@@ -387,6 +387,70 @@
     </section>
   </div>
 
+  <!-- ================= VENTAS (módulo transaccional propio) ================= -->
+  <div class="page" id="page-ventas">
+    <div class="kpis" id="vnt-kpis"></div>
+
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="margin:0"><span class="dot"></span>Ventas — listado</h2>
+        <span id="vnt-periodo-lbl" style="font-size:12px;color:var(--muted)"></span>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="cmp-btn cmp-btn-primary" id="vnt-nueva">+ Nueva Venta</button>
+          <button class="cmp-btn" id="vnt-export">Exportar JSON</button>
+          <button class="cmp-btn" id="vnt-import">Importar JSON</button>
+          <input type="file" id="vnt-import-file" accept="application/json" style="display:none">
+        </div>
+      </div>
+      <div class="cmp-summary" id="vnt-summary"></div>
+      <div class="filter-bar" id="vnt-filtros"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input type="text" class="search-box" id="vnt-buscar" placeholder="Buscar cliente, factura, ítem..." style="margin-left:0">
+        <select id="vnt-filtro-cat" class="cmp-select"></select>
+        <select id="vnt-filtro-periodo" class="cmp-select"></select>
+        <span class="result-count" id="vnt-count" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="tbl-wrap"><table id="vnt-tabla"></table></div>
+    </section>
+
+    <div class="grid2">
+      <section>
+        <h2><span class="dot" style="background:var(--blue)"></span>Ventas por lista de precios — mes filtrado</h2>
+        <div class="asof" id="vnt-asof-cat"></div>
+        <div class="chart-box"><canvas id="vnt-chCat"></canvas></div>
+      </section>
+      <section>
+        <h2><span class="dot"></span>Cuenta corriente clientes — a cobrar</h2>
+        <div class="asof">Saldo pendiente por cliente (todas las ventas cargadas)</div>
+        <div class="tbl-wrap"><table id="vnt-tabla-cli"></table></div>
+      </section>
+    </div>
+
+    <p class="note"><b>Módulo propio de Ventas (reemplaza la carga en Contagram).</b> Datos en la nube (Firestore <code>vph_ventas</code>), en tiempo real y multiusuario. La factura electrónica (ARCA/AFIP) se registra como estado informativo; el envío real a AFIP no se replica acá.</p>
+  </div>
+
+  <!-- ================= FORMULARIO VENTA (overlay) ================= -->
+  <div class="cmp-overlay" id="vnt-modal">
+    <div class="cmp-dialog">
+      <div class="cmp-dialog-head">
+        <h3 id="vnt-form-title">Nueva Venta</h3>
+        <button class="cmp-x" id="vnt-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="vnt-form"></div>
+    </div>
+  </div>
+
+  <!-- ================= REGISTRAR COBRO (overlay) ================= -->
+  <div class="cmp-overlay" id="vnt-modal-cobro">
+    <div class="cmp-dialog" style="max-width:440px">
+      <div class="cmp-dialog-head">
+        <h3>Registrar cobro</h3>
+        <button class="cmp-x" id="vnt-cobro-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="vnt-form-cobro"></div>
+    </div>
+  </div>
+
   <!-- ================= COMPRAS (módulo transaccional propio) ================= -->
   <div class="page" id="page-compras">
     <div class="kpis" id="cmp-kpis"></div>
@@ -550,6 +614,7 @@ const PAGES = [
   { id:'comercial', nombre:'Comercial', ico:'▲' },
   { id:'produccion', nombre:'Producción', ico:'⚙' },
   { id:'logistica', nombre:'Logística y Stock', ico:'⇄' },
+  { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'compras', nombre:'Compras', ico:'🧾' },
   { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
   { id:'fiscal', nombre:'Fiscal', ico:'✓' }
@@ -1197,6 +1262,7 @@ function buildFilterTable(cfg){
   const COL = 'vph_compras';        // colección propia — no choca con la app existente (/users)
   const FB_VER = '10.12.2';
   const USA_NUBE = !!(firebaseConfig && firebaseConfig.projectId);
+  window.__usaNube = USA_NUBE;   // visible para otros módulos (Ventas)
   let FS=null, AUTH=null, fbApp=null, fbDb=null, fbAuth=null, unsub=null, usuario=null;
 
   // ---------- Store ----------
@@ -1564,11 +1630,14 @@ function buildFilterTable(cfg){
     AUTH=authM; FS=fsM;
     fbApp = appM.initializeApp(firebaseConfig);
     fbAuth = authM.getAuth(fbApp); fbDb = fsM.getFirestore(fbApp);
+    window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth };   // compartido con otros módulos (Ventas, etc.)
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
-      if(u){ hideLogin(); startSync(); updateUserBar(); loadReportes(); }
-      else { stopSync(); DB.compras=[]; render(); showLogin(); }
+      if(u){ hideLogin(); startSync(); updateUserBar(); loadReportes();
+        (window.__afterLogin||[]).forEach(fn=>{ try{ fn(u); }catch(e){ console.error(e); } }); }
+      else { stopSync(); DB.compras=[]; render(); showLogin();
+        (window.__afterLogout||[]).forEach(fn=>{ try{ fn(); }catch(e){} }); }
     });
   }
   async function loadReportes(){
@@ -1629,6 +1698,329 @@ function buildFilterTable(cfg){
   $('cmp-filtro-cat').addEventListener('change',e=>{ filtro.cat=e.target.value; render(); });
   $('cmp-filtro-periodo').addEventListener('change',e=>{ filtro.periodo=e.target.value; render(); });
   [$('cmp-modal'),$('cmp-modal-pago')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO VENTAS — app transaccional propia (reemplaza la carga en Contagram)
+     Reutiliza la conexión/sesión de Firebase del módulo Compras (window.__fbctx).
+     Persistencia: Firestore vph_ventas (o localStorage si no hay nube).
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const money = n => '$ ' + (Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const $ = id => document.getElementById(id);
+  const HOY = new Date(); HOY.setHours(0,0,0,0);
+  const parseF = s => { if(!s) return null; const [a,m,d]=s.split('-').map(Number); return new Date(a,m-1,d); };
+  const fmtFecha = s => { if(!s) return '—'; const [a,m,d]=s.split('-'); return d+'/'+m+'/'+a.slice(2); };
+  const hoyISO = (()=>{ const p=n=>String(n).padStart(2,'0'); return HOY.getFullYear()+'-'+p(HOY.getMonth()+1)+'-'+p(HOY.getDate()); })();
+  const num = v => { const n=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(n)?0:n; };
+  const round2 = n => Math.round(n*100)/100;
+
+  const CATEGORIAS = ['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
+  const LISTAS = ['0 Minorista Responsable Inscripto','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  const VENDEDORES = [];   // se autocompletan desde las ventas cargadas (no hardcodear nombres)
+  const TIPOS_COMPROB = ['Factura A','Factura B','Factura C','Nota de Crédito','Presupuesto','Remito'];
+  const COND_IVA = ['A','B','C','M','X'];
+  const ARCA_ESTADOS = ['','Aprobado','Pendiente'];
+  const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
+  const MEDIOS_COBRO = ['Transferencia','Efectivo','Cheque','Tarjeta','Mercado Pago','Retención'];
+
+  const COL='vph_ventas';
+  const KEY='vph_ventas_v1';
+  let DB = { ventas: [] };
+  let unsub=null;
+  let uidSeq = Date.now();
+  function newUid(){ return 'v'+(uidSeq++).toString(36); }
+  const fb = ()=> window.__fbctx;
+  function loadLocal(){ try{ const raw=localStorage.getItem(KEY); if(raw){ const d=JSON.parse(raw); if(Array.isArray(d.ventas)) return d; } }catch(e){} return { ventas: [] }; }
+  function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){ alert('No se pudo guardar: '+e.message); } }
+
+  function persistVenta(v){
+    if(!v._uid) v._uid=newUid();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db){ c.FS.setDoc(c.FS.doc(c.db,COL,v._uid), {...v}).catch(e=>alert('Error al guardar la venta en la nube: '+e.message)); } else alert('Iniciá sesión primero.'); }
+    else { const i=DB.ventas.findIndex(x=>x._uid===v._uid); if(i>=0)DB.ventas[i]=v; else DB.ventas.push(v); saveLocal(); render(); }
+  }
+  function deleteVenta(uid){
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,COL,uid)).catch(e=>alert('Error al eliminar: '+e.message)); }
+    else { DB.ventas=DB.ventas.filter(x=>x._uid!==uid); saveLocal(); render(); }
+  }
+
+  // ---------- Cálculo ----------
+  function calc(v){
+    const factor = 1 - (num(v.descGeneral)/100);
+    let neto=0, iva=0;
+    (v.items||[]).forEach(it=>{
+      const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100);
+      neto+=base;
+      const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
+      iva+=base*al/100;
+    });
+    neto*=factor; iva*=factor;
+    const extras=num(v.percepIva)+num(v.percepIibb)+num(v.impInternos)+num(v.intereses);
+    const signo = v.tipoComprobante==='Nota de Crédito' ? -1 : 1;
+    const total=(neto+iva+extras)*signo;
+    const cobrado=(v.cobros||[]).reduce((a,c)=>a+num(c.monto),0);
+    const saldo=round2(total-cobrado);
+    let estado;
+    if(Math.abs(saldo)<1) estado='cobrado';   // tolerancia de redondeo (centavos)
+    else { const venc=parseF(v.vencimiento); estado=(venc&&venc<HOY)?'vencido':(cobrado>0?'parcial':'acobrar'); }
+    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaDebito:round2(iva*signo), total:round2(total), cobrado:round2(cobrado), saldo, estado, signo };
+  }
+
+  let filtro={ estado:'todos', cat:'', periodo:hoyISO.slice(0,7), q:'', sortCol:'fecha', sortDir:-1 };
+  let chartCat=null;
+
+  function render(){
+    const ventas = DB.ventas.map(v=>({ v, k:calc(v) }));
+    const periodos=[...new Set(DB.ventas.map(v=>v.periodo))].filter(Boolean).sort().reverse();
+    fillSelect($('vnt-filtro-periodo'), [{v:'',l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
+    fillSelect($('vnt-filtro-cat'), [{v:'',l:'Todas las categorías'}].concat(CATEGORIAS.map(x=>({v:x,l:x}))), filtro.cat);
+
+    let rows = ventas.filter(({v,k})=>{
+      if(filtro.periodo && v.periodo!==filtro.periodo) return false;
+      if(filtro.cat && v.categoria!==filtro.cat) return false;
+      if(filtro.estado!=='todos'){
+        if(filtro.estado==='acobrar' && !(k.estado==='acobrar'||k.estado==='parcial'||k.estado==='vencido')) return false;
+        if(filtro.estado==='vencido' && k.estado!=='vencido') return false;
+        if(filtro.estado==='cobrado' && k.estado!=='cobrado') return false;
+      }
+      if(filtro.q){ const q=filtro.q.toLowerCase(); const hay=(v.cliente+' '+v.nroFactura+' '+v.categoria+' '+(v.items||[]).map(i=>i.desc).join(' ')).toLowerCase(); if(!hay.includes(q)) return false; }
+      return true;
+    });
+    rows.sort((a,b)=>{ let va,vb;
+      if(filtro.sortCol==='fecha'){va=a.v.fecha;vb=b.v.fecha;}
+      else if(filtro.sortCol==='cliente'){va=a.v.cliente;vb=b.v.cliente;}
+      else if(filtro.sortCol==='total'){va=a.k.total;vb=b.k.total;}
+      else if(filtro.sortCol==='saldo'){va=a.k.saldo;vb=b.k.saldo;}
+      else {va=a.v[filtro.sortCol];vb=b.v[filtro.sortCol];}
+      return (typeof va==='string'?va.localeCompare(vb):(va-vb))*filtro.sortDir; });
+
+    renderKpis(ventas); renderSummary(rows); renderFiltros(ventas); renderTabla(rows); renderCatChart(rows); renderClientes(ventas);
+    $('vnt-periodo-lbl').textContent = filtro.periodo ? '· '+labelPeriodo(filtro.periodo) : '· todos los períodos';
+    $('vnt-count').textContent = rows.length+' de '+ventas.length+' ventas';
+  }
+  function labelPeriodo(p){ const [a,m]=p.split('-'); const M=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']; return M[+m]+' '+a; }
+
+  function renderKpis(all){
+    const per = filtro.periodo ? all.filter(x=>x.v.periodo===filtro.periodo) : all;
+    const total=per.reduce((a,x)=>a+x.k.total,0);
+    const aCobrar=per.filter(x=>x.k.estado==='acobrar'||x.k.estado==='parcial').reduce((a,x)=>a+x.k.saldo,0);
+    const vencido=per.filter(x=>x.k.estado==='vencido').reduce((a,x)=>a+x.k.saldo,0);
+    const ivaDeb=per.reduce((a,x)=>a+x.k.ivaDebito,0);
+    $('vnt-kpis').innerHTML =
+      k('Total ventas','good', money(total), per.length+' ventas · '+(filtro.periodo?labelPeriodo(filtro.periodo):'histórico')) +
+      k('A cobrar','warn', money(aCobrar), 'Saldo pendiente (no vencido)') +
+      k('Vencido','bad', money(vencido), 'Saldo con vencimiento pasado') +
+      k('IVA débito','info', money(ivaDeb), 'IVA facturado a clientes');
+  }
+  function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
+
+  function renderSummary(rows){
+    const tot=rows.reduce((a,x)=>a+x.k.total,0);
+    const cob=rows.reduce((a,x)=>a+x.k.cobrado,0);
+    const acobrar=rows.filter(x=>x.k.estado==='acobrar'||x.k.estado==='parcial').reduce((a,x)=>a+x.k.saldo,0);
+    const venc=rows.filter(x=>x.k.estado==='vencido').reduce((a,x)=>a+x.k.saldo,0);
+    $('vnt-summary').innerHTML =
+      cell('Cantidad', String(rows.length),'var(--text)') + cell('Cobrado', money(cob),'var(--green)') +
+      cell('A cobrar', money(acobrar),'var(--amber)') + cell('Vencido', money(venc),'var(--red)') + cell('Total ventas', money(tot),'var(--blue)');
+  }
+  function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
+
+  function renderFiltros(all){
+    const counts={ todos:all.length, acobrar:all.filter(x=>x.k.estado!=='cobrado').length, vencido:all.filter(x=>x.k.estado==='vencido').length, cobrado:all.filter(x=>x.k.estado==='cobrado').length };
+    const defs=[['todos','Todas'],['acobrar','A cobrar'],['vencido','Vencidas'],['cobrado','Cobradas']];
+    $('vnt-filtros').innerHTML = defs.map(([v,l])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+counts[v]+')</button>').join('');
+    $('vnt-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
+  }
+
+  function renderTabla(rows){
+    const th=(col,label,cls)=>'<th class="'+(cls||'')+'" data-sort="'+col+'">'+label+(filtro.sortCol===col?' <span class="arrow">'+(filtro.sortDir<0?'▼':'▲')+'</span>':'')+'</th>';
+    let html='<tr><th>Estado</th><th>ARCA</th>'+th('fecha','Emisión')+th('cliente','Cliente')+'<th>Categoría</th><th>N° Factura</th>'+th('total','Total','num')+'<th class="num">Cobrado</th>'+th('saldo','A cobrar','num')+'<th></th></tr>';
+    if(!rows.length) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:22px">Sin ventas para este filtro.</td></tr>';
+    const badge={ cobrado:'<span class="cmp-estado pagado">Cobrado</span>', acobrar:'<span class="cmp-estado apagar">A cobrar</span>', vencido:'<span class="cmp-estado vencido">Vencido</span>', parcial:'<span class="cmp-estado parcial">Parcial</span>' };
+    const arcaBadge=e=> e==='Aprobado'?'<span class="badge green">Aprobado</span>':e==='Pendiente'?'<span class="badge amber">Pendiente</span>':'<span style="color:var(--muted)">—</span>';
+    rows.forEach(({v,k})=>{
+      const fac=(v.puntoVenta||v.nroFactura)?((v.condIva||'')+' '+(v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).trim():'—';
+      html+='<tr><td>'+badge[k.estado]+'</td><td>'+arcaBadge(v.arca)+'</td><td>'+fmtFecha(v.fecha)+'</td>'+
+        '<td><b>'+v.cliente+'</b>'+(v.tipoComprobante&&v.tipoComprobante!=='Factura A'&&v.tipoComprobante!=='Factura B'&&v.tipoComprobante!=='Factura C'?' <span class="badge blue">'+v.tipoComprobante+'</span>':'')+'</td>'+
+        '<td>'+(v.categoria||'—')+'</td><td style="font-variant-numeric:tabular-nums">'+fac+'</td>'+
+        '<td class="num"><b>'+money(k.total)+'</b></td><td class="num">'+money(k.cobrado)+'</td>'+
+        '<td class="num" style="color:'+(k.saldo>0?(k.estado==='vencido'?'var(--red)':'var(--amber)'):'var(--green)')+';font-weight:700">'+money(k.saldo)+'</td>'+
+        '<td style="white-space:nowrap">'+(k.saldo>0.5?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">Cobrar</button>':'')+
+        '<button class="cmp-rowbtn" data-act="edit" data-id="'+v._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+v._uid+'">✕</button></td></tr>';
+    });
+    const t=$('vnt-tabla'); t.innerHTML=html;
+    t.querySelectorAll('th[data-sort]').forEach(h=> h.onclick=()=>{ const c=h.dataset.sort; if(filtro.sortCol===c) filtro.sortDir*=-1; else {filtro.sortCol=c;filtro.sortDir=-1;} render(); });
+    t.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const v=DB.ventas.find(x=>x._uid==b.dataset.id); if(!v)return;
+      if(b.dataset.act==='edit') openForm(v); else if(b.dataset.act==='cobro') openCobro(v);
+      else if(b.dataset.act==='del'){ if(confirm('¿Eliminar la venta de '+v.cliente+' ('+money(calc(v).total)+')?')) deleteVenta(v._uid); } });
+  }
+
+  function renderCatChart(rows){
+    $('vnt-asof-cat').textContent = filtro.periodo ? labelPeriodo(filtro.periodo) : 'Todos los períodos';
+    const by={}; rows.forEach(({v,k})=> by[v.categoria||'(sin categoría)']=(by[v.categoria||'(sin categoría)']||0)+k.total);
+    const labels=Object.keys(by), data=labels.map(l=>Math.round(by[l]));
+    if(chartCat) chartCat.destroy(); if(typeof Chart==='undefined') return;
+    chartCat=new Chart($('vnt-chCat'), { type:'doughnut',
+      data:{ labels, datasets:[{ data, backgroundColor:['#38b26a','#2f6fb2','#e0a63a','#8a5cc0','#5aa9c9','#d64541','#95a5b8'], borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:x=>x.label+': '+money(x.raw)}} } } });
+  }
+
+  function renderClientes(all){
+    const by={}; all.forEach(({v,k})=>{ if(k.saldo>0.5){ by[v.cliente]=by[v.cliente]||{saldo:0,venc:0}; by[v.cliente].saldo+=k.saldo; if(k.estado==='vencido') by[v.cliente].venc+=k.saldo; } });
+    const arr=Object.entries(by).map(([c,x])=>({c,...x})).sort((a,b)=>b.saldo-a.saldo);
+    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num">Vencido</th></tr>';
+    if(!arr.length) html+='<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
+    arr.forEach(r=> html+='<tr><td>'+r.c+'</td><td class="num"><b>'+money(r.saldo)+'</b></td><td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td></tr>');
+    const tot=arr.reduce((a,r)=>a+r.saldo,0), totV=arr.reduce((a,r)=>a+r.venc,0);
+    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totV)+'</td></tr>';
+    $('vnt-tabla-cli').innerHTML=html;
+  }
+
+  // ---------- Formulario ----------
+  let editing=null;
+  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  function openForm(v){ editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
+  function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; }
+
+  function drawForm(){
+    const v=editing;
+    const opt=(arr,sel)=> arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join('');
+    $('vnt-form').innerHTML =
+      '<div class="cmp-form-grid">'+
+        field('Cliente','col2','<input id="vf-cli" list="vf-cli-list" value="'+esc(v.cliente)+'" placeholder="Nombre del cliente">'+datalistCli()) +
+        field('CUIT / DNI','','<input id="vf-cuit" value="'+esc(v.cuit)+'" placeholder="00-00000000-0">') +
+        field('Cond. IVA','','<select id="vf-cond">'+opt(COND_IVA,v.condIva)+'</select>') +
+        field('Categoría','col2','<select id="vf-cat">'+opt(CATEGORIAS,v.categoria)+'</select>') +
+        field('Vendedor','','<input id="vf-vend" list="vf-vend-list" value="'+esc(v.vendedor)+'" placeholder="Vendedor">'+datalistVend()) +
+        field('Lista de precios','','<select id="vf-lista">'+opt(LISTAS,v.listaPrecios)+'</select>') +
+        field('Tipo comprobante','','<select id="vf-tipo">'+opt(TIPOS_COMPROB,v.tipoComprobante)+'</select>') +
+        field('ARCA','','<select id="vf-arca"><option value="">—</option><option value="Aprobado"'+(v.arca==='Aprobado'?' selected':'')+'>Aprobado</option><option value="Pendiente"'+(v.arca==='Pendiente'?' selected':'')+'>Pendiente</option></select>') +
+        field('Emisión','','<input type="date" id="vf-fecha" value="'+v.fecha+'">') +
+        field('Vto. de cobro','','<input type="date" id="vf-venc" value="'+v.vencimiento+'">') +
+        field('Período contable','','<input type="month" id="vf-per" value="'+v.periodo+'">') +
+        field('Pto. Venta','','<input id="vf-pv" value="'+esc(v.puntoVenta)+'" placeholder="0010">') +
+        field('N° Factura','','<input id="vf-nro" value="'+esc(v.nroFactura)+'" placeholder="00000000">') +
+      '</div>'+
+      '<h4 style="margin:6px 0 8px;font-size:13px">Ítems</h4>'+
+      '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead><tbody id="vf-items"></tbody></table></div>'+
+      '<button class="cmp-addline" id="vf-addline">+ Agregar ítem</button>'+
+      '<div class="grid2" style="margin-top:14px">'+
+        '<div>'+ field('Nota para el cliente','','<textarea id="vf-notacli" rows="2" placeholder="Aparece en la factura...">'+esc(v.notaCliente)+'</textarea>') +
+          field('Nota interna','','<textarea id="vf-nota" rows="2" placeholder="Uso interno...">'+esc(v.nota)+'</textarea>') +
+          '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px">'+
+            field('Desc. general %','','<input id="vf-descg" value="'+v.descGeneral+'">') +
+            field('Perc. IVA','','<input id="vf-piva" value="'+v.percepIva+'">') +
+            field('Perc. IIBB','','<input id="vf-piibb" value="'+v.percepIibb+'">') +
+            field('Imp. Internos','','<input id="vf-impint" value="'+v.impInternos+'">') +
+            field('Intereses','','<input id="vf-int" value="'+v.intereses+'">') +
+          '</div></div>'+
+        '<div class="cmp-tot-box" id="vf-totbox"></div>'+
+      '</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="vf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="vf-save">Guardar venta</button></div>';
+    drawItems();
+    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
+      const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
+      el.addEventListener('input',()=>{ editing[key]=el.value; if(['vf-descg','vf-piva','vf-piibb','vf-impint','vf-int'].includes(id)) drawTotals(); });
+    });
+    $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond;} } });
+    $('vf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
+    $('vf-cancel').onclick=closeForm; $('vf-save').onclick=saveForm; drawTotals();
+  }
+  function itemBase(it){ return num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); }
+  function itemAlic(it){ return (it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); }
+  function updateRow(i){ const it=editing.items[i], base=itemBase(it), al=itemAlic(it); const s=$('vf-sub-'+i), t=$('vf-tot-'+i); if(s)s.textContent=money(base); if(t)t.textContent=money(base*(1+al/100)); }
+  function drawItems(){
+    const opt=(arr,sel)=> arr.map(a=>'<option value="'+a.v+'"'+(a.v===sel?' selected':'')+'>'+a.l+'</option>').join('');
+    $('vf-items').innerHTML = editing.items.map((it,i)=>{ const base=itemBase(it), al=itemAlic(it);
+      return '<tr><td><input class="txt" data-i="'+i+'" data-k="desc" value="'+esc(it.desc)+'" placeholder="Descripción"></td>'+
+        '<td><input data-i="'+i+'" data-k="cant" value="'+it.cant+'" style="width:60px"></td>'+
+        '<td><input data-i="'+i+'" data-k="precioUnit" value="'+it.precioUnit+'" style="width:100px"></td>'+
+        '<td><input data-i="'+i+'" data-k="descPct" value="'+it.descPct+'" style="width:55px"></td>'+
+        '<td><select data-i="'+i+'" data-k="iva" style="width:80px">'+opt(ALICUOTAS,it.iva)+'</select></td>'+
+        '<td class="num" id="vf-sub-'+i+'">'+money(base)+'</td><td class="num" id="vf-tot-'+i+'">'+money(base*(1+al/100))+'</td>'+
+        '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>';
+    }).join('');
+    $('vf-items').querySelectorAll('input,select').forEach(el=>{ const ev=el.tagName==='SELECT'?'change':'input'; el.addEventListener(ev,()=>{ const i=+el.dataset.i,kk=el.dataset.k; editing.items[i][kk]=el.value; updateRow(i); drawTotals(); }); });
+    $('vf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
+  }
+  function drawTotals(){
+    const kk=calc(editing);
+    $('vf-totbox').innerHTML =
+      '<div class="cmp-tot-row"><span>Neto gravado + no gravado</span><b>'+money(kk.neto)+'</b></div>'+
+      '<div class="cmp-tot-row"><span>IVA</span><b>'+money(kk.iva)+'</b></div>'+
+      (num(editing.percepIva)?'<div class="cmp-tot-row"><span>Perc. IVA</span><b>'+money(num(editing.percepIva))+'</b></div>':'')+
+      (num(editing.percepIibb)?'<div class="cmp-tot-row"><span>Perc. IIBB</span><b>'+money(num(editing.percepIibb))+'</b></div>':'')+
+      (num(editing.impInternos)?'<div class="cmp-tot-row"><span>Imp. Internos</span><b>'+money(num(editing.impInternos))+'</b></div>':'')+
+      (num(editing.intereses)?'<div class="cmp-tot-row"><span>Intereses</span><b>'+money(num(editing.intereses))+'</b></div>':'')+
+      '<div class="cmp-tot-row big"><span>Total Venta</span><span>'+money(kk.total)+'</span></div>';
+  }
+  function saveForm(){
+    if(!editing.cliente.trim()){ alert('Ingresá el cliente.'); return; }
+    if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
+    if(!editing._uid) editing._uid=newUid();
+    persistVenta(editing); closeForm();
+  }
+
+  // ---------- Cobros ----------
+  let cobrandoUid=null;
+  function openCobro(v){ cobrandoUid=v._uid; const kk=calc(v);
+    $('vnt-form-cobro').innerHTML =
+      '<p style="margin:0 0 12px;font-size:13px">'+v.cliente+' — saldo <b>'+money(kk.saldo)+'</b></p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        field('Monto','','<input id="vc-monto" value="'+kk.saldo+'">') + field('Fecha','','<input type="date" id="vc-fecha" value="'+hoyISO+'">') +
+        field('Medio','col2','<select id="vc-medio">'+MEDIOS_COBRO.map(m=>'<option>'+m+'</option>').join('')+'</select>') + '</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="vc-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="vc-save">Registrar cobro</button></div>';
+    $('vc-cancel').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
+    $('vc-save').onclick=()=>{ const v2=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v2)return; v2.cobros=v2.cobros||[]; v2.cobros.push({fecha:$('vc-fecha').value, monto:num($('vc-monto').value), medio:$('vc-medio').value}); persistVenta(v2); $('vnt-modal-cobro').classList.remove('open'); };
+    $('vnt-modal-cobro').classList.add('open');
+  }
+
+  function clientesConocidos(){ const m={}; DB.ventas.forEach(v=>{ if(v.cliente && !m[v.cliente]) m[v.cliente]={nombre:v.cliente,cuit:v.cuit,cond:v.condIva}; }); return Object.values(m); }
+  function datalistCli(){ return '<datalist id="vf-cli-list">'+clientesConocidos().map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
+  function vendedoresConocidos(){ return [...new Set(VENDEDORES.concat(DB.ventas.map(v=>v.vendedor).filter(Boolean)))]; }
+  function datalistVend(){ return '<datalist id="vf-vend-list">'+vendedoresConocidos().map(x=>'<option value="'+esc(x)+'">').join('')+'</datalist>'; }
+
+  function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_ventas_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
+  function importJSON(file){ const r=new FileReader(); r.onload=()=>{ try{ const d=JSON.parse(r.result); if(!Array.isArray(d.ventas)) throw new Error('formato inválido');
+    if(!confirm((window.__usaNube?'Subir a la nube ':'Reemplazar por ')+d.ventas.length+' ventas del archivo?')) return;
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) d.ventas.forEach(v=>{ const vv={...v}; if(!vv._uid) vv._uid=newUid(); c.FS.setDoc(c.FS.doc(c.db,COL,vv._uid), vv); }); }
+    else { DB=d; DB.ventas.forEach((v,i)=>{ if(!v._uid) v._uid='seed'+i; }); saveLocal(); render(); } }
+    catch(e){ alert('No se pudo importar: '+e.message); } }; r.readAsText(file); }
+
+  function field(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+  function fillSelect(el,opts,sel){ if(!el)return; el.innerHTML=opts.map(o=>'<option value="'+o.v+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join(''); }
+
+  // ---------- Sync ----------
+  function startSync(){ const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.ventas=snap.docs.map(d=>({...d.data(), _uid:d.id})); render(); }, err=>{ console.error('ventas:',err); }); }
+  function stopSync(){ if(unsub){ unsub(); unsub=null; } }
+  function boot(){
+    if(window.__usaNube){
+      window.__afterLogin = window.__afterLogin || [];  window.__afterLogout = window.__afterLogout || [];
+      window.__afterLogin.push(()=> startSync());
+      window.__afterLogout.push(()=>{ stopSync(); DB.ventas=[]; render(); });
+      if(window.__fbctx && window.__fbctx.auth && window.__fbctx.auth.currentUser) startSync();
+      render();
+    } else { DB=loadLocal(); DB.ventas.forEach((v,i)=>{ if(!v._uid) v._uid='seed'+i; }); render(); }
+  }
+
+  // ---------- eventos ----------
+  $('vnt-nueva').onclick=()=>openForm(null);
+  $('vnt-cerrar').onclick=closeForm;
+  $('vnt-cobro-cerrar').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
+  $('vnt-export').onclick=exportJSON;
+  $('vnt-import').onclick=()=>$('vnt-import-file').click();
+  $('vnt-import-file').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
+  $('vnt-buscar').addEventListener('input',e=>{ filtro.q=e.target.value.trim(); render(); });
+  $('vnt-filtro-cat').addEventListener('change',e=>{ filtro.cat=e.target.value; render(); });
+  $('vnt-filtro-periodo').addEventListener('change',e=>{ filtro.periodo=e.target.value; render(); });
+  [$('vnt-modal'),$('vnt-modal-cobro')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
 
   boot();
 })();
