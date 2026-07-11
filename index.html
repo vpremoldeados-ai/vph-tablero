@@ -173,6 +173,22 @@
   .kb-card .acts{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap;align-items:center}
   .kb-wa{background:#25d366;color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;gap:4px;align-items:center}
   .kb-move{font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 6px;background:#fff;color:#54637a;cursor:pointer}
+
+  /* ---------- PRODUCCIÓN / ENTREGAS (mobile-first) ---------- */
+  .pe-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .pe-bigbtn{flex:1;min-width:200px;border:none;border-radius:14px;padding:20px 18px;font-size:18px;font-weight:800;cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;justify-content:center;box-shadow:var(--shadow)}
+  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)}
+  .pe-bigbtn:active{transform:scale(.98)}
+  .pe-qty{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--card)}
+  .pe-qty .nm{font-weight:700;font-size:14px}
+  .pe-qty .cd{font-size:11px;color:var(--muted)}
+  .pe-qty .st{font-size:11px;color:var(--muted)}
+  .pe-stepper{display:flex;align-items:center;gap:8px}
+  .pe-stepper button{width:40px;height:40px;border-radius:10px;border:1px solid var(--border);background:#eef2f7;font-size:20px;font-weight:800;cursor:pointer;color:#3c4c63;line-height:1}
+  .pe-stepper input{width:70px;height:40px;text-align:center;font-size:17px;font-weight:800;border:1px solid var(--border);border-radius:10px;color:var(--text)}
+  .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
+  .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
+  @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
 </style>
 </head>
 <body>
@@ -403,6 +419,41 @@
     </section>
   </div>
 
+  <!-- ================= PRODUCCIÓN Y ENTREGAS (operativo, mobile) ================= -->
+  <div class="page" id="page-prodent">
+    <div class="kpis" id="pe-kpis"></div>
+    <div class="pe-actions">
+      <button class="pe-bigbtn prod" id="pe-btn-prod">🏭 Cargar producción</button>
+      <button class="pe-bigbtn ent" id="pe-btn-ent">🚚 Cargar entrega</button>
+    </div>
+    <section>
+      <h2><span class="dot" style="background:var(--red)"></span>Stock actual</h2>
+      <div class="asof" id="pe-stock-asof"></div>
+      <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
+      <div class="tbl-wrap"><table id="pe-tabla-stock"></table></div>
+      <p class="note">Disponible = stock inicial + producido − entregado. <b>FALTANTE</b> = disponible negativo (hay pedidos sin cubrir). El stock se actualiza solo con lo que cargás en producción y entregas.</p>
+    </section>
+    <section>
+      <h2><span class="dot" style="background:var(--blue)"></span>Últimos movimientos</h2>
+      <div class="tbl-wrap"><table id="pe-tabla-mov"></table></div>
+    </section>
+  </div>
+
+  <!-- Overlay: cargar producción -->
+  <div class="cmp-overlay" id="pe-modal-prod">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head"><h3>🏭 Producción del día</h3><button class="cmp-x" id="pe-prod-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-prod"></div>
+    </div>
+  </div>
+  <!-- Overlay: cargar entrega -->
+  <div class="cmp-overlay" id="pe-modal-ent">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head"><h3>🚚 Registrar entrega</h3><button class="cmp-x" id="pe-ent-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-ent"></div>
+    </div>
+  </div>
+
   <!-- ================= CRM / LEADS (pipeline) ================= -->
   <div class="page" id="page-crm">
     <div class="kpis" id="crm-kpis"></div>
@@ -631,10 +682,47 @@ window.__hydrateReportes = function(d){
   margenCanal=d.margenCanal||[]; notasLogistica=d.notasLogistica||[];
 };
 
+// --- Páginas y navegación (nivel superior: funciona con o sin datos, filtrable por rol) ---
+const PAGES = [
+  { id:'inicio', nombre:'Vista Diaria', ico:'⌂' },
+  { id:'metas', nombre:'Metas del Mes', ico:'◎' },
+  { id:'finanzas', nombre:'Finanzas', ico:'$' },
+  { id:'comercial', nombre:'Comercial', ico:'▲' },
+  { id:'produccion', nombre:'Producción', ico:'⚙' },
+  { id:'logistica', nombre:'Logística y Stock', ico:'⇄' },
+  { id:'prodent', nombre:'Prod. y Entregas', ico:'🏭' },
+  { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
+  { id:'ventas', nombre:'Ventas', ico:'💰' },
+  { id:'compras', nombre:'Compras', ico:'🧾' },
+  { id:'basedatos', nombre:'Base de Datos', ico:'📇' },
+  { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
+  { id:'fiscal', nombre:'Fiscal', ico:'✓' }
+];
+// Permisos por rol. 'produccion' solo ve la carga operativa; 'admin' ve todo.
+const PERMISOS = { produccion: ['prodent'] };
+window.__navBuilt = false;
+window.__construirNav = function(){
+  if(window.__navBuilt) return; window.__navBuilt = true;
+  const rol = window.__rol || 'admin';
+  const permit = PERMISOS[rol] || PAGES.map(p=>p.id);
+  const visibles = PAGES.filter(p=>permit.includes(p.id));
+  const nav = document.getElementById('nav'); if(!nav) return; nav.innerHTML='';
+  visibles.forEach((p,i)=>{
+    const b=document.createElement('button');
+    b.className='nav-item'+(i===0?' active':'');
+    b.innerHTML='<span class="ico">'+p.ico+'</span><span class="txt">'+p.nombre+'</span>';
+    b.onclick=()=>{ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active')); b.classList.add('active'); document.querySelectorAll('.page').forEach(x=>x.classList.remove('active')); const pg=document.getElementById('page-'+p.id); if(pg)pg.classList.add('active'); document.getElementById('page-title').textContent=p.nombre; window.scrollTo({top:0}); };
+    nav.appendChild(b);
+  });
+  if(visibles[0]){ document.querySelectorAll('.page').forEach(x=>x.classList.remove('active')); const pg=document.getElementById('page-'+visibles[0].id); if(pg)pg.classList.add('active'); const t=document.getElementById('page-title'); if(t)t.textContent=visibles[0].nombre; }
+  const hoy=document.getElementById('hoy'); if(hoy) hoy.textContent=new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+};
+
 window.__reportesRendered = false;
 window.__renderReportes = function(){
-  if(window.__reportesRendered) return;      // nav/charts se construyen una sola vez
-  if(!finanzas || !rentabilidad || !Array.isArray(METAS)) return;  // sin datos todavia
+  window.__construirNav();                    // nav siempre (respeta rol)
+  if(window.__reportesRendered) return;
+  if(!finanzas || !rentabilidad || !Array.isArray(METAS)) return;  // sin datos todavia (ej: rol produccion)
   window.__reportesRendered = true;
 
 /* =====================================================================
@@ -686,44 +774,12 @@ function calcularAlertas(){
 }
 
 /* =====================================================================
-   RENDER
+   RENDER  (el nav lo arma window.__construirNav() a nivel superior)
    ===================================================================== */
-const PAGES = [
-  { id:'inicio', nombre:'Vista Diaria', ico:'⌂' },
-  { id:'metas', nombre:'Metas del Mes', ico:'◎' },
-  { id:'finanzas', nombre:'Finanzas', ico:'$' },
-  { id:'comercial', nombre:'Comercial', ico:'▲' },
-  { id:'produccion', nombre:'Producción', ico:'⚙' },
-  { id:'logistica', nombre:'Logística y Stock', ico:'⇄' },
-  { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
-  { id:'ventas', nombre:'Ventas', ico:'💰' },
-  { id:'compras', nombre:'Compras', ico:'🧾' },
-  { id:'basedatos', nombre:'Base de Datos', ico:'📇' },
-  { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
-  { id:'fiscal', nombre:'Fiscal', ico:'✓' }
-];
-
 const alertas = calcularAlertas();
 const nBad = alertas.filter(a=>a.sev==='bad').length;
-
-// --- Sidebar nav ---
-(function(){
-  const nav = document.getElementById('nav');
-  PAGES.forEach((p,i) => {
-    const b = document.createElement('button');
-    b.className = 'nav-item' + (i===0?' active':'');
-    b.innerHTML = '<span class="ico">'+p.ico+'</span><span class="txt">'+p.nombre+'</span>' + (p.id==='inicio' && nBad ? '<span class="pill">'+nBad+'</span>' : '');
-    b.onclick = () => {
-      document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
-      b.classList.add('active');
-      document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
-      document.getElementById('page-'+p.id).classList.add('active');
-      document.getElementById('page-title').textContent = p.nombre;
-      window.scrollTo({top:0});
-    };
-    nav.appendChild(b);
-  });
-})();
+// Pill de alertas en "Vista Diaria" (solo admin, con datos)
+(function(){ const it=[...document.querySelectorAll('#nav .nav-item')][0]; if(it && nBad && !it.querySelector('.pill')){ const s=document.createElement('span'); s.className='pill'; s.textContent=nBad; it.appendChild(s);} })();
 
 // --- Topbar ---
 document.getElementById('hoy').textContent = new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
@@ -1717,12 +1773,18 @@ function buildFilterTable(cfg){
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
-      if(u){ hideLogin(); startSync(); updateUserBar(); loadReportes();
-        (window.__afterLogin||[]).forEach(fn=>{ try{ fn(u); }catch(e){ console.error(e); } }); }
-      else { stopSync(); DB.compras=[]; render(); showLogin();
+      if(u){ hideLogin(); updateUserBar();
+        leerRol(u).then(()=>{
+          window.__construirNav && window.__construirNav();
+          if(window.__rol!=='produccion'){ startSync(); loadReportes(); }
+          (window.__afterLogin||[]).forEach(fn=>{ try{ fn(u); }catch(e){ console.error(e); } });
+        });
+      }
+      else { window.__rol=null; window.__navBuilt=false; window.__reportesRendered=false; stopSync(); DB.compras=[]; render(); showLogin();
         (window.__afterLogout||[]).forEach(fn=>{ try{ fn(); }catch(e){} }); }
     });
   }
+  async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'admin'; window.__rolNombre=d.nombre||''; } else { window.__rol='admin'; window.__rolNombre=''; } }catch(e){ window.__rol='admin'; } }
   async function loadReportes(){
     try{
       const snap = await FS.getDoc(FS.doc(fbDb,'vph_reportes','dashboard'));
@@ -1731,6 +1793,7 @@ function buildFilterTable(cfg){
     }catch(e){ console.error('Error cargando reportes:', e); }
   }
   function startSync(){
+    if(window.__rol==='produccion') return;   // rol producción no ve compras
     if(unsub) unsub();
     unsub = FS.onSnapshot(FS.collection(fbDb,COL),
       snap=>{ DB.compras = snap.docs.map(d=>({...d.data(), _uid:d.id})); render(); },
@@ -2091,7 +2154,7 @@ function buildFilterTable(cfg){
   function fillSelect(el,opts,sel){ if(!el)return; el.innerHTML=opts.map(o=>'<option value="'+o.v+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join(''); }
 
   // ---------- Sync ----------
-  function startSync(){ const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
+  function startSync(){ if(window.__rol==='produccion') return; const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.ventas=snap.docs.map(d=>({...d.data(), _uid:d.id})); render(); }, err=>{ console.error('ventas:',err); }); }
   function stopSync(){ if(unsub){ unsub(); unsub=null; } }
   function boot(){
@@ -2249,7 +2312,7 @@ function buildFilterTable(cfg){
   function exportJSON(){ const blob=new Blob([JSON.stringify({[E().col]:data()},null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_'+tab+'.json'; a.click(); URL.revokeObjectURL(a.href); }
 
   // ---------- Sync ----------
-  function startSync(){ const c=fb(); if(!c||!c.db)return;
+  function startSync(){ if(window.__rol==='produccion') return; const c=fb(); if(!c||!c.db)return;
     Object.values(ENT).forEach(e=>{ if(unsub[e.col]) unsub[e.col]();
       unsub[e.col]=c.FS.onSnapshot(c.FS.collection(c.db,e.col), snap=>{ store[e.col]=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('bd '+e.col+':',err)); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
@@ -2290,7 +2353,7 @@ function buildFilterTable(cfg){
   const COL='vph_leads', KEY='vph_leads_v1';
   const ESTADOS=[ {k:'nuevo',l:'Nuevo',c:'#4aa3ff'},{k:'contactado',l:'Contactado',c:'#c98a06'},{k:'cotizado',l:'Cotizado',c:'#8a5cc0'},{k:'confirmado',l:'Confirmado',c:'#1e9e5a'},{k:'perdido',l:'Perdido',c:'#d64541'} ];
   const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Teléfono','Referido','Manual'];
-  const PAGOS=['Transferencia','Link Viumi','Efectivo','A confirmar'];
+  const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
   const LISTAS=['0 Minorista Responsable Inscripto','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
 
@@ -2406,7 +2469,7 @@ function buildFilterTable(cfg){
     if(window.__usaNube){ const c=fb(); if(c&&c.db) d.leads.forEach(l=>{ const ll={...l}; if(!ll._uid)ll._uid=newUid(); c.FS.setDoc(c.FS.doc(c.db,COL,ll._uid),ll); }); }
     else { DB=d; DB.leads.forEach((l,i)=>{ if(!l._uid)l._uid='seed'+i; }); saveLocal(); render(); } }catch(e){ alert('No se pudo importar: '+e.message); } }; r.readAsText(file); }
 
-  function startSync(){ const c=fb(); if(!c||!c.db)return; if(unsub)unsub();
+  function startSync(){ if(window.__rol==='produccion') return; const c=fb(); if(!c||!c.db)return; if(unsub)unsub();
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.leads=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('crm:',err)); }
   function stopSync(){ if(unsub){unsub();unsub=null;} }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
@@ -2423,6 +2486,157 @@ function buildFilterTable(cfg){
   $('crm-import-file').onchange=e=>{ if(e.target.files[0])importJSON(e.target.files[0]); e.target.value=''; };
   $('crm-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('crm-modal').addEventListener('click',e=>{ if(e.target===$('crm-modal')) closeForm(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO PRODUCCIÓN Y ENTREGAS — carga operativa (mobile) + stock
+     Colecciones vph_produccion, vph_entregas (+ lee vph_productos).
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const num = v => { const n=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(n)?0:n; };
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const HOY=new Date(); const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const fmtFecha = s=>{ if(!s)return'—'; const [a,m,d]=s.split('-'); return d+'/'+m+'/'+a.slice(2); };
+  const fb=()=>window.__fbctx;
+  const nf = n => Math.round(n).toLocaleString('es-AR');
+
+  let prods=[], prod=[], ent=[], q='';
+  const unsub={};
+
+  function usuario(){ const c=fb(); return (c&&c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||''; }
+  function keyProd(x){ return (x.codigo||x.producto||'').toUpperCase(); }
+  function stockDe(p){
+    const k=keyProd(p);
+    const producido=prod.filter(x=>keyProd(x)===k).reduce((a,x)=>a+num(x.cantidad),0);
+    const entregado=ent.filter(x=>keyProd(x)===k).reduce((a,x)=>a+num(x.cantidad),0);
+    const inicial=num(p.stock);
+    const disp=inicial+producido-entregado; const min=num(p.stockMinimo);
+    return { inicial, producido, entregado, disponible:disp, min, estado: disp<0?'falta':(min>0&&disp<min?'bajo':'ok') };
+  }
+
+  function render(){
+    const activos=prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    const filas=activos.map(p=>({p, s:stockDe(p)}));
+    const faltan=filas.filter(f=>f.s.estado==='falta').length;
+    const stockTot=filas.reduce((a,f)=>a+f.s.disponible,0);
+    const prodHoy=prod.filter(x=>x.fecha===hoyISO).reduce((a,x)=>a+num(x.cantidad),0);
+    const entHoy=ent.filter(x=>x.fecha===hoyISO).reduce((a,x)=>a+num(x.cantidad),0);
+    $('pe-kpis').innerHTML =
+      k('Productos con faltante', faltan?'bad':'good', String(faltan), faltan?'Disponible negativo':'Todo cubierto') +
+      k('Stock total (u)','info', nf(stockTot), activos.length+' productos activos') +
+      k('Producido hoy','info', nf(prodHoy)+' u', fmtFecha(hoyISO)) +
+      k('Entregado hoy','info', nf(entHoy)+' u', fmtFecha(hoyISO));
+    // tabla stock
+    let rows=filas;
+    if(q){ const s=q.toLowerCase(); rows=rows.filter(f=>(f.p.nombre+' '+f.p.codigo).toLowerCase().includes(s)); }
+    rows.sort((a,b)=>a.s.disponible-b.s.disponible);
+    const badge={ ok:'<span class="pe-est ok">OK</span>', bajo:'<span class="pe-est bajo">Bajo mínimo</span>', falta:'<span class="pe-est falta">FALTANTE</span>' };
+    let html='<tr><th>Código</th><th>Producto</th><th class="num">Inicial</th><th class="num">Producido</th><th class="num">Entregado</th><th class="num">Disponible</th><th>Estado</th></tr>';
+    if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
+    rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
+      html+='<tr><td>'+esc(p.codigo||'')+'</td><td><b>'+esc(p.nombre||'')+'</b></td><td class="num">'+nf(s.inicial)+'</td><td class="num" style="color:var(--blue)">+'+nf(s.producido)+'</td><td class="num" style="color:var(--muted)">-'+nf(s.entregado)+'</td><td class="num" style="color:'+col+';font-weight:800">'+nf(s.disponible)+'</td><td>'+badge[s.estado]+'</td></tr>'; });
+    $('pe-tabla-stock').innerHTML=html;
+    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos.length+' productos';
+    // movimientos
+    const movs=prod.map(x=>({...x,tipo:'Producción'})).concat(ent.map(x=>({...x,tipo:'Entrega'}))).sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,40);
+    let mh='<tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th class="num">Cant.</th><th>Cliente / Usuario</th></tr>';
+    if(!movs.length) mh+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
+    movs.forEach(m=>{ mh+='<tr><td>'+fmtFecha(m.fecha)+'</td><td>'+(m.tipo==='Producción'?'<span class="badge blue">Producción</span>':'<span class="badge green">Entrega</span>')+'</td><td>'+esc(m.producto||m.codigo||'')+'</td><td class="num"><b>'+(m.tipo==='Entrega'?'-':'+')+nf(num(m.cantidad))+'</b></td><td>'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
+    $('pe-tabla-mov').innerHTML=mh;
+  }
+  function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
+
+  // ---------- Cargar producción ----------
+  function stepperRow(idx, nombre, codigo, sub, val){
+    return '<div class="pe-qty"><div><div class="nm">'+esc(nombre)+'</div><div class="cd">'+esc(codigo||'')+(sub?' · '+sub:'')+'</div></div>'+
+      '<div class="pe-stepper"><button data-step="-1" data-i="'+idx+'">−</button><input data-qi="'+idx+'" inputmode="numeric" value="'+(val||0)+'"><button data-step="1" data-i="'+idx+'">+</button></div></div>';
+  }
+  function openProd(){
+    const activos=prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    $('pe-form-prod').innerHTML =
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Fecha</label><input type="date" id="pe-prod-fecha" value="'+hoyISO+'" style="max-width:200px"></div>'+
+      '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Ingresá la cantidad fabricada hoy de cada producto (dejá 0 los que no).</p>'+
+      '<div id="pe-prod-list">'+ activos.map((p,i)=>stepperRow(i,p.nombre,p.codigo,'stock '+nf(stockDe(p).disponible),0)).join('') +'</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-prod-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-prod-save">Guardar producción</button></div>';
+    wireSteppers('pe-form-prod');
+    $('pe-prod-cancel').onclick=()=>$('pe-modal-prod').classList.remove('open');
+    $('pe-prod-save').onclick=()=>{
+      const fecha=$('pe-prod-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
+      let n=0; activos.forEach((p,i)=>{ const cant=num(($('pe-form-prod').querySelector('input[data-qi="'+i+'"]')||{}).value); if(cant>0){ const id='prod_'+fecha+'_'+(p.codigo||p.nombre).replace(/[^A-Za-z0-9]/g,''); c.FS.setDoc(c.FS.doc(c.db,'vph_produccion',id), {fecha, codigo:p.codigo||'', producto:p.nombre||'', cantidad:cant, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)}); n++; } });
+      $('pe-modal-prod').classList.remove('open'); if(!n) alert('No cargaste ninguna cantidad.');
+    };
+    $('pe-modal-prod').classList.add('open');
+  }
+
+  // ---------- Registrar entrega ----------
+  let entItems=[{producto:'',codigo:'',cantidad:1}];
+  function clientesEntrega(){ return [...new Set(ent.map(e=>e.cliente).filter(Boolean))]; }
+  function openEnt(){
+    entItems=[{producto:'',codigo:'',cantidad:1}];
+    drawEnt(); $('pe-modal-ent').classList.add('open');
+  }
+  function drawEnt(){
+    const activos=prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    const prodOpts='<datalist id="pe-prod-dl">'+activos.map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
+    const cliDl='<datalist id="pe-cli-dl">'+clientesEntrega().map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>';
+    $('pe-form-ent').innerHTML =
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        '<div class="cmp-field col2"><label>Cliente</label><input id="pe-ent-cli" list="pe-cli-dl" placeholder="Nombre del cliente">'+cliDl+'</div>'+
+        '<div class="cmp-field"><label>Fecha</label><input type="date" id="pe-ent-fecha" value="'+hoyISO+'"></div>'+
+      '</div>'+
+      '<h4 style="margin:10px 0 6px;font-size:13px">Productos entregados</h4>'+
+      '<div id="pe-ent-items"></div>'+prodOpts+
+      '<button class="cmp-addline" id="pe-ent-add">+ Agregar producto</button>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-ent-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-ent-save">Guardar entrega</button></div>';
+    drawEntItems();
+    $('pe-ent-add').onclick=()=>{ entItems.push({producto:'',codigo:'',cantidad:1}); drawEntItems(); };
+    $('pe-ent-cancel').onclick=()=>$('pe-modal-ent').classList.remove('open');
+    $('pe-ent-save').onclick=saveEnt;
+  }
+  function drawEntItems(){
+    const activos=prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    $('pe-ent-items').innerHTML=entItems.map((it,i)=>{ const s=it.producto?stockDe({codigo:it.codigo,producto:it.producto,stock:0}):null;
+      return '<div class="pe-qty"><div style="flex:1"><input class="txt" data-ei="'+i+'" data-ek="producto" list="pe-prod-dl" value="'+esc(it.producto)+'" placeholder="Producto" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px"></div>'+
+      '<div class="pe-stepper"><button data-estep="-1" data-i="'+i+'">−</button><input data-eqi="'+i+'" inputmode="numeric" value="'+it.cantidad+'"><button data-estep="1" data-i="'+i+'">+</button></div>'+
+      (entItems.length>1?'<button class="cmp-rowbtn" data-edel="'+i+'">✕</button>':'')+'</div>'; }).join('');
+    $('pe-ent-items').querySelectorAll('input[data-ek="producto"]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.ei; entItems[i].producto=el.value; const p=activos.find(x=>(x.nombre||'').toLowerCase()===el.value.toLowerCase()); entItems[i].codigo=p?p.codigo:''; }));
+    $('pe-ent-items').querySelectorAll('input[data-eqi]').forEach(el=> el.addEventListener('input',()=>{ entItems[+el.dataset.eqi].cantidad=num(el.value); }));
+    $('pe-ent-items').querySelectorAll('button[data-estep]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.i; entItems[i].cantidad=Math.max(0,num(entItems[i].cantidad)+num(b.dataset.estep)); drawEntItems(); });
+    $('pe-ent-items').querySelectorAll('button[data-edel]').forEach(b=> b.onclick=()=>{ entItems.splice(+b.dataset.edel,1); drawEntItems(); });
+  }
+  function saveEnt(){
+    const cli=($('pe-ent-cli').value||'').trim(); const fecha=$('pe-ent-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
+    if(!cli){ alert('Ingresá el cliente.'); return; }
+    const its=entItems.filter(it=>it.producto&&num(it.cantidad)>0); if(!its.length){ alert('Cargá al menos un producto con cantidad.'); return; }
+    its.forEach((it,i)=>{ const id='ent_'+fecha+'_'+Date.now()+'_'+i; c.FS.setDoc(c.FS.doc(c.db,'vph_entregas',id), {fecha, cliente:cli, codigo:it.codigo||'', producto:it.producto, cantidad:num(it.cantidad), usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)}); });
+    $('pe-modal-ent').classList.remove('open');
+  }
+
+  function wireSteppers(cont){
+    $(cont).querySelectorAll('button[data-step]').forEach(b=> b.onclick=()=>{ const inp=$(cont).querySelector('input[data-qi="'+b.dataset.i+'"]'); inp.value=Math.max(0,num(inp.value)+num(b.dataset.step)); });
+  }
+
+  // ---------- Sync ----------
+  function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
+    unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('pe '+col+':',err)); }
+  function startSync(){ sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a); }
+  function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[]; render(); });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
+    } else { render(); } }
+
+  $('pe-btn-prod').onclick=openProd;
+  $('pe-btn-ent').onclick=openEnt;
+  $('pe-prod-cerrar').onclick=()=>$('pe-modal-prod').classList.remove('open');
+  $('pe-ent-cerrar').onclick=()=>$('pe-modal-ent').classList.remove('open');
+  $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
+  [$('pe-modal-prod'),$('pe-modal-ent')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
 })();
 </script>
