@@ -2031,6 +2031,7 @@ function buildFilterTable(cfg){
         '<td class="num" style="color:'+(k.saldo>0?(k.estado==='vencido'?'var(--red)':'var(--amber)'):'var(--green)')+';font-weight:700">'+money(k.saldo)+'</td>'+
         '<td style="white-space:nowrap">'+(k.saldo>0.5?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">Cobrar</button>':'')+
         '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'+
+        '<button class="cmp-rowbtn" data-act="print" data-id="'+v._uid+'" title="Imprimir documentos">🖨️</button>'+
         '<button class="cmp-rowbtn" data-act="edit" data-id="'+v._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+v._uid+'">✕</button></td></tr>';
     });
     const t=$('vnt-tabla'); t.innerHTML=html;
@@ -2038,7 +2039,40 @@ function buildFilterTable(cfg){
     t.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const v=DB.ventas.find(x=>x._uid==b.dataset.id); if(!v)return;
       if(b.dataset.act==='edit') openForm(v); else if(b.dataset.act==='cobro') openCobro(v);
       else if(b.dataset.act==='entrega'){ if(window.__pedidoDesdeVenta){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Prod. y Entregas')); if(nav)nav.click(); window.__pedidoDesdeVenta(v); } else alert('Módulo de Producción/Entregas no disponible.'); }
+      else if(b.dataset.act==='print') menuImprimir(v);
       else if(b.dataset.act==='del'){ if(confirm('¿Eliminar la venta de '+v.cliente+' ('+money(calc(v).total)+')?')) deleteVenta(v._uid); } });
+  }
+
+  // ---------- Menú de impresión de documentos (usa window.__imprimir) ----------
+  function remitoObjDeVenta(v){
+    const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
+    const cu=String(v.cuit||'').replace(/\D/g,'');
+    const cli=(cu&&cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu))||cs.find(c=>(c.nombre||'').trim().toUpperCase()===(v.cliente||'').trim().toUpperCase())||{};
+    const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ');
+    const items=(v.items||[]).filter(it=>it&&(it.desc||it.codigo)).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant)}));
+    return { numero:v.nroFactura||'', fecha:v.fecha, transportista:'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items };
+  }
+  function menuImprimir(v){
+    if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
+    let ov=document.getElementById('vnt-print-menu');
+    if(!ov){ ov=document.createElement('div'); ov.id='vnt-print-menu';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
+      document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;min-width:270px;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 12px;font-size:15px">Imprimir — '+esc(v.cliente||'—')+'</h3>'+
+      '<div style="display:flex;flex-direction:column;gap:8px">'+
+        '<button data-doc="detalle" class="cmp-btn cmp-btn-primary">🧾 Detalle de Venta</button>'+
+        '<button data-doc="presupuesto" class="cmp-btn">📄 Presupuesto</button>'+
+        '<button data-doc="recibo" class="cmp-btn">💵 Recibo de Cobranza</button>'+
+        '<button data-doc="remito" class="cmp-btn">🚚 Remito</button>'+
+        '<button data-doc="cerrar" class="cmp-btn" style="margin-top:4px">Cerrar</button>'+
+      '</div></div>';
+    const go=fn=>{ ov.remove(); try{ fn(); }catch(e){ alert('Error al generar el documento: '+e.message); } };
+    ov.querySelector('[data-doc="detalle"]').onclick=()=>go(()=>window.__imprimir.detalleVenta(v));
+    ov.querySelector('[data-doc="presupuesto"]').onclick=()=>go(()=>window.__imprimir.presupuesto(v));
+    ov.querySelector('[data-doc="recibo"]').onclick=()=>go(()=>window.__imprimir.recibo(v));
+    ov.querySelector('[data-doc="remito"]').onclick=()=>go(()=>window.__imprimir.remito(remitoObjDeVenta(v)));
+    ov.querySelector('[data-doc="cerrar"]').onclick=()=>ov.remove();
   }
 
   function renderCatChart(rows){
@@ -2189,7 +2223,8 @@ function buildFilterTable(cfg){
   function fillSelect(el,opts,sel){ if(!el)return; el.innerHTML=opts.map(o=>'<option value="'+o.v+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join(''); }
 
   // ---------- Sync ----------
-  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
+  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
+    const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.ventas=snap.docs.map(d=>({...d.data(), _uid:d.id})); render(); }, err=>{ console.error('ventas:',err); }); }
   function stopSync(){ if(unsub){ unsub(); unsub=null; } }
   function boot(){
@@ -2214,6 +2249,7 @@ function buildFilterTable(cfg){
   $('vnt-filtro-periodo').addEventListener('change',e=>{ filtro.periodo=e.target.value; render(); });
   [$('vnt-modal'),$('vnt-modal-cobro')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
 
+  window.__ventaCalc = calc;   // expuesto para el módulo Documentos (totales de venta)
   // Crear una venta pre-cargada desde un lead del CRM
   window.__ventaDesdeLead = function(lead){
     const v=blankVenta();
@@ -2347,7 +2383,8 @@ function buildFilterTable(cfg){
   function exportJSON(){ const blob=new Blob([JSON.stringify({[E().col]:data()},null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_'+tab+'.json'; a.click(); URL.revokeObjectURL(a.href); }
 
   // ---------- Sync ----------
-  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales const c=fb(); if(!c||!c.db)return;
+  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
+    const c=fb(); if(!c||!c.db)return;
     Object.values(ENT).forEach(e=>{ if(unsub[e.col]) unsub[e.col]();
       unsub[e.col]=c.FS.onSnapshot(c.FS.collection(c.db,e.col), snap=>{ store[e.col]=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('bd '+e.col+':',err)); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
@@ -2360,6 +2397,7 @@ function buildFilterTable(cfg){
 
   // Catálogo de productos accesible para los formularios de Ventas/Compras
   window.__catalogoProductos = ()=> store.vph_productos.slice();
+  window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
 
   $('bd-nuevo').onclick=()=>openForm(null);
   $('bd-cerrar').onclick=closeForm;
@@ -2504,7 +2542,8 @@ function buildFilterTable(cfg){
     if(window.__usaNube){ const c=fb(); if(c&&c.db) d.leads.forEach(l=>{ const ll={...l}; if(!ll._uid)ll._uid=newUid(); c.FS.setDoc(c.FS.doc(c.db,COL,ll._uid),ll); }); }
     else { DB=d; DB.leads.forEach((l,i)=>{ if(!l._uid)l._uid='seed'+i; }); saveLocal(); render(); } }catch(e){ alert('No se pudo importar: '+e.message); } }; r.readAsText(file); }
 
-  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales const c=fb(); if(!c||!c.db)return; if(unsub)unsub();
+  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
+    const c=fb(); if(!c||!c.db)return; if(unsub)unsub();
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.leads=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('crm:',err)); }
   function stopSync(){ if(unsub){unsub();unsub=null;} }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
@@ -2709,13 +2748,29 @@ function buildFilterTable(cfg){
     rows.forEach(pe=>{ html+='<tr><td><b>'+esc(pe.cliente||'—')+'</b></td><td>'+esc(pe.diaEntrega||'—')+'</td><td>'+esc(pe.transporte||'—')+'</td>'+
       '<td>'+esc(resumenPed(pe))+cargaMini(pe)+'</td><td>'+esc(pe.ciudad||'')+'</td><td>'+(badge[pe.estado]||badge.pendiente)+'</td>'+
       '<td style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
+        '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
     $('pe-tabla-ped').innerHTML=html;
     $('pe-tabla-ped').querySelectorAll('button[data-pact]').forEach(b=> b.onclick=()=>{ const pe=pedidos.find(x=>x._uid==b.dataset.id); if(!pe)return; const a=b.dataset.pact;
       if(a==='edit') openPed(pe);
       else if(a==='del'){ if(confirm('¿Eliminar el pedido de '+(pe.cliente||'—')+'?')) delPed(pe._uid); }
+      else if(a==='remito') imprimirRemito(pe);
       else if(a==='entregar') marcarEntregado(pe); });
+  }
+  function imprimirRemito(pe){
+    if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
+    const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
+    const cli=cs.find(c=>(c.nombre||'').trim().toUpperCase()===String(pe.cliente||'').trim().toUpperCase())||{};
+    const dom=[pe.direccion, pe.ciudad].filter(Boolean).join(' - ') || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
+    const rows=cargaRows(pe);
+    const items=(pe.items||[]).filter(it=>it&&(it.producto||it.codigo)&&num(it.cantidad)>0).map(it=>{
+      const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
+      return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), obs:(r&&r.pallets.length)?(r.pallets.length+(r.pallets.length!==1?' pallets ':' pallet ')+'('+r.pallets.map(nf).join('+')+')'):'' };
+    });
+    const t=totCarga(pe);
+    const resumen=t.pallets?(t.pallets+(t.pallets!==1?' pallets':' pallet')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')):'';
+    window.__imprimir.remito({ numero:'', fecha:pe.fecha||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items, palletResumen:resumen });
   }
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
   function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
@@ -2839,5 +2894,209 @@ function buildFilterTable(cfg){
   boot();
 })();
 </script>
+<!-- =====================================================================
+     MÓDULO DOCUMENTOS — impresión A4 (Detalle de Venta, Presupuesto,
+     Recibo de Cobranza, Remito). Formato calcado de Contagram. Vista previa
+     en overlay + Imprimir del navegador (→ PDF), sin librerías externas.
+     Expone window.__imprimir.{detalleVenta, presupuesto, recibo, remito}.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const EMPRESA = {
+    razon:'VPH SAS',
+    domicilio:'Bolivar 381 - 5123 - Toledo - Córdoba',
+    tel:'+54 9 3517 60-5362',
+    email:'vpremoldeados@gmail.com',
+    web:'www.vpremoldeados.com',
+    cuit:'30-71784004-2',
+    iibb:'287285892',
+    inicio:'01/12/2022',
+    iva:'Responsable Inscripto'
+  };
+  const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const money = n => '$'+ (Math.round(num(n)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const nf = n => Math.round(num(n)).toLocaleString('es-AR');
+  const dmy = s => { if(!s) return '—'; const m=String(s).slice(0,10); if(/^\d{4}-\d{2}-\d{2}/.test(m)){ const [a,me,d]=m.split('-'); return d+'/'+me+'/'+a; } return String(s); };
+  const ALIC = { '21':'21%','10.5':'10,5%','27':'27%','5':'5%','2.5':'2,5%','0':'0%','exento':'Exento','nogravado':'No Gravado' };
+  const alicLbl = v => ALIC[String(v)] || (num(v)?num(v)+'%':'—');
+
+  // Catálogo de clientes (para domicilio/teléfono en los documentos)
+  const clientes = ()=> (window.__catalogoClientes ? window.__catalogoClientes() : []);
+  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  function buscarCliente(nombre,cuit){ const cs=clientes(); const cu=String(cuit||'').replace(/\D/g,''); if(cu){ const bc=cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu); if(bc) return bc; } const n=normc(nombre); return cs.find(c=>normc(c.nombre)===n)||null; }
+
+  // Cálculo de la venta (reutiliza el del módulo Ventas; si no está, cae a uno propio)
+  function calcVenta(v){ if(window.__ventaCalc) return window.__ventaCalc(v);
+    const factor=1-num(v.descGeneral)/100; let neto=0,iva=0;
+    (v.items||[]).forEach(it=>{ const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=base; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=base*al/100; });
+    neto*=factor; iva*=factor; const extras=num(v.percepIva)+num(v.percepIibb)+num(v.impInternos)+num(v.intereses);
+    const signo=v.tipoComprobante==='Nota de Crédito'?-1:1; const total=(neto+iva+extras)*signo;
+    const cobrado=(v.cobros||[]).reduce((a,c)=>a+num(c.monto),0);
+    return { neto:neto*signo, iva:iva*signo, total, cobrado, saldo:total-cobrado };
+  }
+  function desglose(v){ const factor=1-num(v.descGeneral)/100; let netoGrav=0,netoNoGrav=0; const porAlic={};
+    (v.items||[]).forEach(it=>{ const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*factor;
+      const esGrav=!(it.iva==='exento'||it.iva==='nogravado'||num(it.iva)===0);
+      if(esGrav){ const al=num(it.iva); netoGrav+=base; porAlic[al]=(porAlic[al]||0)+base; } else netoNoGrav+=base; });
+    return { netoGrav, netoNoGrav, porAlic };
+  }
+
+  // ---------- Infra de impresión (overlay + @media print) ----------
+  function ensureLayer(){
+    if(document.getElementById('doc-overlay')) return;
+    const st=document.createElement('style'); st.textContent = `
+      #doc-overlay{ position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:100000; overflow:auto; padding:24px 0; display:none; }
+      #doc-overlay.open{ display:block; }
+      #doc-bar{ position:sticky; top:0; display:flex; gap:10px; justify-content:center; margin-bottom:16px; }
+      #doc-bar button{ font:600 14px system-ui; padding:9px 18px; border-radius:9px; border:0; cursor:pointer; }
+      #doc-bar .pr{ background:#2563eb; color:#fff; } #doc-bar .cl{ background:#e5e7eb; color:#111; }
+      .doc-sheet{ width:210mm; min-height:296mm; margin:0 auto; background:#fff; color:#111; box-sizing:border-box;
+        padding:14mm 12mm; box-shadow:0 8px 40px rgba(0,0,0,.35); font:12px/1.35 Arial,Helvetica,sans-serif; }
+      .doc-sheet *{ box-sizing:border-box; }
+      .doc-top{ text-align:right; font-size:17px; font-weight:800; letter-spacing:.5px; margin-bottom:10px; }
+      .doc-top .lt{ display:inline-block; border:2px solid #111; padding:0 7px; margin-right:6px; }
+      .doc-head{ display:flex; justify-content:space-between; gap:20px; border-bottom:2px solid #111; padding-bottom:10px; margin-bottom:10px; }
+      .doc-razon{ font-size:16px; font-weight:800; margin-bottom:3px; }
+      .doc-fisc{ text-align:right; font-size:11px; line-height:1.5; }
+      .doc-cli{ display:flex; justify-content:space-between; gap:20px; border:1px solid #999; border-radius:4px; padding:8px 10px; margin-bottom:10px; font-size:11.5px; line-height:1.5; }
+      .doc-cli .r{ text-align:right; }
+      table.doc-tab{ width:100%; border-collapse:collapse; font-size:11px; margin-bottom:10px; }
+      table.doc-tab th{ background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 6px; text-align:left; }
+      table.doc-tab td{ border:1px solid #e2e8f0; padding:5px 6px; }
+      table.doc-tab td.n, table.doc-tab th.n{ text-align:right; white-space:nowrap; }
+      .doc-tot{ width:52%; margin-left:48%; font-size:12px; }
+      .doc-tot .row{ display:flex; justify-content:space-between; padding:3px 0; }
+      .doc-tot .row.big{ border-top:2px solid #111; font-weight:800; font-size:13px; padding-top:5px; margin-top:3px; }
+      .doc-firma{ margin-top:26px; font-size:11px; }
+      .doc-firma .lbl{ font-weight:700; margin-bottom:14px; }
+      .doc-obs{ font-size:11px; margin-top:12px; line-height:1.5; }
+      .doc-foot{ margin-top:20px; border-top:1px solid #cbd5e1; padding-top:6px; font-size:9.5px; color:#666; display:flex; justify-content:space-between; }
+      @media print {
+        body > *:not(#doc-overlay){ display:none !important; }
+        #doc-overlay{ position:static; background:#fff; padding:0; overflow:visible; display:block !important; }
+        #doc-bar{ display:none !important; }
+        .doc-sheet{ width:auto; min-height:auto; box-shadow:none; margin:0; padding:8mm 6mm; }
+        @page{ size:A4; margin:8mm; }
+      }`;
+    document.head.appendChild(st);
+    const ov=document.createElement('div'); ov.id='doc-overlay';
+    ov.innerHTML = '<div id="doc-bar"><button class="pr">🖨️ Imprimir / PDF</button><button class="cl">Cerrar</button></div><div id="doc-sheet-wrap"></div>';
+    document.body.appendChild(ov);
+    ov.querySelector('.pr').onclick=()=>window.print();
+    ov.querySelector('.cl').onclick=()=>ov.classList.remove('open');
+    ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
+  }
+  function mostrar(sheetHtml){ ensureLayer(); const ov=document.getElementById('doc-overlay');
+    document.getElementById('doc-sheet-wrap').innerHTML='<div class="doc-sheet">'+sheetHtml+'</div>'; ov.classList.add('open'); ov.scrollTop=0; }
+
+  // ---------- Bloques compartidos ----------
+  function encabezado(letra, titulo, numero, fecha, extrasDer){
+    return '<div class="doc-top"><span class="lt">'+esc(letra)+'</span>'+esc(titulo)+(numero?' '+esc(numero):'')+'</div>'+
+      '<div class="doc-head"><div><div class="doc-razon">'+esc(EMPRESA.razon)+'</div>'+
+        '<div>'+esc(EMPRESA.domicilio)+'</div><div>Tel: '+esc(EMPRESA.tel)+'</div>'+
+        '<div>'+esc(EMPRESA.email)+'</div><div>'+esc(EMPRESA.web)+'</div></div>'+
+      '<div class="doc-fisc"><div><b>Fecha de Emisión:</b> '+esc(fecha)+'</div>'+
+        '<div><b>CUIT:</b> '+esc(EMPRESA.cuit)+'</div><div><b>Ingresos Brutos:</b> '+esc(EMPRESA.iibb)+'</div>'+
+        '<div><b>Inicio de Actividades:</b> '+esc(EMPRESA.inicio)+'</div><div><b>Condición IVA:</b> '+esc(EMPRESA.iva)+'</div>'+
+        (extrasDer||'')+'</div></div>';
+  }
+  function bloqueCliente(izq, der){ return '<div class="doc-cli"><div>'+izq+'</div><div class="r">'+der+'</div></div>'; }
+  function pie(){ return '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Documento no válido como factura.</span></div>'; }
+  function firma(){ return '<div class="doc-firma"><div class="lbl">RECIBIDO</div>'+
+      'Firma: ..................................&nbsp;&nbsp; Aclaración: ..................................&nbsp;&nbsp; DNI: ....................&nbsp;&nbsp; Fecha: ................</div>'; }
+
+  // ---------- Detalle de Venta / Presupuesto ----------
+  function detalle(v, esPresupuesto){
+    const cli=buscarCliente(v.cliente,v.cuit)||{};
+    const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
+    const numero = esc(v.nroFactura||v._uid||'');
+    const titulo = esPresupuesto ? 'PRESUPUESTO' : 'DETALLE DE VENTA';
+    let extrasDer='';
+    if(esPresupuesto){ extrasDer='<div style="margin-top:4px"><b>Vto. del Presupuesto:</b> '+dmy(v.vencimiento)+'</div>'; }
+    else if(v.vencimiento){ extrasDer='<div style="margin-top:4px"><b>Vto. para el pago:</b> '+dmy(v.vencimiento)+'</div>'; }
+    const izq='<b>'+esc(v.cliente||'—')+'</b>'+
+      (cli.telefono?'<br>Teléfono: '+esc(cli.telefono):'')+
+      '<br>Domicilio: '+esc(dom);
+    const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—')+
+      '<br>Categoría: '+esc(v.categoria||'—')+'<br>Vendedor: '+esc(v.vendedor||'—');
+    let filas = (v.items||[]).filter(it=>it&&(it.desc||it.codigo)).map(it=>{
+      const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100);
+      const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
+      const cIva=base*(1+al/100);
+      return '<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td>'+
+        '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(it.precioUnit)+'</td>'+
+        '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(base)+'</td>'+
+        '<td class="n">'+alicLbl(it.iva)+'</td><td class="n">'+money(cIva)+'</td></tr>';
+    }).join('');
+    const tabla='<table class="doc-tab"><tr><th>Código</th><th>Descripción</th><th class="n">Cant.</th>'+
+      '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th><th class="n">Alicuota</th><th class="n">Subtotal c/IVA</th></tr>'+filas+'</table>';
+    const d=desglose(v), k=calcVenta(v);
+    let tot='';
+    if(d.netoGrav>0) tot+='<div class="row"><span>Importe Neto Gravado</span><b>'+money(d.netoGrav)+'</b></div>';
+    Object.keys(d.porAlic).sort((a,b)=>b-a).forEach(al=>{ tot+='<div class="row"><span>IVA '+alicLbl(al)+'</span><b>'+money(d.porAlic[al]*num(al)/100)+'</b></div>'; });
+    if(d.netoNoGrav>0) tot+='<div class="row"><span>Importe Neto No Gravado</span><b>'+money(d.netoNoGrav)+'</b></div>';
+    [['percepIva','Perc. IVA'],['percepIibb','Perc. IIBB'],['impInternos','Imp. Internos'],['intereses','Intereses']].forEach(([f,l])=>{ if(num(v[f])) tot+='<div class="row"><span>'+l+'</span><b>'+money(v[f])+'</b></div>'; });
+    tot+='<div class="row big"><span>Total '+(esPresupuesto?'Presupuesto':'Venta')+'</span><b>'+money(k.total)+'</b></div>';
+    if(!esPresupuesto){ tot+='<div class="row"><span>Total Cobrado</span><b>'+money(k.cobrado)+'</b></div>'+
+      '<div class="row"><span>Total a Cobrar</span><b>'+money(k.saldo)+'</b></div>'; }
+    let obs='';
+    if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; }
+    else if(v.notaCliente){ obs+='<div class="doc-obs">'+esc(v.notaCliente)+'</div>'; }
+    return encabezado('X', (esPresupuesto?'PRESUPUESTO':'DETALLE DE VENTA'), numero, dmy(v.fecha), extrasDer)+
+      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+obs+pie();
+  }
+
+  // ---------- Recibo de Cobranza ----------
+  function recibo(v){
+    const cli=buscarCliente(v.cliente,v.cuit)||{};
+    const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
+    const izq='<b>'+esc(v.cliente||'—')+'</b><br>Domicilio: '+esc(dom);
+    const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—');
+    const cobros=(v.cobros||[]).filter(c=>c&&num(c.monto)>0);
+    let filas=cobros.map(c=>'<tr><td>'+dmy(c.fecha)+'</td><td>'+esc(c.medio||'')+'</td><td>'+esc(c.obs||'')+'</td><td class="n">'+money(c.monto)+'</td></tr>').join('');
+    if(!filas) filas='<tr><td colspan="4" style="text-align:center;color:#888">Sin cobros cargados.</td></tr>';
+    const totCob=cobros.reduce((a,c)=>a+num(c.monto),0);
+    const compro = (v.tipoComprobante||'Factura de Venta');
+    const nroComp = v.nroFactura ? ((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura) : '-';
+    const valores='<h4 style="margin:6px 0 4px;font-size:12px">Valores Recibidos</h4>'+
+      '<table class="doc-tab"><tr><th>Fecha</th><th>Forma de Pago</th><th>Observación</th><th class="n">Monto</th></tr>'+filas+
+      '<tr><td colspan="3" class="n"><b>Total</b></td><td class="n"><b>'+money(totCob)+'</b></td></tr></table>';
+    const concepto='<h4 style="margin:10px 0 4px;font-size:12px">Concepto de Cancelación</h4>'+
+      '<table class="doc-tab"><tr><th>Comprobante</th><th>Número</th><th>Fecha</th><th class="n">Monto</th></tr>'+
+      '<tr><td>'+esc(compro)+'</td><td>'+esc(nroComp)+'</td><td>'+dmy(v.fecha)+'</td><td class="n">'+money(totCob)+'</td></tr></table>';
+    return encabezado('X','RECIBO DE COBRANZA', esc(v.nroFactura||''), dmy((cobros[0]&&cobros[0].fecha)||v.fecha))+
+      bloqueCliente(izq,der)+valores+concepto+firma()+pie();
+  }
+
+  // ---------- Remito (recibe objeto normalizado) ----------
+  // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva, domicilioEntrega, items:[{codigo,desc,obs,cant}], palletResumen }
+  function remito(obj){
+    obj=obj||{};
+    const izq='<b>'+esc(obj.clienteNombre||'—')+'</b>'+
+      (obj.clienteTel?'<br>Teléfono: '+esc(obj.clienteTel):'')+
+      '<br>Domicilio de Entrega: '+esc(obj.domicilioEntrega||'—');
+    const der='CUIT: '+esc(obj.clienteCuit||'—')+'<br>Cond. IVA: '+esc(obj.clienteCondIva||'—');
+    const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
+    let filas=its.map(it=>'<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td><td>'+esc(it.obs||'')+'</td><td class="n">'+nf(it.cant)+'</td></tr>').join('');
+    if(!filas) filas='<tr><td colspan="4" style="text-align:center;color:#888">Sin productos.</td></tr>';
+    const totBultos=its.reduce((a,it)=>a+num(it.cant),0);
+    const tabla='<table class="doc-tab"><tr><th>Código</th><th>Productos</th><th>Observaciones</th><th class="n">Cantidad</th></tr>'+filas+
+      '<tr><td colspan="3" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>';
+    const transp = obj.transportista ? '<div style="margin-bottom:8px;font-size:11.5px"><b>Transportista:</b> '+esc(obj.transportista)+'</div>' : '';
+    const pallets = obj.palletResumen ? '<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>' : '';
+    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha))+transp+bloqueCliente(izq,der)+tabla+pallets+firma()+pie();
+  }
+
+  window.__imprimir = {
+    detalleVenta: v => mostrar(detalle(v,false)),
+    presupuesto:  v => mostrar(detalle(v,true)),
+    recibo:       v => mostrar(recibo(v)),
+    remito:       o => mostrar(remito(o))
+  };
+})();
+</script>
+
 </body>
 </html>
