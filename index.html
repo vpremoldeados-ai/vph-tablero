@@ -2260,7 +2260,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] }
   };
@@ -2563,6 +2563,28 @@ function buildFilterTable(cfg){
   function comprometidoDe(k){ let t=0; pedidos.forEach(pe=>{ if(pe.estado!=='entregado') (pe.items||[]).filter(Boolean).forEach(it=>{ if(keyDe(it.codigo,it.producto)===k) t+=num(it.cantidad); }); }); return t; }
   function stockDe(p){ const k=keyDe(p.codigo,p.nombre); const inicial=num(p.stock); const producido=producidoDe(k); const entregado=entregadoDe(k); const fisico=inicial+producido-entregado; const comprometido=comprometidoDe(k); const disponible=fisico-comprometido; const min=num(p.stockMinimo); return { k, inicial, producido, entregado, fisico, comprometido, disponible, min, estado: disponible<0?'falta':(min>0&&disponible<min?'bajo':'ok') }; }
 
+  // ---------- Armado de pallets (plan de carga sobre camión) ----------
+  // Pallets Arlog 1x1,2m. Cada producto entra una cantidad máxima por pallet (udPorPallet, en el catálogo).
+  function planStd(cant, ud){ cant=Math.max(0,Math.round(num(cant))); ud=Math.round(num(ud)); if(cant<=0) return []; if(ud<=0) return [cant]; const full=Math.floor(cant/ud), resto=cant-full*ud; const arr=[]; for(let i=0;i<full;i++)arr.push(ud); if(resto>0)arr.push(resto); return arr; }
+  function planParejo(cant, ud){ cant=Math.max(0,Math.round(num(cant))); ud=Math.round(num(ud)); if(cant<=0) return []; if(ud<=0) return [cant]; const n=Math.max(1,Math.ceil(cant/ud)); const base=Math.floor(cant/n); let resto=cant-base*n; const arr=[]; for(let i=0;i<n;i++){ arr.push(base+(i<resto?1:0)); } return arr; }
+  function parsePlan(s){ return String(s==null?'':s).split(/[^0-9]+/).map(x=>Math.round(num(x))).filter(x=>x>0); }
+  // Devuelve una fila por producto físico del pedido (excluye Servicio/Flete) con su plan de pallets.
+  function cargaRows(pe){
+    const rows=[];
+    (pe.items||[]).filter(Boolean).forEach(it=>{
+      if(!it.producto && !it.codigo) return;
+      const pr=resolverProd(it.producto,it.codigo);
+      if(pr && (pr.tipo||'')==='Servicio') return;
+      const key=keyDe(it.codigo,it.producto);
+      const ud=pr?num(pr.udPorPallet):0, peso=pr?num(pr.pesoUnit):0, cant=Math.round(num(it.cantidad));
+      const guardado = pe.plan && pe.plan[key] && pe.plan[key].length;
+      const pallets = guardado ? pe.plan[key].map(x=>Math.round(num(x))) : planStd(cant,ud);
+      rows.push({ key, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets });
+    });
+    return rows;
+  }
+  function totCarga(pe){ let pallets=0, peso=0; cargaRows(pe).forEach(r=>{ pallets+=r.pallets.length; r.pallets.forEach(u=> peso+=u*r.peso); }); return { pallets, peso }; }
+
   // ---------- Render principal ----------
   function render(){
     $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
@@ -2670,6 +2692,7 @@ function buildFilterTable(cfg){
 
   // ---------- Coordinar entregas (pedidos) ----------
   function resumenPed(pe){ return (pe.items||[]).filter(Boolean).filter(i=>i.producto).map(i=>(num(i.cantidad)||'')+' '+(i.codigo||i.producto)).join(' · ') || '—'; }
+  function cargaMini(pe){ const t=totCarga(pe); if(!t.pallets) return ''; return '<div style="font-size:11px;color:var(--muted);margin-top:2px">📦 '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')+'</div>'; }
   function renderCoord(){
     const defs=[['activos','A entregar'],['todos','Todos'],['entregado','Entregados']];
     const cnt={ activos:pedidos.filter(p=>p.estado!=='entregado').length, todos:pedidos.length, entregado:pedidos.filter(p=>p.estado==='entregado').length };
@@ -2684,7 +2707,7 @@ function buildFilterTable(cfg){
     let html='<tr><th>Cliente</th><th>Entrega</th><th>Transporte</th><th>Pedido</th><th>Ciudad</th><th>Estado</th><th></th></tr>';
     if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">Sin pedidos. Creá con "→ Entrega" desde una Venta o "+ Nuevo pedido".</td></tr>';
     rows.forEach(pe=>{ html+='<tr><td><b>'+esc(pe.cliente||'—')+'</b></td><td>'+esc(pe.diaEntrega||'—')+'</td><td>'+esc(pe.transporte||'—')+'</td>'+
-      '<td>'+esc(resumenPed(pe))+'</td><td>'+esc(pe.ciudad||'')+'</td><td>'+(badge[pe.estado]||badge.pendiente)+'</td>'+
+      '<td>'+esc(resumenPed(pe))+cargaMini(pe)+'</td><td>'+esc(pe.ciudad||'')+'</td><td>'+(badge[pe.estado]||badge.pendiente)+'</td>'+
       '<td style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
@@ -2705,7 +2728,7 @@ function buildFilterTable(cfg){
 
   // Form de pedido
   let editPed=null;
-  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], estado:'pendiente', nota:'' }; }
+  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, estado:'pendiente', nota:'' }; }
   function openPed(pe){ editPed = pe?JSON.parse(JSON.stringify(pe)):blankPed(); if(!editPed.items||!editPed.items.length)editPed.items=[{producto:'',codigo:'',cantidad:1}]; $('pe-ped-title').textContent=pe?'Editar pedido':'Nuevo pedido'; drawPed(); $('pe-modal-ped').classList.add('open'); }
   function drawPed(){
     const pe=editPed;
@@ -2723,22 +2746,67 @@ function buildFilterTable(cfg){
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Productos del pedido</h4><div id="pf-items"></div>'+prodOpts+
       '<button class="cmp-addline" id="pf-add">+ Agregar producto</button>'+
-      '<div class="cmp-field col2" style="margin-top:10px"><label>Nota</label><textarea id="pf-nota" rows="2">'+esc(pe.nota)+'</textarea></div>'+
+      '<div style="margin-top:14px"><h4 style="margin:8px 0 6px;font-size:13px">🚚 Plan de carga · pallets Arlog 1×1,20 m</h4>'+
+        '<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px">Cómo se apilan los productos sobre el camión. Editá las cantidades por pallet para repartir el peso.</p>'+
+        '<div id="pf-plan"></div></div>'+
+      '<div class="cmp-field col2" style="margin-top:12px"><label>Nota</label><textarea id="pf-nota" rows="2">'+esc(pe.nota)+'</textarea></div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pf-save">Guardar pedido</button></div>';
     drawPedItems();
+    drawPlanCarga();
     [['pf-cli','cliente'],['pf-dia','diaEntrega'],['pf-transp','transporte'],['pf-ciudad','ciudad'],['pf-dir','direccion'],['pf-estado','estado'],['pf-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; }); });
     $('pf-add').onclick=()=>{ editPed.items.push({producto:'',codigo:'',cantidad:1}); drawPedItems(); };
     $('pf-cancel').onclick=()=>$('pe-modal-ped').classList.remove('open');
-    $('pf-save').onclick=()=>{ if(!String(editPed.cliente||'').trim()){ alert('Ingresá el cliente.'); return; } editPed.items=(editPed.items||[]).filter(it=>it && it.producto && num(it.cantidad)>0).map(it=>{ const pr=resolverProd(it.producto,it.codigo); return { producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad) }; }); persistPed(editPed); $('pe-modal-ped').classList.remove('open'); };
+    $('pf-save').onclick=()=>{ if(!String(editPed.cliente||'').trim()){ alert('Ingresá el cliente.'); return; } editPed.items=(editPed.items||[]).filter(it=>it && it.producto && num(it.cantidad)>0).map(it=>{ const pr=resolverProd(it.producto,it.codigo); return { producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad) }; });
+      const keys=new Set(editPed.items.map(it=>keyDe(it.codigo,it.producto))); const plan={};
+      if(editPed.plan){ Object.keys(editPed.plan).forEach(kk=>{ const a=editPed.plan[kk]; if(keys.has(kk) && Array.isArray(a) && a.length) plan[kk]=a.map(x=>Math.round(num(x))).filter(x=>x>0); }); }
+      editPed.plan=plan;
+      persistPed(editPed); $('pe-modal-ped').classList.remove('open'); };
   }
   function drawPedItems(){
     $('pf-items').innerHTML=editPed.items.map((it,i)=>'<div class="pe-qty"><div style="flex:1"><input class="txt" data-pi="'+i+'" data-pk="producto" list="pe-ped-prod-dl" value="'+esc(it.producto)+'" placeholder="Producto" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px"></div>'+
       '<div class="pe-stepper"><button data-pstep="-1" data-i="'+i+'">−</button><input data-pqi="'+i+'" inputmode="numeric" value="'+it.cantidad+'"><button data-pstep="1" data-i="'+i+'">+</button></div>'+
       (editPed.items.length>1?'<button class="cmp-rowbtn" data-pdel="'+i+'">✕</button>':'')+'</div>').join('');
-    $('pf-items').querySelectorAll('input[data-pk="producto"]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.pi; editPed.items[i].producto=el.value; const p=resolverProd(el.value,''); editPed.items[i].codigo=p?(p.codigo||''):''; }));
-    $('pf-items').querySelectorAll('input[data-pqi]').forEach(el=> el.addEventListener('input',()=>{ editPed.items[+el.dataset.pqi].cantidad=num(el.value); }));
-    $('pf-items').querySelectorAll('button[data-pstep]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.i; editPed.items[i].cantidad=Math.max(0,num(editPed.items[i].cantidad)+num(b.dataset.pstep)); drawPedItems(); });
-    $('pf-items').querySelectorAll('button[data-pdel]').forEach(b=> b.onclick=()=>{ editPed.items.splice(+b.dataset.pdel,1); drawPedItems(); });
+    $('pf-items').querySelectorAll('input[data-pk="producto"]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.pi; editPed.items[i].producto=el.value; const p=resolverProd(el.value,''); editPed.items[i].codigo=p?(p.codigo||''):''; drawPlanCarga(); }));
+    $('pf-items').querySelectorAll('input[data-pqi]').forEach(el=> el.addEventListener('input',()=>{ editPed.items[+el.dataset.pqi].cantidad=num(el.value); drawPlanCarga(); }));
+    $('pf-items').querySelectorAll('button[data-pstep]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.i; editPed.items[i].cantidad=Math.max(0,num(editPed.items[i].cantidad)+num(b.dataset.pstep)); drawPedItems(); drawPlanCarga(); });
+    $('pf-items').querySelectorAll('button[data-pdel]').forEach(b=> b.onclick=()=>{ editPed.items.splice(+b.dataset.pdel,1); drawPedItems(); drawPlanCarga(); });
+  }
+  // ---------- Editor del plan de carga (pallets) ----------
+  function drawPlanCarga(){
+    const cont=$('pf-plan'); if(!cont) return;
+    const rows=cargaRows(editPed);
+    if(!rows.length){ cont.innerHTML='<p style="font-size:12px;color:var(--muted);margin:2px 0">Agregá productos (no Flete) para ver el plan de pallets.</p>'; return; }
+    cont.innerHTML = rows.map((r,i)=>{
+      const cap = r.ud<=0 ? '<span style="color:var(--amber)">sin u/pallet — cargalo en Base de Datos</span>' : ('máx '+nf(r.ud)+' u/pallet · '+nf(r.peso)+' kg/u');
+      return '<div class="pe-plan-row" data-idx="'+i+'" style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px">'+
+        '<div style="font-size:12.5px;margin-bottom:6px"><b>'+esc(r.codigo||r.nombre)+'</b> · '+nf(r.cant)+' u · '+cap+'</div>'+
+        '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
+          '<input data-planinp="'+i+'" value="'+esc(r.pallets.join(', '))+'" placeholder="ej: 75, 75, 50" style="flex:1;min-width:150px;padding:7px;border:1px solid var(--border);border-radius:8px;font-size:13px">'+
+          '<button type="button" class="cmp-rowbtn" data-planstd="'+i+'">Estándar</button>'+
+          '<button type="button" class="cmp-rowbtn" data-planpar="'+i+'">Parejo</button>'+
+        '</div>'+
+        '<div data-planout="'+i+'" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>'+
+      '</div>';
+    }).join('') + '<div class="pe-plan-tot" style="font-weight:800;font-size:13px;margin-top:4px"></div>';
+    cont.querySelectorAll('input[data-planinp]').forEach(el=>{ const i=+el.dataset.planinp; el.addEventListener('input',()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=parsePlan(el.value); refreshPlanOut(); }); });
+    cont.querySelectorAll('button[data-planstd]').forEach(b=>{ const i=+b.dataset.planstd; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=planStd(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
+    cont.querySelectorAll('button[data-planpar]').forEach(b=>{ const i=+b.dataset.planpar; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=planParejo(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
+    refreshPlanOut();
+  }
+  function refreshPlanOut(){
+    const cont=$('pf-plan'); if(!cont) return;
+    const rows=cargaRows(editPed); let gPal=0, gPeso=0;
+    rows.forEach((r,i)=>{
+      const suma=r.pallets.reduce((a,x)=>a+x,0);
+      const pesos=r.pallets.map(u=>Math.round(u*r.peso)); const totPeso=pesos.reduce((a,x)=>a+x,0);
+      gPal+=r.pallets.length; gPeso+=totPeso;
+      const out=cont.querySelector('[data-planout="'+i+'"]'); if(!out) return;
+      const ok = suma===r.cant;
+      const pesoTxt = r.peso>0 ? (' · '+pesos.map(nf).join(' · ')+' kg · total '+nf(totPeso)+' kg') : '';
+      out.innerHTML = '<b>'+r.pallets.length+'</b> pallet'+(r.pallets.length!==1?'s':'')+' ('+r.pallets.map(nf).join(' + ')+')'+pesoTxt+
+        (ok?'':' <span style="color:var(--red)">⚠ suma '+nf(suma)+' ≠ '+nf(r.cant)+' u</span>');
+    });
+    const tot=cont.querySelector('.pe-plan-tot'); if(tot) tot.innerHTML='Total: '+gPal+' pallet'+(gPal!==1?'s':'')+(gPeso>0?(' · '+nf(gPeso)+' kg ('+(Math.round(gPeso/100)/10)+' t)'):'');
   }
 
   // API: crear un pedido a partir de una venta (botón "→ Entrega" en Ventas)
