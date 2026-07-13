@@ -449,6 +449,7 @@
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
           <h2 style="margin:0"><span class="dot" style="background:var(--accent)"></span>Entregas a coordinar</h2>
           <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="cmp-btn" id="pe-programa" title="Armar el programa de entregas para el transportista">🚚 Programa transportista</button>
             <button class="cmp-btn cmp-btn-primary" id="pe-ped-nuevo">+ Nuevo pedido</button>
           </div>
         </div>
@@ -2037,6 +2038,7 @@ function buildFilterTable(cfg){
         '<td style="white-space:nowrap">'+(k.saldo>0.5?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">Cobrar</button>':'')+
         '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'+
         '<button class="cmp-rowbtn" data-act="print" data-id="'+v._uid+'" title="Imprimir documentos">🖨️</button>'+
+        '<button class="cmp-rowbtn" data-act="wa" data-id="'+v._uid+'" title="Mensajes de WhatsApp">📲</button>'+
         '<button class="cmp-rowbtn" data-act="edit" data-id="'+v._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+v._uid+'">✕</button></td></tr>';
     });
     const t=$('vnt-tabla'); t.innerHTML=html;
@@ -2045,7 +2047,38 @@ function buildFilterTable(cfg){
       if(b.dataset.act==='edit') openForm(v); else if(b.dataset.act==='cobro') openCobro(v);
       else if(b.dataset.act==='entrega'){ if(window.__pedidoDesdeVenta){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Prod. y Entregas')); if(nav)nav.click(); window.__pedidoDesdeVenta(v); } else alert('Módulo de Producción/Entregas no disponible.'); }
       else if(b.dataset.act==='print') menuImprimir(v);
+      else if(b.dataset.act==='wa') menuWhatsapp(v);
       else if(b.dataset.act==='del'){ if(confirm('¿Eliminar la venta de '+v.cliente+' ('+money(calc(v).total)+')?')) deleteVenta(v._uid); } });
+  }
+
+  // ---------- Menú de WhatsApp de la venta (usa window.__wa) ----------
+  function resumenVenta(v){ return (v.items||[]).filter(it=>it&&it.desc&&num(it.cant)>0).map(it=>nf(num(it.cant))+' '+(it.desc||'')).join(', ') || 'productos'; }
+  function menuWhatsapp(v){
+    if(!window.__wa){ alert('Módulo de WhatsApp no disponible.'); return; }
+    const k=calc(v), nombre=window.__wa.primerNombre(v.cliente), tel=window.__wa.telWa(v.cliente,v.cuit);
+    const nro=(v.puntoVenta?v.puntoVenta+'-':'')+(v.nroFactura||'');
+    const money2=n=>'$'+(Math.round(num(n)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const ops=[
+      { l:'📣 Aviso al grupo (venta cargada)', run:()=>window.__wa.modal({ titulo:'Aviso al grupo Producción/Entregas', destino:'Copiá y pegá en el grupo "VPH Producción/Entregas"',
+          texto:'chicos hicimos una venta de '+resumenVenta(v)+' para '+(v.cliente||'—')+', ya está cargada en el sistema' }) },
+      { l:'💬 Enviar presupuesto al cliente', run:()=>window.__wa.modal({ titulo:'Presupuesto → '+(v.cliente||''), telefono:tel, adjunto:'Presupuesto Nº '+(v.nroFactura||'')+'.pdf',
+          texto:'Hola '+(nombre||'')+'! Te paso el presupuesto'+(v.nroFactura?' Nº '+v.nroFactura:'')+'. Total '+money2(k.total)+', válido 7 días. Cualquier duda me decís 😊' }) },
+      { l:'💵 Recordatorio de cobro', hide: !(k.saldo>0.5), run:()=>window.__wa.modal({ titulo:'Cobro → '+(v.cliente||''), telefono:tel,
+          texto:'Hola '+(nombre||'')+'! Cómo va? Alguna novedad del pago'+(v.nroFactura?' de la factura '+nro:'')+'? Mil gracias!' }) },
+      { l:'🧾 Datos para transferencia', run:()=>window.__wa.modal({ titulo:'Datos fiscales para transferencia', destino:'Copiá y pegá', texto:window.__wa.DATOS_FISCALES }) },
+      { l:'💳 Condiciones de pago', run:()=>window.__wa.modal({ titulo:'Condiciones de pago', destino:'Copiá y pegá', texto:window.__wa.COND_PAGO }) }
+    ].filter(o=>!o.hide);
+    let ov=document.getElementById('vnt-wa-menu');
+    if(!ov){ ov=document.createElement('div'); ov.id='vnt-wa-menu';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center';
+      document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;min-width:290px;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 4px;font-size:15px">WhatsApp — '+esc(v.cliente||'—')+'</h3>'+
+      '<div style="font-size:11.5px;color:#666;margin:0 0 12px">'+(tel?'Cliente con teléfono en la ficha':'⚠ Sin teléfono en Base de Datos → los mensajes al cliente se copian para pegar')+'</div>'+
+      '<div style="display:flex;flex-direction:column;gap:8px">'+ops.map((o,i)=>'<button data-i="'+i+'" class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'">'+esc(o.l)+'</button>').join('')+
+      '<button data-x="1" class="cmp-btn" style="margin-top:4px">Cerrar</button></div></div>';
+    ov.querySelectorAll('button[data-i]').forEach(b=> b.onclick=()=>{ ov.remove(); try{ ops[+b.dataset.i].run(); }catch(e){ alert('Error: '+e.message); } });
+    ov.querySelector('button[data-x]').onclick=()=>ov.remove();
   }
 
   // ---------- Menú de impresión de documentos (usa window.__imprimir) ----------
@@ -2754,6 +2787,7 @@ function buildFilterTable(cfg){
       '<td>'+esc(resumenPed(pe))+cargaMini(pe)+'</td><td>'+esc(pe.ciudad||'')+'</td><td>'+(badge[pe.estado]||badge.pendiente)+'</td>'+
       '<td style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
         '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
+        '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
     $('pe-tabla-ped').innerHTML=html;
@@ -2761,7 +2795,45 @@ function buildFilterTable(cfg){
       if(a==='edit') openPed(pe);
       else if(a==='del'){ if(confirm('¿Eliminar el pedido de '+(pe.cliente||'—')+'?')) delPed(pe._uid); }
       else if(a==='remito') imprimirRemito(pe);
+      else if(a==='wa') menuWaPedido(pe);
       else if(a==='entregar') marcarEntregado(pe); });
+  }
+  // ---------- WhatsApp del pedido + programa del transportista (usa window.__wa) ----------
+  function telPedido(pe){ if(!window.__wa) return ''; const cli=(window.__catalogoClientes?window.__catalogoClientes():[]).find(c=>norm(c.nombre)===norm(pe.cliente))||{}; return window.__wa.telWa(pe.cliente, cli.cuit); }
+  function menuWaPedido(pe){
+    if(!window.__wa){ alert('Módulo de WhatsApp no disponible.'); return; }
+    const nombre=window.__wa.primerNombre(pe.cliente), tel=telPedido(pe), t=totCarga(pe);
+    const resu=t.pallets?(t.pallets+(t.pallets!==1?' pallets':' pallet')):resumenPed(pe);
+    const ops=[
+      { l:'📣 Aviso al grupo (programado)', run:()=>window.__wa.modal({ titulo:'Aviso al grupo Producción/Entregas', destino:'Copiá y pegá en el grupo "VPH Producción/Entregas"',
+          texto:(pe.diaEntrega||'Próxima entrega')+' va '+(pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'el transporte')+' a '+(pe.cliente||'—')+' con '+resu+', ya les dejo el remito listo' }) },
+      { l:'💬 Avisar "en camino"', run:()=>window.__wa.modal({ titulo:'En camino → '+(pe.cliente||''), telefono:tel, texto:'Hola '+(nombre||'')+'! Ya salió el pedido para allá 🚚' }) },
+      { l:'💬 Avisar "entregado" + remito', run:()=>window.__wa.modal({ titulo:'Entregado → '+(pe.cliente||''), telefono:tel, adjunto:'Remito.pdf',
+          texto:'Hola '+(nombre||'')+'! Ya está entregado, te paso el remito. Mil gracias!' }) }
+    ];
+    let ov=document.getElementById('pe-wa-menu');
+    if(!ov){ ov=document.createElement('div'); ov.id='pe-wa-menu';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center';
+      document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;min-width:290px;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 12px;font-size:15px">WhatsApp — '+esc(pe.cliente||'—')+'</h3>'+
+      '<div style="display:flex;flex-direction:column;gap:8px">'+ops.map((o,i)=>'<button data-i="'+i+'" class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'">'+esc(o.l)+'</button>').join('')+
+      '<button data-x="1" class="cmp-btn" style="margin-top:4px">Cerrar</button></div></div>';
+    ov.querySelectorAll('button[data-i]').forEach(b=> b.onclick=()=>{ ov.remove(); try{ ops[+b.dataset.i].run(); }catch(e){ alert('Error: '+e.message); } });
+    ov.querySelector('button[data-x]').onclick=()=>ov.remove();
+  }
+  function programaTransportista(){
+    if(!window.__wa){ alert('Módulo de WhatsApp no disponible.'); return; }
+    const pend=pedidos.filter(p=>p.estado!=='entregado');
+    if(!pend.length){ alert('No hay pedidos pendientes para armar el programa.'); return; }
+    const grupos={}; pend.forEach(p=>{ const k=(p.diaEntrega||'Sin fecha').trim(); (grupos[k]=grupos[k]||[]).push(p); });
+    let out='Hola Mati! Te paso el programa:\n';
+    Object.keys(grupos).forEach(dia=>{
+      let totPal=0; grupos[dia].forEach(p=>{ totPal+=totCarga(p).pallets; });
+      out+='\n'+dia.toUpperCase()+(totPal?' ('+totPal+' pallet'+(totPal!==1?'s':'')+')':'')+'\n';
+      grupos[dia].forEach(p=>{ const dir=[p.direccion, p.ciudad].filter(Boolean).join(' - '); out+='• '+(p.cliente||'—')+(dir?' — '+dir:'')+'\n'; });
+    });
+    window.__wa.modal({ titulo:'Programa del transportista', destino:'Copiá y pegá en el chat del transportista', texto:out.trim() });
   }
   function imprimirRemito(pe){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -2893,6 +2965,7 @@ function buildFilterTable(cfg){
   $('pe-ent-cerrar').onclick=()=>$('pe-modal-ent').classList.remove('open');
   $('pe-ped-cerrar').onclick=()=>$('pe-modal-ped').classList.remove('open');
   $('pe-ped-nuevo').onclick=()=>openPed(null);
+  { const pb=$('pe-programa'); if(pb) pb.onclick=programaTransportista; }
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
   [$('pe-modal-prod'),$('pe-modal-ent'),$('pe-modal-ped')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
@@ -3100,6 +3173,71 @@ function buildFilterTable(cfg){
     recibo:       v => mostrar(recibo(v)),
     remito:       o => mostrar(remito(o))
   };
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO WHATSAPP — mensajes de un toque calibrados al tono de Sofía.
+     Vista previa editable + Copiar (grupo/transportista) o Abrir WhatsApp
+     (cliente individual, wa.me). NO adjunta PDFs (Sofía los arrastra).
+     Expone window.__wa.{modal, telWa, primerNombre, DATOS_FISCALES, COND_PAGO}.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const clientes = () => (window.__catalogoClientes ? window.__catalogoClientes() : []);
+  function buscarCli(nombre,cuit){ const cs=clientes(); const cu=String(cuit||'').replace(/\D/g,''); if(cu){ const bc=cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu); if(bc) return bc; } const n=normc(nombre); return cs.find(c=>normc(c.nombre)===n)||null; }
+
+  // Teléfono → formato wa.me AR (549 + área + número). Best-effort; Sofía verifica en el modal.
+  function telWa(cliente,cuit){
+    const c=buscarCli(cliente,cuit); let t=c?String(c.telefono||'').replace(/\D/g,''):''; if(!t) return '';
+    t=t.replace(/^0+/,'');
+    if(t.startsWith('549')) return t;
+    if(t.startsWith('54')) return '549'+t.slice(2);
+    return '549'+t;
+  }
+  // Primer nombre para el saludo (editable en el modal si no es el de la persona)
+  function primerNombre(cliente){ const w=String(cliente||'').replace(/[.,].*$/,'').trim().split(/\s+/)[0]||''; return w? w.charAt(0).toUpperCase()+w.slice(1).toLowerCase() : ''; }
+
+  const DATOS_FISCALES = 'Razón social: VPH SAS\nCUIT: 30-71784004-2\nResponsable Inscripto\nIIBB: 287285892\nDirección: Bolivar 381, Toledo, Pcia. de Córdoba\nMail: vpremoldeados@gmail.com\nTeléfono: 0351 15-7605362';
+  const COND_PAGO = 'Si abonás en efectivo o transferencia SIN factura, tenés un 10,5% extra.\nPagá en cuotas: con MACRO hasta 12 cuotas sin interés; con tarjetas bancarizadas 3 y 6 cuotas sin interés.';
+
+  function ensure(){
+    if(document.getElementById('wa-modal')) return;
+    const ov=document.createElement('div'); ov.id='wa-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:100001;display:none;align-items:center;justify-content:center;padding:16px';
+    document.body.appendChild(ov);
+    ov.addEventListener('click',e=>{ if(e.target===ov) ov.style.display='none'; });
+  }
+  // opts: { titulo, texto, telefono, destino, adjunto }
+  function modal(opts){
+    opts=opts||{}; ensure();
+    const ov=document.getElementById('wa-modal'); ov.style.display='flex';
+    const tel=opts.telefono||'';
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:14px;padding:18px;max-width:460px;width:100%;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 4px;font-size:15px">'+esc(opts.titulo||'Mensaje de WhatsApp')+'</h3>'+
+      '<div style="font-size:12px;color:#666;margin:0 0 10px">'+(opts.destino?esc(opts.destino):(tel?('Abre el chat del cliente (verificá el N°: +'+esc(tel)+')'):'Copiá y pegá en el chat'))+'</div>'+
+      '<textarea id="wa-text" rows="7" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;font:13px/1.55 system-ui;resize:vertical">'+esc(opts.texto||'')+'</textarea>'+
+      (opts.adjunto?'<div style="font-size:11.5px;color:#c98a06;margin-top:6px">📎 Acordate de adjuntar: '+esc(opts.adjunto)+' (descargalo con el botón 🖨️ y arrastralo al chat)</div>':'')+
+      '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'+
+        (tel?'<button id="wa-open" style="flex:1;min-width:150px;background:#25D366;color:#fff;border:0;border-radius:9px;padding:10px;font:600 14px system-ui;cursor:pointer">Abrir WhatsApp</button>':'')+
+        '<button id="wa-copy" style="flex:1;min-width:120px;background:#e5e7eb;color:#111;border:0;border-radius:9px;padding:10px;font:600 14px system-ui;cursor:pointer">Copiar</button>'+
+        '<button id="wa-close" style="background:transparent;color:#666;border:0;padding:10px;font:14px system-ui;cursor:pointer">Cerrar</button>'+
+      '</div><div id="wa-toast" style="font-size:12px;color:#1e9e5a;margin-top:8px;height:16px"></div></div>';
+    const ta=ov.querySelector('#wa-text');
+    const toast=m=>{ ov.querySelector('#wa-toast').textContent=m; };
+    ov.querySelector('#wa-copy').onclick=()=>{ const t=ta.value;
+      const fb=()=>{ try{ ta.focus(); ta.select(); document.execCommand('copy'); toast('Copiado ✓'); }catch(e){ toast('No se pudo copiar'); } };
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>toast('Copiado ✓')).catch(fb); else fb();
+    };
+    ov.querySelector('#wa-close').onclick=()=>{ ov.style.display='none'; };
+    const ob=ov.querySelector('#wa-open');
+    if(ob) ob.onclick=()=>{ window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(ta.value),'_blank'); };
+  }
+
+  window.__wa = { modal, telWa, primerNombre, DATOS_FISCALES, COND_PAGO };
 })();
 </script>
 
