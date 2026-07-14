@@ -189,6 +189,21 @@
   .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
   .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
+  /* Celular de Gustavo: tablas densas (Stock, Plan, Conteo) pasan de filas horizontales a tarjetas apiladas.
+     La grilla mensual (.pe-tbl-matriz) queda excluida a propósito: es una matriz día×producto, se lee mejor con scroll horizontal + columna fija. */
+  @media(max-width:640px){
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) tr:has(th){display:none}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) tr{display:block;border:1px solid var(--border);border-radius:12px;margin-bottom:10px;padding:4px 12px;background:var(--card)}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);white-space:normal;text-align:right}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td:last-child{border-bottom:none}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td::before{content:attr(data-label);font-weight:700;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;text-align:left;margin-right:8px}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td[colspan]{display:block;text-align:center}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td[colspan]::before{content:none}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td[data-label=""]{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px;text-align:left}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td[data-label=""]::before{content:none}
+    #page-prodent .pe-stepper button{width:46px;height:46px;font-size:22px}
+    #page-prodent .cmp-rowbtn{padding:7px 12px;font-size:12.5px}
+  }
 </style>
 </head>
 <body>
@@ -530,7 +545,7 @@
           <input type="month" id="pe-mes" class="cmp-select" style="margin-left:auto;max-width:170px">
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado. Última fila: total de kilogramos por día.</div>
-        <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" style="font-size:12px"></table></div>
+        <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" class="pe-tbl-matriz" style="font-size:12px"></table></div>
         <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
       </section>
     </div>
@@ -3472,12 +3487,12 @@ function buildFilterTable(cfg){
     if(!rows.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
       const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
-      html+='<tr><td>'+esc(p.codigo||'')+'</td><td><b>'+esc(p.nombre||'')+'</b></td>'+
-        '<td class="num">'+nf(s.fisico)+'</td>'+
-        '<td class="num" style="color:var(--blue)">'+cur+'</td>'+
-        '<td class="num" style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
-        '<td class="num" style="color:'+col+';font-weight:800">'+nf(s.disponible)+'</td>'+
-        '<td class="num" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td>'+badge[s.estado]+'</td></tr>'; });
+      html+='<tr><td data-label="Código">'+esc(p.codigo||'')+'</td><td data-label="Producto"><b>'+esc(p.nombre||'')+'</b></td>'+
+        '<td class="num" data-label="Físico">'+nf(s.fisico)+'</td>'+
+        '<td class="num" data-label="En curado" style="color:var(--blue)">'+cur+'</td>'+
+        '<td class="num" data-label="Compr." style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
+        '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.disponible)+'</td>'+
+        '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html;
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = curado − comprometido (curado = fabricado hace 10+ días)';
     renderPlan(filas);
@@ -3487,7 +3502,7 @@ function buildFilterTable(cfg){
     if(!movs.length) mh+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
     movs.forEach(m=>{ const tb=m.tipo==='Producción'?'<span class="badge blue">Producción</span>':m.tipo==='Entrega'?'<span class="badge green">Entrega</span>':'<span class="badge amber">Ajuste conteo</span>';
       const cant=m.tipo==='Entrega'?('-'+nf(num(m.cantidad))):m.tipo==='Ajuste'?((num(m.cantidad)>=0?'+':'')+nf(num(m.cantidad))):('+'+nf(num(m.cantidad)));
-      mh+='<tr><td>'+fmtFecha(m.fecha)+'</td><td>'+tb+'</td><td>'+esc(m.producto||m.codigo||'')+'</td><td class="num"><b>'+cant+'</b></td><td>'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
+      mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
     $('pe-tabla-mov').innerHTML=mh;
   }
 
@@ -3518,9 +3533,9 @@ function buildFilterTable(cfg){
       : '<span style="color:var(--amber)">Reponer a mínimo ('+nf(it.s.min)+')</span>';
     let html='<tr><th>#</th><th>Producto</th><th class="num">A fabricar</th><th class="num">Kg</th><th>Urgencia</th><th>Fabricado est.</th><th>Disponible desde</th></tr>';
     if(!items.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--green);padding:18px">✅ Sin faltantes ni productos bajo mínimo. Nada urgente para fabricar.</td></tr>';
-    items.forEach((it,i)=>{ html+='<tr><td>'+(i+1)+'</td><td><b>'+esc(it.p.nombre||'')+'</b>'+(it.p.codigo?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.p.codigo)+'</div>':'')+'</td>'+
-      '<td class="num" style="font-weight:800">'+nf(it.aFab)+' u</td><td class="num">'+(it.kg>0?nf(it.kg):'—')+'</td>'+
-      '<td>'+motivo(it)+'</td><td>'+fmtF(it.finFab)+'</td><td><b>'+fmtF(it.listo)+'</b></td></tr>'; });
+    items.forEach((it,i)=>{ html+='<tr><td data-label="#">'+(i+1)+'</td><td data-label="Producto"><b>'+esc(it.p.nombre||'')+'</b>'+(it.p.codigo?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.p.codigo)+'</div>':'')+'</td>'+
+      '<td class="num" data-label="A fabricar" style="font-weight:800">'+nf(it.aFab)+' u</td><td class="num" data-label="Kg">'+(it.kg>0?nf(it.kg):'—')+'</td>'+
+      '<td data-label="Urgencia">'+motivo(it)+'</td><td data-label="Fabricado est.">'+fmtF(it.finFab)+'</td><td data-label="Disponible desde"><b>'+fmtF(it.listo)+'</b></td></tr>'; });
     cont.innerHTML=html;
     const asof=$('pe-plan-asof'); if(asof) asof.textContent='Ritmo estimado: '+nf(ritmo)+' kg/día hábil (promedio últimos '+nf(window.__param('ritmoDias',14))+' días'+(ritmo===OBJ()?' — sin datos, usa el objetivo':'')+') · fechas en orden de esta cola + curado';
   }
@@ -3573,11 +3588,11 @@ function buildFilterTable(cfg){
     let html='<tr><th>Insumo / MP</th><th>Categoría</th><th class="num">Stock</th><th class="num">Mínimo</th><th>Últ. conteo</th><th>Estado</th></tr>';
     if(!list.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px">Sin insumos cargados. Agregalos con "🧱 Contar materias primas e insumos" o en Base de Datos.</td></tr>';
     list.forEach(x=>{ const bajo=insBajo(x);
-      html+='<tr><td><b>'+esc(x.nombre||'')+'</b></td><td>'+esc(x.categoria||'—')+'</td>'+
-        '<td class="num" style="font-weight:800;color:'+(bajo?'var(--red)':'var(--text)')+'">'+nf(num(x.stock))+(x.unidad?' '+esc(x.unidad):'')+'</td>'+
-        '<td class="num" style="color:var(--muted)">'+(num(x.stockMinimo)>0?nf(num(x.stockMinimo)):'—')+'</td>'+
-        '<td>'+fmtFecha(x.fechaConteo||'')+'</td>'+
-        '<td>'+(bajo?'<span class="pe-est falta">PEDIR</span>':'<span class="pe-est ok">OK</span>')+'</td></tr>'; });
+      html+='<tr><td data-label="Insumo/MP"><b>'+esc(x.nombre||'')+'</b></td><td data-label="Categoría">'+esc(x.categoria||'—')+'</td>'+
+        '<td class="num" data-label="Stock" style="font-weight:800;color:'+(bajo?'var(--red)':'var(--text)')+'">'+nf(num(x.stock))+(x.unidad?' '+esc(x.unidad):'')+'</td>'+
+        '<td class="num" data-label="Mínimo" style="color:var(--muted)">'+(num(x.stockMinimo)>0?nf(num(x.stockMinimo)):'—')+'</td>'+
+        '<td data-label="Últ. conteo">'+fmtFecha(x.fechaConteo||'')+'</td>'+
+        '<td data-label="Estado">'+(bajo?'<span class="pe-est falta">PEDIR</span>':'<span class="pe-est ok">OK</span>')+'</td></tr>'; });
     $('pe-tabla-insumos').innerHTML=html;
     const nBajo=insumos.filter(insBajo).length;
     const ultIns=insumos.map(x=>x.fechaConteo||'').sort().reverse()[0]||'';
@@ -3587,10 +3602,10 @@ function buildFilterTable(cfg){
     let ah='<tr><th>Fecha</th><th>Producto</th><th class="num">Teórico</th><th class="num">Contado</th><th class="num">Ajuste</th><th>Usuario</th></tr>';
     if(!ajs.length) ah+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px">Todavía no hay conteos de productos. Empezá con "📋 Contar productos".</td></tr>';
     ajs.forEach(a=>{ const d=num(a.cantidad);
-      ah+='<tr><td>'+fmtFecha(a.fecha)+'</td><td><b>'+esc(a.producto||a.codigo||'')+'</b></td>'+
-        '<td class="num">'+(a.teorico!=null?nf(num(a.teorico)):'—')+'</td><td class="num">'+(a.real!=null?nf(num(a.real)):'—')+'</td>'+
-        '<td class="num" style="font-weight:800;color:'+(d<0?'var(--red)':'var(--green)')+'">'+(d>=0?'+':'')+nf(d)+'</td>'+
-        '<td style="font-size:11px;color:var(--muted)">'+esc(a.usuario||'')+'</td></tr>'; });
+      ah+='<tr><td data-label="Fecha">'+fmtFecha(a.fecha)+'</td><td data-label="Producto"><b>'+esc(a.producto||a.codigo||'')+'</b></td>'+
+        '<td class="num" data-label="Teórico">'+(a.teorico!=null?nf(num(a.teorico)):'—')+'</td><td class="num" data-label="Contado">'+(a.real!=null?nf(num(a.real)):'—')+'</td>'+
+        '<td class="num" data-label="Ajuste" style="font-weight:800;color:'+(d<0?'var(--red)':'var(--green)')+'">'+(d>=0?'+':'')+nf(d)+'</td>'+
+        '<td data-label="Usuario" style="font-size:11px;color:var(--muted)">'+esc(a.usuario||'')+'</td></tr>'; });
     $('pe-tabla-ajustes').innerHTML=ah;
     const ultAju=ajustes.map(a=>a.fecha||'').sort().reverse()[0]||'';
     $('pe-aju-asof').textContent = ultAju ? ('Último conteo de productos: '+fmtFecha(ultAju)) : 'Sin conteos registrados aún';
@@ -3789,9 +3804,9 @@ function buildFilterTable(cfg){
     rows.forEach(pe=>{ const entregaCell = esc(pe.diaEntrega||'—')
         + (pe.fechaRequerida?'<div style="font-size:10.5px;color:var(--red);font-weight:700">🎯 requerida '+fmtFecha(pe.fechaRequerida)+'</div>':'')
         + (pe.puedeEsperar?'<div style="font-size:10.5px;color:var(--muted)">🕐 puede esperar</div>':'');
-      html+='<tr><td><b>'+esc(pe.cliente||'—')+'</b></td><td>'+entregaCell+'</td><td>'+esc(pe.transporte||'—')+'</td>'+
-      '<td>'+esc(resumenPed(pe))+cargaMini(pe)+'</td><td>'+esc(pe.ciudad||'')+'</td><td>'+(badge[pe.estado]||badge.pendiente)+'</td>'+
-      '<td style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
+      html+='<tr><td data-label="Cliente"><b>'+esc(pe.cliente||'—')+'</b></td><td data-label="Entrega">'+entregaCell+'</td><td data-label="Transporte">'+esc(pe.transporte||'—')+'</td>'+
+      '<td data-label="Pedido">'+esc(resumenPed(pe))+cargaMini(pe)+'</td><td data-label="Ciudad">'+esc(pe.ciudad||'')+'</td><td data-label="Estado">'+(badge[pe.estado]||badge.pendiente)+'</td>'+
+      '<td data-label="" style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
         '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
         '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
