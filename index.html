@@ -1627,6 +1627,11 @@ function buildFilterTable(cfg){
     if(USA_NUBE && fbDb){ FS.deleteDoc(FS.doc(fbDb, COL, uid)).catch(e=>alert('Error al eliminar: '+e.message)); }
     else { DB.compras = DB.compras.filter(x=>x._uid!==uid); saveLocal(); render(); }
   }
+  // Guarda SOLO el campo pagos (no la compra completa) — evita pisar otros campos cambiados por otro usuario a la vez
+  function persistPagos(uid, pagos){
+    if(USA_NUBE && fbDb){ FS.updateDoc(FS.doc(fbDb, COL, uid), {pagos}).catch(e=>alert('Error al guardar el pago: '+e.message)); }
+    else { const i=DB.compras.findIndex(x=>x._uid===uid); if(i>=0){ DB.compras[i].pagos=pagos; saveLocal(); render(); } }
+  }
 
   // ---------- Cálculos ----------
   function calc(c){
@@ -1927,7 +1932,7 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn cmp-btn-primary" id="p-save">Registrar pago</button>'+
       '</div>';
     $('p-cancel').onclick=()=>$('cmp-modal-pago').classList.remove('open');
-    $('p-save').onclick=()=>{ const c2=DB.compras.find(x=>x._uid===payingUid); if(!c2) return; c2.pagos=c2.pagos||[]; c2.pagos.push({fecha:$('p-fecha').value, monto:num($('p-monto').value), medio:$('p-medio').value}); persistCompra(c2); $('cmp-modal-pago').classList.remove('open'); };
+    $('p-save').onclick=()=>{ const c2=DB.compras.find(x=>x._uid===payingUid); if(!c2) return; const pagos=(c2.pagos||[]).slice(); pagos.push({fecha:$('p-fecha').value, monto:num($('p-monto').value), medio:$('p-medio').value}); c2.pagos=pagos; persistPagos(c2._uid, pagos); $('cmp-modal-pago').classList.remove('open'); };
     $('cmp-modal-pago').classList.add('open');
   }
 
@@ -2099,6 +2104,11 @@ function buildFilterTable(cfg){
     if(window.__usaNube){ const c=fb(); if(c&&c.db){ c.FS.setDoc(c.FS.doc(c.db,COL,v._uid), {...v}).catch(e=>alert('Error al guardar la venta en la nube: '+e.message)); } else alert('Iniciá sesión primero.'); }
     else { const i=DB.ventas.findIndex(x=>x._uid===v._uid); if(i>=0)DB.ventas[i]=v; else DB.ventas.push(v); saveLocal(); render(); }
   }
+  // Guarda SOLO el campo cobros (no el documento completo) — evita pisar otros campos que otro usuario haya cambiado a la vez
+  function persistCobros(uid, cobros){
+    if(window.__usaNube){ const c=fb(); if(c&&c.db){ c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {cobros}).catch(e=>alert('Error al guardar el cobro: '+e.message)); } else alert('Iniciá sesión primero.'); }
+    else { const i=DB.ventas.findIndex(x=>x._uid===uid); if(i>=0){ DB.ventas[i].cobros=cobros; saveLocal(); render(); } }
+  }
   function deleteVenta(uid){
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,COL,uid)).catch(e=>alert('Error al eliminar: '+e.message)); }
     else { DB.ventas=DB.ventas.filter(x=>x._uid!==uid); saveLocal(); render(); }
@@ -2198,8 +2208,8 @@ function buildFilterTable(cfg){
   const badgeEstado={ cobrado:'<span class="cmp-estado pagado">Cobrado</span>', acobrar:'<span class="cmp-estado apagar">A cobrar</span>', vencido:'<span class="cmp-estado vencido">Vencido</span>', parcial:'<span class="cmp-estado parcial">Parcial</span>' };
   const arcaBadge=e=> e==='Aprobado'?'<span class="badge green">Aprobado</span>':e==='Pendiente'?'<span class="badge amber">Pendiente</span>':'<span style="color:var(--muted)">—</span>';
   function facLabel(v){ if(v.tipoComprobante==='Sin factura') return '<span class="badge" style="background:#eceffb;color:#5b6b9a">Sin factura</span>'; return (v.puntoVenta||v.nroFactura)?((v.condIva||'')+' '+(v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).trim():'—'; }
-  function accionesCell(v,k){ const tieneCobros=(v.cobros||[]).length>0;
-    return ((k.saldo>0.5||tieneCobros)?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">'+(k.saldo>0.5?'Cobrar':'Cobros')+'</button>':'')+
+  function accionesCell(v,k){ const tieneCobros=(v.cobros||[]).length>0; const esNC=v.tipoComprobante==='Nota de Crédito';
+    return (((!esNC&&k.saldo>0.5)||tieneCobros)?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">'+((!esNC&&k.saldo>0.5)?'Cobrar':'Cobros')+'</button>':'')+
       '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'+
       '<button class="cmp-rowbtn" data-act="print" data-id="'+v._uid+'" title="Imprimir documentos">🖨️</button>'+
       '<button class="cmp-rowbtn" data-act="wa" data-id="'+v._uid+'" title="Mensajes de WhatsApp">📲</button>'+
@@ -2411,6 +2421,7 @@ function buildFilterTable(cfg){
   function saveForm(){
     if(!editing.cliente.trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
+    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
     if(!editing._uid) editing._uid=newUid();
     const cb=_onSaved; _onSaved=null;
     persistVenta(editing); closeForm();
@@ -2423,8 +2434,8 @@ function buildFilterTable(cfg){
   function drawCobro(){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
-    const lista = v.cobros.length ? v.cobros.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px'+(cobroEdit===i?';outline:2px solid var(--blue)':'')+'">'+
-        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+'</span>'+
+    const lista = v.cobros.length ? v.cobros.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid '+(c.chequeRechazado?'var(--red)':'var(--border)')+';border-radius:8px;margin-bottom:6px;font-size:13px'+(cobroEdit===i?';outline:2px solid var(--blue)':'')+'">'+
+        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+(c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
         '<span style="display:flex;gap:8px;align-items:center"><b>'+money(num(c.monto))+'</b>'+
           '<button class="cmp-rowbtn" data-cedit="'+i+'">Editar</button>'+
           '<button class="cmp-rowbtn" data-cdel="'+i+'" title="Revertir / eliminar este cobro">✕</button></span></div>').join('')
@@ -2437,13 +2448,14 @@ function buildFilterTable(cfg){
       '<h4 style="margin:8px 0 6px;font-size:13px">'+(cobroEdit!=null?'✏️ Editar cobro':'Registrar nuevo cobro')+'</h4>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="vc-monto" value="'+montoDef+'">') + field('Fecha','','<input type="date" id="vc-fecha" value="'+fechaDef+'">') +
-        field('Medio','col2','<select id="vc-medio">'+MEDIOS_COBRO.map(m=>'<option'+(m===medioDef?' selected':'')+'>'+m+'</option>').join('')+'</select>') + '</div>'+
+        field('Medio','col2','<select id="vc-medio">'+MEDIOS_COBRO.map(m=>'<option'+(m===medioDef?' selected':'')+'>'+m+'</option>').join('')+'</select>') +
+        '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
     $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
-    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(v.cobros[i].monto))+'?')) return; v.cobros.splice(i,1); cobroEdit=null; persistVenta(v); drawCobro(); });
+    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(v.cobros[i].monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); drawCobro(); });
     if($('vc-cancel')) $('vc-cancel').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
     if($('vc-cancel-edit')) $('vc-cancel-edit').onclick=()=>{ cobroEdit=null; drawCobro(); };
-    $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; } const rec={fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value}; if(cobroEdit!=null){ v.cobros[cobroEdit]=rec; cobroEdit=null; } else { v.cobros.push(rec); } persistVenta(v); drawCobro(); };
+    $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; } const rec={fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked}; const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros); drawCobro(); };
   }
 
   function clientesConocidos(){ const m={}; DB.ventas.forEach(v=>{ if(v.cliente && !m[v.cliente]) m[v.cliente]={nombre:v.cliente,cuit:v.cuit,cond:v.condIva}; }); return Object.values(m); }
@@ -2485,10 +2497,18 @@ function buildFilterTable(cfg){
   }
 
   // ---------- eventos ----------
-  // Fuente de alertas EN VIVO: cobros vencidos
+  // Fuente de alertas EN VIVO: cobros vencidos + cheques rechazados + ventas con margen negativo
   window.__alertSources.push(()=>{ const A=[]; let n=0, tot=0;
     DB.ventas.forEach(v=>{ const k=calc(v); if(k.estado==='vencido' && k.saldo>0.5){ n++; tot+=k.saldo; } });
     if(n) A.push({sev:'bad', area:'Finanzas', t:n+' cobro'+(n>1?'s':'')+' vencido'+(n>1?'s':'')+' por '+money(tot), act:'Gestionar la cobranza por WhatsApp (recordatorio con un toque en el Asistente).', go:{page:'Ventas'}});
+    let nCh=0, totCh=0;
+    DB.ventas.forEach(v=> (v.cobros||[]).forEach(c=>{ if(c.chequeRechazado){ nCh++; totCh+=num(c.monto); } }));
+    if(nCh) A.push({sev:'bad', area:'Finanzas', t:nCh+' cheque'+(nCh>1?'s':'')+' rechazado'+(nCh>1?'s':'')+' por '+money(totCh), act:'Contactar al cliente y evaluar si conviene seguir vendiéndole a cuenta.', go:{page:'Ventas'}});
+    const prods=(window.__catalogoProductos?window.__catalogoProductos():[]); const ncat=s=>String(s||'').trim().toUpperCase();
+    let nMg=0; DB.ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return;
+      let costo=0; (v.items||[]).forEach(it=>{ const pr=prods.find(p=>(it.codigo&&ncat(p.codigo)===ncat(it.codigo))||ncat(p.nombre)===ncat(it.desc)); if(pr) costo+=num(pr.costo)*num(it.cant); });
+      if(costo>0){ const k=calc(v); if(k.neto>0 && k.neto<costo) nMg++; } });
+    if(nMg) A.push({sev:'warn', area:'Comercial', t:nMg+' venta'+(nMg>1?'s':'')+' con margen negativo (precio por debajo del costo de catálogo)', act:'Revisar precios/descuentos aplicados en esas ventas.', go:{page:'Ventas'}});
     return A; });
   $('vnt-nueva').onclick=()=>openForm(null);
   $('vnt-cerrar').onclick=closeForm;
@@ -2748,6 +2768,7 @@ function buildFilterTable(cfg){
   }
   function saveForm(){ if(!String(editing.cliente||'').trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
+    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
     const esNuevo=!editing._uid;
     if(esNuevo && window.__usaNube){
       const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
@@ -3594,7 +3615,8 @@ function buildFilterTable(cfg){
       const fecha=$('pe-conteo-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
       let nAju=0, nOk=0;
       act.forEach((p,i)=>{ const el=$('pe-form-conteo').querySelector('input[data-cti="'+i+'"]'); if(!el||el.value.trim()==='') return;
-        const teo=num(el.dataset.teo), real=num(el.value), dif=real-teo;
+        const teo=stockDe(p).curado;   // recalculado AHORA (no el valor cacheado al abrir el modal) — puede haber cambiado durante el conteo
+        const real=num(el.value), dif=real-teo;
         if(dif===0){ nOk++; return; }
         const id='aju_'+uniq();
         c.FS.setDoc(c.FS.doc(c.db,'vph_ajustes',id), {fecha, codigo:p.codigo||'', producto:p.nombre||'', teorico:teo, real, cantidad:dif, motivo:'Conteo semanal', usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)});
