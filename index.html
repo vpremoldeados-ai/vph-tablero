@@ -975,7 +975,7 @@ let alertas = [];
 function _gatherAlertas(){ let all=[]; try{ all=all.concat(calcularAlertas()); }catch(e){ console.error('alertas estáticas:',e); }
   (window.__alertSources||[]).forEach(fn=>{ try{ const l=fn(); if(Array.isArray(l)) all=all.concat(l); }catch(e){ console.error('fuente de alerta:',e); } });
   return all; }
-function irAPagina(page){ const b=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.trim().includes(page)); if(b) b.click(); }
+function irAPagina(page){ const items=[...document.querySelectorAll('#nav .nav-item')]; const b=items.find(x=>{ const t=x.querySelector('.txt'); return t && t.textContent.trim()===page; }) || items.find(x=>x.textContent.trim().includes(page)); if(b) b.click(); }
 
 // --- Topbar ---
 document.getElementById('hoy').textContent = new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
@@ -2540,7 +2540,7 @@ function buildFilterTable(cfg){
 
   window.__ventaCalc = calc;   // expuesto para el módulo Documentos (totales de venta)
   // Crear una venta pre-cargada desde un lead del CRM
-  window.__ventaDesdeLead = function(lead){
+  window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=lead.listaPrecios;
@@ -2548,7 +2548,7 @@ function buildFilterTable(cfg){
     v.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)? lead.items : [];
     v.items = items.length ? items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const p=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(p){ it.desc=p.nombre; aplicarProducto(it,p,v.listaPrecios); } return it; }) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
-    openForm(v);
+    openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "confirmado" si la venta se guarda de verdad
   };
 
   // Crear una venta pre-cargada desde un PRESUPUESTO (preserva ítems y precios tal cual)
@@ -2706,8 +2706,9 @@ function buildFilterTable(cfg){
   // ---------- Formulario ----------
   let editing=null;
   function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
-  function openForm(p){ editing = p?JSON.parse(JSON.stringify(p)):blank(); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
-  function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; }
+  let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
+  function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
+  function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
   function opt(arr,sel){ return arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join(''); }
   function drawForm(){
     const p=editing;
@@ -2796,11 +2797,11 @@ function buildFilterTable(cfg){
         const next=cur+1;
         tx.set(ref,{presupuestos:next},{merge:true});
         return next;
-      }).then(next=>{ editing.numero='P-'+String(next).padStart(4,'0'); editing._uid=newUid(); persist(editing); closeForm(); })
+      }).then(next=>{ editing.numero='P-'+String(next).padStart(4,'0'); editing._uid=newUid(); persist(editing); const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(); }catch(e){ console.error('presupuesto onSaved:',e); } } })
         .catch(e=>alert('Error al numerar el presupuesto: '+e.message));
       return;
     }
-    if(!editing._uid) editing._uid=newUid(); persist(editing); closeForm(); }
+    if(!editing._uid) editing._uid=newUid(); persist(editing); const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(); }catch(e){ console.error('presupuesto onSaved:',e); } } }
 
   function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_presupuestos_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
   function importJSON(file){ const r=new FileReader(); r.onload=()=>{ try{ const d=JSON.parse(r.result); if(!Array.isArray(d.presupuestos)) throw new Error('formato inválido');
@@ -2817,11 +2818,12 @@ function buildFilterTable(cfg){
     } else { DB=loadLocal(); render(); } }
 
   // Crear un presupuesto desde un lead del CRM (botón "→ Presupuesto" en la tarjeta)
-  window.__presupuestoDesdeLead = function(lead){ const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||''; if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
+  window.__presupuestoDesdeLead = function(lead, onSaved){ const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||''; if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
     const notas=[]; if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     p.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)?lead.items:[]; p.items=items.length?items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const pr=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(pr){ it.desc=pr.nombre; aplicarProducto(it,pr,p.listaPrecios); } return it; }):[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
-    openForm(p); };
+    openForm(p); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "cotizado" si el presupuesto se guarda de verdad
+  };
 
   window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
   // Fuente de alertas EN VIVO: presupuestos en borrador (sin enviar) y vencidos
@@ -2977,6 +2979,7 @@ function buildFilterTable(cfg){
     el.style.color = dias>=7 ? 'var(--red)' : 'var(--muted)';
   }
   async function backupCompleto(){
+    if(window.__rol && window.__rol!=='admin'){ alert('El backup completo incluye datos financieros — solo disponible para el rol admin.'); return; }
     if(!window.__usaNube){ alert('El backup completo lee todas las colecciones de la nube — iniciá sesión primero.'); return; }
     const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
     const btn=$('bd-backup'); if(btn){ btn.disabled=true; btn.textContent='Generando…'; }
@@ -3055,7 +3058,11 @@ function buildFilterTable(cfg){
   DEFS.forEach(d=>{ if(window.__cfg[d.k]===undefined) window.__cfg[d.k]=d.def; });   // defaults desde el arranque
   if(!window.__param) window.__param=(k,f)=>{ const v=window.__cfg[k]; return (v==null||v==='')?f:v; };
 
-  function aplicar(data){ DEFS.forEach(d=>{ const v=data&&data[d.k]; window.__cfg[d.k]=(v==null||v==='')?d.def:(d.t==='num'?num(v):v); }); window.dispatchEvent(new Event('vph-params')); }
+  function aplicar(data){ DEFS.forEach(d=>{ const v=data&&data[d.k];
+    if(v==null||v===''){ window.__cfg[d.k]=d.def; return; }
+    if(d.t==='num'){ const n=parseFloat(String(v).replace(',','.')); window.__cfg[d.k]=isFinite(n)?n:d.def; }   // valor corrupto (texto no numérico) → usa el default, no 0 silencioso
+    else window.__cfg[d.k]=v;
+  }); window.dispatchEvent(new Event('vph-params')); }
 
   function drawForm(){
     let g=''; let html='';
@@ -3153,8 +3160,8 @@ function buildFilterTable(cfg){
       if(a==='edit') openForm(l);
       else if(a==='preg') openPreg(l);
       else if(a==='del'){ if(confirm('¿Eliminar el lead de '+(l.cliente||'—')+'?')) remove(l._uid); }
-      else if(a==='venta'){ if(window.__ventaDesdeLead){ l.estado='confirmado'; persist(l); window.__ventaDesdeLead(l); } else alert('Módulo de Ventas no disponible.'); }
-      else if(a==='presup'){ if(window.__presupuestoDesdeLead){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Presupuestos')); if(nav)nav.click(); window.__presupuestoDesdeLead(l); } else alert('Módulo de Presupuestos no disponible.'); } });
+      else if(a==='venta'){ if(window.__ventaDesdeLead){ window.__ventaDesdeLead(l, ()=>{ l.estado='confirmado'; persist(l); }); } else alert('Módulo de Ventas no disponible.'); }
+      else if(a==='presup'){ if(window.__presupuestoDesdeLead){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Presupuestos')); if(nav)nav.click(); window.__presupuestoDesdeLead(l, ()=>{ if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); } }); } else alert('Módulo de Presupuestos no disponible.'); } });
     $('crm-board').querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ l.estado=sel.value; persist(l); } });
     $('crm-count').textContent = leads.length+' leads';
   }
@@ -4244,8 +4251,9 @@ function buildFilterTable(cfg){
     return { neto:neto*signo, iva:iva*signo, total, cobrado, saldo:total-cobrado };
   }
   function desglose(v){ const factor=1-num(v.descGeneral)/100; let netoGrav=0,netoNoGrav=0; const porAlic={};
+    const sinFactura=v.tipoComprobante==='Sin factura';   // no genera IVA débito: mismo criterio que calc()/window.__ventaCalc
     (v.items||[]).forEach(it=>{ const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*factor;
-      const esGrav=!(it.iva==='exento'||it.iva==='nogravado'||num(it.iva)===0);
+      const esGrav=!sinFactura && !(it.iva==='exento'||it.iva==='nogravado'||num(it.iva)===0);
       if(esGrav){ const al=num(it.iva); netoGrav+=base; porAlic[al]=(porAlic[al]||0)+base; } else netoNoGrav+=base; });
     return { netoGrav, netoNoGrav, porAlic };
   }
@@ -4388,7 +4396,7 @@ function buildFilterTable(cfg){
     const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[]);
     const nc=s=>String(s||'').trim().toUpperCase();
-    const bultosDe=it=>{ const pr=prods.find(p=>(it.codigo&&nc(p.codigo)===nc(it.codigo))||nc(p.nombre)===nc(it.desc)); const ud=pr?num(pr.udPorPallet):0; return ud>0?Math.ceil(num(it.cant)/ud):num(it.cant); };
+    const bultosDe=it=>{ const pr=(it.codigo&&prods.find(p=>nc(p.codigo)===nc(it.codigo))) || prods.find(p=>nc(p.nombre)===nc(it.desc)); const ud=pr?num(pr.udPorPallet):0; return ud>0?Math.ceil(num(it.cant)/ud):num(it.cant); };
     let filas=its.map(it=>'<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td><td>'+esc(it.obs||'')+'</td><td class="n">'+nf(it.cant)+'</td><td class="n">'+nf(bultosDe(it))+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';
     const totBultos=its.reduce((a,it)=>a+bultosDe(it),0);
