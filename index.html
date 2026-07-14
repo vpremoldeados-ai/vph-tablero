@@ -520,6 +520,19 @@
         <p class="note">Cada pedido es una venta pendiente de entregar. Al marcar <b>Entregado</b> se descuenta del stock físico y sale de lo comprometido. Los pedidos se crean con <b>"→ Entrega"</b> desde una Venta, o a mano acá.</p>
       </section>
     </div>
+
+    <!-- Sub-vista: PRODUCCIÓN MENSUAL (calendario fabricado/entregado) -->
+    <div id="pe-view-mensual" style="display:none">
+      <section>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <h2 style="margin:0"><span class="dot" style="background:var(--blue)"></span>Producción y entregas del mes</h2>
+          <input type="month" id="pe-mes" class="cmp-select" style="margin-left:auto;max-width:170px">
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado. Última fila: total de kilogramos por día.</div>
+        <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" style="font-size:12px"></table></div>
+        <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
+      </section>
+    </div>
   </div>
 
   <!-- Overlay: pedido (coordinación de entrega) -->
@@ -2748,8 +2761,10 @@ function buildFilterTable(cfg){
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { DB=loadLocal(); render(); } }
 
-  // Crear un presupuesto desde un lead del CRM (para el botón futuro)
+  // Crear un presupuesto desde un lead del CRM (botón "→ Presupuesto" en la tarjeta)
   window.__presupuestoDesdeLead = function(lead){ const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||''; if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
+    const notas=[]; if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
+    p.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)?lead.items:[]; p.items=items.length?items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const pr=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(pr){ it.desc=pr.nombre; aplicarProducto(it,pr,p.listaPrecios); } return it; }):[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
     openForm(p); };
 
@@ -3046,7 +3061,8 @@ function buildFilterTable(cfg){
       if(a==='edit') openForm(l);
       else if(a==='preg') openPreg(l);
       else if(a==='del'){ if(confirm('¿Eliminar el lead de '+(l.cliente||'—')+'?')) remove(l._uid); }
-      else if(a==='venta'){ if(window.__ventaDesdeLead){ l.estado='confirmado'; persist(l); window.__ventaDesdeLead(l); } else alert('Módulo de Ventas no disponible.'); } });
+      else if(a==='venta'){ if(window.__ventaDesdeLead){ l.estado='confirmado'; persist(l); window.__ventaDesdeLead(l); } else alert('Módulo de Ventas no disponible.'); }
+      else if(a==='presup'){ if(window.__presupuestoDesdeLead){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Presupuestos')); if(nav)nav.click(); window.__presupuestoDesdeLead(l); } else alert('Módulo de Presupuestos no disponible.'); } });
     $('crm-board').querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ l.estado=sel.value; persist(l); } });
     $('crm-count').textContent = leads.length+' leads';
   }
@@ -3061,6 +3077,7 @@ function buildFilterTable(cfg){
         (wa?'<a class="kb-wa" href="'+wa+'" target="_blank" rel="noopener">WhatsApp</a>':'')+
         '<button class="cmp-rowbtn" data-act="preg" data-id="'+l._uid+'" title="Preguntas rápidas para WhatsApp">💬 Preguntas</button>'+
         '<button class="cmp-rowbtn" data-act="edit" data-id="'+l._uid+'">Editar</button>'+
+        '<button class="cmp-rowbtn" data-act="presup" data-id="'+l._uid+'" title="Crear presupuesto con los datos de este lead">→ Presupuesto</button>'+
         '<button class="cmp-rowbtn" data-act="venta" data-id="'+l._uid+'" title="Crear venta desde este lead">→ Venta</button>'+
         '<button class="cmp-rowbtn" data-act="del" data-id="'+l._uid+'">✕</button>'+
         '<select class="kb-move" data-move="'+l._uid+'" title="Mover a">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+((l.estado||'nuevo')===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>'+
@@ -3336,13 +3353,14 @@ function buildFilterTable(cfg){
   // ---------- Render principal ----------
   function render(){
     const aPedir=insumos.filter(x=>num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo)).length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
+    $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
     renderKpis();
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -3432,6 +3450,46 @@ function buildFilterTable(cfg){
 
   // ---------- Conteo semanal (Gustavo): teórico vs real + insumos/MP ----------
   const insBajo=x=> num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo);
+  // ---------- Vista MENSUAL: matriz productos × días (fabricado/entregado) + total kg ----------
+  function renderMensual(){
+    const mesInp=$('pe-mes'); if(!mesInp) return;
+    if(!mesInp.value) mesInp.value=hoyISO.slice(0,7);
+    if(!mesInp._wired){ mesInp._wired=true; mesInp.addEventListener('change', renderMensual); }
+    const parts=mesInp.value.split('-'); const Y=+parts[0], M=+parts[1];
+    const cont=$('pe-tabla-mensual'); if(!cont) return; if(!Y||!M){ cont.innerHTML=''; return; }
+    const nDias=new Date(Y,M,0).getDate();
+    const dowL=['Do','Lu','Ma','Mi','Ju','Vi','Sa'];
+    const pref=Y+'-'+p2(M)+'-';
+    const fab={}, entr={};
+    const acum=(store,arr)=>{ arr.forEach(x=>{ const f=String(x.fecha||'').slice(0,10); if(!f.startsWith(pref)) return; const d=+f.slice(8,10); const kk=keyDe(x.codigo,x.producto); (store[kk]=store[kk]||{}); store[kk][d]=(store[kk][d]||0)+num(x.cantidad); }); };
+    acum(fab,prod); acum(entr,ent);
+    const keys=new Set([...Object.keys(fab),...Object.keys(entr)]);
+    const rows=activos().filter(p=>keys.has(keyDe(p.codigo,p.nombre))).map(p=>({p,k:keyDe(p.codigo,p.nombre)}));
+    // días con dow y número de semana del mes
+    const dias=[]; let wk=0;
+    for(let d=1;d<=nDias;d++){ const dow=new Date(Y,M-1,d).getDay(); if(d===1||dow===1) wk++; dias.push({d,dow,wk}); }
+    const semanas=[]; dias.forEach(x=>{ const s=semanas[semanas.length-1]; if(s&&s.wk===x.wk)s.count++; else semanas.push({wk:x.wk,count:1}); });
+    const stick='position:sticky;left:0;background:var(--card,#fff);z-index:2';
+    let h='<thead><tr><th rowspan="2" style="'+stick+';text-align:left;min-width:150px">Producto</th>';
+    semanas.forEach((s,i)=> h+='<th colspan="'+s.count+'" style="text-align:center;border-left:2px solid var(--border)">Sem '+(i+1)+'</th>');
+    h+='<th rowspan="2" style="text-align:center;border-left:2px solid var(--border);min-width:74px">Total mes</th></tr><tr>';
+    dias.forEach(x=>{ const wknd=(x.dow===0||x.dow===6); h+='<th style="text-align:center;min-width:50px;'+(x.dow===1?'border-left:2px solid var(--border);':'')+(wknd?'color:var(--muted)':'')+'">'+dowL[x.dow]+'<br>'+x.d+'</th>'; });
+    h+='</tr></thead><tbody>';
+    if(!rows.length){ h+='<tr><td colspan="'+(nDias+2)+'" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas en este mes.</td></tr>'; }
+    rows.forEach(({p,k})=>{ let totF=0,totE=0;
+      h+='<tr><td style="'+stick+';text-align:left;font-weight:600">'+esc(p.nombre)+(p.codigo?' <span style="color:var(--muted);font-weight:400">'+esc(p.codigo)+'</span>':'')+'</td>';
+      dias.forEach(x=>{ const f=(fab[k]&&fab[k][x.d])||0, e=(entr[k]&&entr[k][x.d])||0; totF+=f; totE+=e; const bl=(x.dow===1?'border-left:2px solid var(--border);':'');
+        h+='<td style="text-align:center;white-space:nowrap;'+bl+'">'+((f||e)? ('<span style="color:var(--green);font-weight:700">'+(f?'+'+nf(f):'')+'</span>'+(f&&e?' ':'')+'<span style="color:var(--red)">'+(e?'−'+nf(e):'')+'</span>') : '<span style="color:#ccc">·</span>')+'</td>'; });
+      h+='<td style="text-align:center;border-left:2px solid var(--border);white-space:nowrap"><span style="color:var(--green);font-weight:700">+'+nf(totF)+'</span> / <span style="color:var(--red)">−'+nf(totE)+'</span></td></tr>'; });
+    if(rows.length){ let mesKgF=0,mesKgE=0;
+      h+='<tr style="border-top:2px solid var(--border);font-weight:700"><td style="'+stick+';text-align:left">TOTAL kg</td>';
+      dias.forEach(x=>{ let kgF=0,kgE=0; keys.forEach(k=>{ const pz=pesoDe(k); kgF+=((fab[k]&&fab[k][x.d])||0)*pz; kgE+=((entr[k]&&entr[k][x.d])||0)*pz; }); mesKgF+=kgF; mesKgE+=kgE; const bl=(x.dow===1?'border-left:2px solid var(--border);':'');
+        h+='<td style="text-align:center;font-size:11px;'+bl+'">'+((kgF||kgE)? ('<span style="color:var(--green)">'+(kgF?nf(kgF):'')+'</span>'+(kgF&&kgE?'<br>':'')+'<span style="color:var(--red)">'+(kgE?nf(kgE):'')+'</span>') : '')+'</td>'; });
+      h+='<td style="text-align:center;border-left:2px solid var(--border)"><span style="color:var(--green)">'+nf(mesKgF)+'</span> kg<br><span style="color:var(--red)">'+nf(mesKgE)+'</span> kg</td></tr>'; }
+    h+='</tbody>';
+    cont.innerHTML=h;
+  }
+
   function renderConteo(){
     // Insumos / materias primas
     const list=insumos.slice().sort((a,b)=> (insBajo(b)?1:0)-(insBajo(a)?1:0) || String(a.categoria||'').localeCompare(String(b.categoria||'')) || String(a.nombre||'').localeCompare(String(b.nombre||'')));
@@ -4210,11 +4268,14 @@ function buildFilterTable(cfg){
       '<br>Domicilio de Entrega: '+esc(obj.domicilioEntrega||'—');
     const der='CUIT: '+esc(obj.clienteCuit||'—')+'<br>Cond. IVA: '+esc(obj.clienteCondIva||'—');
     const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
-    let filas=its.map(it=>'<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td><td>'+esc(it.obs||'')+'</td><td class="n">'+nf(it.cant)+'</td></tr>').join('');
-    if(!filas) filas='<tr><td colspan="4" style="text-align:center;color:#888">Sin productos.</td></tr>';
-    const totBultos=its.reduce((a,it)=>a+num(it.cant),0);
-    const tabla='<table class="doc-tab"><tr><th>Código</th><th>Productos</th><th>Observaciones</th><th class="n">Cantidad</th></tr>'+filas+
-      '<tr><td colspan="3" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>';
+    const prods=(window.__catalogoProductos?window.__catalogoProductos():[]);
+    const nc=s=>String(s||'').trim().toUpperCase();
+    const bultosDe=it=>{ const pr=prods.find(p=>(it.codigo&&nc(p.codigo)===nc(it.codigo))||nc(p.nombre)===nc(it.desc)); const ud=pr?num(pr.udPorPallet):0; return ud>0?Math.ceil(num(it.cant)/ud):num(it.cant); };
+    let filas=its.map(it=>'<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td><td>'+esc(it.obs||'')+'</td><td class="n">'+nf(it.cant)+'</td><td class="n">'+nf(bultosDe(it))+'</td></tr>').join('');
+    if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';
+    const totBultos=its.reduce((a,it)=>a+bultosDe(it),0);
+    const tabla='<table class="doc-tab"><tr><th>Código</th><th>Productos</th><th>Observaciones</th><th class="n">Cantidad</th><th class="n">Bultos</th></tr>'+filas+
+      '<tr><td colspan="4" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>';
     const transp = obj.transportista ? '<div style="margin-bottom:8px;font-size:11.5px"><b>Transportista:</b> '+esc(obj.transportista)+'</div>' : '';
     const pallets = obj.palletResumen ? '<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>' : '';
     return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha))+transp+bloqueCliente(izq,der)+tabla+pallets+firma()+pie();
