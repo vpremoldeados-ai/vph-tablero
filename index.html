@@ -597,6 +597,7 @@
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="crm-nuevo">+ Nuevo Lead</button>
           <button class="cmp-btn" id="crm-preg-edit" title="Editar las preguntas rápidas de WhatsApp">💬 Preguntas rápidas</button>
+          <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
           <button class="cmp-btn" id="crm-export">Exportar JSON</button>
           <button class="cmp-btn" id="crm-import">Importar JSON</button>
           <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -630,6 +631,17 @@
         <button class="cmp-x" id="crm-preg-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="crm-preg-body"></div>
+    </div>
+  </div>
+
+  <!-- ================= PLANTILLAS POR PRODUCTO (WhatsApp) ================= -->
+  <div class="cmp-overlay" id="crm-plant-modal">
+    <div class="cmp-dialog" style="max-width:680px">
+      <div class="cmp-dialog-head">
+        <h3 id="crm-plant-title">Plantillas de WhatsApp</h3>
+        <button class="cmp-x" id="crm-plant-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="crm-plant-body"></div>
     </div>
   </div>
 
@@ -3159,6 +3171,7 @@ function buildFilterTable(cfg){
     $('crm-board').querySelectorAll('[data-act]').forEach(el=> el.onclick=()=>{ const l=DB.leads.find(x=>x._uid==el.dataset.id); if(!l)return; const a=el.dataset.act;
       if(a==='edit') openForm(l);
       else if(a==='preg') openPreg(l);
+      else if(a==='plant') openPlant(l);
       else if(a==='del'){ if(confirm('¿Eliminar el lead de '+(l.cliente||'—')+'?')) remove(l._uid); }
       else if(a==='venta'){ if(window.__ventaDesdeLead){ window.__ventaDesdeLead(l, ()=>{ l.estado='confirmado'; persist(l); }); } else alert('Módulo de Ventas no disponible.'); }
       else if(a==='presup'){ if(window.__presupuestoDesdeLead){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Presupuestos')); if(nav)nav.click(); window.__presupuestoDesdeLead(l, ()=>{ if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); } }); } else alert('Módulo de Presupuestos no disponible.'); } });
@@ -3175,6 +3188,7 @@ function buildFilterTable(cfg){
       '<div class="acts">'+
         (wa?'<a class="kb-wa" href="'+wa+'" target="_blank" rel="noopener">WhatsApp</a>':'')+
         '<button class="cmp-rowbtn" data-act="preg" data-id="'+l._uid+'" title="Preguntas rápidas para WhatsApp">💬 Preguntas</button>'+
+        '<button class="cmp-rowbtn" data-act="plant" data-id="'+l._uid+'" title="Plantillas de WhatsApp por producto">📄 Plantillas</button>'+
         '<button class="cmp-rowbtn" data-act="edit" data-id="'+l._uid+'">Editar</button>'+
         '<button class="cmp-rowbtn" data-act="presup" data-id="'+l._uid+'" title="Crear presupuesto con los datos de este lead">→ Presupuesto</button>'+
         '<button class="cmp-rowbtn" data-act="venta" data-id="'+l._uid+'" title="Crear venta desde este lead">→ Venta</button>'+
@@ -3228,6 +3242,66 @@ function buildFilterTable(cfg){
       $('crm-preg-body').querySelectorAll('[data-copy]').forEach(b=> b.onclick=()=>{ const txt=fillPreg(PREG[+b.dataset.copy],lead); const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='Copiar'; },1200); }; if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); } });
       $('preg-editbtn').onclick=()=>{ pregEditing=true; drawPreg(lead); };
       $('preg-close').onclick=closePreg;
+    }
+  }
+
+  // ---------- Plantillas de WhatsApp por producto (editables y compartidas por la nube) ----------
+  const PLANT_KEY='vph_crm_plant_v1', PLANT_COL='vph_config', PLANT_DOC='crm_plantillas';
+  const PLANT_DEFAULT=[
+    {cat:'General', txt:'Hola{nombre}! Te habla Sofía de VPH Premoldeados 😊 Fabricamos productos de hormigón premoldeado para obra y vivienda. Contame qué necesitás y te armo un presupuesto.'},
+    {cat:'Tiempos de entrega', txt:'Te cuento cómo trabajamos los tiempos: si tenemos stock disponible, la entrega es inmediata; si hay que fabricar, el producto necesita además 10 días de curado antes de poder entregarse. Apenas me confirmes cantidades te digo la fecha estimada.'},
+    {cat:'Postes', txt:'Los postes de hormigón los fabricamos en varias medidas. Contame para qué los necesitás (cerco, vid, alambrado) y la cantidad, así te confirmo medida, precio y disponibilidad.'},
+    {cat:'Losetas', txt:'Las losetas las tenemos en distintos tamaños y terminaciones. Decime los m² o la cantidad de unidades que necesitás y te paso precio y disponibilidad.'},
+    {cat:'Forma de pago', txt:'Podés abonar por transferencia, efectivo o tarjeta en cuotas. Si pagás sin factura tenés un descuento adicional. ¿Cómo preferís abonar?'}
+  ];
+  let PLANT=PLANT_DEFAULT.slice(), plantUnsub=null, plantLead=null, plantEditing=false;
+  function plantLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(PLANT_KEY)); if(Array.isArray(d)&&d.length) return d; }catch(e){} return PLANT_DEFAULT.slice(); }
+  function plantSave(list){ PLANT=list.slice();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,PLANT_COL,PLANT_DOC),{plantillas:PLANT}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else { try{ localStorage.setItem(PLANT_KEY, JSON.stringify(PLANT)); }catch(e){} } }
+  function plantSubscribe(){ if(!window.__usaNube){ PLANT=plantLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(plantUnsub)plantUnsub();
+    plantUnsub=c.FS.onSnapshot(c.FS.doc(c.db,PLANT_COL,PLANT_DOC), snap=>{ const d=snap.exists()?snap.data():null; PLANT=(d&&Array.isArray(d.plantillas)&&d.plantillas.length)?d.plantillas:PLANT_DEFAULT.slice(); if($('crm-plant-modal').classList.contains('open')&&!plantEditing) drawPlant(plantLead); }, err=>console.error('plant:',err)); }
+  function openPlant(lead){ plantLead=lead||null; plantEditing=!lead; drawPlant(lead); $('crm-plant-modal').classList.add('open'); }
+  function closePlant(){ $('crm-plant-modal').classList.remove('open'); plantLead=null; plantEditing=false; }
+  function drawPlant(lead){
+    $('crm-plant-title').textContent = lead ? ('Plantillas — '+(lead.cliente||'lead')) : 'Editar plantillas';
+    const wa=lead?waLink(lead.telefono):null;
+    if(plantEditing){
+      const rows=PLANT.map((p,i)=>'<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">'+
+        '<input data-pcat="'+i+'" value="'+esc(p.cat||'')+'" placeholder="Categoría (ej: Postes)" style="width:150px;padding:8px;border:1px solid var(--border);border-radius:8px;flex-shrink:0">'+
+        '<textarea data-ptxt="'+i+'" rows="2" placeholder="Mensaje... usá {nombre} para el nombre del cliente" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;font:13px/1.4 inherit">'+esc(p.txt||'')+'</textarea>'+
+        '<button class="cmp-rowbtn" data-prm="'+i+'" title="Eliminar">✕</button>'+
+      '</div>').join('');
+      $('crm-plant-body').innerHTML =
+        '<p class="note" style="margin-top:0">Una plantilla por categoría de producto. Escribí <b>{nombre}</b> donde quieras que aparezca el nombre del cliente. Se comparten con todo el equipo.</p>'+
+        '<div id="plant-rows">'+rows+'</div>'+
+        '<button class="cmp-addline" id="plant-add">+ Agregar plantilla</button>'+
+        '<div class="cmp-form-foot"><button class="cmp-btn" id="plant-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="plant-save">Guardar plantillas</button></div>';
+      const leerFilas=()=> [...$('crm-plant-body').querySelectorAll('[data-pcat]')].map((el,i)=>({ cat: el.value, txt: $('crm-plant-body').querySelector('[data-ptxt="'+i+'"]').value }));
+      $('crm-plant-body').querySelectorAll('[data-prm]').forEach(b=> b.onclick=()=>{ const list=leerFilas(); list.splice(+b.dataset.prm,1); PLANT=list; drawPlant(lead); });
+      $('plant-add').onclick=()=>{ const list=leerFilas(); list.push({cat:'',txt:''}); PLANT=list; drawPlant(lead); };
+      $('plant-save').onclick=()=>{
+        const list=leerFilas().map(p=>({cat:p.cat.trim(),txt:p.txt.trim()})).filter(p=>p.cat||p.txt);
+        if(!list.length){ alert('Cargá al menos una plantilla.'); return; }
+        plantSave(list); if(plantLead){ plantEditing=false; drawPlant(plantLead); } else closePlant();
+      };
+      $('plant-cancel').onclick=()=>{ if(plantLead){ plantEditing=false; drawPlant(plantLead); } else closePlant(); };
+    } else {
+      const rows=PLANT.map((p,i)=>{ const txt=fillPreg(p.txt,lead);
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
+          '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:3px">'+esc(p.cat||'General')+'</div>'+
+          '<div style="display:flex;gap:8px;align-items:flex-start">'+
+            '<div style="flex:1;font-size:13px;line-height:1.45">'+esc(txt)+'</div>'+
+            '<button class="cmp-rowbtn" data-pcopy="'+i+'">Copiar</button>'+
+            (wa?'<a class="kb-wa" href="'+wa+'?text='+encodeURIComponent(txt)+'" target="_blank" rel="noopener">WhatsApp</a>':'')+
+          '</div></div>'; }).join('');
+      $('crm-plant-body').innerHTML =
+        (lead&&!lead.telefono?'<p class="note" style="margin-top:0">Este lead no tiene teléfono cargado. Podés copiar la plantilla y pegarla en WhatsApp.</p>':'')+
+        (rows||'<p class="note" style="margin-top:0">Todavía no hay plantillas cargadas.</p>')+
+        '<div class="cmp-form-foot"><button class="cmp-btn" id="plant-editbtn">✏️ Editar plantillas</button><button class="cmp-btn cmp-btn-primary" id="plant-close">Cerrar</button></div>';
+      $('crm-plant-body').querySelectorAll('[data-pcopy]').forEach(b=> b.onclick=()=>{ const txt=fillPreg(PLANT[+b.dataset.pcopy].txt,lead); const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='Copiar'; },1200); }; if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); } });
+      $('plant-editbtn').onclick=()=>{ plantEditing=true; drawPlant(lead); };
+      $('plant-close').onclick=closePlant;
     }
   }
 
@@ -3291,12 +3365,12 @@ function buildFilterTable(cfg){
   function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
     const c=fb(); if(!c||!c.db)return; if(unsub)unsub();
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.leads=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('crm:',err));
-    pregSubscribe(); }
-  function stopSync(){ if(unsub){unsub();unsub=null;} if(pregUnsub){pregUnsub();pregUnsub=null;} }
+    pregSubscribe(); plantSubscribe(); }
+  function stopSync(){ if(unsub){unsub();unsub=null;} if(pregUnsub){pregUnsub();pregUnsub=null;} if(plantUnsub){plantUnsub();plantUnsub=null;} }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.leads=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
-    } else { DB=loadLocal(); pregSubscribe(); render(); } }
+    } else { DB=loadLocal(); pregSubscribe(); plantSubscribe(); render(); } }
   // API para que el cotizador (u otra fuente) cree leads: window.__nuevoLead({cliente, telefono, items:[{producto,cantidad}], lugar, pago, email})
   window.__nuevoLead = function(datos){ datos=datos||{};
     // Traer el máximo de datos posible aunque el origen use otros nombres de campo
@@ -3315,6 +3389,9 @@ function buildFilterTable(cfg){
   $('crm-preg-edit').onclick=()=>openPreg(null);
   $('crm-preg-cerrar').onclick=closePreg;
   $('crm-preg-modal').addEventListener('click',e=>{ if(e.target===$('crm-preg-modal')) closePreg(); });
+  $('crm-plant-edit').onclick=()=>openPlant(null);
+  $('crm-plant-cerrar').onclick=closePlant;
+  $('crm-plant-modal').addEventListener('click',e=>{ if(e.target===$('crm-plant-modal')) closePlant(); });
   $('crm-cerrar').onclick=closeForm;
   $('crm-export').onclick=exportJSON;
   $('crm-import').onclick=()=>$('crm-import-file').click();
