@@ -461,6 +461,7 @@
       <div class="pe-actions">
         <button class="pe-bigbtn prod" id="pe-btn-prod">🏭 Cargar producción</button>
         <button class="pe-bigbtn ent" id="pe-btn-ent">🚚 Cargar entrega directa</button>
+        <button class="cmp-btn" id="pe-btn-deshacer" style="display:none;border-color:var(--red);color:var(--red)" title="Deshace la última carga (disponible por 5 minutos)">↩️ Deshacer última carga</button>
       </div>
       <section>
         <h2><span class="dot" style="background:var(--red)"></span>Stock y faltantes</h2>
@@ -627,8 +628,10 @@
           <button class="cmp-btn" id="bd-params" title="Editar las variables que usan los cálculos (objetivo de kg/día, días de curado, validez de presupuestos, etc.)">⚙️ Parámetros</button>
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
+          <button class="cmp-btn cmp-btn-primary" id="bd-backup" title="Descarga un único JSON con TODAS las colecciones (ventas, compras, presupuestos, leads, producción, etc.)">🗄️ Backup completo</button>
         </div>
       </div>
+      <p class="note" id="bd-backup-asof" style="margin:-4px 0 10px"></p>
       <div class="filter-bar" id="bd-tabs"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <input type="text" class="search-box" id="bd-buscar" placeholder="Buscar..." style="margin-left:0">
@@ -2036,7 +2039,7 @@ function buildFilterTable(cfg){
 
   // ---------- helpers markup ----------
   function field(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
-  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fillSelect(el,opts,sel){ if(!el)return; el.innerHTML=opts.map(o=>'<option value="'+o.v+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join(''); }
 
   // ---------- eventos globales ----------
@@ -2463,7 +2466,7 @@ function buildFilterTable(cfg){
     catch(e){ alert('No se pudo importar: '+e.message); } }; r.readAsText(file); }
 
   function field(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
-  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fillSelect(el,opts,sel){ if(!el)return; el.innerHTML=opts.map(o=>'<option value="'+o.v+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join(''); }
 
   // ---------- Sync ----------
@@ -2539,7 +2542,7 @@ function buildFilterTable(cfg){
   const $=id=>document.getElementById(id);
   const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const round2=n=>Math.round(n*100)/100;
-  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const HOY=new Date(); HOY.setHours(0,0,0,0);
   const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
   const parseF=s=>{ if(!s) return null; const a=String(s).slice(0,10).split('-').map(Number); return new Date(a[0],a[1]-1,a[2]); };
@@ -2675,7 +2678,7 @@ function buildFilterTable(cfg){
     const p=editing;
     $('pre-form').innerHTML =
       '<div class="cmp-form-grid">'+
-        field('N° Presupuesto','','<input id="pf-num" value="'+esc(p.numero)+'">') +
+        field('N° Presupuesto','','<input id="pf-num" value="'+esc(p.numero)+'"'+((!p._uid&&window.__usaNube)?' readonly title="Se asigna automáticamente al guardar">':'>')) +
         field('Fecha','','<input type="date" id="pf-fecha" value="'+p.fecha+'">') +
         field('Validez (días)','','<input id="pf-val" value="'+esc(p.validezDias)+'">') +
         field('Estado','','<select id="pf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(p.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
@@ -2745,6 +2748,22 @@ function buildFilterTable(cfg){
   }
   function saveForm(){ if(!String(editing.cliente||'').trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
+    const esNuevo=!editing._uid;
+    if(esNuevo && window.__usaNube){
+      const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      // Numeración atómica: evita que dos presupuestos nuevos guardados casi a la vez terminen con el mismo número.
+      c.FS.runTransaction(c.db, async (tx)=>{
+        const ref=c.FS.doc(c.db,'vph_config','contadores');
+        const snap=await tx.get(ref);
+        let maxViejo=0; DB.presupuestos.forEach(p=>{ const m=String(p.numero||'').match(/(\d+)/); if(m){ const n=+m[1]; if(n>maxViejo)maxViejo=n; } });
+        const cur=snap.exists()?num(snap.data().presupuestos):maxViejo;   // primera vez: arranca del máximo ya usado, no de 0
+        const next=cur+1;
+        tx.set(ref,{presupuestos:next},{merge:true});
+        return next;
+      }).then(next=>{ editing.numero='P-'+String(next).padStart(4,'0'); editing._uid=newUid(); persist(editing); closeForm(); })
+        .catch(e=>alert('Error al numerar el presupuesto: '+e.message));
+      return;
+    }
     if(!editing._uid) editing._uid=newUid(); persist(editing); closeForm(); }
 
   function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_presupuestos_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
@@ -2799,9 +2818,11 @@ function buildFilterTable(cfg){
   const money = n => '$ ' + (Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const $ = id => document.getElementById(id);
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
-  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const slug = s => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,42) || 'x';
   const fb = ()=> window.__fbctx;
+  const p2=n=>String(n).padStart(2,'0'); const HOY=new Date(); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const fmtFecha = iso => { const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (m[3]+'/'+m[2]+'/'+m[1]) : (iso||'—'); };
 
   const COND=['A','B','C','M','X'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
@@ -2909,6 +2930,39 @@ function buildFilterTable(cfg){
   }
   function exportJSON(){ const blob=new Blob([JSON.stringify({[E().col]:data()},null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_'+tab+'.json'; a.click(); URL.revokeObjectURL(a.href); }
 
+  // ---------- Backup completo: TODAS las colecciones en un solo JSON descargable ----------
+  const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads','vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes'];
+  const BACKUP_KEY='vph_ultimo_backup';
+  function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
+    const u=localStorage.getItem(BACKUP_KEY);
+    if(!u){ el.textContent='⚠️ Todavía no hiciste ningún backup completo desde este dispositivo.'; el.style.color='var(--red)'; return; }
+    const dias=Math.floor((new Date(hoyISO)-new Date(u))/86400000);
+    el.textContent='Último backup completo: '+fmtFecha(u)+(dias>=7?' — ⚠️ hace '+dias+' días, convendría repetirlo':'');
+    el.style.color = dias>=7 ? 'var(--red)' : 'var(--muted)';
+  }
+  async function backupCompleto(){
+    if(!window.__usaNube){ alert('El backup completo lee todas las colecciones de la nube — iniciá sesión primero.'); return; }
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    const btn=$('bd-backup'); if(btn){ btn.disabled=true; btn.textContent='Generando…'; }
+    try{
+      const out={ fecha: hoyISO, generadoPor: (window.__rolNombre||'') };
+      for(const col of BACKUP_COLS){
+        const snap = await c.FS.getDocs(c.FS.collection(c.db,col));
+        out[col] = snap.docs.map(d=>({...d.data(), _uid:d.id}));
+      }
+      const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_backup_completo_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href);
+      localStorage.setItem(BACKUP_KEY, hoyISO); pintarBackupAsof();
+    } catch(e){ alert('No se pudo generar el backup: '+e.message); }
+    finally{ if(btn){ btn.disabled=false; btn.textContent='🗄️ Backup completo'; } }
+  }
+  // Recordatorio en vivo: si nunca se hizo backup o pasaron 7+ días, avisar en la Vista Diaria
+  window.__alertSources = window.__alertSources || [];
+  window.__alertSources.push(()=>{ const u=localStorage.getItem(BACKUP_KEY);
+    const dias = u ? Math.floor((new Date(hoyISO)-new Date(u))/86400000) : Infinity;
+    if(dias>=7) return [{sev:(u?'warn':'bad'), area:'Datos', t: u?('Backup completo hace '+dias+' días'):'Nunca se hizo un backup completo', act:'Descargalo desde Base de Datos → "🗄️ Backup completo" (queda un JSON con todo en tu computadora).', go:{page:'Base de Datos'}}];
+    return []; });
+
   // ---------- Sync ----------
   function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
     const c=fb(); if(!c||!c.db)return;
@@ -2930,8 +2984,10 @@ function buildFilterTable(cfg){
   $('bd-cerrar').onclick=closeForm;
   $('bd-import').onclick=importar;
   $('bd-export').onclick=exportJSON;
+  $('bd-backup').onclick=backupCompleto;
   $('bd-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('bd-modal').addEventListener('click',e=>{ if(e.target===$('bd-modal')) closeForm(); });
+  pintarBackupAsof();
   boot();
 })();
 </script>
@@ -2945,7 +3001,7 @@ function buildFilterTable(cfg){
 (function(){
   'use strict';
   const $=id=>document.getElementById(id);
-  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const fb=()=>window.__fbctx;
   const COL='vph_config', DOC='parametros';
@@ -3013,7 +3069,7 @@ function buildFilterTable(cfg){
   const money = n => '$ ' + (Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const $ = id => document.getElementById(id);
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
-  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const HOY=new Date(); const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
   const fb=()=>window.__fbctx;
 
@@ -3238,7 +3294,7 @@ function buildFilterTable(cfg){
   const money = n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const nf = n=>Math.round(n||0).toLocaleString('es-AR');
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
-  const esc = s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const esc = s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const norm = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
   const keyDe = (cod,nom)=>{ const c=String(cod||'').trim(); return c ? c.toUpperCase() : norm(nom); };
   const HOY=new Date(); const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
@@ -3595,6 +3651,22 @@ function buildFilterTable(cfg){
     else { try{ navigator.clipboard.writeText(out.trim()); alert('Pedido copiado al portapapeles:\n\n'+out); marcarPedido(); }catch(e){ alert(out); } }
   }
 
+  // ---------- Deshacer última carga (producción/entrega) — ventana de 5 minutos ----------
+  let ultimaCarga=null, ultimaCargaTimeout=null;
+  function registrarUltimaCarga(col,ids,resumen){
+    ultimaCarga={col,ids,resumen}; clearTimeout(ultimaCargaTimeout);
+    const btn=$('pe-btn-deshacer'); if(btn){ btn.style.display=''; btn.title='Deshace: '+resumen+' (disponible 5 min)'; }
+    ultimaCargaTimeout=setTimeout(()=>{ ultimaCarga=null; if(btn) btn.style.display='none'; }, 5*60*1000);
+  }
+  function deshacerUltimaCarga(){
+    if(!ultimaCarga){ alert('No hay ninguna carga reciente para deshacer.'); return; }
+    if(!confirm('¿Deshacer esta carga?\n\n'+ultimaCarga.resumen)) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    ultimaCarga.ids.forEach(id=> c.FS.deleteDoc(c.FS.doc(c.db,ultimaCarga.col,id)).catch(e=>console.error('deshacer:',e)));
+    clearTimeout(ultimaCargaTimeout); ultimaCarga=null; const btn=$('pe-btn-deshacer'); if(btn) btn.style.display='none';
+    alert('Carga deshecha.');
+  }
+
   // ---------- Cargar producción (steppers, id único por evento) ----------
   function stepperRow(idx,nombre,codigo,sub){ return '<div class="pe-qty"><div><div class="nm">'+esc(nombre)+'</div><div class="cd">'+esc(codigo||'')+(sub?' · '+esc(sub):'')+'</div></div>'+
     '<div class="pe-stepper"><button data-step="-1" data-i="'+idx+'">−</button><input data-qi="'+idx+'" inputmode="numeric" value="0"><button data-step="1" data-i="'+idx+'">+</button></div></div>'; }
@@ -3624,8 +3696,13 @@ function buildFilterTable(cfg){
     $('pe-prod-cancel').onclick=()=>$('pe-modal-prod').classList.remove('open');
     $('pe-prod-save').onclick=()=>{
       const fecha=$('pe-prod-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
-      let n=0; act.forEach((p,i)=>{ const cant=num(($('pe-form-prod').querySelector('input[data-qi="'+i+'"]')||{}).value); if(cant>0){ const id='prod_'+uniq(); c.FS.setDoc(c.FS.doc(c.db,'vph_produccion',id), {fecha, codigo:p.codigo||'', producto:p.nombre||'', cantidad:cant, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)}); n++; } });
-      $('pe-modal-prod').classList.remove('open'); if(!n) alert('No cargaste ninguna cantidad.');
+      const cargas=[]; act.forEach((p,i)=>{ const cant=num(($('pe-form-prod').querySelector('input[data-qi="'+i+'"]')||{}).value); if(cant>0) cargas.push({p,cant}); });
+      if(!cargas.length){ alert('No cargaste ninguna cantidad.'); return; }
+      const resumen='Producción del '+fmtFecha(fecha)+':\n'+cargas.map(x=>'• '+x.p.nombre+': '+nf(x.cant)).join('\n');
+      if(!confirm(resumen+'\n\n¿Confirmás la carga?')) return;
+      const ids=[]; cargas.forEach(({p,cant})=>{ const id='prod_'+uniq(); ids.push(id); c.FS.setDoc(c.FS.doc(c.db,'vph_produccion',id), {fecha, codigo:p.codigo||'', producto:p.nombre||'', cantidad:cant, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)}); });
+      registrarUltimaCarga('vph_produccion', ids, resumen.replace(/\n/g,' · '));
+      $('pe-modal-prod').classList.remove('open');
     };
     $('pe-modal-prod').classList.add('open');
   }
@@ -3663,10 +3740,13 @@ function buildFilterTable(cfg){
     const cli=($('pe-ent-cli').value||'').trim(); const fecha=$('pe-ent-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
     if(!cli){ alert('Ingresá el cliente.'); return; }
     const its=entItems.filter(it=>it.producto&&num(it.cantidad)>0); if(!its.length){ alert('Cargá al menos un producto con cantidad.'); return; }
-    its.forEach(it=>{ const pr=resolverProd(it.producto,it.codigo); registrarEntrega(c,fecha,cli,{producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, ''); });
+    const resumen='Entrega a '+cli+' del '+fmtFecha(fecha)+':\n'+its.map(it=>'• '+it.producto+': '+nf(it.cantidad)).join('\n');
+    if(!confirm(resumen+'\n\n¿Confirmás la entrega?')) return;
+    const ids=its.map(it=>{ const pr=resolverProd(it.producto,it.codigo); return registrarEntrega(c,fecha,cli,{producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, ''); });
+    registrarUltimaCarga('vph_entregas', ids, resumen.replace(/\n/g,' · '));
     $('pe-modal-ent').classList.remove('open');
   }
-  function registrarEntrega(c,fecha,cliente,it,pedidoUid){ const id='ent_'+uniq(); c.FS.setDoc(c.FS.doc(c.db,'vph_entregas',id), {fecha, cliente, codigo:it.codigo||'', producto:it.producto, cantidad:num(it.cantidad), usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8), pedidoUid:pedidoUid||''}); }
+  function registrarEntrega(c,fecha,cliente,it,pedidoUid){ const id='ent_'+uniq(); c.FS.setDoc(c.FS.doc(c.db,'vph_entregas',id), {fecha, cliente, codigo:it.codigo||'', producto:it.producto, cantidad:num(it.cantidad), usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8), pedidoUid:pedidoUid||''}); return id; }
 
   // ---------- Coordinar entregas (pedidos) ----------
   function resumenPed(pe){ return (pe.items||[]).filter(Boolean).filter(i=>i.producto).map(i=>(num(i.cantidad)||'')+' '+(i.codigo||i.producto)).join(' · ') || '—'; }
@@ -3881,6 +3961,7 @@ function buildFilterTable(cfg){
     return A; });
   $('pe-btn-prod').onclick=openProd;
   $('pe-btn-ent').onclick=openEnt;
+  $('pe-btn-deshacer').onclick=deshacerUltimaCarga;
   $('pe-btn-conteo-prod').onclick=openConteoProd;
   $('pe-btn-conteo-ins').onclick=openConteoIns;
   $('pe-btn-pedircompra').onclick=pedidoCompra;
@@ -3908,7 +3989,7 @@ function buildFilterTable(cfg){
 (function(){
   'use strict';
   const $=id=>document.getElementById(id);
-  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const nf=n=>Math.round(n||0).toLocaleString('es-AR');
   const money=n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -4104,7 +4185,7 @@ function buildFilterTable(cfg){
     iva:'Responsable Inscripto'
   };
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
-  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const money = n => '$'+ (Math.round(num(n)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const nf = n => Math.round(num(n)).toLocaleString('es-AR');
   const dmy = s => { if(!s) return '—'; const m=String(s).slice(0,10); if(/^\d{4}-\d{2}-\d{2}/.test(m)){ const [a,me,d]=m.split('-'); return d+'/'+me+'/'+a; } return String(s); };
@@ -4299,7 +4380,7 @@ function buildFilterTable(cfg){
 <script>
 (function(){
   'use strict';
-  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   const clientes = () => (window.__catalogoClientes ? window.__catalogoClientes() : []);
   function buscarCli(nombre,cuit){ const cs=clientes(); const cu=String(cuit||'').replace(/\D/g,''); if(cu){ const bc=cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu); if(bc) return bc; } const n=normc(nombre); return cs.find(c=>normc(c.nombre)===n)||null; }
