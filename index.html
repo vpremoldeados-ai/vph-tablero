@@ -2623,7 +2623,7 @@ function buildFilterTable(cfg){
     const v=blankVenta();
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=lead.listaPrecios;
-    const notas=[]; if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
+    const notas=[]; if(num(lead.m2))notas.push('Necesita '+num(lead.m2).toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     v.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)? lead.items : [];
     v.items = items.length ? items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const p=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(p){ it.desc=p.nombre; aplicarProducto(it,p,v.listaPrecios); } return it; }) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
@@ -3081,7 +3081,7 @@ function buildFilterTable(cfg){
 
   // Crear un presupuesto desde un lead del CRM (botón "→ Presupuesto" en la tarjeta)
   window.__presupuestoDesdeLead = function(lead, onSaved){ const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||''; if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
-    const notas=[]; if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
+    const notas=[]; if(num(lead.m2))notas.push('Necesita '+num(lead.m2).toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     p.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)?lead.items:[]; p.items=items.length?items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const pr=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(pr){ it.desc=pr.nombre; aplicarProducto(it,pr,p.listaPrecios); } return it; }):[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
     openForm(p); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "cotizado" si el presupuesto se guarda de verdad
@@ -3382,8 +3382,11 @@ function buildFilterTable(cfg){
   const fb=()=>window.__fbctx;
 
   const COL='vph_leads', KEY='vph_leads_v1';
-  const ESTADOS=[ {k:'nuevo',l:'Nuevo',c:'#4aa3ff'},{k:'contactado',l:'Contactado',c:'#c98a06'},{k:'cotizado',l:'Cotizado',c:'#8a5cc0'},{k:'reconsulta1',l:'Reconsulta 1',c:'#d98324'},{k:'reconsulta2',l:'Reconsulta 2',c:'#c96a1a'},{k:'reconsulta3',l:'Reconsulta 3',c:'#a8480f'},{k:'confirmado',l:'Confirmado',c:'#1e9e5a'},{k:'perdido',l:'Perdido',c:'#d64541'} ];
-  const ACTIVOS=['nuevo','contactado','cotizado','reconsulta1','reconsulta2','reconsulta3'];
+  const ESTADOS=[ {k:'nuevo',l:'Nuevo',c:'#4aa3ff'},{k:'cotizado',l:'Cotizado',c:'#8a5cc0'},{k:'reconsulta1',l:'Reconsulta 1',c:'#d98324'},{k:'reconsulta2',l:'Reconsulta 2',c:'#c96a1a'},{k:'reconsulta3',l:'Reconsulta 3',c:'#a8480f'},{k:'confirmado',l:'Confirmado',c:'#1e9e5a'},{k:'perdido',l:'Perdido',c:'#d64541'} ];
+  const ACTIVOS=['nuevo','cotizado','reconsulta1','reconsulta2','reconsulta3'];
+  // "Contactado" se quitó como columna del pipeline; ahora es un flag booleano en el lead (l.contactado).
+  // Migración perezosa: cualquier lead viejo con estado 'contactado' vuelve a 'nuevo' marcado como contactado.
+  function normalizarLeads(){ (DB.leads||[]).forEach(l=>{ if(l.estado==='contactado'){ l.estado='nuevo'; if(l.contactado===undefined) l.contactado=true; } }); }
   const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Teléfono','Referido','Manual'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
@@ -3404,6 +3407,7 @@ function buildFilterTable(cfg){
   const catProd=()=> (window.__catalogoProductos? window.__catalogoProductos():[]);
 
   function render(){
+    normalizarLeads();
     let leads=DB.leads.slice();
     if(q){ const s=q.toLowerCase(); leads=leads.filter(l=> (l.cliente+' '+l.telefono+' '+l.lugar+' '+resumenPedido(l)).toLowerCase().includes(s)); }
     // KPIs
@@ -3411,7 +3415,7 @@ function buildFilterTable(cfg){
     const valorPipe=activos.reduce((a,l)=>a+num(l.monto),0);
     $('crm-kpis').innerHTML =
       k('Leads totales','info', String(leads.length), 'En todo el pipeline') +
-      k('En gestión','warn', String(activos.length), 'Nuevos, contactados, cotizados y en reconsulta') +
+      k('En gestión','warn', String(activos.length), 'Nuevos, cotizados y en reconsulta') +
       k('Valor en pipeline','info', money(valorPipe), 'Suma de montos estimados activos') +
       k('Confirmados','good', String(leads.filter(l=>l.estado==='confirmado').length), 'Listos para venta/entrega');
     // Board
@@ -3439,8 +3443,8 @@ function buildFilterTable(cfg){
     return '<div style="font-size:11px;font-weight:700;color:'+col+';margin-top:4px">📅 Seguimiento '+txt+'</div>'; }
   function cardHtml(l){
     const wa=waLink(l.telefono);
-    return '<div class="kb-card"><div class="cli">'+esc(l.cliente||'(sin nombre)')+'</div>'+
-      '<div class="ped">'+esc(resumenPedido(l))+'</div>'+
+    return '<div class="kb-card"><div class="cli">'+esc(l.cliente||'(sin nombre)')+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700" title="Ya se hizo el primer contacto">✓ contactado</span>':'')+'</div>'+
+      '<div class="ped">'+esc(resumenPedido(l))+(num(l.m2)?' · <b>'+num(l.m2).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
       '<div class="meta">'+(l.lugar?'📍 '+esc(l.lugar)+'<br>':'')+(l.pago?'💳 '+esc(l.pago)+' · ':'')+(l.origen?esc(l.origen):'')+(l.telefono?'<br>📞 '+esc(l.telefono):'')+'</div>'+
       seguiBadge(l)+
       (num(l.monto)?'<div class="monto">'+money(num(l.monto))+'</div>':'')+
@@ -3566,7 +3570,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', estado:'nuevo', monto:0, items:[{producto:'',cantidad:1}], seguimiento:[], nota:'', proximoSeguimiento:'' }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -3584,6 +3588,7 @@ function buildFilterTable(cfg){
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección">') +
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
+        fld('m² que necesita','','<input id="cf-m2" value="'+(l.m2||'')+'" placeholder="0" title="Metros cuadrados que necesita el cliente (para presupuestar)">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
         fld('Lista de precios','','<select id="cf-lista">'+opt(LISTAS,l.listaPrecios)+'</select>') +
         fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'">') +
@@ -3599,7 +3604,7 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= key==='monto'?num(el.value):el.value; }); });
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-pago','pago'],['cf-monto','monto'],['cf-m2','m2'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto'||key==='m2')?num(el.value):el.value; }); });
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1}); drawItems(); };
     $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
@@ -3639,11 +3644,12 @@ function buildFilterTable(cfg){
     if(!map.cliente && (datos.nombre||datos.name)) map.cliente=datos.nombre||datos.name;   // nombre del perfil de WhatsApp si lo trae
     if(!map.telefono && (datos.tel||datos.phone||datos.whatsapp)) map.telefono=datos.tel||datos.phone||datos.whatsapp;
     if(!map.lugar && (datos.localidad||datos.domicilio||datos.direccion)) map.lugar=[datos.localidad,datos.domicilio||datos.direccion].filter(Boolean).join(' · ');
+    if(!map.m2 && (datos.m2||datos.metros||datos.superficie)) map.m2=num(datos.m2||datos.metros||datos.superficie);
     const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; persist(l); };
 
   // Fuente de alertas EN VIVO: leads nuevos sin contactar + seguimientos vencidos/hoy
   window.__alertSources.push(()=>{ const A=[];
-    const nuevos=DB.leads.filter(l=>(l.estado||'nuevo')==='nuevo');
+    const nuevos=DB.leads.filter(l=>(l.estado||'nuevo')==='nuevo' && l.estado!=='contactado' && !l.contactado);
     if(nuevos.length) A.push({sev:'warn', area:'Comercial', t:nuevos.length+' lead'+(nuevos.length>1?'s':'')+' sin contactar', act:'Primer contacto por WhatsApp (un toque en el Asistente o abrí el CRM).', go:{page:'CRM / Leads'}});
     const segui=DB.leads.filter(l=>l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO && ACTIVOS.includes(l.estado||'nuevo'));
     if(segui.length) A.push({sev:'warn', area:'Comercial', t:segui.length+' seguimiento'+(segui.length>1?'s':'')+' de lead pendiente'+(segui.length>1?'s':'')+' (vencido u hoy)', act:'Retomar el contacto prometido antes de que se enfríe.', go:{page:'CRM / Leads'}});
@@ -4449,12 +4455,13 @@ function buildFilterTable(cfg){
         prim:{l:'▶ Recordar', run(){ waModal({titulo:'Cobro → '+(v.cliente||''), telefono:telDe(v.cliente,v.cuit), texto:'Hola '+(primerNombre(v.cliente)||'')+'! Cómo va? Alguna novedad del pago'+(v.nroFactura?' de la factura '+nro:'')+'? Mil gracias!', alConfirmar(){ marcar('vph_ventas',v,'cobro'); }}); }},
         omit:{run(){ marcar('vph_ventas',v,'cobro'); }} });
     });
-    // 7) Leads nuevos sin contactar
-    leads.filter(l=>(l.estado||'nuevo')==='nuevo').forEach(l=>{
+    // 7) Leads nuevos sin contactar (el primer contacto marca l.contactado, no cambia la columna del pipeline)
+    leads.filter(l=>((l.estado||'nuevo')==='nuevo'||l.estado==='contactado') && !l.contactado).forEach(l=>{
       const preg1=(PREG[0]||'Hola{nombre}! Te habla Sofía de VPH Premoldeados 😊 ¿Me confirmás tu nombre y apellido, por favor?').replace(/\{nombre\}/g, l.cliente?(' '+String(l.cliente).split(/\s+/)[0]):'');
       T.push({ ico:'🎯', titulo:'Contactar al lead '+(l.cliente||l.telefono||'—'), detalle:(l.origen||'')+((l.items||[]).some(i=>i&&i.producto)?' · '+resumenItems(l.items,'producto','cantidad'):''),
-        prim:{l:'▶ Contactar', run(){ waModal({titulo:'Primer contacto → '+(l.cliente||''), telefono:telDe(l.cliente,l.cuit)||(String(l.telefono||'').replace(/\D/g,'')?('549'+String(l.telefono).replace(/\D/g,'').replace(/^0/,'').replace(/^549?/,'')):''), texto:preg1, alConfirmar(){ setCampos('vph_leads',l,{estado:'contactado'}); }}); }},
-        doc:{l:'👁 CRM', run(){ navTo('CRM / Leads'); }} });
+        prim:{l:'▶ Contactar', run(){ waModal({titulo:'Primer contacto → '+(l.cliente||''), telefono:telDe(l.cliente,l.cuit)||(String(l.telefono||'').replace(/\D/g,'')?('549'+String(l.telefono).replace(/\D/g,'').replace(/^0/,'').replace(/^549?/,'')):''), texto:preg1, alConfirmar(){ setCampos('vph_leads',l,{contactado:true, contactadoFecha:hoyISO, estado:(l.estado==='contactado'?'nuevo':l.estado)}); }}); }},
+        doc:{l:'👁 CRM', run(){ navTo('CRM / Leads'); }},
+        omit:{run(){ setCampos('vph_leads',l,{contactado:true, contactadoFecha:hoyISO}); }} });
     });
     // 7b) Leads con seguimiento programado, vencido o para hoy
     leads.filter(l=> l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO && l.estado!=='confirmado' && l.estado!=='perdido').forEach(l=>{
