@@ -1645,7 +1645,8 @@ function buildFilterTable(cfg){
   const TIPOS_COMPROB = ['Compra','Nota de Crédito','Nota de Débito'];
   const COND_IVA = ['A','B','C','M','X'];
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
-  const MEDIOS_PAGO = ['Transferencia','Efectivo','Cheque','VISA / Tarjeta','Débito automático','Retención'];
+  const MEDIOS_PAGO = ['Transferencia','Efectivo','Cheque','E-Cheq','VISA / Tarjeta','Débito automático','Retención'];
+  const esCheque = m => /cheq/i.test(String(m||''));   // "Cheque" o "E-Cheq" → se sincroniza con el módulo Cheques (emitido)
 
   // ---- Semilla: compras reales de julio 2026 (extraídas de Contagram) ----
   const SEED = [];  // datos en Firestore (vph_compras); el archivo público no lleva datos
@@ -1988,12 +1989,26 @@ function buildFilterTable(cfg){
         field('Fecha','','<input type="date" id="p-fecha" value="'+hoyISO+'">') +
         field('Medio','col2','<select id="p-medio">'+MEDIOS_PAGO.map(m=>'<option>'+m+'</option>').join('')+'</select>') +
       '</div>'+
+      '<div id="p-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea en el módulo Cheques como emitido)</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('N° de cheque','','<input id="p-ch-num">') +
+          field('Banco','','<input id="p-ch-banco">') +
+          field('Vencimiento / fecha de pago','col2','<input type="date" id="p-ch-venc" value="'+hoyISO+'">') +
+        '</div></div>'+
       '<div class="cmp-form-foot">'+
         '<button class="cmp-btn" id="p-cancel">Cancelar</button>'+
         '<button class="cmp-btn cmp-btn-primary" id="p-save">Registrar pago</button>'+
       '</div>';
+    $('p-medio').addEventListener('change',()=>{ $('p-cheque-extra').style.display = esCheque($('p-medio').value)?'block':'none'; });
     $('p-cancel').onclick=()=>$('cmp-modal-pago').classList.remove('open');
-    $('p-save').onclick=()=>{ const c2=DB.compras.find(x=>x._uid===payingUid); if(!c2) return; const pagos=(c2.pagos||[]).slice(); pagos.push({fecha:$('p-fecha').value, monto:num($('p-monto').value), medio:$('p-medio').value}); c2.pagos=pagos; persistPagos(c2._uid, pagos); $('cmp-modal-pago').classList.remove('open'); };
+    $('p-save').onclick=()=>{ const c2=DB.compras.find(x=>x._uid===payingUid); if(!c2) return;
+      const medio=$('p-medio').value;
+      const pago={ id:'pag_'+newUid(), fecha:$('p-fecha').value, monto:num($('p-monto').value), medio };
+      if(esCheque(medio)){ pago.chNumero=$('p-ch-num')?$('p-ch-num').value.trim():''; pago.chBanco=$('p-ch-banco')?$('p-ch-banco').value.trim():''; pago.chVenc=$('p-ch-venc')?$('p-ch-venc').value:''; }
+      const pagos=(c2.pagos||[]).slice(); pagos.push(pago); c2.pagos=pagos; persistPagos(c2._uid, pagos);
+      if(esCheque(medio) && window.__upsertChequePago){ window.__upsertChequePago({ pagoId:pago.id, compraUid:c2._uid, compraNro:c2.nroFactura||c2.numero||'', entidad:c2.proveedor||'', numero:pago.chNumero, banco:pago.chBanco, monto:pago.monto, fechaEmision:pago.fecha, fechaVencimiento:pago.chVenc||pago.fecha }); }
+      $('cmp-modal-pago').classList.remove('open'); };
     $('cmp-modal-pago').classList.add('open');
   }
 
@@ -2148,7 +2163,8 @@ function buildFilterTable(cfg){
   const COND_IVA = ['A','B','C','M','X'];
   const ARCA_ESTADOS = ['','Aprobado','Pendiente'];
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
-  const MEDIOS_COBRO = ['Transferencia','Efectivo','Cheque','Tarjeta','Mercado Pago','Retención'];
+  const MEDIOS_COBRO = ['Transferencia','Efectivo','Cheque','E-Cheq','Tarjeta','Mercado Pago','Retención'];
+  const esCheque = m => /cheq/i.test(String(m||''));   // "Cheque" o "E-Cheq" → se sincroniza con el módulo Cheques
 
   const COL='vph_ventas';
   const KEY='vph_ventas_v1';
@@ -2496,13 +2512,14 @@ function buildFilterTable(cfg){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
     const lista = v.cobros.length ? v.cobros.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid '+(c.chequeRechazado?'var(--red)':'var(--border)')+';border-radius:8px;margin-bottom:6px;font-size:13px'+(cobroEdit===i?';outline:2px solid var(--blue)':'')+'">'+
-        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+(c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
+        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+(esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>':'')+(c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
         '<span style="display:flex;gap:8px;align-items:center"><b>'+money(num(c.monto))+'</b>'+
           '<button class="cmp-rowbtn" data-cedit="'+i+'">Editar</button>'+
           '<button class="cmp-rowbtn" data-cdel="'+i+'" title="Revertir / eliminar este cobro">✕</button></span></div>').join('')
       : '<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Todavía no hay cobros registrados.</p>';
     const ed = cobroEdit!=null ? v.cobros[cobroEdit] : null;
     const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO, medioDef = ed ? ed.medio : MEDIOS_COBRO[0];
+    const chShow = esCheque(medioDef);
     $('vnt-form-cobro').innerHTML =
       '<p style="margin:0 0 10px;font-size:13px">'+(v.cliente||'—')+' — total <b>'+money(kk.total)+'</b> · cobrado <b style="color:var(--green)">'+money(kk.cobrado)+'</b> · saldo <b style="color:'+(kk.saldo>0.5?'var(--amber)':'var(--green)')+'">'+money(kk.saldo)+'</b></p>'+
       '<div style="margin-bottom:10px">'+lista+'</div>'+
@@ -2511,12 +2528,28 @@ function buildFilterTable(cfg){
         field('Monto','','<input id="vc-monto" value="'+montoDef+'">') + field('Fecha','','<input type="date" id="vc-fecha" value="'+fechaDef+'">') +
         field('Medio','col2','<select id="vc-medio">'+MEDIOS_COBRO.map(m=>'<option'+(m===medioDef?' selected':'')+'>'+m+'</option>').join('')+'</select>') +
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
+      '<div id="vc-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea/actualiza en el módulo Cheques)</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('N° de cheque','','<input id="vc-ch-num" value="'+esc((ed&&ed.chNumero)||'')+'">') +
+          field('Banco','','<input id="vc-ch-banco" value="'+esc((ed&&ed.chBanco)||'')+'">') +
+          field('Vencimiento / fecha de cobro','col2','<input type="date" id="vc-ch-venc" value="'+((ed&&ed.chVenc)||fechaDef)+'">') +
+        '</div></div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
+    $('vc-medio').addEventListener('change',()=>{ $('vc-cheque-extra').style.display = esCheque($('vc-medio').value)?'block':'none'; });
     $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
-    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(v.cobros[i].monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); drawCobro(); });
+    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
     if($('vc-cancel')) $('vc-cancel').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
     if($('vc-cancel-edit')) $('vc-cancel-edit').onclick=()=>{ cobroEdit=null; drawCobro(); };
-    $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; } const rec={fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked}; const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros); drawCobro(); };
+    $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; }
+      const prev = cobroEdit!=null ? v.cobros[cobroEdit] : null;
+      const rec={ id:(prev&&prev.id)||('cob_'+newUid()), fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked };
+      if(esCheque(rec.medio)){ rec.chNumero=$('vc-ch-num')?$('vc-ch-num').value.trim():''; rec.chBanco=$('vc-ch-banco')?$('vc-ch-banco').value.trim():''; rec.chVenc=$('vc-ch-venc')?$('vc-ch-venc').value:''; }
+      const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
+      // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
+      if(esCheque(rec.medio) && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
+      else if(!esCheque(rec.medio) && window.__deleteChequeCobro){ window.__deleteChequeCobro(rec.id); }
+      drawCobro(); };
   }
 
   function clientesConocidos(){ const m={}; DB.ventas.forEach(v=>{ if(v.cliente && !m[v.cliente]) m[v.cliente]={nombre:v.cliente,cuit:v.cuit,cond:v.condIva}; }); return Object.values(m); }
@@ -2701,7 +2734,7 @@ function buildFilterTable(cfg){
     let html='<tr><th>Tipo</th><th>N°</th><th>Banco</th><th>Cliente/Proveedor</th>'+th('fechaEmision','Emisión')+th('fechaVencimiento','Vencimiento')+th('monto','Monto','num')+'<th>Estado</th><th></th></tr>';
     if(!rows.length) html+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:22px">Sin cheques para este filtro.</td></tr>';
     rows.forEach(c=>{ const venc=porVencer(c);
-      html+='<tr><td>'+(c.tipo==='emitido'?'📤 Emitido':'📥 Recibido')+'</td><td>'+esc(c.numero||'—')+'</td><td>'+esc(c.banco||'—')+'</td><td><b>'+esc(c.entidad||'—')+'</b></td>'+
+      html+='<tr><td>'+(c.tipo==='emitido'?'📤 Emitido':'📥 Recibido')+(c.origen==='cobro'?'<div style="font-size:9.5px;color:var(--muted)">↩ de Ventas</div>':c.origen==='pago'?'<div style="font-size:9.5px;color:var(--muted)">↩ de Compras</div>':'')+'</td><td>'+esc(c.numero||'—')+'</td><td>'+esc(c.banco||'—')+'</td><td><b>'+esc(c.entidad||'—')+'</b></td>'+
         '<td>'+fmtFecha(c.fechaEmision)+'</td><td'+(venc?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.fechaVencimiento)+(venc?' ⏰':'')+'</td>'+
         '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado)+'</td>'+
         '<td style="white-space:nowrap">'+
@@ -2755,6 +2788,26 @@ function buildFilterTable(cfg){
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.cheques=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { DB=loadLocal(); render(); } }
+
+  // ---------- API para Ventas/Compras: crear/actualizar un cheque desde un cobro (recibido) o un pago (emitido) ----------
+  // Id determinístico (chqcob_<id> / chqpag_<id>) para que reeditar el mismo movimiento actualice el mismo cheque, sin duplicar.
+  function upsertChequeDesde(kind, p){   // kind: 'cob' (cobro→recibido) | 'pag' (pago→emitido)
+    if(!p||!p.refId) return;
+    const id='chq'+kind+'_'+p.refId; const ex=DB.cheques.find(x=>x._uid===id)||{};
+    const tipo = kind==='pag' ? 'emitido' : 'recibido';
+    // Estado: si el movimiento marca rechazado, fuerza 'rechazado'; si no, conserva el estado manual del cheque (o 'cartera' si es nuevo).
+    const estado = p.rechazado ? 'rechazado' : (ex.estado || 'cartera');
+    const rec={ _uid:id, tipo, origen:(kind==='pag'?'pago':'cobro'), refId:p.refId, refUid:p.refUid||ex.refUid||'',
+      numero:(p.numero||ex.numero||''), banco:(p.banco||ex.banco||''), entidad:(p.entidad||ex.entidad||''),
+      fechaEmision:(p.fechaEmision||ex.fechaEmision||hoyISO), fechaVencimiento:(p.fechaVencimiento||ex.fechaVencimiento||p.fechaEmision||hoyISO),
+      monto:num(p.monto), estado, nota:(p.refNro?((kind==='pag'?'Pago de la compra ':'Cobro de la venta ')+p.refNro):(kind==='pag'?'Generado desde un pago de Compras':'Generado desde un cobro de Ventas')) };
+    persist(rec);
+  }
+  function delChequeDesde(kind, refId){ if(!refId) return; const id='chq'+kind+'_'+refId; if(DB.cheques.find(x=>x._uid===id)) remove(id); }
+  window.__upsertChequeCobro = p=>upsertChequeDesde('cob', {refId:p.cobroId, refUid:p.ventaUid, refNro:p.ventaNro, numero:p.numero, banco:p.banco, entidad:p.entidad, monto:p.monto, fechaEmision:p.fechaEmision, fechaVencimiento:p.fechaVencimiento, rechazado:p.chequeRechazado});
+  window.__deleteChequeCobro = cobroId=>delChequeDesde('cob', cobroId);
+  window.__upsertChequePago = p=>upsertChequeDesde('pag', {refId:p.pagoId, refUid:p.compraUid, refNro:p.compraNro, numero:p.numero, banco:p.banco, entidad:p.entidad, monto:p.monto, fechaEmision:p.fechaEmision, fechaVencimiento:p.fechaVencimiento, rechazado:p.chequeRechazado});
+  window.__deleteChequePago = pagoId=>delChequeDesde('pag', pagoId);
 
   window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
   // Fuente de alertas EN VIVO: cheques por vencer sin resolver
