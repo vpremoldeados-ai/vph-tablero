@@ -860,6 +860,39 @@
     </div>
   </div>
 
+  <!-- ================= CHEQUES (recibidos y emitidos) ================= -->
+  <div class="page" id="page-cheques">
+    <div class="kpis" id="chq-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="margin:0"><span class="dot"></span>Cheques</h2>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="cmp-btn cmp-btn-primary" id="chq-nuevo">+ Nuevo Cheque</button>
+          <button class="cmp-btn" id="chq-export">Exportar JSON</button>
+        </div>
+      </div>
+      <div class="cmp-summary" id="chq-summary"></div>
+      <div class="filter-bar" id="chq-filtros"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input type="text" class="search-box" id="chq-buscar" placeholder="Buscar N°, banco, cliente/proveedor..." style="margin-left:0">
+        <span class="result-count" id="chq-count" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="tbl-wrap"><table id="chq-tabla"></table></div>
+      <p class="note"><b>Cheques recibidos</b> (de clientes, como cobranza) y <b>emitidos</b> (a proveedores, como pago) en un solo lugar. Estado: En cartera → Depositado (solo recibidos) → Cobrado / Rechazado. Vista Diaria avisa cuando se acerca la fecha de vencimiento de uno sin resolver. Datos en la nube (Firestore <code>vph_cheques</code>).</p>
+    </section>
+  </div>
+
+  <!-- ================= FORMULARIO CHEQUE (overlay) ================= -->
+  <div class="cmp-overlay" id="chq-modal">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head">
+        <h3 id="chq-form-title">Nuevo Cheque</h3>
+        <button class="cmp-x" id="chq-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="chq-form"></div>
+    </div>
+  </div>
+
   <!-- ================= FISCAL ================= -->
   <div class="page" id="page-fiscal">
     <section>
@@ -908,6 +941,7 @@ const PAGES = [
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'compras', nombre:'Compras', ico:'🧾' },
+  { id:'cheques', nombre:'Cheques', ico:'🏦' },
   { id:'basedatos', nombre:'Base de Datos', ico:'📇' },
   { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
   { id:'fiscal', nombre:'Fiscal', ico:'✓' }
@@ -2579,6 +2613,169 @@ function buildFilterTable(cfg){
 </script>
 
 <!-- =====================================================================
+     MÓDULO CHEQUES — recibidos (de clientes) y emitidos (a proveedores).
+     Persistencia: Firestore vph_cheques. Solo admin (datos financieros).
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const money=n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const $=id=>document.getElementById(id);
+  const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const HOY=new Date(); HOY.setHours(0,0,0,0);
+  const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const fmtFecha=s=>{ if(!s) return '—'; const a=String(s).slice(0,10).split('-'); return a[2]+'/'+a[1]+'/'+a[0].slice(2); };
+  const fb=()=>window.__fbctx;
+
+  const COL='vph_cheques', KEY='vph_cheques_v1';
+  const TIPOS=[{k:'recibido',l:'Recibido (cliente)'},{k:'emitido',l:'Emitido (proveedor)'}];
+  const ESTADOS=[{k:'cartera',l:'En cartera',c:'#4aa3ff'},{k:'depositado',l:'Depositado',c:'#c98a06'},{k:'cobrado',l:'Cobrado',c:'#1e9e5a'},{k:'rechazado',l:'Rechazado',c:'#d64541'}];
+  const tipoLbl=k=>(TIPOS.find(x=>x.k===k)||{}).l||k;
+  const estLbl=k=>(ESTADOS.find(x=>x.k===k)||{}).l||k;
+  const RESUELTO=['cobrado','rechazado'];
+
+  let DB={cheques:[]}, unsub=null, uidSeq=Date.now();
+  function newUid(){ return 'chq'+(uidSeq++).toString(36); }
+  function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(KEY)); if(d&&Array.isArray(d.cheques)) return d; }catch(e){} return {cheques:[]}; }
+  function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
+  function persist(c){ if(!c._uid)c._uid=newUid();
+    if(window.__usaNube){ const cx=fb(); if(cx&&cx.db) cx.FS.setDoc(cx.FS.doc(cx.db,COL,c._uid),{...c}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else { const i=DB.cheques.findIndex(x=>x._uid===c._uid); if(i>=0)DB.cheques[i]=c; else DB.cheques.push(c); saveLocal(); render(); } }
+  function remove(uid){ if(window.__usaNube){ const cx=fb(); if(cx&&cx.db) cx.FS.deleteDoc(cx.FS.doc(cx.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
+    else { DB.cheques=DB.cheques.filter(x=>x._uid!==uid); saveLocal(); render(); } }
+  function setEstado(c,estado){ persist({...c, estado}); }
+
+  function blank(){ return { tipo:'recibido', numero:'', banco:'', entidad:'', fechaEmision:hoyISO, fechaVencimiento:hoyISO, monto:0, estado:'cartera', nota:'' }; }
+  function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
+  function catProveedores(){ return (window.__catalogoProveedores?window.__catalogoProveedores():[]); }
+  function datalistEntidad(tipo){ const arr=(tipo==='emitido'?catProveedores():catClientes()); return '<datalist id="chq-ent-list">'+arr.map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
+
+  let filtro={ estado:'todos', q:'', sortCol:'fechaVencimiento', sortDir:1 };
+  function field(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
+  function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
+  function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
+  const diasAviso=()=> num(window.__param?window.__param('diasAvisoCheque',5):5)||5;
+  function porVencer(c){ return !RESUELTO.includes(c.estado) && c.fechaVencimiento && c.fechaVencimiento<=addDias(hoyISO,diasAviso()); }
+  function addDias(iso,n){ const a=String(iso).slice(0,10).split('-').map(Number); const d=new Date(a[0],a[1]-1,a[2]); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()); }
+
+  function render(){
+    let rows=DB.cheques.slice();
+    if(filtro.estado!=='todos'){
+      if(filtro.estado==='recibido'||filtro.estado==='emitido') rows=rows.filter(c=>c.tipo===filtro.estado);
+      else if(filtro.estado==='porvencer') rows=rows.filter(porVencer);
+      else rows=rows.filter(c=>c.estado===filtro.estado);
+    }
+    if(filtro.q){ const q=filtro.q.toLowerCase(); rows=rows.filter(c=>((c.numero||'')+' '+(c.banco||'')+' '+(c.entidad||'')).toLowerCase().includes(q)); }
+    rows.sort((a,b)=>{ let va=a[filtro.sortCol]||'', vb=b[filtro.sortCol]||''; if(filtro.sortCol==='monto'){va=num(a.monto);vb=num(b.monto);} return (typeof va==='string'?va.localeCompare(vb):(va-vb))*filtro.sortDir; });
+    renderKpis(); renderSummary(rows); renderFiltros(); renderTabla(rows);
+    $('chq-count').textContent = rows.length+' de '+DB.cheques.length+' cheques';
+  }
+  function renderKpis(){
+    const rec=DB.cheques.filter(c=>c.tipo==='recibido'&&!RESUELTO.includes(c.estado));
+    const emi=DB.cheques.filter(c=>c.tipo==='emitido'&&!RESUELTO.includes(c.estado));
+    const vencer=DB.cheques.filter(porVencer);
+    const rechazados=DB.cheques.filter(c=>c.estado==='rechazado');
+    $('chq-kpis').innerHTML =
+      k('En cartera (recibidos)','info', money(rec.reduce((a,c)=>a+num(c.monto),0)), rec.length+' cheque'+(rec.length!==1?'s':'')+' sin resolver') +
+      k('En cartera (emitidos)','info', money(emi.reduce((a,c)=>a+num(c.monto),0)), emi.length+' cheque'+(emi.length!==1?'s':'')+' sin resolver') +
+      k('Por vencer','warn', String(vencer.length), money(vencer.reduce((a,c)=>a+num(c.monto),0))+' en los próximos '+diasAviso()+' días') +
+      k('Rechazados', rechazados.length?'bad':'good', String(rechazados.length), money(rechazados.reduce((a,c)=>a+num(c.monto),0)));
+  }
+  function renderSummary(rows){
+    const tot=rows.reduce((a,c)=>a+num(c.monto),0);
+    const rec=rows.filter(c=>c.tipo==='recibido').reduce((a,c)=>a+num(c.monto),0);
+    const emi=rows.filter(c=>c.tipo==='emitido').reduce((a,c)=>a+num(c.monto),0);
+    const rech=rows.filter(c=>c.estado==='rechazado').reduce((a,c)=>a+num(c.monto),0);
+    $('chq-summary').innerHTML = cell('Cantidad',String(rows.length),'var(--text)')+cell('Recibidos',money(rec),'var(--blue)')+cell('Emitidos',money(emi),'var(--amber)')+cell('Rechazados',money(rech),'var(--red)')+cell('Total',money(tot),'var(--text)');
+  }
+  function renderFiltros(){
+    const cnt=e=>DB.cheques.filter(c=>c.estado===e).length;
+    const defs=[['todos','Todos',DB.cheques.length],['recibido','Recibidos',DB.cheques.filter(c=>c.tipo==='recibido').length],['emitido','Emitidos',DB.cheques.filter(c=>c.tipo==='emitido').length],['porvencer','Por vencer',DB.cheques.filter(porVencer).length],['cartera','En cartera',cnt('cartera')],['depositado','Depositados',cnt('depositado')],['cobrado','Cobrados',cnt('cobrado')],['rechazado','Rechazados',cnt('rechazado')]];
+    $('chq-filtros').innerHTML = defs.map(([v,l,n])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+n+')</button>').join('');
+    $('chq-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
+  }
+  const badgeEstado=e=>{ const est=ESTADOS.find(x=>x.k===e)||{c:'#95a5b8',l:e}; return '<span class="badge" style="background:'+est.c+'22;color:'+est.c+';border:1px solid '+est.c+'55">'+est.l+'</span>'; };
+  function renderTabla(rows){
+    const th=(col,label,cls)=>'<th class="'+(cls||'')+'" data-sort="'+col+'">'+label+(filtro.sortCol===col?' <span class="arrow">'+(filtro.sortDir<0?'▼':'▲')+'</span>':'')+'</th>';
+    let html='<tr><th>Tipo</th><th>N°</th><th>Banco</th><th>Cliente/Proveedor</th>'+th('fechaEmision','Emisión')+th('fechaVencimiento','Vencimiento')+th('monto','Monto','num')+'<th>Estado</th><th></th></tr>';
+    if(!rows.length) html+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:22px">Sin cheques para este filtro.</td></tr>';
+    rows.forEach(c=>{ const venc=porVencer(c);
+      html+='<tr><td>'+(c.tipo==='emitido'?'📤 Emitido':'📥 Recibido')+'</td><td>'+esc(c.numero||'—')+'</td><td>'+esc(c.banco||'—')+'</td><td><b>'+esc(c.entidad||'—')+'</b></td>'+
+        '<td>'+fmtFecha(c.fechaEmision)+'</td><td'+(venc?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.fechaVencimiento)+(venc?' ⏰':'')+'</td>'+
+        '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado)+'</td>'+
+        '<td style="white-space:nowrap">'+
+          (c.tipo==='recibido'&&c.estado==='cartera'?'<button class="cmp-rowbtn" data-act="depositar" data-id="'+c._uid+'">Depositar</button>':'')+
+          (!RESUELTO.includes(c.estado)?'<button class="cmp-rowbtn" data-act="cobrado" data-id="'+c._uid+'">✓ Cobrado</button><button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rechazado</button>':'')+
+          '<button class="cmp-rowbtn" data-act="edit" data-id="'+c._uid+'">Editar</button>'+
+          '<button class="cmp-rowbtn" data-act="del" data-id="'+c._uid+'">✕</button>'+
+        '</td></tr>'; });
+    $('chq-tabla').innerHTML=html;
+    $('chq-tabla').querySelectorAll('th[data-sort]').forEach(th=> th.onclick=()=>{ const col=th.dataset.sort; if(filtro.sortCol===col) filtro.sortDir*=-1; else {filtro.sortCol=col; filtro.sortDir=1;} render(); });
+    $('chq-tabla').querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const c=DB.cheques.find(x=>x._uid===b.dataset.id); if(!c) return; const a=b.dataset.act;
+      if(a==='depositar') setEstado(c,'depositado');
+      else if(a==='cobrado') setEstado(c,'cobrado');
+      else if(a==='rechazado'){ if(confirm('¿Marcar este cheque de '+money(num(c.monto))+' como RECHAZADO?')) setEstado(c,'rechazado'); }
+      else if(a==='edit') openForm(c);
+      else if(a==='del'){ if(confirm('¿Eliminar este cheque de '+(c.entidad||'—')+' por '+money(num(c.monto))+'?')) remove(c._uid); } });
+  }
+
+  // ---------- Form ----------
+  let editing=null;
+  function openForm(c){ editing=c?JSON.parse(JSON.stringify(c)):blank(); $('chq-form-title').textContent=c?'Editar Cheque':'Nuevo Cheque'; drawForm(); $('chq-modal').classList.add('open'); }
+  function closeForm(){ $('chq-modal').classList.remove('open'); editing=null; }
+  function drawForm(){
+    const c=editing;
+    $('chq-form').innerHTML =
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        field('Tipo','','<select id="cf-tipo">'+TIPOS.map(t=>'<option value="'+t.k+'"'+(c.tipo===t.k?' selected':'')+'>'+t.l+'</option>').join('')+'</select>') +
+        field('N° de cheque','','<input id="cf-num" value="'+esc(c.numero)+'">') +
+        field('Banco','','<input id="cf-banco" value="'+esc(c.banco)+'">') +
+        field((c.tipo==='emitido'?'Proveedor':'Cliente'),'','<input id="cf-ent" list="chq-ent-list" value="'+esc(c.entidad)+'">'+datalistEntidad(c.tipo)) +
+        field('Fecha de emisión','','<input type="date" id="cf-femi" value="'+(c.fechaEmision||'')+'">') +
+        field('Fecha de vencimiento','','<input type="date" id="cf-fvenc" value="'+(c.fechaVencimiento||'')+'">') +
+        field('Monto $','','<input id="cf-monto" value="'+c.monto+'">') +
+        field('Estado','','<select id="cf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
+        field('Nota','col2','<textarea id="cf-nota" rows="2">'+esc(c.nota)+'</textarea>') +
+      '</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
+    $('cf-tipo').addEventListener('change',()=>{ editing.tipo=$('cf-tipo').value; editing.entidad=''; drawForm(); });
+    [['cf-num','numero'],['cf-banco','banco'],['cf-ent','entidad'],['cf-femi','fechaEmision'],['cf-fvenc','fechaVencimiento'],['cf-monto','monto'],['cf-estado','estado'],['cf-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= key==='monto'?num(el.value):el.value; }); });
+    $('cf-cancel').onclick=closeForm;
+    $('cf-save').onclick=()=>{ if(!String(editing.entidad||'').trim()){ alert('Ingresá el cliente/proveedor.'); return; } if(!num(editing.monto)){ alert('Ingresá el monto.'); return; } persist(editing); closeForm(); };
+  }
+
+  function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_cheques_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
+
+  function startSync(){ if(window.__rol!=='admin') return;   // datos financieros: solo admin
+    const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.cheques=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('cheques:',err)); }
+  function stopSync(){ if(unsub){unsub();unsub=null;} }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.cheques=[]; render(); });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
+    } else { DB=loadLocal(); render(); } }
+
+  window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
+  // Fuente de alertas EN VIVO: cheques por vencer sin resolver
+  window.__alertSources = window.__alertSources || [];
+  window.__alertSources.push(()=>{ const A=[];
+    const vencer=DB.cheques.filter(porVencer);
+    if(vencer.length){ const rec=vencer.filter(c=>c.tipo==='recibido'), emi=vencer.filter(c=>c.tipo==='emitido');
+      let t=vencer.length+' cheque'+(vencer.length>1?'s':'')+' por vencer en los próximos '+diasAviso()+' días ('+money(vencer.reduce((a,c)=>a+num(c.monto),0))+')';
+      A.push({sev:'warn', area:'Finanzas', t, act:(rec.length?rec.length+' a depositar/cobrar':'')+(rec.length&&emi.length?' · ':'')+(emi.length?emi.length+' a pagar':''), go:{page:'Cheques'}}); }
+    return A; });
+
+  $('chq-nuevo').onclick=()=>openForm(null);
+  $('chq-cerrar').onclick=closeForm;
+  $('chq-export').onclick=exportJSON;
+  $('chq-buscar').addEventListener('input',e=>{ filtro.q=e.target.value.trim(); render(); });
+  $('chq-modal').addEventListener('click',e=>{ if(e.target===$('chq-modal')) closeForm(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
      MÓDULO PRESUPUESTOS — app propia estilo Contagram (numeración, validez, estado,
      imprimir/WhatsApp, convertir a venta). Persistencia: Firestore vph_presupuestos.
      ===================================================================== -->
@@ -3030,6 +3227,7 @@ function buildFilterTable(cfg){
   // Catálogo de productos accesible para los formularios de Ventas/Compras
   window.__catalogoProductos = ()=> store.vph_productos.slice();
   window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
+  window.__catalogoProveedores = ()=> store.vph_proveedores.slice();   // para el módulo Cheques (emitidos)
 
   $('bd-nuevo').onclick=()=>openForm(null);
   $('bd-cerrar').onclick=closeForm;
@@ -3064,7 +3262,8 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
-    {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'}
+    {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
+    {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'}
   ];
   window.__cfg = window.__cfg || {};
   DEFS.forEach(d=>{ if(window.__cfg[d.k]===undefined) window.__cfg[d.k]=d.def; });   // defaults desde el arranque
