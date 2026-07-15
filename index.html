@@ -2623,7 +2623,8 @@ function buildFilterTable(cfg){
     const v=blankVenta();
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=lead.listaPrecios;
-    const notas=[]; if(num(lead.m2))notas.push('Necesita '+num(lead.m2).toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
+    const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
+    const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     v.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)? lead.items : [];
     v.items = items.length ? items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const p=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(p){ it.desc=p.nombre; aplicarProducto(it,p,v.listaPrecios); } return it; }) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
@@ -3081,7 +3082,8 @@ function buildFilterTable(cfg){
 
   // Crear un presupuesto desde un lead del CRM (botón "→ Presupuesto" en la tarjeta)
   window.__presupuestoDesdeLead = function(lead, onSaved){ const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||''; if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
-    const notas=[]; if(num(lead.m2))notas.push('Necesita '+num(lead.m2).toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
+    const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
+    const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     p.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)?lead.items:[]; p.items=items.length?items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const pr=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(pr){ it.desc=pr.nombre; aplicarProducto(it,pr,p.listaPrecios); } return it; }):[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
     openForm(p); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "cotizado" si el presupuesto se guarda de verdad
@@ -3139,7 +3141,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'m2PorUnidad',l:'m² que cubre cada unidad',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
@@ -3405,6 +3407,9 @@ function buildFilterTable(cfg){
   function waLink(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d)return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; }
   function resumenPedido(l){ return (l.items||[]).filter(i=>i && i.producto).map(i=>(num(i.cantidad)||'')+' '+i.producto).join(' · ') || '—'; }
   const catProd=()=> (window.__catalogoProductos? window.__catalogoProductos():[]);
+  const matchProd=val=>{ const v=(val||'').trim().toLowerCase(); return catProd().find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v); };
+  // m² totales del lead: suma de m² por ítem (o el campo viejo l.m2 si no hay ítems con m²)
+  function totalM2(l){ const s=(l.items||[]).reduce((a,it)=>a+num(it.m2),0); return s>0?s:num(l.m2); }
 
   function render(){
     normalizarLeads();
@@ -3444,7 +3449,7 @@ function buildFilterTable(cfg){
   function cardHtml(l){
     const wa=waLink(l.telefono);
     return '<div class="kb-card"><div class="cli">'+esc(l.cliente||'(sin nombre)')+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700" title="Ya se hizo el primer contacto">✓ contactado</span>':'')+'</div>'+
-      '<div class="ped">'+esc(resumenPedido(l))+(num(l.m2)?' · <b>'+num(l.m2).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
+      '<div class="ped">'+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
       '<div class="meta">'+(l.lugar?'📍 '+esc(l.lugar)+'<br>':'')+(l.pago?'💳 '+esc(l.pago)+' · ':'')+(l.origen?esc(l.origen):'')+(l.telefono?'<br>📞 '+esc(l.telefono):'')+'</div>'+
       seguiBadge(l)+
       (num(l.monto)?'<div class="monto">'+money(num(l.monto))+'</div>':'')+
@@ -3588,14 +3593,14 @@ function buildFilterTable(cfg){
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección">') +
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
-        fld('m² que necesita','','<input id="cf-m2" value="'+(l.m2||'')+'" placeholder="0" title="Metros cuadrados que necesita el cliente (para presupuestar)">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
         fld('Lista de precios','','<select id="cf-lista">'+opt(LISTAS,l.listaPrecios)+'</select>') +
         fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'">') +
         fld('Cond. IVA','','<select id="cf-cond">'+opt(['A','B','C','M','X'],l.condIva)+'</select>') +
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Pedido</h4>'+
-      '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:70%">Producto</th><th>Cantidad</th><th></th></tr></thead><tbody id="cf-items"></tbody></table></div>'+
+      '<p class="note" style="margin:0 0 6px">Cargá los <b>m²</b> que necesita y, si el producto tiene definido cuántos m² cubre cada unidad, la <b>cantidad</b> se calcula sola (podés ajustarla a mano).</p>'+
+      '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:55%">Producto</th><th>m²</th><th>Cantidad</th><th></th></tr></thead><tbody id="cf-items"></tbody></table></div>'+
       '<button class="cmp-addline" id="cf-addline">+ Agregar producto</button>'+ datalistProd() +
       '<h4 style="margin:14px 0 6px;font-size:13px">Seguimiento</h4>'+
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><label style="font-size:12.5px;color:var(--muted);font-weight:700;white-space:nowrap">📅 Próximo seguimiento</label><input type="date" id="cf-proxsegui" value="'+esc(l.proximoSeguimiento||'')+'" style="max-width:170px;padding:7px 10px;border:1px solid var(--border);border-radius:8px">'+(l.proximoSeguimiento?'<button class="cmp-rowbtn" id="cf-proxsegui-clear">Quitar</button>':'')+'</div>'+
@@ -3604,18 +3609,26 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-pago','pago'],['cf-monto','monto'],['cf-m2','m2'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto'||key==='m2')?num(el.value):el.value; }); });
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; }); });
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1}); drawItems(); };
     $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
     $('cf-cancel').onclick=closeForm;
     $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } persist(editing); closeForm(); };
   }
+  function m2PorUnidadDe(prodNombre){ const p=matchProd(prodNombre); return p?num(p.m2PorUnidad):0; }
+  function recalcUnidades(i){ const it=editing.items[i]; const m2u=m2PorUnidadDe(it.producto); if(m2u>0 && num(it.m2)>0){ it.cantidad=Math.ceil(num(it.m2)/m2u); return true; } return false; }
   function drawItems(){
-    $('cf-items').innerHTML = editing.items.map((it,i)=>'<tr><td><input class="txt" data-i="'+i+'" data-k="producto" list="crm-prod-list" value="'+esc(it.producto)+'" placeholder="Producto"></td>'+
-      '<td><input data-i="'+i+'" data-k="cantidad" value="'+esc(it.cantidad)+'" style="width:80px"></td>'+
-      '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>').join('');
-    $('cf-items').querySelectorAll('input').forEach(el=> el.addEventListener('input',()=>{ editing.items[+el.dataset.i][el.dataset.k]= el.dataset.k==='cantidad'?num(el.value):el.value; }));
+    $('cf-items').innerHTML = editing.items.map((it,i)=>{ const m2u=m2PorUnidadDe(it.producto);
+      return '<tr><td><input class="txt" data-i="'+i+'" data-k="producto" list="crm-prod-list" value="'+esc(it.producto)+'" placeholder="Producto"></td>'+
+      '<td><input data-i="'+i+'" data-k="m2" value="'+esc(it.m2||'')+'" style="width:66px" placeholder="m²"></td>'+
+      '<td><input data-i="'+i+'" data-k="cantidad" value="'+esc(it.cantidad)+'" style="width:66px">'+(m2u>0?'<div style="font-size:9px;color:var(--muted)">'+num(m2u).toLocaleString('es-AR')+' m²/u</div>':'')+'</td>'+
+      '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>'; }).join('');
+    $('cf-items').querySelectorAll('input').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.i, k=el.dataset.k;
+      editing.items[i][k]= (k==='cantidad'||k==='m2')?num(el.value):el.value;
+      if(k==='m2' && recalcUnidades(i)){ const cq=$('cf-items').querySelector('input[data-i="'+i+'"][data-k="cantidad"]'); if(cq) cq.value=editing.items[i].cantidad; } }));
+    // Al elegir el producto (change/blur): fija el código y recalcula las unidades si ya hay m² cargados
+    $('cf-items').querySelectorAll('input[data-k="producto"]').forEach(el=> el.addEventListener('change',()=>{ const i=+el.dataset.i; const p=matchProd(el.value); if(p){ editing.items[i].producto=p.nombre; editing.items[i].codigo=p.codigo||''; } recalcUnidades(i); drawItems(); }));
     $('cf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); });
   }
   function drawSegui(){
