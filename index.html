@@ -2853,6 +2853,53 @@ function buildFilterTable(cfg){
   const COND_IVA=['A','B','C','M','X'];
   const ALICUOTAS=[{v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'}];
   const ESTADOS=[{k:'borrador',l:'Borrador',c:'#95a5b8'},{k:'enviado',l:'Enviado',c:'#2f6fb2'},{k:'aceptado',l:'Aceptado',c:'#1e9e5a'},{k:'rechazado',l:'Rechazado',c:'#d64541'},{k:'convertido',l:'Convertido a venta',c:'#8a5cc0'}];
+
+  // ---------- FLETE por zona (misma lógica y precios que el cotizador web; precios editables en Parámetros) ----------
+  const ZONAS=[
+    {k:'', l:'— Sin definir —', par:null, def:0},
+    {k:'retiro', l:'Retiro en fábrica (Toledo)', par:null, def:0},
+    {k:'capital', l:'Córdoba Capital', par:'fleteCapital', def:28000},
+    {k:'cercanas', l:'Hasta 30 km de Circunvalación', par:'fleteCercanas', def:39000},
+    {k:'argentina', l:'Resto del país', par:'fleteArgentina', def:140000}
+  ];
+  const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
+  const zonaCosto=k=>{ const z=ZONAS.find(x=>x.k===k); return (z&&z.par)?num(window.__param(z.par,z.def)):0; };
+  const esItemFlete=it=> /^flete/i.test(String((it&&it.desc)||''));
+  const ncp=s=>String(s||'').trim().toUpperCase();
+  // Flete CONSOLIDADO: junta las fracciones de pallet de todos los ítems, con tope de kg por pallet.
+  // Dos productos que ocupan pallets parciales viajan en el mismo pallet y no se cobra de más.
+  function calcFlete(items, zona){
+    if(!zona || zona==='retiro') return {pallets:0, costo:0, kg:0};
+    const prods=catProductos(); let frac=0, kg=0, hay=false;
+    (items||[]).forEach(it=>{ if(esItemFlete(it)) return; const cant=num(it.cant); if(cant<=0) return;
+      const pr=(it.codigo&&prods.find(p=>ncp(p.codigo)===ncp(it.codigo)))||prods.find(p=>ncp(p.nombre)===ncp(it.desc));
+      if(!it.desc && !it.codigo) return;
+      hay=true;
+      const ud=pr?num(pr.udPorPallet):0;
+      frac += ud>0 ? cant/ud : 1;   // sin udPorPallet cargado: se asume 1 pallet por ítem (conservador)
+      kg += cant*(pr?num(pr.pesoUnit):0);
+    });
+    if(!hay) return {pallets:0, costo:0, kg:0};
+    const tope=num(window.__param('kgPorPallet',1500))||1500;
+    const pallets=Math.max(Math.ceil(frac-1e-9), Math.ceil(kg/tope), 1);
+    return {pallets, costo: zonaCosto(zona)*pallets, kg};
+  }
+  // Reemplaza el renglón "Flete" del presupuesto según la zona y los ítems actuales.
+  function aplicarFlete(p){
+    p.items=(p.items||[]).filter(it=>!esItemFlete(it));
+    const f=calcFlete(p.items, p.zona);
+    if(f.costo>0){
+      const sf=/sin facturar|sin factura/i.test(p.listaPrecios||'');
+      const iva= sf?'nogravado':'21';
+      // El precio de zona es FINAL (con IVA), igual que en el cotizador → se netea para el renglón, como hace aplicarProducto con los productos.
+      const precioUnit = sf ? round2(f.costo) : round2(f.costo/1.21);
+      p.items.push({desc:'Flete — '+zonaLabel(p.zona)+' ('+f.pallets+' pallet'+(f.pallets>1?'s':'')+')', codigo:'FLETE', cant:1, precioUnit, descPct:0, iva});
+    }
+    return f;
+  }
+  window.__fleteZonas = ()=> ZONAS.map(z=>({k:z.k,l:z.l}));
+  // Abre la vista previa/PDF de un presupuesto ya guardado (la usa el CRM para el PDF de un toque)
+  window.__presupuestoImprimir = p=>{ if(window.__imprimir&&window.__imprimir.presupuesto) window.__imprimir.presupuesto(paraDoc(p)); else alert('Módulo de Documentos no disponible.'); };
   const estadoLbl=k=>{ const e=ESTADOS.find(x=>x.k===k); return e?e.l:k; };
 
   let DB={presupuestos:[]}, unsub=null, uidSeq=Date.now();
@@ -2968,7 +3015,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
+  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], zona:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
   let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
   function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
   function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
@@ -2987,6 +3034,7 @@ function buildFilterTable(cfg){
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
         field('Lista de precios','','<select id="pf-lista">'+opt(LISTAS,p.listaPrecios)+'</select>') +
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
+        field('Zona de entrega (flete)','col2','<select id="pf-zona">'+ZONAS.map(z=>'<option value="'+z.k+'"'+((p.zona||'')===z.k?' selected':'')+'>'+z.l+(z.par?' — '+money(zonaCosto(z.k))+'/pallet':'')+'</option>').join('')+'</select>') +
       '</div>'+
       '<h4 style="margin:6px 0 8px;font-size:13px">Ítems</h4>'+
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead><tbody id="pf-items"></tbody></table></div>'+
@@ -3005,7 +3053,10 @@ function buildFilterTable(cfg){
     ['pf-num:numero','pf-fecha:fecha','pf-val:validezDias','pf-estado:estado','pf-cli:cliente','pf-cuit:cuit','pf-cond:condIva','pf-cat:categoria','pf-lista:listaPrecios','pf-vend:vendedor','pf-notacli:notaCliente','pf-nota:nota','pf-descg:descGeneral'].forEach(pair=>{
       const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); }); });
     $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } });
-    $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(ch){ drawItems(); drawTotals(); } });
+    $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); } });
+    // Cambiar la zona recalcula el renglón "Flete" (podés editarlo/borrarlo a mano después: solo se rehace si volvés a tocar la zona)
+    $('pf-zona').addEventListener('change',()=>{ editing.zona=$('pf-zona').value; const f=aplicarFlete(editing); drawItems(); drawTotals();
+      if(editing.zona && editing.zona!=='retiro' && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.'); });
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     $('pf-cancel').onclick=closeForm; $('pf-save').onclick=saveForm; drawTotals();
   }
@@ -3045,26 +3096,28 @@ function buildFilterTable(cfg){
     }).filter(Boolean);
     box.innerHTML = lineas.length ? '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:#f8fafc"><div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:2px">DISPONIBILIDAD DE STOCK</div>'+lineas.join('')+'</div>' : '';
   }
-  function saveForm(){ if(!String(editing.cliente||'').trim()){ alert('Ingresá el cliente.'); return; }
-    if(!editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
-    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
-    const esNuevo=!editing._uid;
-    if(esNuevo && window.__usaNube){
+  // Numeración atómica + guardado. Evita que dos presupuestos nuevos guardados casi a la vez terminen con el mismo número.
+  function asignarNumeroYGuardar(p, cb){
+    if(window.__usaNube){
       const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
-      // Numeración atómica: evita que dos presupuestos nuevos guardados casi a la vez terminen con el mismo número.
       c.FS.runTransaction(c.db, async (tx)=>{
         const ref=c.FS.doc(c.db,'vph_config','contadores');
         const snap=await tx.get(ref);
-        let maxViejo=0; DB.presupuestos.forEach(p=>{ const m=String(p.numero||'').match(/(\d+)/); if(m){ const n=+m[1]; if(n>maxViejo)maxViejo=n; } });
+        let maxViejo=0; DB.presupuestos.forEach(x=>{ const m=String(x.numero||'').match(/(\d+)/); if(m){ const n=+m[1]; if(n>maxViejo)maxViejo=n; } });
         const cur=snap.exists()?num(snap.data().presupuestos):maxViejo;   // primera vez: arranca del máximo ya usado, no de 0
         const next=cur+1;
         tx.set(ref,{presupuestos:next},{merge:true});
         return next;
-      }).then(next=>{ editing.numero='P-'+String(next).padStart(4,'0'); editing._uid=newUid(); persist(editing); const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(); }catch(e){ console.error('presupuesto onSaved:',e); } } })
+      }).then(next=>{ p.numero='P-'+String(next).padStart(4,'0'); p._uid=newUid(); persist(p); if(cb) cb(p); })
         .catch(e=>alert('Error al numerar el presupuesto: '+e.message));
-      return;
-    }
-    if(!editing._uid) editing._uid=newUid(); persist(editing); const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(); }catch(e){ console.error('presupuesto onSaved:',e); } } }
+    } else { if(!p.numero) p.numero=nextNumero(); p._uid=newUid(); persist(p); if(cb) cb(p); }
+  }
+  function saveForm(){ if(!String(editing.cliente||'').trim()){ alert('Ingresá el cliente.'); return; }
+    if(!editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
+    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
+    const cerrarYAvisar=()=>{ const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(); }catch(e){ console.error('presupuesto onSaved:',e); } } };
+    if(!editing._uid){ asignarNumeroYGuardar(editing, cerrarYAvisar); return; }
+    persist(editing); cerrarYAvisar(); }
 
   function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_presupuestos_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
   function importJSON(file){ const r=new FileReader(); r.onload=()=>{ try{ const d=JSON.parse(r.result); if(!Array.isArray(d.presupuestos)) throw new Error('formato inválido');
@@ -3080,13 +3133,32 @@ function buildFilterTable(cfg){
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { DB=loadLocal(); render(); } }
 
-  // Crear un presupuesto desde un lead del CRM (botón "→ Presupuesto" en la tarjeta)
-  window.__presupuestoDesdeLead = function(lead, onSaved){ const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||''; if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
+  // Arma un presupuesto completo a partir de un lead: cliente + ítems con precios del catálogo + flete por zona.
+  function armarDesdeLead(lead){
+    const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
+    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
+    p.zona = lead.zona||'';
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     p.notaCliente = lead.notaCliente || notas.join(' · ');
-    const items=(lead.items&&lead.items.length)?lead.items:[]; p.items=items.length?items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const pr=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(pr){ it.desc=pr.nombre; aplicarProducto(it,pr,p.listaPrecios); } return it; }):[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
-    openForm(p); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "cotizado" si el presupuesto se guarda de verdad
+    const items=(lead.items&&lead.items.length)?lead.items.filter(li=>li&&(li.producto||li.desc)):[];
+    p.items=items.length?items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const pr=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(pr){ it.desc=pr.nombre; it.codigo=pr.codigo||''; aplicarProducto(it,pr,p.listaPrecios); } return it; }):[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
+    aplicarFlete(p);   // renglón "Flete" según la zona del lead
+    return p;
+  }
+  // Crear un presupuesto desde un lead del CRM (botón "→ Presupuesto": abre el form para revisarlo antes de guardar)
+  window.__presupuestoDesdeLead = function(lead, onSaved){
+    openForm(armarDesdeLead(lead)); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "cotizado" si el presupuesto se guarda de verdad
+  };
+  // Generar + GUARDAR el presupuesto de una sin abrir el form, y devolverlo (para el PDF de un toque desde el CRM).
+  // onDone(p) recibe el presupuesto ya numerado y guardado; onError(msg) si no se pudo armar.
+  window.__presupuestoAutoDesdeLead = function(lead, onDone, onError){
+    const p=armarDesdeLead(lead);
+    const err = m=>{ if(typeof onError==='function') onError(m); else alert(m); };
+    if(!String(p.cliente||'').trim()) return err('El lead no tiene cargado el nombre del cliente.');
+    const conImporte=p.items.filter(it=>!esItemFlete(it) && num(it.precioUnit)>0);
+    if(!conImporte.length) return err('No se pudo calcular el presupuesto: los productos del lead no tienen precio en el catálogo (revisá que el nombre/código coincida con Base de Datos → Productos).');
+    asignarNumeroYGuardar(p, pp=>{ if(typeof onDone==='function') onDone(pp); });
   };
 
   window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
@@ -3317,6 +3389,10 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
+    {g:'Flete', k:'fleteCapital',   l:'Flete Córdoba Capital ($ por pallet)',          def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
+    {g:'Flete', k:'fleteCercanas',  l:'Flete hasta 30 km de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Flete', k:'fleteArgentina', l:'Flete resto del país ($ por pallet)',            def:140000, t:'num', hint:'Precio final (con IVA). Puede variar según la zona: revisalo antes de enviar.'},
+    {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'}
   ];
@@ -3408,6 +3484,8 @@ function buildFilterTable(cfg){
   function resumenPedido(l){ return (l.items||[]).filter(i=>i && i.producto).map(i=>(num(i.cantidad)||'')+' '+i.producto).join(' · ') || '—'; }
   const catProd=()=> (window.__catalogoProductos? window.__catalogoProductos():[]);
   const matchProd=val=>{ const v=(val||'').trim().toLowerCase(); return catProd().find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v); };
+  // Zonas de flete: las define el módulo Presupuestos (precios editables en Parámetros)
+  const zonasOpt=sel=>{ const zs=(window.__fleteZonas?window.__fleteZonas():[{k:'',l:'— Sin definir —'}]); return zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(sel||'')===z.k?' selected':'')+'>'+esc(z.l)+'</option>').join(''); };
   // m² totales del lead: suma de m² por ítem (o el campo viejo l.m2 si no hay ítems con m²)
   function totalM2(l){ const s=(l.items||[]).reduce((a,it)=>a+num(it.m2),0); return s>0?s:num(l.m2); }
 
@@ -3436,7 +3514,14 @@ function buildFilterTable(cfg){
       else if(a==='plant') openPlant(l);
       else if(a==='del'){ if(confirm('¿Eliminar el lead de '+(l.cliente||'—')+'?')) remove(l._uid); }
       else if(a==='venta'){ if(window.__ventaDesdeLead){ window.__ventaDesdeLead(l, ()=>{ l.estado='confirmado'; persist(l); }); } else alert('Módulo de Ventas no disponible.'); }
-      else if(a==='presup'){ if(window.__presupuestoDesdeLead){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Presupuestos')); if(nav)nav.click(); window.__presupuestoDesdeLead(l, ()=>{ if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); } }); } else alert('Módulo de Presupuestos no disponible.'); } });
+      else if(a==='presup'){ if(window.__presupuestoDesdeLead){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Presupuestos')); if(nav)nav.click(); window.__presupuestoDesdeLead(l, ()=>{ if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); } }); } else alert('Módulo de Presupuestos no disponible.'); }
+      else if(a==='pdf'){ if(!window.__presupuestoAutoDesdeLead){ alert('Módulo de Presupuestos no disponible.'); return; }
+        if(!(l.items||[]).some(it=>it&&it.producto)){ alert('Cargá al menos un producto en el lead (Editar → Pedido) para poder presupuestar.'); return; }
+        if(!l.zona && !confirm('Este lead no tiene zona de entrega cargada, así que el presupuesto va a salir SIN flete.\n\n¿Generarlo igual?')) return;
+        window.__presupuestoAutoDesdeLead(l, p=>{
+          if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); }   // el lead pasa a "Cotizado"
+          if(window.__presupuestoImprimir) window.__presupuestoImprimir(p);   // abre la vista previa para descargar/imprimir el PDF
+        }); } });
     $('crm-board').querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ l.estado=sel.value; persist(l); } });
     $('crm-count').textContent = leads.length+' leads';
   }
@@ -3458,7 +3543,8 @@ function buildFilterTable(cfg){
         '<button class="cmp-rowbtn" data-act="preg" data-id="'+l._uid+'" title="Preguntas rápidas para WhatsApp">💬 Preguntas</button>'+
         '<button class="cmp-rowbtn" data-act="plant" data-id="'+l._uid+'" title="Plantillas de WhatsApp por producto">📄 Plantillas</button>'+
         '<button class="cmp-rowbtn" data-act="edit" data-id="'+l._uid+'">Editar</button>'+
-        '<button class="cmp-rowbtn" data-act="presup" data-id="'+l._uid+'" title="Crear presupuesto con los datos de este lead">→ Presupuesto</button>'+
+        '<button class="cmp-rowbtn" data-act="pdf" data-id="'+l._uid+'" style="border-color:var(--accent);color:var(--accent);font-weight:800" title="Calcula el presupuesto (precios + flete), lo guarda en Presupuestos y abre el PDF">⚡ Presupuesto PDF</button>'+
+        '<button class="cmp-rowbtn" data-act="presup" data-id="'+l._uid+'" title="Crear presupuesto con los datos de este lead, para revisarlo antes de guardar">→ Presupuesto</button>'+
         '<button class="cmp-rowbtn" data-act="venta" data-id="'+l._uid+'" title="Crear venta desde este lead">→ Venta</button>'+
         '<button class="cmp-rowbtn" data-act="del" data-id="'+l._uid+'">✕</button>'+
         '<select class="kb-move" data-move="'+l._uid+'" title="Mover a">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+((l.estado||'nuevo')===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>'+
@@ -3575,7 +3661,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -3591,6 +3677,7 @@ function buildFilterTable(cfg){
         fld('Origen','','<select id="cf-origen">'+opt(ORIGENES,l.origen)+'</select>') +
         fld('Estado','','<select id="cf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(l.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección">') +
+        fld('Zona de entrega (flete)','col2','<select id="cf-zona">'+zonasOpt(l.zona)+'</select>') +
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
@@ -3609,7 +3696,7 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; }); });
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; }); });
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1}); drawItems(); };
     $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
@@ -3658,6 +3745,7 @@ function buildFilterTable(cfg){
     if(!map.telefono && (datos.tel||datos.phone||datos.whatsapp)) map.telefono=datos.tel||datos.phone||datos.whatsapp;
     if(!map.lugar && (datos.localidad||datos.domicilio||datos.direccion)) map.lugar=[datos.localidad,datos.domicilio||datos.direccion].filter(Boolean).join(' · ');
     if(!map.m2 && (datos.m2||datos.metros||datos.superficie)) map.m2=num(datos.m2||datos.metros||datos.superficie);
+    if(!map.zona && (datos.destination||datos.destino)) map.zona=datos.destination||datos.destino;   // el cotizador web usa las mismas claves (retiro/capital/cercanas/argentina)
     const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; persist(l); };
 
   // Fuente de alertas EN VIVO: leads nuevos sin contactar + seguimientos vencidos/hoy
