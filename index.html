@@ -339,10 +339,10 @@
 
     <section>
       <h2><span class="dot" style="background:var(--red)"></span>Costos fijos — calendario de pagos</h2>
-      <div class="asof">Fuente: sheet ADMINISTRACION › COSTOS FIJOS CARGA · circuito: A confirmar (Sofía) → Confirmado → Cargado en Contagram (Claude) → Pagado</div>
+      <div class="asof" id="asof-cf"></div>
       <div class="kpis" id="kpis-cf" style="margin-bottom:16px"></div>
       <div class="tbl-wrap"><table id="tabla-cf"></table></div>
-      <p class="note">Los pagos que vencen en 3 días o menos, o ya vencidos, aparecen también como alerta en la Vista Diaria. Los montos "A confirmar" son estimados hasta que Sofía los valide.</p>
+      <p class="note">Se carga y edita en el módulo <b>Costos Fijos</b>; acá se ve el calendario en contexto financiero. Circuito: <b>A confirmar</b> (Sofía valida monto y fecha) → <b>Confirmado</b> → <b>Pagado</b>. Lo que vence en 3 días o menos, o ya venció, aparece además como alerta en la Vista Diaria.</p>
     </section>
 
     <section>
@@ -1062,22 +1062,12 @@ const fmtKg = n => n.toLocaleString('es-AR') + ' kg';
 
 function calcularAlertas(){
   const A = [];
-  // COSTOS FIJOS CON VENCIMIENTO
-  const hoy0 = new Date(); hoy0.setHours(0,0,0,0);
-  const parseF = s => { const [d,m,a] = s.split('/').map(Number); return new Date(a, m-1, d); };
-  costosFijosPagos.filter(p => p.estado !== 'Pagado').forEach(p => {
-    const dias = Math.round((parseF(p.venc) - hoy0) / 86400000);
-    if (dias < 0) A.push({sev:'bad', area:'Finanzas', t:'VENCIDO: ' + p.concepto + ' (' + p.proveedor + ') ' + fmt$(p.monto) + ' venció el ' + p.venc, act:'Pagar o renegociar hoy.', go:{page:'Finanzas'}});
-    else if (dias <= 3) A.push({sev:'warn', area:'Finanzas', t:'Vence ' + (dias===0?'HOY':dias===1?'MAÑANA':'en '+dias+' días') + ': ' + p.concepto + ' (' + p.proveedor + ') ' + fmt$(p.monto), act: p.estado==='A confirmar' ? 'Sofía debe confirmar monto/fecha y cargarlo en Contagram.' : 'Verificar fondos en la cuenta para el pago (' + p.medio + ').', go:{page:'Finanzas'}});
-  });
-  const sinConfirmar = costosFijosPagos.filter(p => p.estado === 'A confirmar').length;
-  if (sinConfirmar) A.push({sev:'info', area:'Finanzas', t:sinConfirmar + ' costos fijos "A confirmar" en el sheet ADMINISTRACION', act:'Sofía: validar monto y fecha en COSTOS FIJOS CARGA para que pasen a Contagram.', go:{page:'Finanzas'}});
-  // FINANZAS
-  const pctVencidoPagar = finanzas.aPagarVencido / finanzas.aPagar * 100;
-  if (pctVencidoPagar > 50) A.push({sev:'bad', area:'Finanzas', t:'Deuda comercial vencida: ' + pctVencidoPagar.toFixed(0) + '% del total a pagar (' + fmtM(finanzas.aPagarVencido) + ')', act:'Acordar un plan de pagos con los principales proveedores vencidos esta semana. Priorizar a quien corta el suministro.', go:{page:'Compras'}});
-  const cobertura = (finanzas.disponible + finanzas.aCobrar) / finanzas.aPagar;
-  if (cobertura < 1.5) A.push({sev: cobertura < 1 ? 'bad' : 'warn', area:'Finanzas', t:'Liquidez corriente ' + cobertura.toFixed(2) + ' (referencia sana: >1,5)', act:'Adelantar cobranzas: gestionar los ' + fmtM(finanzas.aCobrarVencido) + ' vencidos de clientes antes de asumir nuevos compromisos.', go:{page:'Ventas'}});
-  A.push({sev:'info', area:'Finanzas', t:'Débito automático VISA Business: ~' + fmt$(finanzas.visa.estimado) + ' el ' + finanzas.visa.debito + ' (cierre ' + finanzas.visa.cierre + ')', act:'Asegurar ese saldo en la CC Macro para la fecha del débito — si la cuenta queda corta, el rojo cuesta TNA ~70%.', go:{page:'Finanzas'}});
+  // Los costos fijos (vencidos / por vencer / a confirmar) los avisa AHORA el módulo Costos Fijos en vivo,
+  // con su propia fuente en window.__alertSources. Antes se calculaban acá desde la foto del cierre.
+  // FINANZAS: la deuda vencida y la liquidez las calcula AHORA el módulo "Finanzas en vivo"
+  // desde Ventas/Compras/Cheques/Caja reales (antes salían de la foto del cierre y quedaban viejas).
+  // El débito de VISA sigue saliendo del cierre porque no hay fuente en vivo — va marcado como tal.
+  if (finanzas.visa) A.push({sev:'info', area:'Finanzas', t:'Débito automático VISA Business: ~' + fmt$(finanzas.visa.estimado) + ' el ' + finanzas.visa.debito + ' (cierre ' + finanzas.visa.cierre + ')', act:'Dato del último cierre, no en vivo. Asegurar ese saldo en la CC Macro para la fecha del débito — si la cuenta queda corta, el rojo cuesta TNA ~70%.', go:{page:'Finanzas'}});
   // COMERCIAL
   if (mesEnCurso.clienteTopPct > 40) A.push({sev:'warn', area:'Comercial', t:'Concentración: ' + mesEnCurso.clienteTop + ' explica el ' + mesEnCurso.clienteTopPct + '% de la facturación del mes', act:'Impulsar la venta a corralones (ruta de Eduardo) para diversificar la cartera.', go:{page:'Comercial'}});
   const bajoMargen = rentabilidad.clientes.filter(c => c.pct < 50 && c.venta > 0);
@@ -1311,151 +1301,10 @@ new Chart(document.getElementById('chProdDiaria'), {
     scales:{ y:{ min:0, ticks:{callback:v=>(v/1000)+'k'} } } }
 });
 
-/* ================= FINANZAS ================= */
-(function(){
-  const brecha = finanzas.aCobrar - finanzas.aPagar;
-  const liquidez = (finanzas.disponible + finanzas.aCobrar) / finanzas.aPagar;
-  document.getElementById('kpis-finanzas').innerHTML =
-    kpi('Disponible', fmt$(finanzas.disponible), 'Cajas + bancos al '+finanzas.fecha, 'info') +
-    kpi('A cobrar', fmt$(finanzas.aCobrar), fmtM(finanzas.aCobrarVencido)+' vencido (0-30d)', 'good') +
-    kpi('A pagar', fmt$(finanzas.aPagar), fmtM(finanzas.aPagarVencido)+' vencido — 72%', 'bad') +
-    kpi('Brecha cobrar - pagar', (brecha>0?'+':'')+fmt$(brecha), 'Positiva, pero el vencido apremia', brecha>0?'good':'bad') +
-    kpi('Liquidez corriente', liquidez.toFixed(2), 'Referencia sana: > 1,5', liquidez>=1.5?'good':'warn') +
-    kpi('Próximo débito VISA', '~' + fmt$(finanzas.visa.estimado), 'Se debita de la CC el ' + finanzas.visa.debito + ' · último: ' + fmt$(finanzas.visa.ultimoDebito), 'warn');
-
-  document.getElementById('asof-pagar-chart').textContent = 'Antigüedad al '+finanzas.fecha;
-  document.getElementById('asof-cobrar-chart').textContent = 'Antigüedad al '+finanzas.fecha;
-
-  new Chart(document.getElementById('chAgingPagar'), {
-    type:'doughnut',
-    data:{ labels:['A vencer','Vencido 0-30','Vencido 31-60','Vencido 61-90','Vencido +90'],
-      datasets:[{ data:[4426052, 9947442, 1255628, 381876, 22812], backgroundColor:['#38b26a','#e0a63a','#e07b3a','#d64541','#8e1f1c'], borderWidth:2 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.label+': '+fmt$(c.raw)}} } }
-  });
-  new Chart(document.getElementById('chAgingCobrar'), {
-    type:'doughnut',
-    data:{ labels:['A vencer','Vencido 0-30'],
-      datasets:[{ data:[12939414, 3545866], backgroundColor:['#38b26a','#e0a63a'], borderWidth:2 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.label+': '+fmt$(c.raw)}} } }
-  });
-
-  // Tabla pagar
-  document.getElementById('asof-pagar').textContent = finanzas.pagar.length + ' proveedores · al ' + finanzas.fecha + ' · clic en encabezados para ordenar';
-  buildFilterTable({
-    tableId:'tabla-pagar', barId:'filtros-pagar', countId:'count-pagar',
-    cols:[
-      {h:'Proveedor', get:r=>r.prov + (r.tag==='socio'?' <span class="badge amber">aporte socio</span>':'') + (r.tag==='vencido-critico'?' <span class="badge red">mora +60d</span>':''), sortVal:r=>r.prov},
-      {h:'A vencer', num:1, get:r=>fmt$(r.avencer), sortVal:r=>r.avencer},
-      {h:'Vencido 0-60', num:1, get:r=>r.v060?fmt$(r.v060):'—', sortVal:r=>r.v060},
-      {h:'Vencido +60', num:1, get:r=>r.v60mas?fmt$(r.v60mas):'—', sortVal:r=>r.v60mas},
-      {h:'Total', num:1, get:r=>'<b>'+fmt$(r.total)+'</b>', sortVal:r=>r.total}
-    ],
-    rows: finanzas.pagar,
-    filters:[
-      {label:'Todos', f:()=>true},
-      {label:'Al día', f:r=>r.tag==='al-dia'},
-      {label:'Vencidos', f:r=>r.tag==='vencido-leve'||r.tag==='vencido-critico'},
-      {label:'Aporte socio', f:r=>r.tag==='socio'}
-    ],
-    totalRow: r => ['<b>Total</b>', fmt$(sum(r,'avencer')), fmt$(sum(r,'v060')), fmt$(sum(r,'v60mas')), fmt$(sum(r,'total'))],
-    defaultSort: 4
-  });
-  document.getElementById('note-pagar').innerHTML = (function(){
-    const totalPagar = finanzas.pagar.reduce((a,p)=>a+(p.total||0),0);
-    const top5 = finanzas.pagar.slice().sort((a,b)=>b.total-a.total).slice(0,5).reduce((a,p)=>a+(p.total||0),0);
-    const pct = totalPagar ? Math.round(top5/totalPagar*100) : 0;
-    const critico = finanzas.pagar.find(p=>p.tag==='vencido-critico');
-    const socio = finanzas.pagar.find(p=>p.tag==='socio');
-    return 'Los 5 proveedores más grandes concentran el '+pct+'% de la deuda.' +
-      (critico ? ' <b>'+critico.prov+'</b> tiene la mora más antigua — riesgo de corte de suministro.' : '') +
-      (socio ? ' "'+socio.prov+'" es aporte de socio, no deuda operativa: conviene separarlo contablemente.' : '');
-  })();
-
-  // Tabla cobrar
-  document.getElementById('asof-cobrar').textContent = finanzas.cobrar.length + ' clientes · al ' + finanzas.fecha;
-  buildFilterTable({
-    tableId:'tabla-cobrar', barId:'filtros-cobrar', countId:'count-cobrar',
-    cols:[
-      {h:'Cliente', get:r=>r.cli + (r.tag==='concentracion'?' <span class="badge amber">'+mesEnCurso.clienteTopPct+'% ventas jul</span>':''), sortVal:r=>r.cli},
-      {h:'A vencer', num:1, get:r=>r.avencer?fmt$(r.avencer):'—', sortVal:r=>r.avencer},
-      {h:'Vencido 0-30', num:1, get:r=>r.v030?fmt$(r.v030):'—', sortVal:r=>r.v030},
-      {h:'Total', num:1, get:r=>'<b>'+fmt$(r.total)+'</b>', sortVal:r=>r.total}
-    ],
-    rows: finanzas.cobrar,
-    filters:[
-      {label:'Todos', f:()=>true},
-      {label:'Al día', f:r=>r.tag==='al-dia'||r.tag==='concentracion'},
-      {label:'Vencidos 0-30', f:r=>r.tag==='vencido-leve'}
-    ],
-    totalRow: r => ['<b>Total</b>', fmt$(sum(r,'avencer')), fmt$(sum(r,'v030')), fmt$(sum(r,'total'))],
-    defaultSort: 3
-  });
-  document.getElementById('note-cobrar').innerHTML = (function(){
-    const conc = finanzas.cobrar.find(c=>c.tag==='concentracion');
-    return 'Sin mora mayor a 30 días: la cobranza está sana.' +
-      (conc ? ' El riesgo es de <b>concentración</b>: '+conc.cli+' concentra '+fmtM(conc.total)+' de la cartera; su cobro define la caja del mes.' : '');
-  })();
-
-  // --- Costos fijos: calendario de pagos ---
-  (function(){
-    const hoy = new Date(); hoy.setHours(0,0,0,0);
-    const pf = s => { const [d,m,a] = s.split('/').map(Number); return new Date(a, m-1, d); };
-    const pend = costosFijosPagos.filter(p => p.estado !== 'Pagado');
-    const en7 = pend.filter(p => (pf(p.venc)-hoy)/86400000 <= 7).reduce((a,p)=>a+p.monto,0);
-    const en30 = pend.filter(p => (pf(p.venc)-hoy)/86400000 <= 30).reduce((a,p)=>a+p.monto,0);
-    const vencidos = pend.filter(p => pf(p.venc) < hoy);
-    document.getElementById('kpis-cf').innerHTML =
-      kpi('Vencen en 7 días', fmt$(en7), 'Disponible hoy: ' + fmt$(finanzas.disponible), en7 > finanzas.disponible ? 'bad' : 'good') +
-      kpi('Vencen en 30 días', fmt$(en30), pend.length + ' pagos pendientes en el calendario', 'info') +
-      kpi('Pagos vencidos', String(vencidos.length), vencidos.length ? vencidos.map(v=>v.concepto).join(', ') : 'Ninguno', vencidos.length ? 'bad' : 'good') +
-      kpi('Sin confirmar por Sofía', String(costosFijosPagos.filter(p=>p.estado==='A confirmar').length), 'Filas "A confirmar" en el sheet', 'warn');
-    const bEst = e => e==='Pagado' ? '<span class="badge green">Pagado</span>' : e==='Cargado en Contagram' ? '<span class="badge blue">Cargado en Contagram</span>' : e==='Confirmado' ? '<span class="badge amber">Confirmado — falta cargar</span>' : '<span class="badge red">A confirmar (Sofía)</span>';
-    const t = document.getElementById('tabla-cf');
-    t.innerHTML = '<tr><th>Vencimiento</th><th>Concepto</th><th>Proveedor</th><th class="num">Monto</th><th>Medio</th><th>Días</th><th>Estado</th></tr>' +
-      costosFijosPagos.slice().sort((a,b)=>pf(a.venc)-pf(b.venc)).map(p=>{
-        const dias = Math.round((pf(p.venc)-hoy)/86400000);
-        const dTxt = p.estado==='Pagado' ? '—' : dias<0 ? '<b style="color:var(--red)">vencido '+Math.abs(dias)+'d</b>' : dias===0 ? '<b style="color:var(--red)">HOY</b>' : dias<=3 ? '<b style="color:var(--amber)">'+dias+'d</b>' : dias+'d';
-        return '<tr><td><b>'+p.venc+'</b></td><td>'+p.concepto+'</td><td>'+p.proveedor+'</td><td class="num">'+(p.monto?fmt$(p.monto):'<i style="color:var(--muted)">a definir</i>')+'</td><td>'+p.medio+'</td><td>'+dTxt+'</td><td>'+bEst(p.estado)+'</td></tr>';
-      }).join('');
-  })();
-
-  // --- IVA débito vs crédito ---
-  const totDeb = ivaDiario.reduce((a,d)=>a+d.debito,0);
-  const totCred = ivaDiario.reduce((a,d)=>a+d.credito,0);
-  const posicion = totDeb - totCred;
-  document.getElementById('asof-iva').textContent = 'Acumulado del mes al ' + finanzas.fecha + ' · calculado línea por línea de los informes de ventas y compras';
-  document.getElementById('kpis-iva').innerHTML =
-    kpi('IVA débito (ventas)', fmt$(totDeb), 'IVA facturado a clientes', 'info') +
-    kpi('IVA crédito (compras)', fmt$(totCred), 'IVA de compras con factura', 'info') +
-    kpi('Posición estimada', (posicion>0?'':'+') + fmt$(posicion), posicion>0 ? 'A pagar a AFIP (estimado, antes de retenciones/percepciones)' : 'Saldo a favor estimado', posicion>0?'warn':'good');
-  let accD=0, accC=0;
-  const acumD = ivaDiario.map(d=>accD+=d.debito);
-  const acumC = ivaDiario.map(d=>accC+=d.credito);
-  new Chart(document.getElementById('chIva'), {
-    data:{ labels: ivaDiario.map(d=>d.fecha),
-      datasets:[
-        { type:'bar', label:'Débito del día', data: ivaDiario.map(d=>d.debito), backgroundColor:'#d64541', borderRadius:5 },
-        { type:'bar', label:'Crédito del día', data: ivaDiario.map(d=>d.credito), backgroundColor:'#38b26a', borderRadius:5 },
-        { type:'line', label:'Débito acumulado', data: acumD, borderColor:'#8e1f1c', tension:.3, pointRadius:3 },
-        { type:'line', label:'Crédito acumulado', data: acumC, borderColor:'#155d38', tension:.3, pointRadius:3 }
-      ] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}}},
-      scales:{ y:{ticks:{callback:v=>fmtM(v)}} } }
-  });
-
-  // Indicadores
-  const ind = [
-    ['Liquidez corriente','(Disponible + A cobrar) / A pagar', liquidez.toFixed(2), '> 1,5', liquidez>=1.5?'green':'amber'],
-    ['Capital de trabajo','Activo cte. - Pasivo cte.', fmt$(finanzas.disponible+finanzas.aCobrar-finanzas.aPagar), 'Positivo', (finanzas.disponible+finanzas.aCobrar-finanzas.aPagar)>0?'green':'red'],
-    ['Margen bruto (jun)','Margen / Ventas', rentabilidad.margenPct+'%', 'Según rubro', 'green'],
-    ['DSO — días de cobro','A cobrar / ventas diarias', '~19 días', 'A menor, mejor', 'green'],
-    ['DPO — días de pago','A pagar / compras diarias', '~15 días', 'A mayor, mejor', 'amber'],
-    ['% deuda vencida (prov.)','Vencido / total a pagar', (finanzas.aPagarVencido/finanzas.aPagar*100).toFixed(0)+'%', '< 20%', 'red']
-  ];
-  const t = document.getElementById('tabla-indicadores');
-  t.innerHTML = '<tr><th>Indicador</th><th>Fórmula</th><th class="num">Resultado</th><th>Referencia</th><th>Estado</th></tr>' +
-    ind.map(i=>'<tr><td>'+i[0]+'</td><td style="color:var(--muted)">'+i[1]+'</td><td class="num"><b>'+i[2]+'</b></td><td>'+i[3]+'</td><td><span class="badge '+i[4]+'">'+(i[4]==='green'?'OK':i[4]==='amber'?'ATENCIÓN':'CRÍTICO')+'</span></td></tr>').join('');
-})();
+/* ================= FINANZAS =================
+   La página Finanzas ya NO se dibuja acá con la foto del cierre (vph_reportes).
+   Ahora la calcula el módulo "FINANZAS EN VIVO" (al final del archivo) con los datos
+   reales de Ventas, Compras, Cheques, Costos Fijos y Caja. */
 
 /* ================= COMERCIAL ================= */
 (function(){
@@ -1729,6 +1578,9 @@ function buildFilterTable(cfg){
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
   const MEDIOS_PAGO = ['Transferencia','Efectivo','Cheque','E-Cheq','VISA / Tarjeta','Débito automático','Retención'];
   const esCheque = m => /cheq/i.test(String(m||''));   // "Cheque" o "E-Cheq" → se sincroniza con el módulo Cheques (emitido)
+  // Cuentas (Efectivo / Banco Macro MAV / Banco Macro VPH...): las define Caja al declarar el saldo.
+  const cuentasOpt = sel => { const cs=(window.__cajaCuentas?window.__cajaCuentas():[]); if(!cs.length) return '<option value="">—</option>';
+    return cs.map(c=>'<option value="'+esc(c)+'"'+(String(sel||'')===c?' selected':'')+'>'+esc(c)+'</option>').join(''); };
 
   // ---- Semilla: compras reales de julio 2026 (extraídas de Contagram) ----
   const SEED = [];  // datos en Firestore (vph_compras); el archivo público no lleva datos
@@ -2069,7 +1921,8 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="p-monto" value="'+kk.saldo+'">') +
         field('Fecha','','<input type="date" id="p-fecha" value="'+hoyISO+'">') +
-        field('Medio','col2','<select id="p-medio">'+MEDIOS_PAGO.map(m=>'<option>'+m+'</option>').join('')+'</select>') +
+        field('Medio','','<select id="p-medio">'+MEDIOS_PAGO.map(m=>'<option>'+m+'</option>').join('')+'</select>') +
+        '<div class="cmp-field" id="p-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="p-cuenta">'+cuentasOpt('')+'</select></div>' +
       '</div>'+
       '<div id="p-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea en el módulo Cheques como emitido)</div>'+
@@ -2082,12 +1935,16 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn" id="p-cancel">Cancelar</button>'+
         '<button class="cmp-btn cmp-btn-primary" id="p-save">Registrar pago</button>'+
       '</div>';
-    $('p-medio').addEventListener('change',()=>{ $('p-cheque-extra').style.display = esCheque($('p-medio').value)?'block':'none'; });
+    // Si se paga con cheque, la plata no sale de ninguna cuenta hasta que el cheque se haga efectivo.
+    $('p-medio').addEventListener('change',()=>{ const ch=esCheque($('p-medio').value);
+      $('p-cheque-extra').style.display = ch?'block':'none';
+      $('p-cuenta-wrap').style.display = ch?'none':''; });
     $('p-cancel').onclick=()=>$('cmp-modal-pago').classList.remove('open');
     $('p-save').onclick=()=>{ const c2=DB.compras.find(x=>x._uid===payingUid); if(!c2) return;
       const medio=$('p-medio').value;
       const pago={ id:'pag_'+newUid(), fecha:$('p-fecha').value, monto:num($('p-monto').value), medio };
       if(esCheque(medio)){ pago.chNumero=$('p-ch-num')?$('p-ch-num').value.trim():''; pago.chBanco=$('p-ch-banco')?$('p-ch-banco').value.trim():''; pago.chVenc=$('p-ch-venc')?$('p-ch-venc').value:''; }
+      else { pago.cuenta=$('p-cuenta')?$('p-cuenta').value:''; }   // de qué cuenta salió la plata
       const pagos=(c2.pagos||[]).slice(); pagos.push(pago); c2.pagos=pagos; persistPagos(c2._uid, pagos);
       if(esCheque(medio) && window.__upsertChequePago){ window.__upsertChequePago({ pagoId:pago.id, compraUid:c2._uid, compraNro:c2.nroFactura||c2.numero||'', entidad:c2.proveedor||'', numero:pago.chNumero, banco:pago.chBanco, monto:pago.monto, fechaEmision:pago.fecha, fechaVencimiento:pago.chVenc||pago.fecha }); }
       $('cmp-modal-pago').classList.remove('open'); };
@@ -2250,6 +2107,9 @@ function buildFilterTable(cfg){
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
   const MEDIOS_COBRO = ['Transferencia','Efectivo','Cheque','E-Cheq','Tarjeta','Mercado Pago','Retención'];
   const esCheque = m => /cheq/i.test(String(m||''));   // "Cheque" o "E-Cheq" → se sincroniza con el módulo Cheques
+  // Cuentas (Efectivo / Banco Macro MAV / Banco Macro VPH...): las define Caja al declarar el saldo.
+  const cuentasOpt = sel => { const cs=(window.__cajaCuentas?window.__cajaCuentas():[]); if(!cs.length) return '<option value="">—</option>';
+    return cs.map(c=>'<option value="'+esc(c)+'"'+(String(sel||'')===c?' selected':'')+'>'+esc(c)+'</option>').join(''); };
 
   const COL='vph_ventas';
   const KEY='vph_ventas_v1';
@@ -2597,7 +2457,7 @@ function buildFilterTable(cfg){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
     const lista = v.cobros.length ? v.cobros.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid '+(c.chequeRechazado?'var(--red)':'var(--border)')+';border-radius:8px;margin-bottom:6px;font-size:13px'+(cobroEdit===i?';outline:2px solid var(--blue)':'')+'">'+
-        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+(esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>':'')+(c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
+        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+(esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>':(c.cuenta?' <span style="color:var(--muted);font-size:11px">→ '+esc(c.cuenta)+'</span>':''))+(c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
         '<span style="display:flex;gap:8px;align-items:center"><b>'+money(num(c.monto))+'</b>'+
           '<button class="cmp-rowbtn" data-cedit="'+i+'">Editar</button>'+
           '<button class="cmp-rowbtn" data-cdel="'+i+'" title="Revertir / eliminar este cobro">✕</button></span></div>').join('')
@@ -2611,7 +2471,8 @@ function buildFilterTable(cfg){
       '<h4 style="margin:8px 0 6px;font-size:13px">'+(cobroEdit!=null?'✏️ Editar cobro':'Registrar nuevo cobro')+'</h4>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="vc-monto" value="'+montoDef+'">') + field('Fecha','','<input type="date" id="vc-fecha" value="'+fechaDef+'">') +
-        field('Medio','col2','<select id="vc-medio">'+MEDIOS_COBRO.map(m=>'<option'+(m===medioDef?' selected':'')+'>'+m+'</option>').join('')+'</select>') +
+        field('Medio','','<select id="vc-medio">'+MEDIOS_COBRO.map(m=>'<option'+(m===medioDef?' selected':'')+'>'+m+'</option>').join('')+'</select>') +
+        '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+(chShow?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
       '<div id="vc-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea/actualiza en el módulo Cheques)</div>'+
@@ -2621,7 +2482,10 @@ function buildFilterTable(cfg){
           field('Vencimiento / fecha de cobro','col2','<input type="date" id="vc-ch-venc" value="'+((ed&&ed.chVenc)||fechaDef)+'">') +
         '</div></div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
-    $('vc-medio').addEventListener('change',()=>{ $('vc-cheque-extra').style.display = esCheque($('vc-medio').value)?'block':'none'; });
+    // Si es cheque, la plata no entra a ninguna cuenta todavía (entra al cobrarse, desde el módulo Cheques).
+    $('vc-medio').addEventListener('change',()=>{ const ch=esCheque($('vc-medio').value);
+      $('vc-cheque-extra').style.display = ch?'block':'none';
+      $('vc-cuenta-wrap').style.display = ch?'none':''; });
     $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
     $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
     if($('vc-cancel')) $('vc-cancel').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
@@ -2630,6 +2494,7 @@ function buildFilterTable(cfg){
       const prev = cobroEdit!=null ? v.cobros[cobroEdit] : null;
       const rec={ id:(prev&&prev.id)||('cob_'+newUid()), fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked };
       if(esCheque(rec.medio)){ rec.chNumero=$('vc-ch-num')?$('vc-ch-num').value.trim():''; rec.chBanco=$('vc-ch-banco')?$('vc-ch-banco').value.trim():''; rec.chVenc=$('vc-ch-venc')?$('vc-ch-venc').value:''; }
+      else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
       const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
       // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
       if(esCheque(rec.medio) && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
@@ -2766,7 +2631,11 @@ function buildFilterTable(cfg){
   // Al cobrar/rechazar un cheque se registra la fecha del movimiento — la usa la Caja para saber cuándo entró/salió la plata.
   function setEstado(c,estado){ const extra={estado}; if(estado==='cobrado'||estado==='rechazado') extra.fechaMov=hoyISO; persist({...c, ...extra}); }
 
-  function blank(){ return { tipo:'recibido', numero:'', banco:'', entidad:'', fechaEmision:hoyISO, fechaVencimiento:hoyISO, monto:0, estado:'cartera', nota:'' }; }
+  function blank(){ return { tipo:'recibido', numero:'', banco:'', entidad:'', fechaEmision:hoyISO, fechaVencimiento:hoyISO, monto:0, estado:'cartera', cuenta:'', nota:'' }; }
+  // Cuentas (Efectivo / Banco Macro MAV / Banco Macro VPH...): las define Caja al declarar el saldo.
+  // Sirve para saber a qué cuenta impacta el cheque cuando se hace efectivo.
+  const cuentasOpt = sel => { const cs=(window.__cajaCuentas?window.__cajaCuentas():[]); if(!cs.length) return '<option value="">—</option>';
+    return cs.map(c=>'<option value="'+esc(c)+'"'+(String(sel||'')===c?' selected':'')+'>'+esc(c)+'</option>').join(''); };
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
   function catProveedores(){ return (window.__catalogoProveedores?window.__catalogoProveedores():[]); }
   function datalistEntidad(tipo){ const arr=(tipo==='emitido'?catProveedores():catClientes()); return '<datalist id="chq-ent-list">'+arr.map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
@@ -2856,11 +2725,12 @@ function buildFilterTable(cfg){
         field('Fecha de vencimiento','','<input type="date" id="chf-fvenc" value="'+(c.fechaVencimiento||'')+'">') +
         field('Monto $','','<input id="chf-monto" value="'+c.monto+'">') +
         field('Estado','','<select id="chf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
+        field((c.tipo==='emitido'?'Cuenta de la que sale':'Cuenta donde se deposita'),'','<select id="chf-cuenta">'+cuentasOpt(c.cuenta)+'</select>') +
         field('Nota','col2','<textarea id="chf-nota" rows="2">'+esc(c.nota)+'</textarea>') +
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="chf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="chf-save">Guardar</button></div>';
     $('chf-tipo').addEventListener('change',()=>{ editing.tipo=$('chf-tipo').value; editing.entidad=''; drawForm(); });
-    [['chf-num','numero'],['chf-banco','banco'],['chf-ent','entidad'],['chf-femi','fechaEmision'],['chf-fvenc','fechaVencimiento'],['chf-monto','monto'],['chf-estado','estado'],['chf-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= key==='monto'?num(el.value):el.value; }); });
+    [['chf-num','numero'],['chf-banco','banco'],['chf-ent','entidad'],['chf-femi','fechaEmision'],['chf-fvenc','fechaVencimiento'],['chf-monto','monto'],['chf-estado','estado'],['chf-cuenta','cuenta'],['chf-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= key==='monto'?num(el.value):el.value; }); });
     $('chf-cancel').onclick=closeForm;
     $('chf-save').onclick=()=>{ if(!String(editing.entidad||'').trim()){ alert('Ingresá el cliente/proveedor.'); return; } if(!num(editing.monto)){ alert('Ingresá el monto.'); return; } persist(editing); closeForm(); };
   }
@@ -2887,6 +2757,7 @@ function buildFilterTable(cfg){
     const rec={ _uid:id, tipo, origen:(kind==='pag'?'pago':'cobro'), refId:p.refId, refUid:p.refUid||ex.refUid||'',
       numero:(p.numero||ex.numero||''), banco:(p.banco||ex.banco||''), entidad:(p.entidad||ex.entidad||''),
       fechaEmision:(p.fechaEmision||ex.fechaEmision||hoyISO), fechaVencimiento:(p.fechaVencimiento||ex.fechaVencimiento||p.fechaEmision||hoyISO),
+      cuenta:(ex.cuenta||''),   // la cuenta se elige en el módulo Cheques; reeditar el cobro/pago no la pisa
       monto:num(p.monto), estado, nota:(p.refNro?((kind==='pag'?'Pago de la compra ':'Cobro de la venta ')+p.refNro):(kind==='pag'?'Generado desde un pago de Compras':'Generado desde un cobro de Ventas')) };
     persist(rec);
   }
@@ -3142,15 +3013,30 @@ function buildFilterTable(cfg){
   function movimientosReales(desde){
     const M=[];
     ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio)) return; const f=String(c.fecha||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro'}); }); });
+      if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
     compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago'}); }); });
+      if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque'}); } });
+      if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||''}); } });
     (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado!=='pagado') return; const f=String(cf.fechaPago||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO && num(cf.monto)>0) M.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—'), tipo:'costofijo'}); });
-    caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && f>desde && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid}); });
+      if(f && f>desde && f<=hoyISO && num(cf.monto)>0) M.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—'), tipo:'costofijo', cuenta:cf.cuenta||''}); });
+    caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && f>desde && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid, cuenta:m.cuenta||''}); });
     return M.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha))); }
+
+  // Saldo POR CUENTA: arranca del saldo declarado de cada una y le aplica los movimientos que la indican.
+  // Lo que no tiene cuenta cargada (cheques viejos, movimientos anteriores a este campo) va a "Sin asignar",
+  // para que el total siempre cierre aunque el detalle por cuenta esté incompleto.
+  function porCuenta(d){
+    const m={}; const orden=[];
+    cuentasDe(d.ancla).forEach(c=>{ const n=c.nombre||'—'; if(!(n in m)){ m[n]=num(c.monto); orden.push(n); } });
+    let sinAsignar=0;
+    d.movs.forEach(mv=>{ const delta=mv.signo*mv.monto; const n=mv.cuenta;
+      if(n && (n in m)) m[n]+=delta;
+      else if(n){ m[n]=(m[n]||0)+delta; if(orden.indexOf(n)<0) orden.push(n); }   // cuenta que ya no está declarada
+      else sinAsignar+=delta; });
+    const filas=orden.map(n=>({nombre:n, monto:m[n]}));
+    if(Math.abs(sinAsignar)>0.5) filas.push({nombre:'Sin asignar', monto:sinAsignar, sinAsignar:true});
+    return filas; }
 
   function disponibleHoy(){ const a=ancla(); if(!a) return null;
     const base=totalCuentas(a); const M=movimientosReales(a.fecha);
@@ -3159,14 +3045,16 @@ function buildFilterTable(cfg){
 
   // ---------- Proyección: eventos futuros (o vencidos pendientes) por fecha ----------
   // Sin doble conteo: a la venta/compra por cobrar/pagar le resto los cheques pendientes ligados a ella.
-  function chequesPendientesDe(refUid, tipo){ return cheques.filter(c=>c.tipo===tipo && (c.estado==='cartera'||c.estado==='depositado') && c.refUid===refUid).reduce((s,c)=>s+num(c.monto),0); }
+  // OJO: el saldo de una venta/compra YA descuenta los cobros/pagos hechos con cheque (entran en v.cobros / c.pagos).
+  // Por eso el cheque pendiente es un importe SEPARADO y NO hay que restarlo del saldo: son cosas distintas.
+  // (Restarlo hacía desaparecer la parte de la venta que el cliente todavía debía en efectivo.)
   function eventosProyeccion(){
     const E=[];
     cheques.forEach(c=>{ if(c.estado!=='cartera'&&c.estado!=='depositado') return; const f=String(c.fechaVencimiento||'').slice(0,10)||hoyISO;
       const sg=c.tipo==='emitido'?-1:1; E.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque a pagar · ':'Cheque a cobrar · ')+(c.entidad||'—')}); });
-    ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const k=calcV(v); const saldo=num(k.saldo)-chequesPendientesDe(v._uid,'recibido');
+    ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const saldo=num(calcV(v).saldo);
       if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); } });
-    compras.forEach(c=>{ const total=calcCompra(c); const cobrado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-cobrado-chequesPendientesDe(c._uid,'emitido');
+    compras.forEach(c=>{ const total=calcCompra(c); const pagado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-pagado;
       if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); } });
     (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado==='pagado') return; const f=String(cf.vencimiento||'').slice(0,10)||hoyISO;
       if(num(cf.monto)>0) E.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—')}); });
@@ -3213,13 +3101,15 @@ function buildFilterTable(cfg){
 
     const cuentasAncla=cuentasDe(d.ancla);
     $('caj-ancla').innerHTML='Saldo declarado el <b>'+fmtFecha(d.desde)+'</b> ('+cuentasAncla.map(c=>esc(c.nombre)+': '+money(num(c.monto))).join(' · ')+') · desde entonces entraron '+money(d.ent)+' y salieron '+money(d.sal)+'.';
+    // Saldo actual POR CUENTA (declarado + movimientos que indican esa cuenta)
+    const pc=porCuenta(d);
     $('caj-summary').innerHTML =
-      cuentasAncla.map(c=>cell(c.nombre, money(num(c.monto)), 'var(--muted)')).join('')+
-      cell('Entradas', '+ '+money(d.ent), 'var(--green)')+
-      cell('Salidas', '- '+money(d.sal), 'var(--red)')+
+      pc.map(c=>cell(c.nombre + (c.sinAsignar?' ⚠️':''), money(c.monto), c.sinAsignar?'var(--amber)':(c.monto<0?'var(--red)':'var(--text)'))).join('')+
       cell('DISPONIBLE HOY', money(d.total), d.total>0?'var(--green)':'var(--red)');
     const alerta = minSaldo<0 ? '<b style="color:var(--red)">⚠️ Con los pagos comprometidos, el '+fmtFecha(minFecha)+' la caja quedaría en '+money(minSaldo)+'.</b> Adelantá cobranzas o corré algún pago.' : 'Con lo comprometido, el saldo más bajo proyectado es '+money(minSaldo)+' (el '+fmtFecha(minFecha)+').';
-    $('caj-explica').innerHTML = 'El <b>disponible hoy</b> es plata real. Lo demás es proyección con fechas de vencimiento. '+alerta;
+    const hayS=pc.some(c=>c.sinAsignar);
+    $('caj-explica').innerHTML = 'El <b>disponible hoy</b> es plata real, abierto por cuenta. Lo demás es proyección con fechas de vencimiento. '+alerta+
+      (hayS?' <b style="color:var(--amber)">⚠️ Hay movimientos «Sin asignar»</b>: son cobros/pagos cargados antes de que existiera el campo de cuenta, o cheques sin cuenta de depósito. El total es correcto igual; para que el detalle por cuenta cierre, editalos e indicá la cuenta.':'');
 
     // Filtros de horizonte
     const defs=[['15','15 días'],['30','30 días'],['60','60 días'],['todos','Todo']];
@@ -3302,11 +3192,12 @@ function buildFilterTable(cfg){
         fld('Fecha','','<input type="date" id="caj-m-fecha" value="'+hoyISO+'">')+
         fld('Monto $','','<input id="caj-m-monto" value="0">')+
         fld('Concepto','','<input id="caj-m-concepto" placeholder="Retiro, gasto...">')+
+        fld('Cuenta','col2','<select id="caj-m-cuenta">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-m-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-m-save">Guardar movimiento</button></div>';
     $('caj-m-cancel').onclick=cerrar;
     $('caj-m-save').onclick=()=>{ const monto=num($('caj-m-monto').value); if(monto<=0){ alert('El monto tiene que ser mayor a 0.'); return; }
-      persist({tipo:'mov', signo:num($('caj-m-signo').value)>=0?1:-1, fecha:$('caj-m-fecha').value||hoyISO, monto, concepto:$('caj-m-concepto').value||'Movimiento manual', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)}); cerrar(); };
+      persist({tipo:'mov', signo:num($('caj-m-signo').value)>=0?1:-1, fecha:$('caj-m-fecha').value||hoyISO, monto, concepto:$('caj-m-concepto').value||'Movimiento manual', cuenta:($('caj-m-cuenta')?$('caj-m-cuenta').value:''), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)}); cerrar(); };
     $('caj-modal').classList.add('open');
   }
   function cerrar(){ $('caj-modal').classList.remove('open'); editing=null; }
@@ -3314,7 +3205,7 @@ function buildFilterTable(cfg){
 
   // ---------- Sync ----------
   function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
-    unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('caja '+col+':',err)); }
+    unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); if(window.__finanzasRefresh) window.__finanzasRefresh(); }, err=>console.error('caja '+col+':',err)); }
   function startSync(){ if(window.__rol!=='admin') return;
     sub('vph_caja',a=>{ caja={saldos:a.filter(x=>x.tipo==='saldo'), movs:a.filter(x=>x.tipo==='mov')}; });
     sub('vph_ventas',a=>ventas=a); sub('vph_compras',a=>compras=a); sub('vph_cheques',a=>cheques=a); }
@@ -3325,7 +3216,13 @@ function buildFilterTable(cfg){
     } else { render(); } }
 
   // Para que Costos Fijos y otros disparen el recálculo de la caja al cambiar
-  window.__cajaRefresh = ()=>{ try{ render(); }catch(e){} };
+  window.__cajaRefresh = ()=>{ try{ render(); if(window.__finanzasRefresh) window.__finanzasRefresh(); }catch(e){} };
+  // El disponible real de hoy, para que Finanzas muestre el MISMO número que Caja (una sola fuente de verdad).
+  // Devuelve null si todavía no se declaró ningún saldo.
+  window.__cajaDisponible = ()=>{ try{ const d=disponibleHoy(); return d?{total:d.total, base:d.base, ent:d.ent, sal:d.sal, desde:d.desde}:null; }catch(e){ return null; } };
+  // Nombres de las cuentas para los selectores de Ventas / Compras / Cheques.
+  // Salen del último saldo declarado, así hay UNA sola lista y no se desincroniza.
+  window.__cajaCuentas = ()=>{ try{ return cuentasDe(ancla()).map(c=>c.nombre).filter(Boolean); }catch(e){ return CUENTAS_DEF.slice(); } };
 
   // Alerta EN VIVO: caja proyectada en negativo
   window.__alertSources = window.__alertSources || [];
@@ -3341,6 +3238,264 @@ function buildFilterTable(cfg){
   $('caj-mov').onclick=abrirMov;
   $('caj-cerrar').onclick=cerrar;
   $('caj-modal').addEventListener('click',e=>{ if(e.target===$('caj-modal')) cerrar(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO FINANZAS EN VIVO — reemplaza la foto del cierre (vph_reportes).
+     Calcula A cobrar / A pagar / antigüedad / IVA con los datos REALES de
+     Ventas, Compras, Cheques y Costos Fijos. El Disponible sale de Caja
+     (window.__cajaDisponible) para mostrar el MISMO número que ese módulo.
+     Lo único que sigue siendo del cierre: el débito de VISA y el margen histórico.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const m$=n=>{ const s=n<0?'-':''; const a=Math.abs(Math.round(n||0)); return s+'$ '+a.toLocaleString('es-AR'); };
+  const mM=n=>{ const s=n<0?'-':''; const a=Math.abs(n||0); return s+(a>=1e6?'$'+(a/1e6).toFixed(1)+'M':a>=1e3?'$'+Math.round(a/1e3)+'K':'$'+Math.round(a)); };
+  const HOY=new Date(); HOY.setHours(0,0,0,0);
+  const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const fmtFecha=s=>{ if(!s) return '—'; const a=String(s).slice(0,10).split('-'); return a[2]+'/'+a[1]+'/'+a[0].slice(2); };
+  const fb=()=>window.__fbctx;
+  const dias=(iso)=>{ if(!iso) return 0; const a=String(iso).slice(0,10).split('-').map(Number); return Math.round((HOY-new Date(a[0],a[1]-1,a[2]))/86400000); };
+  // OJO: kpi()/fmt$/fmtM del script principal viven DENTRO de window.__renderReportes, así que
+  // NO son accesibles desde acá. Se define el helper propio (mismo markup que el resto del tablero).
+  const kpi=(label,value,sub,cls)=>'<div class="kpi '+(cls||'')+'"><div class="label">'+label+'</div><div class="value">'+value+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
+  // Del cierre (vph_reportes) siguen saliendo solo dos cosas, porque no hay fuente en vivo:
+  // el débito estimado de VISA y el margen bruto histórico. Se declaran con `let` a nivel global,
+  // así que NO están en window: hay que leerlas por nombre, con guarda por si aún no cargaron.
+  const visa=()=>{ try{ return (finanzas && finanzas.visa) ? finanzas.visa : null; }catch(e){ return null; } };
+  const margenCierre=()=>{ try{ return (rentabilidad && rentabilidad.margenPct!=null) ? rentabilidad.margenPct : null; }catch(e){ return null; } };
+
+  let ventas=[], compras=[], cheques=[], unsub={}, charts={};
+
+  const calcV=v=> window.__ventaCalc? window.__ventaCalc(v) : {total:0,saldo:0,iva:0,cobrado:0};
+  // Totales de una compra (el módulo Compras no los expone): neto + IVA + percepciones, con signo NC
+  function calcC(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
+    (c.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; });
+    neto*=f; iva*=f; const extras=num(c.percepIva)+num(c.percepIibb)+num(c.impInternos)+num(c.intereses);
+    const sg=c.tipoComprobante==='Nota de Crédito'?-1:1;
+    return {neto:neto*sg, iva:iva*sg, total:(neto+iva+extras)*sg}; }
+
+  // ---------- Deuda / cartera EN VIVO ----------
+  // El saldo de una venta/compra ya descuenta los cobros/pagos con cheque; el cheque pendiente
+  // es un importe aparte. Por eso se SUMAN, no se restan (si no, se pierde plata del cálculo).
+  const chqPend=c=>c.estado==='cartera'||c.estado==='depositado';
+  function porCobrar(){ const R=[];
+    ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const s=num(calcV(v).saldo);
+      if(s>0.5) R.push({quien:v.cliente||'—', monto:s, venc:String(v.vencimiento||'').slice(0,10)||hoyISO, tipo:'venta'}); });
+    cheques.forEach(c=>{ if(c.tipo!=='recibido'||!chqPend(c)) return;
+      R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque'}); });
+    return R; }
+  function porPagar(){ const R=[];
+    compras.forEach(c=>{ const t=calcC(c).total; const pag=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const s=t-pag;
+      if(s>0.5) R.push({quien:c.proveedor||'—', monto:s, venc:String(c.vencimiento||'').slice(0,10)||hoyISO, tipo:'compra'}); });
+    cheques.forEach(c=>{ if(c.tipo!=='emitido'||!chqPend(c)) return;
+      R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque'}); });
+    return R; }
+  const costosPend=()=> (window.__costosFijos?window.__costosFijos():[]).filter(c=>c.estado!=='pagado');
+
+  // Antigüedad: días vencidos respecto de hoy
+  function aging(rows){ const b={avencer:0,d030:0,d3160:0,d6190:0,d90:0};
+    rows.forEach(r=>{ const d=dias(r.venc);
+      if(d<=0) b.avencer+=r.monto; else if(d<=30) b.d030+=r.monto; else if(d<=60) b.d3160+=r.monto; else if(d<=90) b.d6190+=r.monto; else b.d90+=r.monto; });
+    return b; }
+  function agrupar(rows){ const m={};
+    rows.forEach(r=>{ const k=r.quien; const g=m[k]=m[k]||{quien:k, avencer:0, v060:0, v60mas:0, total:0, vencido:0};
+      const d=dias(r.venc); g.total+=r.monto;
+      if(d<=0) g.avencer+=r.monto; else { g.vencido+=r.monto; if(d<=60) g.v060+=r.monto; else g.v60mas+=r.monto; } });
+    return Object.values(m).sort((a,b)=>b.total-a.total); }
+
+  // ---------- Render ----------
+  function render(){
+    if(!$('kpis-finanzas')) return;
+    const cob=porCobrar(), pag=porPagar(), cf=costosPend();
+    const aCobrar=cob.reduce((s,r)=>s+r.monto,0);
+    const aPagarProv=pag.reduce((s,r)=>s+r.monto,0);
+    const aPagarCF=cf.reduce((s,c)=>s+num(c.monto),0);
+    const aPagar=aPagarProv+aPagarCF;
+    const cobVenc=cob.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0);
+    const pagVenc=pag.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0)+cf.filter(c=>dias(c.vencimiento)>0).reduce((s,c)=>s+num(c.monto),0);
+    const caja=window.__cajaDisponible?window.__cajaDisponible():null;
+    const disp=caja?caja.total:null;
+    const brecha=aCobrar-aPagar;
+    const liq=aPagar>0 ? ((disp||0)+aCobrar)/aPagar : null;
+
+    $('kpis-finanzas').innerHTML =
+      kpi('Disponible', disp==null?'—':m$(disp), disp==null?'Declaralo en Caja / Liquidez':'Real, al '+fmtFecha(caja.desde)+' + movimientos', disp==null?'warn':(disp>0?'info':'bad')) +
+      kpi('A cobrar', m$(aCobrar), cobVenc?mM(cobVenc)+' vencido':'Todo al día', cobVenc?'warn':'good') +
+      kpi('A pagar', m$(aPagar), (pagVenc?mM(pagVenc)+' vencido · ':'')+'incluye costos fijos', pagVenc?'bad':'good') +
+      kpi('Brecha cobrar - pagar', (brecha>0?'+':'')+m$(brecha), brecha>0?'Alcanza para cubrir la deuda':'La deuda supera la cartera', brecha>0?'good':'bad') +
+      kpi('Liquidez corriente', liq==null?'—':liq.toFixed(2), 'Referencia sana: > 1,5', liq==null?'info':(liq>=1.5?'good':'warn')) +
+      kpi('Próximo débito VISA', visa()?'~'+m$(visa().estimado):'—', visa()?('Del último cierre · se debita el '+visa().debito):'Sin dato del cierre', 'warn');
+
+    // Gráficos de antigüedad (calculados, ya no hardcodeados)
+    const ap=aging(pag.concat(cf.map(c=>({quien:c.proveedor||c.concepto, monto:num(c.monto), venc:String(c.vencimiento||'').slice(0,10)}))));
+    const ac=aging(cob);
+    $('asof-pagar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye compras, cheques emitidos y costos fijos';
+    $('asof-cobrar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye ventas y cheques a cobrar';
+    dibujarDona('chAgingPagar', ['A vencer','Vencido 0-30','Vencido 31-60','Vencido 61-90','Vencido +90'],
+      [ap.avencer,ap.d030,ap.d3160,ap.d6190,ap.d90], ['#38b26a','#e0a63a','#e07b3a','#d64541','#8e1f1c']);
+    dibujarDona('chAgingCobrar', ['A vencer','Vencido 0-30','Vencido 31-60','Vencido 61-90','Vencido +90'],
+      [ac.avencer,ac.d030,ac.d3160,ac.d6190,ac.d90], ['#38b26a','#e0a63a','#e07b3a','#d64541','#8e1f1c']);
+
+    // Tabla por pagar (proveedores: compras + cheques emitidos)
+    const gp=agrupar(pag);
+    $('asof-pagar').textContent=gp.length+' proveedores · en vivo · clic en encabezados para ordenar';
+    tabla('tabla-pagar','filtros-pagar','count-pagar', gp,
+      [['Proveedor',r=>esc(r.quien)],['A vencer',r=>r.avencer?m$(r.avencer):'—'],['Vencido 0-60',r=>r.v060?m$(r.v060):'—'],['Vencido +60',r=>r.v60mas?m$(r.v60mas):'—'],['Total',r=>'<b>'+m$(r.total)+'</b>']],
+      [['Todos',()=>true],['Al día',r=>r.vencido<=0.5],['Vencidos',r=>r.vencido>0.5]]);
+    const top5=gp.slice(0,5).reduce((s,r)=>s+r.total,0);
+    $('note-pagar').innerHTML = gp.length
+      ? 'Los '+Math.min(5,gp.length)+' proveedores más grandes concentran el '+(aPagarProv?Math.round(top5/aPagarProv*100):0)+'% de la deuda comercial. Incluye los cheques emitidos que todavía no se hicieron efectivos. Los <b>costos fijos</b> ('+m$(aPagarCF)+') están en su propia sección más abajo.'
+      : 'Sin deuda con proveedores 👍';
+
+    // Tabla por cobrar (clientes: ventas + cheques recibidos)
+    const gc=agrupar(cob);
+    $('asof-cobrar').textContent=gc.length+' clientes · en vivo';
+    tabla('tabla-cobrar','filtros-cobrar','count-cobrar', gc,
+      [['Cliente',r=>esc(r.quien)],['A vencer',r=>r.avencer?m$(r.avencer):'—'],['Vencido 0-60',r=>r.v060?m$(r.v060):'—'],['Vencido +60',r=>r.v60mas?m$(r.v60mas):'—'],['Total',r=>'<b>'+m$(r.total)+'</b>']],
+      [['Todos',()=>true],['Al día',r=>r.vencido<=0.5],['Vencidos',r=>r.vencido>0.5]]);
+    const t1=gc[0];
+    $('note-cobrar').innerHTML = gc.length
+      ? (cobVenc>0.5 ? '<b style="color:var(--amber)">'+mM(cobVenc)+' vencidos</b> — gestionar la cobranza antes de asumir nuevos compromisos.' : 'Sin mora: la cobranza está sana.')
+        + (t1 && aCobrar && (t1.total/aCobrar)>0.4 ? ' Riesgo de <b>concentración</b>: '+esc(t1.quien)+' concentra el '+Math.round(t1.total/aCobrar*100)+'% de la cartera; su cobro define la caja del mes.' : '')
+        + ' Incluye los cheques recibidos todavía no cobrados.'
+      : 'Sin nada por cobrar.';
+
+    // Costos fijos (del módulo Costos Fijos, en vivo)
+    renderCF(disp);
+    // IVA del mes (de las ventas y compras reales)
+    renderIVA();
+    // Indicadores
+    const ind=[
+      ['Liquidez corriente','(Disponible + A cobrar) / A pagar', liq==null?'—':liq.toFixed(2), '> 1,5', liq==null?'amber':(liq>=1.5?'green':'amber')],
+      ['Capital de trabajo','Disponible + A cobrar − A pagar', m$((disp||0)+aCobrar-aPagar), 'Positivo', ((disp||0)+aCobrar-aPagar)>0?'green':'red'],
+      ['% deuda vencida','Vencido / total a pagar', aPagar?Math.round(pagVenc/aPagar*100)+'%':'—', '< 20%', (aPagar&&pagVenc/aPagar>0.2)?'red':'green']
+    ];
+    const mg=margenCierre(); if(mg!=null) ind.push(['Margen bruto (del cierre)','Margen / Ventas', mg+'%', 'Según rubro', 'green']);
+    const t=$('tabla-indicadores');
+    if(t) t.innerHTML='<tr><th>Indicador</th><th>Fórmula</th><th class="num">Resultado</th><th>Referencia</th><th>Estado</th></tr>'+
+      ind.map(i=>'<tr><td data-label="Indicador">'+i[0]+'</td><td data-label="Fórmula" style="color:var(--muted)">'+i[1]+'</td><td class="num" data-label="Resultado"><b>'+i[2]+'</b></td><td data-label="Referencia">'+i[3]+'</td><td data-label="Estado"><span class="badge '+i[4]+'">'+(i[4]==='green'?'OK':i[4]==='amber'?'ATENCIÓN':'CRÍTICO')+'</span></td></tr>').join('');
+  }
+
+  function renderCF(disp){
+    if(!$('kpis-cf')) return;
+    const todos=(window.__costosFijos?window.__costosFijos():[]);
+    const pend=todos.filter(c=>c.estado!=='pagado');
+    const en7Real=pend.filter(c=>{ const d=-dias(c.vencimiento); return d<=7; }).reduce((s,c)=>s+num(c.monto),0);
+    const en30=pend.filter(c=>{ const d=-dias(c.vencimiento); return d<=30; }).reduce((s,c)=>s+num(c.monto),0);
+    const venc=pend.filter(c=>dias(c.vencimiento)>0);
+    const aconf=todos.filter(c=>(c.estado||'aconfirmar')==='aconfirmar');
+    $('asof-cf').textContent = todos.length? (todos.length+' costos fijos cargados · en vivo desde el módulo Costos Fijos') : 'Todavía no hay costos fijos cargados — cargalos en el módulo Costos Fijos';
+    $('kpis-cf').innerHTML =
+      kpi('Vencen en 7 días', m$(en7Real), disp==null?'Declará el saldo en Caja':'Disponible hoy: '+m$(disp), (disp!=null&&en7Real>disp)?'bad':'good') +
+      kpi('Vencen en 30 días', m$(en30), pend.length+' pagos pendientes', 'info') +
+      kpi('Pagos vencidos', String(venc.length), venc.length?venc.map(v=>v.concepto).join(', '):'Ninguno', venc.length?'bad':'good') +
+      kpi('Sin confirmar por Sofía', String(aconf.length), 'Falta validar monto y fecha', aconf.length?'warn':'good');
+    const bEst=e=> e==='pagado'?'<span class="badge green">Pagado</span>' : e==='confirmado'?'<span class="badge amber">Confirmado — a pagar</span>' : '<span class="badge red">A confirmar (Sofía)</span>';
+    const t=$('tabla-cf'); if(!t) return;
+    if(!todos.length){ t.innerHTML='<tr><td style="text-align:center;color:var(--muted);padding:20px">Sin costos fijos cargados. Cargalos en el módulo <b>Costos Fijos</b> para verlos acá y en la proyección de Caja.</td></tr>'; return; }
+    t.innerHTML='<tr><th>Vencimiento</th><th>Concepto</th><th>Proveedor</th><th class="num">Monto</th><th>Medio</th><th>Días</th><th>Estado</th></tr>'+
+      todos.slice().sort((a,b)=>String(a.vencimiento||'').localeCompare(String(b.vencimiento||''))).map(p=>{
+        const d=-dias(p.vencimiento);
+        const dTxt = p.estado==='pagado' ? '—' : d<0 ? '<b style="color:var(--red)">vencido '+Math.abs(d)+'d</b>' : d===0 ? '<b style="color:var(--red)">HOY</b>' : d<=3 ? '<b style="color:var(--amber)">'+d+'d</b>' : d+'d';
+        return '<tr><td data-label="Vencimiento"><b>'+fmtFecha(p.vencimiento)+'</b></td><td data-label="Concepto">'+esc(p.concepto||'')+'</td><td data-label="Proveedor">'+esc(p.proveedor||'—')+'</td>'+
+          '<td class="num" data-label="Monto">'+(num(p.monto)?m$(num(p.monto)):'<i style="color:var(--muted)">a definir</i>')+'</td><td data-label="Medio">'+esc(p.medio||'—')+'</td><td data-label="Días">'+dTxt+'</td><td data-label="Estado">'+bEst(p.estado||'aconfirmar')+'</td></tr>'; }).join('');
+  }
+
+  function renderIVA(){
+    if(!$('kpis-iva')) return;
+    const per=hoyISO.slice(0,7);
+    const dd={}, cc={};
+    ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; const iva=num(calcV(v).iva); if(iva) dd[f]=(dd[f]||0)+iva; });
+    compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; const iva=num(calcC(c).iva); if(iva) cc[f]=(cc[f]||0)+iva; });
+    const totDeb=Object.values(dd).reduce((a,b)=>a+b,0), totCred=Object.values(cc).reduce((a,b)=>a+b,0);
+    const pos=totDeb-totCred;
+    $('asof-iva').textContent='Mes en curso ('+per+') · calculado en vivo desde las ventas y compras cargadas';
+    $('kpis-iva').innerHTML =
+      kpi('IVA débito (ventas)', m$(totDeb), 'IVA facturado a clientes (no cuenta "Sin factura")', 'info') +
+      kpi('IVA crédito (compras)', m$(totCred), 'IVA de compras con factura', 'info') +
+      kpi('Posición estimada', (pos>0?'':'+')+m$(Math.abs(pos)), pos>0?'A pagar a AFIP (estimado, antes de retenciones)':'Saldo a favor estimado', pos>0?'warn':'good');
+    const fechas=[...new Set(Object.keys(dd).concat(Object.keys(cc)))].sort();
+    let ad=0, ac=0;
+    dibujarIva(fechas.map(f=>fmtFecha(f)), fechas.map(f=>dd[f]||0), fechas.map(f=>cc[f]||0),
+      fechas.map(f=>ad+=(dd[f]||0)), fechas.map(f=>ac+=(cc[f]||0)));
+  }
+
+  // ---------- Gráficos (se destruyen y redibujan en cada refresco) ----------
+  function dibujarDona(id, labels, data, colors){
+    const el=$(id); if(!el || typeof Chart==='undefined') return;
+    if(charts[id]) charts[id].destroy();
+    charts[id]=new Chart(el, { type:'doughnut',
+      data:{ labels, datasets:[{ data, backgroundColor:colors, borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.label+': '+m$(c.raw)}} } } });
+  }
+  function dibujarIva(labels, deb, cred, acumD, acumC){
+    const el=$('chIva'); if(!el || typeof Chart==='undefined') return;
+    if(charts.chIva) charts.chIva.destroy();
+    charts.chIva=new Chart(el, {
+      data:{ labels, datasets:[
+        { type:'bar', label:'Débito del día', data:deb, backgroundColor:'#d64541', borderRadius:5 },
+        { type:'bar', label:'Crédito del día', data:cred, backgroundColor:'#38b26a', borderRadius:5 },
+        { type:'line', label:'Débito acumulado', data:acumD, borderColor:'#8e1f1c', tension:.3, pointRadius:3 },
+        { type:'line', label:'Crédito acumulado', data:acumC, borderColor:'#155d38', tension:.3, pointRadius:3 } ] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+m$(c.raw)}}},
+        scales:{ y:{ticks:{callback:v=>mM(v)}} } } });
+  }
+
+  // ---------- Tabla con filtros y orden (propia, para no depender del buildFilterTable del cierre) ----------
+  const estado={};
+  function tabla(tableId, barId, countId, rows, cols, filtros){
+    const t=$(tableId); if(!t) return;
+    const st=estado[tableId]=estado[tableId]||{f:0, sort:cols.length-1, dir:-1};
+    const bar=$(barId);
+    if(bar){ bar.innerHTML=filtros.map((f,i)=>'<button class="filter-btn'+(st.f===i?' active':'')+'" data-i="'+i+'">'+f[0]+'</button>').join('');
+      bar.querySelectorAll('button').forEach(b=>b.onclick=()=>{ st.f=+b.dataset.i; render(); }); }
+    let rs=rows.filter(filtros[st.f][1]);
+    const key=['quien','avencer','v060','v60mas','total'][st.sort];
+    rs=rs.slice().sort((a,b)=>{ const x=a[key],y=b[key]; const r=(typeof x==='string')?String(x).localeCompare(String(y)):(x-y); return st.dir<0?-r:r; });
+    let h='<tr>'+cols.map((c,i)=>'<th class="'+(i?'num':'')+'" data-s="'+i+'" style="cursor:pointer">'+c[0]+(st.sort===i?' <span class="arrow">'+(st.dir<0?'▼':'▲')+'</span>':'')+'</th>').join('')+'</tr>';
+    if(!rs.length) h+='<tr><td colspan="'+cols.length+'" style="text-align:center;color:var(--muted);padding:18px">Nada para este filtro.</td></tr>';
+    rs.forEach(r=>{ h+='<tr>'+cols.map((c,i)=>'<td class="'+(i?'num':'')+'" data-label="'+esc(c[0])+'">'+c[1](r)+'</td>').join('')+'</tr>'; });
+    if(rs.length){ const sum=k=>rs.reduce((s,r)=>s+(r[k]||0),0);
+      h+='<tr class="total"><td data-label=""><b>Total</b></td><td class="num">'+m$(sum('avencer'))+'</td><td class="num">'+m$(sum('v060'))+'</td><td class="num">'+m$(sum('v60mas'))+'</td><td class="num">'+m$(sum('total'))+'</td></tr>'; }
+    t.innerHTML=h;
+    t.querySelectorAll('th[data-s]').forEach(th=>th.onclick=()=>{ const i=+th.dataset.s; if(st.sort===i) st.dir=-st.dir; else { st.sort=i; st.dir=-1; } render(); });
+    const c=$(countId); if(c) c.textContent=rs.length+' de '+rows.length;
+  }
+
+  // ---------- Alertas EN VIVO (reemplazan a las que salían del cierre) ----------
+  window.__alertSources = window.__alertSources || [];
+  window.__alertSources.push(()=>{ const A=[];
+    if(!ventas.length && !compras.length) return A;
+    const pag=porPagar(), cf=costosPend();
+    const aPagar=pag.reduce((s,r)=>s+r.monto,0)+cf.reduce((s,c)=>s+num(c.monto),0);
+    const pagVenc=pag.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0)+cf.filter(c=>dias(c.vencimiento)>0).reduce((s,c)=>s+num(c.monto),0);
+    if(aPagar>0 && pagVenc/aPagar>0.5) A.push({sev:'bad', area:'Finanzas', t:'Deuda vencida: '+Math.round(pagVenc/aPagar*100)+'% del total a pagar ('+mM(pagVenc)+')', act:'Acordar plan de pagos con los proveedores vencidos. Priorizar a quien corta el suministro.', go:{page:'Finanzas'}});
+    const cob=porCobrar(); const aCobrar=cob.reduce((s,r)=>s+r.monto,0);
+    const cobVenc=cob.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0);
+    const caja=window.__cajaDisponible?window.__cajaDisponible():null;
+    if(caja && aPagar>0){ const liq=(caja.total+aCobrar)/aPagar;
+      if(liq<1.5) A.push({sev: liq<1?'bad':'warn', area:'Finanzas', t:'Liquidez corriente '+liq.toFixed(2)+' (referencia sana: >1,5)', act:cobVenc>0.5?('Adelantar cobranzas: hay '+mM(cobVenc)+' vencidos de clientes.'):'Cuidar los compromisos nuevos hasta mejorar la cobranza.', go:{page:'Finanzas'}}); }
+    return A; });
+
+  // ---------- Sync ----------
+  function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
+    unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('finanzas '+col+':',err)); }
+  function startSync(){ if(window.__rol!=='admin') return; sub('vph_ventas',a=>ventas=a); sub('vph_compras',a=>compras=a); sub('vph_cheques',a=>cheques=a); }
+  function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(()=>{ startSync(); setTimeout(render,600); });
+      window.__afterLogout.push(()=>{ stopSync(); ventas=[];compras=[];cheques=[]; });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+    } }
+  // Lo llaman Caja y Costos Fijos cuando cambian sus datos
+  window.__finanzasRefresh = ()=>{ try{ render(); }catch(e){} };
   boot();
 })();
 </script>
