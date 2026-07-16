@@ -893,6 +893,83 @@
     </div>
   </div>
 
+  <!-- ================= CAJA / LIQUIDEZ ================= -->
+  <div class="page" id="page-caja">
+    <div class="kpis" id="caj-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="margin:0"><span class="dot" style="background:var(--green)"></span>Caja / Liquidez</h2>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="cmp-btn cmp-btn-primary" id="caj-saldo">💰 Declarar saldo real</button>
+          <button class="cmp-btn" id="caj-mov">+ Movimiento</button>
+        </div>
+      </div>
+      <div id="caj-ancla" class="asof"></div>
+      <div class="cmp-summary" id="caj-summary"></div>
+      <p class="note" id="caj-explica" style="margin-top:0"></p>
+    </section>
+
+    <section>
+      <h2><span class="dot" style="background:var(--amber)"></span>Proyección de caja</h2>
+      <div class="asof" id="caj-proy-asof"></div>
+      <div class="filter-bar" id="caj-proy-filtros"></div>
+      <div class="tbl-wrap"><table id="caj-tabla-proy"></table></div>
+      <p class="note">Suma lo que <b>va a entrar</b> (cheques en cartera, ventas a cobrar) y lo que <b>hay que pagar</b> (cheques emitidos, compras y costos fijos pendientes) por fecha, arrancando del disponible de hoy. La columna <b>Saldo</b> te dice con cuánto quedás cada día: si se pone en rojo, ese día no alcanza.</p>
+    </section>
+
+    <section>
+      <h2><span class="dot"></span>Movimientos desde el último saldo declarado</h2>
+      <div class="asof" id="caj-mov-asof"></div>
+      <div class="tbl-wrap"><table id="caj-tabla-mov"></table></div>
+      <p class="note">Todo lo que movió la caja desde que declaraste el saldo. Los cobros y pagos salen solos de Ventas y Compras; los cheques cuentan <b>recién cuando se cobran</b> (no cuando los recibís). Si algo no pasa por esos módulos (un retiro, un gasto de caja chica), cargalo con <b>+ Movimiento</b>.</p>
+    </section>
+  </div>
+
+  <!-- ================= FORMULARIOS CAJA (overlay) ================= -->
+  <div class="cmp-overlay" id="caj-modal">
+    <div class="cmp-dialog" style="max-width:520px">
+      <div class="cmp-dialog-head">
+        <h3 id="caj-form-title">Declarar saldo real</h3>
+        <button class="cmp-x" id="caj-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="caj-form"></div>
+    </div>
+  </div>
+
+  <!-- ================= COSTOS FIJOS ================= -->
+  <div class="page" id="page-costosfijos">
+    <div class="kpis" id="cfj-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="margin:0"><span class="dot" style="background:var(--red)"></span>Costos Fijos</h2>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="cmp-btn cmp-btn-primary" id="cfj-nuevo">+ Nuevo Costo Fijo</button>
+          <button class="cmp-btn" id="cfj-generar" title="Crea los costos fijos recurrentes que falten de este mes (alquiler, sueldos, etc.)">🔁 Generar recurrentes del mes</button>
+          <button class="cmp-btn" id="cfj-export">Exportar JSON</button>
+        </div>
+      </div>
+      <div class="cmp-summary" id="cfj-summary"></div>
+      <div class="filter-bar" id="cfj-filtros"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input type="text" class="search-box" id="cfj-buscar" placeholder="Buscar concepto, proveedor..." style="margin-left:0">
+        <span class="result-count" id="cfj-count" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="tbl-wrap"><table id="cfj-tabla"></table></div>
+      <p class="note">Alquiler, sueldos, servicios, seguros — todo lo que se paga sí o sí. Circuito: <b>A confirmar</b> (Sofía valida monto y fecha) → <b>Confirmado</b> → <b>Pagado</b>. Los <b>recurrentes</b> se regeneran cada mes con el botón de arriba. Lo pendiente entra en la <b>proyección de Caja</b> y avisa en la Vista Diaria cuando se acerca el vencimiento. Datos en la nube (Firestore <code>vph_costosfijos</code>).</p>
+    </section>
+  </div>
+
+  <!-- ================= FORMULARIO COSTO FIJO (overlay) ================= -->
+  <div class="cmp-overlay" id="cfj-modal">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head">
+        <h3 id="cfj-form-title">Nuevo Costo Fijo</h3>
+        <button class="cmp-x" id="cfj-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="cfj-form"></div>
+    </div>
+  </div>
+
   <!-- ================= FISCAL ================= -->
   <div class="page" id="page-fiscal">
     <section>
@@ -942,6 +1019,8 @@ const PAGES = [
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'compras', nombre:'Compras', ico:'🧾' },
   { id:'cheques', nombre:'Cheques', ico:'🏦' },
+  { id:'caja', nombre:'Caja / Liquidez', ico:'💵' },
+  { id:'costosfijos', nombre:'Costos Fijos', ico:'📌' },
   { id:'basedatos', nombre:'Base de Datos', ico:'📇' },
   { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
   { id:'fiscal', nombre:'Fiscal', ico:'✓' }
@@ -2681,7 +2760,8 @@ function buildFilterTable(cfg){
     else { const i=DB.cheques.findIndex(x=>x._uid===c._uid); if(i>=0)DB.cheques[i]=c; else DB.cheques.push(c); saveLocal(); render(); } }
   function remove(uid){ if(window.__usaNube){ const cx=fb(); if(cx&&cx.db) cx.FS.deleteDoc(cx.FS.doc(cx.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
     else { DB.cheques=DB.cheques.filter(x=>x._uid!==uid); saveLocal(); render(); } }
-  function setEstado(c,estado){ persist({...c, estado}); }
+  // Al cobrar/rechazar un cheque se registra la fecha del movimiento — la usa la Caja para saber cuándo entró/salió la plata.
+  function setEstado(c,estado){ const extra={estado}; if(estado==='cobrado'||estado==='rechazado') extra.fechaMov=hoyISO; persist({...c, ...extra}); }
 
   function blank(){ return { tipo:'recibido', numero:'', banco:'', entidad:'', fechaEmision:hoyISO, fechaVencimiento:hoyISO, monto:0, estado:'cartera', nota:'' }; }
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
@@ -2828,6 +2908,411 @@ function buildFilterTable(cfg){
   $('chq-export').onclick=exportJSON;
   $('chq-buscar').addEventListener('input',e=>{ filtro.q=e.target.value.trim(); render(); });
   $('chq-modal').addEventListener('click',e=>{ if(e.target===$('chq-modal')) closeForm(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO COSTOS FIJOS — alquiler, sueldos, servicios, seguros.
+     Circuito: A confirmar (Sofía) → Confirmado → Pagado. Recurrentes por mes.
+     Lo pendiente alimenta la proyección de Caja. Persistencia: Firestore vph_costosfijos.
+     Prefijo de ids: cfj-
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const money=n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtM=n=>{ const a=Math.abs(n||0); return a>=1e6?'$ '+(n/1e6).toFixed(1)+'M':a>=1e3?'$ '+Math.round(n/1e3)+'K':'$ '+Math.round(n||0); };
+  const $=id=>document.getElementById(id);
+  const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const HOY=new Date(); HOY.setHours(0,0,0,0);
+  const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const fmtFecha=s=>{ if(!s) return '—'; const a=String(s).slice(0,10).split('-'); return a[2]+'/'+a[1]+'/'+a[0].slice(2); };
+  const fb=()=>window.__fbctx;
+
+  const COL='vph_costosfijos';
+  const ESTADOS=[{k:'aconfirmar',l:'A confirmar',c:'#d64541'},{k:'confirmado',l:'Confirmado',c:'#c98a06'},{k:'pagado',l:'Pagado',c:'#1e9e5a'}];
+  const MEDIOS=['Transferencia','Débito automático','Efectivo','Cheque','E-Cheq','VISA / Tarjeta'];
+  const PENDIENTES=['aconfirmar','confirmado'];
+  let DB={costos:[]}, unsub=null, editing=null, filtro={estado:'pendientes', q:''};
+  let uidSeq=Date.now(); const newUid=()=>'cfj'+(uidSeq++).toString(36);
+
+  const estadoLbl=k=>{ const e=ESTADOS.find(x=>x.k===k); return e?e.l:k; };
+  const badge=k=>{ const e=ESTADOS.find(x=>x.k===k)||{c:'#95a5b8',l:k}; return '<span class="badge" style="background:'+e.c+'22;color:'+e.c+';border:1px solid '+e.c+'55">'+e.l+'</span>'; };
+  const esPendiente=c=>PENDIENTES.includes(c.estado||'aconfirmar');
+  const vencido=c=>esPendiente(c) && c.vencimiento && c.vencimiento<hoyISO;
+  const periodoDe=c=>String(c.vencimiento||'').slice(0,7);
+
+  function persist(c){ if(!c._uid)c._uid=newUid();
+    if(window.__usaNube){ const x=fb(); if(x&&x.db) x.FS.setDoc(x.FS.doc(x.db,COL,c._uid),{...c}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else { const i=DB.costos.findIndex(y=>y._uid===c._uid); if(i>=0)DB.costos[i]=c; else DB.costos.push(c); render(); } }
+  function remove(uid){ if(window.__usaNube){ const x=fb(); if(x&&x.db) x.FS.deleteDoc(x.FS.doc(x.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
+    else { DB.costos=DB.costos.filter(y=>y._uid!==uid); render(); } }
+
+  function blank(){ return { concepto:'', proveedor:'', monto:0, vencimiento:hoyISO, estado:'aconfirmar', medio:MEDIOS[0], fechaPago:'', recurrente:false, diaVto:10, nota:'' }; }
+  function field(l,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+l+'</label>'+inner+'</div>'; }
+  function opt(arr,sel){ return arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join(''); }
+  function openForm(c){ editing=c?JSON.parse(JSON.stringify(c)):blank(); $('cfj-form-title').textContent=c?'Editar Costo Fijo':'Nuevo Costo Fijo'; drawForm(); $('cfj-modal').classList.add('open'); }
+  function closeForm(){ $('cfj-modal').classList.remove('open'); editing=null; }
+  function drawForm(){
+    const c=editing;
+    $('cfj-form').innerHTML =
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        field('Concepto','col2','<input id="cfj-concepto" value="'+esc(c.concepto)+'" placeholder="Alquiler, Sueldos, Luz, Seguro...">')+
+        field('Proveedor / destinatario','col2','<input id="cfj-prov" value="'+esc(c.proveedor)+'" placeholder="A quién se le paga">')+
+        field('Monto $','','<input id="cfj-monto" value="'+c.monto+'">')+
+        field('Vencimiento','','<input type="date" id="cfj-venc" value="'+esc(c.vencimiento||'')+'">')+
+        field('Estado','','<select id="cfj-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>')+
+        field('Medio de pago','','<select id="cfj-medio">'+opt(MEDIOS,c.medio)+'</select>')+
+        '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="cfj-recu"'+(c.recurrente?' checked':'')+'> 🔁 Es recurrente (se repite todos los meses)</label></div>'+
+        field('Día de vencimiento (si es recurrente)','','<input id="cfj-diavto" value="'+esc(c.diaVto||10)+'" placeholder="10">')+
+        field('Nota','col2','<textarea id="cfj-nota" rows="2">'+esc(c.nota)+'</textarea>')+
+      '</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="cfj-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cfj-save">Guardar</button></div>';
+    [['cfj-concepto','concepto'],['cfj-prov','proveedor'],['cfj-monto','monto'],['cfj-venc','vencimiento'],['cfj-estado','estado'],['cfj-medio','medio'],['cfj-diavto','diaVto'],['cfj-nota','nota']].forEach(([id,k])=>{
+      const el=$(id); if(el) el.addEventListener('input',()=>{ editing[k]=(k==='monto'||k==='diaVto')?num(el.value):el.value; }); });
+    $('cfj-recu').addEventListener('change',()=>{ editing.recurrente=$('cfj-recu').checked; });
+    $('cfj-cancel').onclick=closeForm;
+    $('cfj-save').onclick=()=>{
+      if(!String(editing.concepto||'').trim()){ alert('Ingresá el concepto.'); return; }
+      if(num(editing.monto)<=0){ alert('El monto tiene que ser mayor a 0.'); return; }
+      if(editing.estado==='pagado' && !editing.fechaPago) editing.fechaPago=hoyISO;
+      if(editing.estado!=='pagado') editing.fechaPago='';
+      persist(editing); closeForm(); };
+  }
+  // Marca pagado: la fecha de pago es la que impacta en la caja
+  function pagar(c){ const f=prompt('¿En qué fecha se pagó? (AAAA-MM-DD)', hoyISO); if(!f) return;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(f)){ alert('Fecha inválida. Usá el formato AAAA-MM-DD.'); return; }
+    const cur=DB.costos.find(x=>x._uid===c._uid)||c; cur.estado='pagado'; cur.fechaPago=f; persist(cur); }
+
+  // Crea los recurrentes que falten del mes en curso (no duplica los que ya existen)
+  function generarRecurrentes(){
+    const per=hoyISO.slice(0,7);
+    const yaHay=new Set(DB.costos.filter(c=>periodoDe(c)===per).map(c=>String(c.concepto||'').trim().toLowerCase()));
+    const plantillas=[]; const vistos=new Set();
+    DB.costos.filter(c=>c.recurrente).forEach(c=>{ const k=String(c.concepto||'').trim().toLowerCase(); if(!vistos.has(k)){ vistos.add(k); plantillas.push(c); } });
+    const faltan=plantillas.filter(c=>!yaHay.has(String(c.concepto||'').trim().toLowerCase()));
+    if(!plantillas.length){ alert('No hay ningún costo fijo marcado como recurrente todavía.\n\nMarcá el checkbox "🔁 Es recurrente" en los que se repiten todos los meses (alquiler, sueldos, etc.).'); return; }
+    if(!faltan.length){ alert('Los recurrentes de este mes ya están todos creados 👍'); return; }
+    const resumen=faltan.map(c=>'• '+c.concepto+' — '+money(num(c.monto))).join('\n');
+    if(!confirm('Voy a crear estos '+faltan.length+' costo(s) fijo(s) para '+per+', en estado "A confirmar":\n\n'+resumen+'\n\n¿Confirmás?')) return;
+    faltan.forEach(c=>{ const dia=Math.min(Math.max(num(c.diaVto)||10,1),28);
+      persist({ concepto:c.concepto, proveedor:c.proveedor||'', monto:num(c.monto), vencimiento:per+'-'+p2(dia),
+        estado:'aconfirmar', medio:c.medio||MEDIOS[0], fechaPago:'', recurrente:true, diaVto:dia, nota:c.nota||'', _uid:newUid() }); });
+  }
+
+  function render(){
+    if(!$('cfj-tabla')) return;
+    let rows=DB.costos.slice();
+    if(filtro.q){ const s=filtro.q.toLowerCase(); rows=rows.filter(c=>((c.concepto||'')+' '+(c.proveedor||'')).toLowerCase().includes(s)); }
+    if(filtro.estado==='pendientes') rows=rows.filter(esPendiente);
+    else if(filtro.estado==='vencidos') rows=rows.filter(vencido);
+    else if(filtro.estado!=='todos') rows=rows.filter(c=>(c.estado||'aconfirmar')===filtro.estado);
+    rows.sort((a,b)=> String(a.vencimiento||'9999').localeCompare(String(b.vencimiento||'9999')));
+
+    const pend=DB.costos.filter(esPendiente), venc=DB.costos.filter(vencido);
+    const totPend=pend.reduce((a,c)=>a+num(c.monto),0), totVenc=venc.reduce((a,c)=>a+num(c.monto),0);
+    const en7=pend.filter(c=>c.vencimiento&&c.vencimiento>=hoyISO&&c.vencimiento<=isoMas(7));
+    const pagMes=DB.costos.filter(c=>c.estado==='pagado'&&String(c.fechaPago||'').slice(0,7)===hoyISO.slice(0,7));
+    const aconf=DB.costos.filter(c=>(c.estado||'aconfirmar')==='aconfirmar');
+    $('cfj-kpis').innerHTML =
+      k('Pendiente de pago', totPend?'warn':'good', fmt$(totPend), pend.length+' costo'+(pend.length!==1?'s':'')+' sin pagar')+
+      k('Vencidos', venc.length?'bad':'good', fmt$(totVenc), venc.length?venc.length+' ya vencido'+(venc.length!==1?'s':''):'Ninguno vencido 👍')+
+      k('Vencen en 7 días', en7.length?'warn':'good', fmt$(en7.reduce((a,c)=>a+num(c.monto),0)), en7.length+' por vencer')+
+      k('Pagado este mes','info', fmt$(pagMes.reduce((a,c)=>a+num(c.monto),0)), pagMes.length+' pagado'+(pagMes.length!==1?'s':''));
+
+    $('cfj-summary').innerHTML =
+      cell('A confirmar (Sofía)', String(aconf.length), aconf.length?'var(--red)':'var(--muted)')+
+      cell('Confirmados, a pagar', String(DB.costos.filter(c=>c.estado==='confirmado').length), 'var(--amber)')+
+      cell('Total pendiente', money(totPend), totPend?'var(--amber)':'var(--green)');
+
+    const cnt=e=>DB.costos.filter(c=>(c.estado||'aconfirmar')===e).length;
+    const defs=[['pendientes','Pendientes',pend.length],['vencidos','Vencidos',venc.length],['aconfirmar','A confirmar',cnt('aconfirmar')],['confirmado','Confirmados',cnt('confirmado')],['pagado','Pagados',cnt('pagado')],['todos','Todos',DB.costos.length]];
+    $('cfj-filtros').innerHTML=defs.map(([v,l,n])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-e="'+v+'">'+l+' ('+n+')</button>').join('');
+    $('cfj-filtros').querySelectorAll('button').forEach(b=>b.onclick=()=>{ filtro.estado=b.dataset.e; render(); });
+
+    let html='<tr><th>Concepto</th><th>Proveedor</th><th>Vencimiento</th><th class="num">Monto</th><th>Medio</th><th>Estado</th><th></th></tr>';
+    if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:22px">Sin costos fijos para este filtro.</td></tr>';
+    rows.forEach(c=>{ const v=vencido(c);
+      html+='<tr><td data-label="Concepto"><b>'+esc(c.concepto||'—')+'</b>'+(c.recurrente?' <span style="font-size:9.5px;color:var(--muted)" title="Se repite todos los meses">🔁</span>':'')+'</td>'+
+        '<td data-label="Proveedor">'+esc(c.proveedor||'—')+'</td>'+
+        '<td data-label="Vencimiento"'+(v?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.vencimiento)+(v?' ⚠️':'')+(c.estado==='pagado'&&c.fechaPago?'<div style="font-size:9.5px;color:var(--green)">pagado '+fmtFecha(c.fechaPago)+'</div>':'')+'</td>'+
+        '<td class="num" data-label="Monto"><b>'+money(num(c.monto))+'</b></td>'+
+        '<td data-label="Medio">'+esc(c.medio||'—')+'</td>'+
+        '<td data-label="Estado">'+badge(c.estado||'aconfirmar')+'</td>'+
+        '<td data-label="" style="white-space:nowrap">'+
+          ((c.estado||'aconfirmar')==='aconfirmar'?'<button class="cmp-rowbtn" data-a="confirmar" data-id="'+c._uid+'">✓ Confirmar</button>':'')+
+          (esPendiente(c)?'<button class="cmp-rowbtn" data-a="pagar" data-id="'+c._uid+'" title="Marcar como pagado (descuenta de la caja)">💵 Pagar</button>':'')+
+          '<button class="cmp-rowbtn" data-a="edit" data-id="'+c._uid+'">Editar</button>'+
+          '<button class="cmp-rowbtn" data-a="del" data-id="'+c._uid+'">✕</button>'+
+        '</td></tr>'; });
+    $('cfj-tabla').innerHTML=html;
+    $('cfj-tabla').querySelectorAll('button[data-a]').forEach(b=>b.onclick=()=>{ const c=DB.costos.find(x=>x._uid==b.dataset.id); if(!c)return; const a=b.dataset.a;
+      if(a==='edit') openForm(c);
+      else if(a==='confirmar'){ const cur=DB.costos.find(x=>x._uid===c._uid)||c; cur.estado='confirmado'; persist(cur); }
+      else if(a==='pagar') pagar(c);
+      else if(a==='del'){ if(confirm('¿Eliminar "'+(c.concepto||'')+'" de '+money(num(c.monto))+'?')) remove(c._uid); } });
+    $('cfj-count').textContent=rows.length+' de '+DB.costos.length;
+  }
+  function k(l,cls,v,sub){ return '<div class="kpi '+cls+'"><div class="label">'+l+'</div><div class="value">'+v+'</div><div class="sub">'+sub+'</div></div>'; }
+  function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
+  const fmt$=n=>fmtM(n);
+  function isoMas(d){ const x=new Date(HOY); x.setDate(x.getDate()+d); return x.getFullYear()+'-'+p2(x.getMonth()+1)+'-'+p2(x.getDate()); }
+
+  function exportJSON(){ const b=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='VPH_costosfijos_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
+
+  // API para el módulo Caja
+  window.__costosFijos = ()=> DB.costos.slice();
+
+  function startSync(){ if(window.__rol!=='admin') return; const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.costos=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); if(window.__cajaRefresh) window.__cajaRefresh(); }, err=>console.error('costosfijos:',err)); }
+  function stopSync(){ if(unsub){unsub();unsub=null;} }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.costos=[]; render(); });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
+    } else { render(); } }
+
+  // Fuente de alertas EN VIVO: costos fijos vencidos / por vencer / a confirmar
+  window.__alertSources = window.__alertSources || [];
+  window.__alertSources.push(()=>{ const A=[];
+    const venc=DB.costos.filter(vencido);
+    if(venc.length) A.push({sev:'bad', area:'Finanzas', t:venc.length+' costo'+(venc.length>1?'s':'')+' fijo'+(venc.length>1?'s':'')+' VENCIDO'+(venc.length>1?'S':'')+' por '+money(venc.reduce((a,c)=>a+num(c.monto),0)), act:'Pagarlos o renegociar la fecha. Fijate en Caja si alcanza.', go:{page:'Costos Fijos'}});
+    const en5=DB.costos.filter(c=>esPendiente(c)&&c.vencimiento&&c.vencimiento>=hoyISO&&c.vencimiento<=isoMas(5));
+    if(en5.length) A.push({sev:'warn', area:'Finanzas', t:en5.length+' costo'+(en5.length>1?'s':'')+' fijo'+(en5.length>1?'s':'')+' vence'+(en5.length>1?'n':'')+' en 5 días ('+money(en5.reduce((a,c)=>a+num(c.monto),0))+')', act:'Verificar en Caja que haya fondos antes del vencimiento.', go:{page:'Caja / Liquidez'}});
+    const ac=DB.costos.filter(c=>(c.estado||'aconfirmar')==='aconfirmar');
+    if(ac.length) A.push({sev:'info', area:'Finanzas', t:ac.length+' costo'+(ac.length>1?'s':'')+' fijo'+(ac.length>1?'s':'')+' a confirmar', act:'Sofía: validar monto y fecha para que entren en la proyección de caja.', go:{page:'Costos Fijos'}});
+    return A; });
+
+  $('cfj-nuevo').onclick=()=>openForm(null);
+  $('cfj-cerrar').onclick=closeForm;
+  $('cfj-export').onclick=exportJSON;
+  $('cfj-generar').onclick=generarRecurrentes;
+  $('cfj-buscar').addEventListener('input',e=>{ filtro.q=e.target.value.trim(); render(); });
+  $('cfj-modal').addEventListener('click',e=>{ if(e.target===$('cfj-modal')) closeForm(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO CAJA / LIQUIDEZ — disponible HOY (saldo declarado + cobros − pagos en vivo)
+     y proyección por fecha (cheques, ventas a cobrar, compras y costos fijos por pagar).
+     Suscribe: vph_caja (saldos+movimientos manuales), vph_ventas, vph_compras, vph_cheques.
+     Costos fijos vía window.__costosFijos(). Prefijo de ids: caj-
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const money=n=>{ const s=n<0?'-':''; const a=Math.abs(Math.round((n||0)*100)/100); return s+'$ '+a.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  const fmtM=n=>{ const s=n<0?'-':''; const a=Math.abs(n||0); return s+(a>=1e6?'$ '+(a/1e6).toFixed(1)+'M':a>=1e3?'$ '+Math.round(a/1e3)+'K':'$ '+Math.round(a)); };
+  const $=id=>document.getElementById(id);
+  const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const HOY=new Date(); HOY.setHours(0,0,0,0);
+  const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const fmtFecha=s=>{ if(!s) return '—'; const a=String(s).slice(0,10).split('-'); return a[2]+'/'+a[1]+'/'+a[0].slice(2); };
+  const fb=()=>window.__fbctx;
+  const esCheque=m=>/cheq/i.test(String(m||''));
+  const calcV=v=> window.__ventaCalc? window.__ventaCalc(v) : {total:num(v.total),saldo:num(v.total),cobrado:0,estado:'acobrar'};
+
+  const COL='vph_caja';
+  let caja={saldos:[], movs:[]}, ventas=[], compras=[], cheques=[];
+  let unsub={}, editing=null, filtro='30';
+  let uidSeq=Date.now(); const newUid=()=>'caj'+(uidSeq++).toString(36);
+
+  // ---------- Ancla: último saldo declarado ----------
+  function ancla(){ if(!caja.saldos.length) return null;
+    return caja.saldos.slice().sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')) || String(b.ts||'').localeCompare(String(a.ts||'')))[0]; }
+
+  // ---------- Movimientos de caja REALES desde el ancla hasta hoy (lo que ya pasó) ----------
+  // Devuelve lista {fecha, signo, monto, concepto, tipo}. Excluye cobros/pagos con cheque:
+  // esos entran/salen por el módulo Cheques cuando se cobran, no en la fecha del cobro.
+  function movimientosReales(desde){
+    const M=[];
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio)) return; const f=String(c.fecha||'').slice(0,10);
+      if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro'}); }); });
+    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
+      if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago'}); }); });
+    cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
+      if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque'}); } });
+    (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado!=='pagado') return; const f=String(cf.fechaPago||'').slice(0,10);
+      if(f && f>desde && f<=hoyISO && num(cf.monto)>0) M.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—'), tipo:'costofijo'}); });
+    caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && f>desde && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid}); });
+    return M.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha))); }
+
+  function disponibleHoy(){ const a=ancla(); if(!a) return null;
+    const base=num(a.caja)+num(a.banco); const M=movimientosReales(a.fecha);
+    const ent=M.filter(m=>m.signo>0).reduce((s,m)=>s+m.monto,0), sal=M.filter(m=>m.signo<0).reduce((s,m)=>s+m.monto,0);
+    return {base, ent, sal, total: base+ent-sal, desde:a.fecha, ancla:a, movs:M}; }
+
+  // ---------- Proyección: eventos futuros (o vencidos pendientes) por fecha ----------
+  // Sin doble conteo: a la venta/compra por cobrar/pagar le resto los cheques pendientes ligados a ella.
+  function chequesPendientesDe(refUid, tipo){ return cheques.filter(c=>c.tipo===tipo && (c.estado==='cartera'||c.estado==='depositado') && c.refUid===refUid).reduce((s,c)=>s+num(c.monto),0); }
+  function eventosProyeccion(){
+    const E=[];
+    cheques.forEach(c=>{ if(c.estado!=='cartera'&&c.estado!=='depositado') return; const f=String(c.fechaVencimiento||'').slice(0,10)||hoyISO;
+      const sg=c.tipo==='emitido'?-1:1; E.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque a pagar · ':'Cheque a cobrar · ')+(c.entidad||'—')}); });
+    ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const k=calcV(v); const saldo=num(k.saldo)-chequesPendientesDe(v._uid,'recibido');
+      if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); } });
+    compras.forEach(c=>{ const total=calcCompra(c); const cobrado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-cobrado-chequesPendientesDe(c._uid,'emitido');
+      if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); } });
+    (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado==='pagado') return; const f=String(cf.vencimiento||'').slice(0,10)||hoyISO;
+      if(num(cf.monto)>0) E.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—')}); });
+    return E; }
+  // Total de una compra (sin depender del módulo): neto + IVA + percepciones, con signo NC
+  function calcCompra(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
+    (c.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; });
+    neto*=f; iva*=f; const extras=num(c.percepIva)+num(c.percepIibb)+num(c.impInternos)+num(c.intereses);
+    const signo=c.tipoComprobante==='Nota de Crédito'?-1:1; return (neto+iva+extras)*signo; }
+
+  // ---------- Render ----------
+  function render(){
+    if(!$('caj-kpis')) return;
+    const d=disponibleHoy();
+    if(!d){
+      $('caj-kpis').innerHTML = k('Disponible hoy','warn','—','Falta declarar el saldo');
+      $('caj-ancla').textContent='';
+      $('caj-summary').innerHTML='';
+      $('caj-explica').innerHTML='Para empezar, tocá <b>💰 Declarar saldo real</b> y cargá cuánta plata tenés hoy en <b>caja</b> y en el <b>banco</b>. A partir de ahí, el tablero suma los cobros y resta los pagos que vayas registrando, y te muestra el disponible al día.';
+      $('caj-proy-asof').textContent=''; $('caj-tabla-proy').innerHTML=''; $('caj-mov-asof').textContent=''; $('caj-tabla-mov').innerHTML='';
+      return;
+    }
+    // Proyección
+    const ev=eventosProyeccion();
+    const proyIn=ev.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), proyOut=ev.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
+    const dias=filtro==='todos'?999999:num(filtro); const limite=isoMas(dias);
+    const evFiltrados=ev.filter(e=>e.fecha<=limite);
+    // Agrupar por fecha-bucket (vencido/hoy colapsa a hoy)
+    const buckets={};
+    evFiltrados.forEach(e=>{ const b=e.fecha<hoyISO?hoyISO:e.fecha; (buckets[b]=buckets[b]||[]).push(e); });
+    const fechas=Object.keys(buckets).sort();
+    let saldo=d.total, minSaldo=d.total, minFecha=hoyISO;
+    const filas=fechas.map(f=>{ const arr=buckets[f]; const inn=arr.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), out=arr.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
+      saldo=saldo+inn-out; if(saldo<minSaldo){ minSaldo=saldo; minFecha=f; }
+      const detalle=arr.slice().sort((a,b)=>b.monto-a.monto).map(e=>(e.signo>0?'▲ ':'▼ ')+esc(e.concepto)+' '+money(e.monto)).join('<br>');
+      return {f, inn, out, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO)}; });
+
+    const proyFinal = d.total+proyIn-proyOut;
+    $('caj-kpis').innerHTML =
+      k('Disponible hoy', d.total>0?'good':'bad', money(d.total), 'Caja + banco declarado + cobros − pagos')+
+      k('Por cobrar (todo)','info', fmtM(proyIn), 'Cheques + ventas a cobrar')+
+      k('Por pagar (todo)', proyOut?'warn':'good', fmtM(proyOut), 'Cheques + compras + costos fijos')+
+      k('Saldo si se cumple todo', proyFinal<0?'bad':'good', money(proyFinal), 'Disponible + por cobrar − por pagar');
+
+    $('caj-ancla').innerHTML='Saldo declarado el <b>'+fmtFecha(d.desde)+'</b>: '+money(d.base)+' · desde entonces entraron '+money(d.ent)+' y salieron '+money(d.sal)+'.';
+    $('caj-summary').innerHTML =
+      cell('Saldo declarado', money(d.base), 'var(--muted)')+
+      cell('Entradas', '+ '+money(d.ent), 'var(--green)')+
+      cell('Salidas', '- '+money(d.sal), 'var(--red)')+
+      cell('DISPONIBLE HOY', money(d.total), d.total>0?'var(--green)':'var(--red)');
+    const alerta = minSaldo<0 ? '<b style="color:var(--red)">⚠️ Con los pagos comprometidos, el '+fmtFecha(minFecha)+' la caja quedaría en '+money(minSaldo)+'.</b> Adelantá cobranzas o corré algún pago.' : 'Con lo comprometido, el saldo más bajo proyectado es '+money(minSaldo)+' (el '+fmtFecha(minFecha)+').';
+    $('caj-explica').innerHTML = 'El <b>disponible hoy</b> es plata real. Lo demás es proyección con fechas de vencimiento. '+alerta;
+
+    // Filtros de horizonte
+    const defs=[['15','15 días'],['30','30 días'],['60','60 días'],['todos','Todo']];
+    $('caj-proy-filtros').innerHTML=defs.map(([v,l])=>'<button class="filter-btn'+(filtro===v?' active':'')+'" data-f="'+v+'">'+l+'</button>').join('');
+    $('caj-proy-filtros').querySelectorAll('button').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
+
+    let ph='<tr><th>Fecha</th><th>Detalle</th><th class="num">Entra</th><th class="num">Sale</th><th class="num">Saldo proyectado</th></tr>';
+    ph+='<tr><td data-label="Fecha"><b>Hoy</b></td><td data-label="Detalle">Disponible actual</td><td class="num"></td><td class="num"></td><td class="num"><b>'+money(d.total)+'</b></td></tr>';
+    if(!filas.length) ph+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin cobros ni pagos comprometidos en este período 👍</td></tr>';
+    filas.forEach(r=>{ ph+='<tr><td data-label="Fecha"><b>'+(r.vencido?'Hoy y vencidos':fmtFecha(r.f))+'</b></td>'+
+      '<td data-label="Detalle" style="font-size:11.5px;line-height:1.5">'+r.detalle+'</td>'+
+      '<td class="num" data-label="Entra" style="color:var(--green)">'+(r.inn?money(r.inn):'')+'</td>'+
+      '<td class="num" data-label="Sale" style="color:var(--red)">'+(r.out?money(r.out):'')+'</td>'+
+      '<td class="num" data-label="Saldo" style="font-weight:800;color:'+(r.saldo<0?'var(--red)':'var(--text)')+'">'+money(r.saldo)+'</td></tr>'; });
+    $('caj-tabla-proy').innerHTML=ph;
+    $('caj-proy-asof').textContent='Arranca del disponible de hoy y suma/resta por fecha de vencimiento · horizonte '+(filtro==='todos'?'completo':filtro+' días');
+
+    // Movimientos reales desde el ancla
+    $('caj-mov-asof').textContent='Desde el saldo declarado el '+fmtFecha(d.desde)+' · '+d.movs.length+' movimiento'+(d.movs.length!==1?'s':'');
+    let mh='<tr><th>Fecha</th><th>Concepto</th><th class="num">Entra</th><th class="num">Sale</th></tr>';
+    if(!d.movs.length) mh+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos desde el último saldo declarado.</td></tr>';
+    d.movs.forEach(m=>{ mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Concepto">'+esc(m.concepto)+(m.tipo==='manual'?' <button class="cmp-rowbtn" data-delmov="'+m.uid+'" title="Eliminar este movimiento manual">✕</button>':'')+'</td>'+
+      '<td class="num" data-label="Entra" style="color:var(--green)">'+(m.signo>0?money(m.monto):'')+'</td>'+
+      '<td class="num" data-label="Sale" style="color:var(--red)">'+(m.signo<0?money(m.monto):'')+'</td></tr>'; });
+    $('caj-tabla-mov').innerHTML=mh;
+    $('caj-tabla-mov').querySelectorAll('button[data-delmov]').forEach(b=>b.onclick=()=>{ if(confirm('¿Eliminar este movimiento manual?')) removeDoc(b.dataset.delmov); });
+  }
+  function k(l,cls,v,sub){ return '<div class="kpi '+cls+'"><div class="label">'+l+'</div><div class="value" style="font-size:20px">'+v+'</div><div class="sub">'+sub+'</div></div>'; }
+  function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
+  function isoMas(d){ const x=new Date(HOY); x.setDate(x.getDate()+d); return x.getFullYear()+'-'+p2(x.getMonth()+1)+'-'+p2(x.getDate()); }
+
+  function persist(doc){ if(!doc._uid)doc._uid=newUid();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL,doc._uid),{...doc}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else { const arr=doc.tipo==='saldo'?caja.saldos:caja.movs; const i=arr.findIndex(x=>x._uid===doc._uid); if(i>=0)arr[i]=doc; else arr.push(doc); render(); } }
+  function removeDoc(uid){ if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
+    else { caja.movs=caja.movs.filter(x=>x._uid!==uid); caja.saldos=caja.saldos.filter(x=>x._uid!==uid); render(); } }
+
+  // ---------- Formularios ----------
+  function abrirSaldo(){ editing={tipo:'saldo', fecha:hoyISO, caja:0, banco:0, nota:''};
+    $('caj-form-title').textContent='Declarar saldo real';
+    $('caj-form').innerHTML =
+      '<p class="note" style="margin-top:0">Cargá cuánta plata tenés <b>hoy</b>, contada de verdad. Este es el punto de partida: el tablero suma los cobros y resta los pagos que registres a partir de esta fecha.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        fld('Fecha','','<input type="date" id="caj-f-fecha" value="'+hoyISO+'">')+
+        '<div></div>'+
+        fld('En caja (efectivo) $','','<input id="caj-f-caja" value="0">')+
+        fld('En el banco $','','<input id="caj-f-banco" value="0">')+
+        fld('Nota','col2','<input id="caj-f-nota" placeholder="Ej: cierre del día, arqueo...">')+
+      '</div>'+
+      '<div id="caj-f-total" style="text-align:right;font-weight:800;font-size:16px;margin:4px 0 8px"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-f-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-f-save">Guardar saldo</button></div>';
+    const upd=()=>{ $('caj-f-total').textContent='Total declarado: '+money(num($('caj-f-caja').value)+num($('caj-f-banco').value)); };
+    ['caj-f-caja','caj-f-banco'].forEach(id=>$(id).addEventListener('input',upd)); upd();
+    $('caj-f-cancel').onclick=cerrar;
+    $('caj-f-save').onclick=()=>{ const rec={tipo:'saldo', fecha:$('caj-f-fecha').value||hoyISO, caja:num($('caj-f-caja').value), banco:num($('caj-f-banco').value), nota:$('caj-f-nota').value||'', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)};
+      persist(rec); cerrar(); };
+    $('caj-modal').classList.add('open');
+  }
+  function abrirMov(){ editing={tipo:'mov'};
+    $('caj-form-title').textContent='Movimiento manual de caja';
+    $('caj-form').innerHTML =
+      '<p class="note" style="margin-top:0">Solo para lo que <b>no</b> pasa por Ventas ni Compras: un retiro, un ingreso de plata, un gasto de caja chica. Los cobros y pagos normales ya se cuentan solos.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        fld('Tipo','','<select id="caj-m-signo"><option value="1">Entra plata (+)</option><option value="-1">Sale plata (−)</option></select>')+
+        fld('Fecha','','<input type="date" id="caj-m-fecha" value="'+hoyISO+'">')+
+        fld('Monto $','','<input id="caj-m-monto" value="0">')+
+        fld('Concepto','','<input id="caj-m-concepto" placeholder="Retiro, gasto...">')+
+      '</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-m-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-m-save">Guardar movimiento</button></div>';
+    $('caj-m-cancel').onclick=cerrar;
+    $('caj-m-save').onclick=()=>{ const monto=num($('caj-m-monto').value); if(monto<=0){ alert('El monto tiene que ser mayor a 0.'); return; }
+      persist({tipo:'mov', signo:num($('caj-m-signo').value)>=0?1:-1, fecha:$('caj-m-fecha').value||hoyISO, monto, concepto:$('caj-m-concepto').value||'Movimiento manual', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)}); cerrar(); };
+    $('caj-modal').classList.add('open');
+  }
+  function cerrar(){ $('caj-modal').classList.remove('open'); editing=null; }
+  function fld(l,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+l+'</label>'+inner+'</div>'; }
+
+  // ---------- Sync ----------
+  function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
+    unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('caja '+col+':',err)); }
+  function startSync(){ if(window.__rol!=='admin') return;
+    sub('vph_caja',a=>{ caja={saldos:a.filter(x=>x.tipo==='saldo'), movs:a.filter(x=>x.tipo==='mov')}; });
+    sub('vph_ventas',a=>ventas=a); sub('vph_compras',a=>compras=a); sub('vph_cheques',a=>cheques=a); }
+  function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); caja={saldos:[],movs:[]}; ventas=[];compras=[];cheques=[]; render(); });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
+    } else { render(); } }
+
+  // Para que Costos Fijos y otros disparen el recálculo de la caja al cambiar
+  window.__cajaRefresh = ()=>{ try{ render(); }catch(e){} };
+
+  // Alerta EN VIVO: caja proyectada en negativo
+  window.__alertSources = window.__alertSources || [];
+  window.__alertSources.push(()=>{ const A=[]; const d=disponibleHoy(); if(!d) return A;
+    const ev=eventosProyeccion().filter(e=>e.fecha<=isoMas(30)); const buckets={};
+    ev.forEach(e=>{ const b=e.fecha<hoyISO?hoyISO:e.fecha; (buckets[b]=buckets[b]||0); buckets[b]+= e.signo>0?e.monto:-e.monto; });
+    let saldo=d.total, min=d.total, minF=hoyISO; Object.keys(buckets).sort().forEach(f=>{ saldo+=buckets[f]; if(saldo<min){ min=saldo; minF=f; } });
+    if(min<0) A.push({sev:'bad', area:'Finanzas', t:'La caja quedaría en NEGATIVO el '+fmtFecha(minF)+' ('+money(min)+')', act:'Con los pagos comprometidos no alcanza. Adelantá cobranzas o reprogramá pagos.', go:{page:'Caja / Liquidez'}});
+    else if(d.total<0) A.push({sev:'bad', area:'Finanzas', t:'Caja en negativo hoy ('+money(d.total)+')', act:'Revisar el disponible y los pagos.', go:{page:'Caja / Liquidez'}});
+    return A; });
+
+  $('caj-saldo').onclick=abrirSaldo;
+  $('caj-mov').onclick=abrirMov;
+  $('caj-cerrar').onclick=cerrar;
+  $('caj-modal').addEventListener('click',e=>{ if(e.target===$('caj-modal')) cerrar(); });
   boot();
 })();
 </script>
