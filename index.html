@@ -2906,6 +2906,9 @@ function buildFilterTable(cfg){
     return f;
   }
   window.__fleteZonas = ()=> ZONAS.map(z=>({k:z.k,l:z.l}));
+  // Cotiza el flete desde otro módulo (lo usa el CRM para el detalle en vivo del lead).
+  // items: [{desc, codigo, cant}] → {pallets, costo, kg, label, precioPallet}
+  window.__fleteCotizar = (items, zona)=>{ const f=calcFlete(items, zona); return Object.assign({}, f, {label:zonaLabel(zona), precioPallet:zonaCosto(zona)}); };
   // Abre la vista previa/PDF de un presupuesto ya guardado (la usa el CRM para el PDF de un toque)
   window.__presupuestoImprimir = p=>{ if(window.__imprimir&&window.__imprimir.presupuesto) window.__imprimir.presupuesto(paraDoc(p)); else alert('Módulo de Documentos no disponible.'); };
   const estadoLbl=k=>{ const e=ESTADOS.find(x=>x.k===k); return e?e.l:k; };
@@ -3703,6 +3706,7 @@ function buildFilterTable(cfg){
       '<p class="note" style="margin:0 0 6px">Cargá los <b>m²</b> que necesita y, si el producto tiene definido cuántos m² cubre cada unidad, la <b>cantidad</b> se calcula sola (podés ajustarla a mano).</p>'+
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:55%">Producto</th><th>m²</th><th>Cantidad</th><th></th></tr></thead><tbody id="cf-items"></tbody></table></div>'+
       '<button class="cmp-addline" id="cf-addline">+ Agregar producto</button>'+ datalistProd() +
+      '<div id="cf-flete-box" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc);font-size:12.5px;line-height:1.5"></div>'+
       '<h4 style="margin:14px 0 6px;font-size:13px">Seguimiento</h4>'+
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><label style="font-size:12.5px;color:var(--muted);font-weight:700;white-space:nowrap">📅 Próximo seguimiento</label><input type="date" id="cf-proxsegui" value="'+esc(l.proximoSeguimiento||'')+'" style="max-width:170px;padding:7px 10px;border:1px solid var(--border);border-radius:8px">'+(l.proximoSeguimiento?'<button class="cmp-rowbtn" id="cf-proxsegui-clear">Quitar</button>':'')+'</div>'+
       '<div id="cf-segui" style="font-size:12.5px;margin-bottom:8px"></div>'+
@@ -3710,27 +3714,63 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; }); });
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona') drawFleteBox(); }); });
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1}); drawItems(); };
     $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
     $('cf-cancel').onclick=closeForm;
     $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } persist(editing); closeForm(); };
   }
-  function m2PorUnidadDe(prodNombre){ const p=matchProd(prodNombre); return p?num(p.m2PorUnidad):0; }
+  // Deduce los m² de una unidad a partir de las medidas del nombre: "Loseta Cribada 60x40" → 0,6 × 0,4 = 0,24 m².
+  // Si el nombre trae 3 medidas (ej "Bloque 20x20x40") es ambiguo cuál es la cara → devuelve 0 y no adivina.
+  function m2DeNombre(nombre){
+    const s=String(nombre||'').replace(/,/g,'.');
+    const m=s.match(/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)/);
+    if(!m) return 0;
+    if(/^\s*[xX×]\s*\d/.test(s.slice(m.index+m[0].length))) return 0;   // hay una tercera medida
+    let a=parseFloat(m[1]), b=parseFloat(m[2]);
+    if(!isFinite(a)||!isFinite(b)||a<=0||b<=0) return 0;
+    if(a>10||b>10){ a=a/100; b=b/100; }   // medidas en cm
+    const v=a*b;
+    return (v>0 && v<=10) ? Math.round(v*10000)/10000 : 0;
+  }
+  // m² por unidad: manda el campo del catálogo; si no está cargado, se deduce del nombre.
+  function m2PorUnidadInfo(prodNombre){ const p=matchProd(prodNombre);
+    const cat=p?num(p.m2PorUnidad):0; if(cat>0) return {m2:cat, origen:'catálogo'};
+    const der=m2DeNombre(p?p.nombre:prodNombre); return der>0 ? {m2:der, origen:'medidas del nombre'} : {m2:0, origen:''};
+  }
+  function m2PorUnidadDe(prodNombre){ return m2PorUnidadInfo(prodNombre).m2; }
   function recalcUnidades(i){ const it=editing.items[i]; const m2u=m2PorUnidadDe(it.producto); if(m2u>0 && num(it.m2)>0){ it.cantidad=Math.ceil(num(it.m2)/m2u); return true; } return false; }
   function drawItems(){
-    $('cf-items').innerHTML = editing.items.map((it,i)=>{ const m2u=m2PorUnidadDe(it.producto);
+    $('cf-items').innerHTML = editing.items.map((it,i)=>{ const inf=m2PorUnidadInfo(it.producto);
+      const pie = inf.m2>0 ? '<div style="font-size:9px;color:var(--muted)" title="m² que cubre cada unidad, según el '+esc(inf.origen)+'">'+num(inf.m2).toLocaleString('es-AR')+' m²/u'+(inf.origen!=='catálogo'?' ✎':'')+'</div>'
+        : (it.producto&&!/^flete/i.test(it.producto) ? '<div style="font-size:9px;color:var(--amber)" title="Cargá los m² por unidad en Base de Datos → Productos para que la cantidad se calcule sola">sin m²/u</div>' : '');
       return '<tr><td><input class="txt" data-i="'+i+'" data-k="producto" list="crm-prod-list" value="'+esc(it.producto)+'" placeholder="Producto"></td>'+
       '<td><input data-i="'+i+'" data-k="m2" value="'+esc(it.m2||'')+'" style="width:66px" placeholder="m²"></td>'+
-      '<td><input data-i="'+i+'" data-k="cantidad" value="'+esc(it.cantidad)+'" style="width:66px">'+(m2u>0?'<div style="font-size:9px;color:var(--muted)">'+num(m2u).toLocaleString('es-AR')+' m²/u</div>':'')+'</td>'+
+      '<td><input data-i="'+i+'" data-k="cantidad" value="'+esc(it.cantidad)+'" style="width:66px">'+pie+'</td>'+
       '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>'; }).join('');
     $('cf-items').querySelectorAll('input').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.i, k=el.dataset.k;
       editing.items[i][k]= (k==='cantidad'||k==='m2')?num(el.value):el.value;
-      if(k==='m2' && recalcUnidades(i)){ const cq=$('cf-items').querySelector('input[data-i="'+i+'"][data-k="cantidad"]'); if(cq) cq.value=editing.items[i].cantidad; } }));
+      if(k==='m2' && recalcUnidades(i)){ const cq=$('cf-items').querySelector('input[data-i="'+i+'"][data-k="cantidad"]'); if(cq) cq.value=editing.items[i].cantidad; }
+      drawFleteBox(); }));
     // Al elegir el producto (change/blur): fija el código y recalcula las unidades si ya hay m² cargados
     $('cf-items').querySelectorAll('input[data-k="producto"]').forEach(el=> el.addEventListener('change',()=>{ const i=+el.dataset.i; const p=matchProd(el.value); if(p){ editing.items[i].producto=p.nombre; editing.items[i].codigo=p.codigo||''; } recalcUnidades(i); drawItems(); }));
     $('cf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); });
+    drawFleteBox();
+  }
+  // Detalle del flete en vivo: pallets que ocupan las unidades pedidas × precio de la forma de entrega elegida.
+  function drawFleteBox(){
+    const box=$('cf-flete-box'); if(!box) return;
+    const zona=editing.zona||'';
+    if(!zona){ box.innerHTML='<span style="color:var(--muted)">Elegí la <b>forma de entrega</b> arriba para calcular el flete.</span>'; return; }
+    if(!window.__fleteCotizar){ box.innerHTML=''; return; }
+    const items=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
+    const f=window.__fleteCotizar(items, zona);
+    const cab='🚚 <b>'+esc(f.label||'')+'</b>';
+    if(!items.some(it=>it.cant>0)){ box.innerHTML=cab+' · <span style="color:var(--muted)">cargá productos con cantidad para calcular el flete</span>'; return; }
+    if(f.precioPallet<=0){ box.innerHTML=cab+' · <b style="color:var(--green)">sin flete</b> <span style="color:var(--muted)">('+f.pallets+' pallet'+(f.pallets!==1?'s':'')+' · '+num(f.kg).toLocaleString('es-AR')+' kg)</span>'; return; }
+    box.innerHTML=cab+' · '+f.pallets+' pallet'+(f.pallets!==1?'s':'')+' × '+money(f.precioPallet)+' = <b style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+      '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Peso total '+num(f.kg).toLocaleString('es-AR')+' kg · el flete se consolida entre productos (tope '+num(window.__param('kgPorPallet',1500)).toLocaleString('es-AR')+' kg por pallet). Se agrega como renglón al generar el presupuesto.</div>';
   }
   function drawSegui(){
     $('cf-segui').innerHTML = (editing.seguimiento||[]).filter(Boolean).length ? editing.seguimiento.filter(Boolean).slice().reverse().map(s=>'<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b style="color:var(--muted)">'+esc(s.fecha)+':</b> '+esc(s.texto)+'</div>').join('') : '<span style="color:var(--muted)">Sin notas de seguimiento.</span>';
