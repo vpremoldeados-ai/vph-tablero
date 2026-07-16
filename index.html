@@ -2157,7 +2157,10 @@ function buildFilterTable(cfg){
   const round2 = n => Math.round(n*100)/100;
 
   const CATEGORIAS = ['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
-  const LISTAS = ['0 Minorista Responsable Inscripto','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  const LISTAS = ['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
+  // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
+  const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
   const VENDEDORES = [];   // se autocompletan desde las ventas cargadas (no hardcodear nombres)
   const TIPOS_COMPROB = ['Factura A','Factura B','Factura C','Sin factura','Nota de Crédito','Presupuesto','Remito'];
   const COND_IVA = ['A','B','C','M','X'];
@@ -2415,7 +2418,7 @@ function buildFilterTable(cfg){
   // ---------- Formulario ----------
   let editing=null;
   function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
-  function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
+  function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); editing.listaPrecios=normLista(editing.listaPrecios); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
   function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; _onSaved=null; }
 
   function drawForm(){
@@ -2622,7 +2625,7 @@ function buildFilterTable(cfg){
   window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
-    if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=lead.listaPrecios;
+    if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=normLista(lead.listaPrecios);
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     v.notaCliente = lead.notaCliente || notas.join(' · ');
@@ -2635,7 +2638,7 @@ function buildFilterTable(cfg){
   window.__ventaDesdePresupuesto = function(p, onSaved){
     const v=blankVenta();
     v.cliente=p.cliente||''; v.cuit=p.cuit||''; if(p.condIva)v.condIva=p.condIva;
-    if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=p.listaPrecios; if(p.vendedor)v.vendedor=p.vendedor;
+    if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
     v.descGeneral=p.descGeneral||0; v.notaCliente=p.notaCliente||''; v.nota=(p.nota?p.nota+' · ':'')+'Desde presupuesto '+(p.numero||'');
     const items=(p.items||[]).filter(it=>it&&(it.desc||num(it.precioUnit)));
     v.items = items.length ? items.map(it=>({desc:it.desc||'',codigo:it.codigo||'',cant:num(it.cant)||1,precioUnit:num(it.precioUnit),descPct:num(it.descPct),iva:it.iva||'21'})) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
@@ -2849,7 +2852,10 @@ function buildFilterTable(cfg){
 
   const COL='vph_presupuestos', KEY='vph_presupuestos_v1';
   const CATEGORIAS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
-  const LISTAS=['0 Minorista Responsable Inscripto','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
+  // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
+  const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
   const COND_IVA=['A','B','C','M','X'];
   const ALICUOTAS=[{v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'}];
   const ESTADOS=[{k:'borrador',l:'Borrador',c:'#95a5b8'},{k:'enviado',l:'Enviado',c:'#2f6fb2'},{k:'aceptado',l:'Aceptado',c:'#1e9e5a'},{k:'rechazado',l:'Rechazado',c:'#d64541'},{k:'convertido',l:'Convertido a venta',c:'#8a5cc0'}];
@@ -2857,10 +2863,12 @@ function buildFilterTable(cfg){
   // ---------- FLETE por zona (misma lógica y precios que el cotizador web; precios editables en Parámetros) ----------
   const ZONAS=[
     {k:'', l:'— Sin definir —', par:null, def:0},
-    {k:'retiro', l:'Retiro en fábrica (Toledo)', par:null, def:0},
-    {k:'capital', l:'Córdoba Capital', par:'fleteCapital', def:28000},
-    {k:'cercanas', l:'Hasta 30 km de Circunvalación', par:'fleteCercanas', def:39000},
-    {k:'argentina', l:'Resto del país', par:'fleteArgentina', def:140000}
+    {k:'retiro', l:'1 Retira en fábrica', par:null, def:0},
+    {k:'capital', l:'2 Córdoba Capital', par:'fleteCapital', def:28000},
+    {k:'cercanas', l:'3 Hasta 30km de Av. de Circunvalación', par:'fleteCercanas', def:39000},
+    {k:'mati', l:'4 Interior con Mati', par:'fleteMati', def:140000},
+    {k:'particular', l:'5 Transporte Particular', par:'fleteParticular', def:0},
+    {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000}
   ];
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
   const zonaCosto=k=>{ const z=ZONAS.find(x=>x.k===k); return (z&&z.par)?num(window.__param(z.par,z.def)):0; };
@@ -3017,7 +3025,7 @@ function buildFilterTable(cfg){
   let editing=null;
   function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], zona:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
   let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
-  function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
+  function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
   function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
   function opt(arr,sel){ return arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join(''); }
   function drawForm(){
@@ -3034,7 +3042,7 @@ function buildFilterTable(cfg){
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
         field('Lista de precios','','<select id="pf-lista">'+opt(LISTAS,p.listaPrecios)+'</select>') +
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
-        field('Zona de entrega (flete)','col2','<select id="pf-zona">'+ZONAS.map(z=>'<option value="'+z.k+'"'+((p.zona||'')===z.k?' selected':'')+'>'+z.l+(z.par?' — '+money(zonaCosto(z.k))+'/pallet':'')+'</option>').join('')+'</select>') +
+        field('Forma de entrega (flete)','col2','<select id="pf-zona">'+ZONAS.map(z=>'<option value="'+z.k+'"'+((p.zona||'')===z.k?' selected':'')+'>'+z.l+(z.par&&zonaCosto(z.k)>0?' — '+money(zonaCosto(z.k))+'/pallet':'')+'</option>').join('')+'</select>') +
       '</div>'+
       '<h4 style="margin:6px 0 8px;font-size:13px">Ítems</h4>'+
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead><tbody id="pf-items"></tbody></table></div>'+
@@ -3056,7 +3064,8 @@ function buildFilterTable(cfg){
     $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); } });
     // Cambiar la zona recalcula el renglón "Flete" (podés editarlo/borrarlo a mano después: solo se rehace si volvés a tocar la zona)
     $('pf-zona').addEventListener('change',()=>{ editing.zona=$('pf-zona').value; const f=aplicarFlete(editing); drawItems(); drawTotals();
-      if(editing.zona && editing.zona!=='retiro' && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.'); });
+      // Solo avisa si la forma de entrega SÍ tiene precio cargado y aun así no se pudo calcular (= faltan ítems).
+      if(zonaCosto(editing.zona)>0 && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.'); });
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     $('pf-cancel').onclick=closeForm; $('pf-save').onclick=saveForm; drawTotals();
   }
@@ -3136,7 +3145,7 @@ function buildFilterTable(cfg){
   // Arma un presupuesto completo a partir de un lead: cliente + ítems con precios del catálogo + flete por zona.
   function armarDesdeLead(lead){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
-    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=lead.listaPrecios;
+    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
     p.zona = lead.zona||'';
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
@@ -3389,9 +3398,11 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
-    {g:'Flete', k:'fleteCapital',   l:'Flete Córdoba Capital ($ por pallet)',          def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
-    {g:'Flete', k:'fleteCercanas',  l:'Flete hasta 30 km de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
-    {g:'Flete', k:'fleteArgentina', l:'Flete resto del país ($ por pallet)',            def:140000, t:'num', hint:'Precio final (con IVA). Puede variar según la zona: revisalo antes de enviar.'},
+    {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
+    {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
+    {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
+    {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'}
@@ -3468,7 +3479,10 @@ function buildFilterTable(cfg){
   const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Teléfono','Referido','Manual'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
-  const LISTAS=['0 Minorista Responsable Inscripto','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar'];
+  // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
+  // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
+  const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
 
   let DB={leads:[]}, q='', unsub=null, uidSeq=Date.now();
   const newUid=()=> 'l'+(uidSeq++).toString(36);
@@ -3662,7 +3676,7 @@ function buildFilterTable(cfg){
   // ---------- Form ----------
   let editing=null;
   function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
-  function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
+  function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
   function opt(arr,sel){ return arr.map(o=>'<option value="'+esc(o)+'"'+(String(sel)===String(o)?' selected':'')+'>'+esc(o)+'</option>').join(''); }
@@ -3676,8 +3690,8 @@ function buildFilterTable(cfg){
         fld('Email','','<input id="cf-email" value="'+esc(l.email)+'">') +
         fld('Origen','','<select id="cf-origen">'+opt(ORIGENES,l.origen)+'</select>') +
         fld('Estado','','<select id="cf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(l.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
+        fld('Forma de entrega (flete)','col2','<select id="cf-zona">'+zonasOpt(l.zona)+'</select>') +
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección">') +
-        fld('Zona de entrega (flete)','col2','<select id="cf-zona">'+zonasOpt(l.zona)+'</select>') +
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
@@ -3745,7 +3759,9 @@ function buildFilterTable(cfg){
     if(!map.telefono && (datos.tel||datos.phone||datos.whatsapp)) map.telefono=datos.tel||datos.phone||datos.whatsapp;
     if(!map.lugar && (datos.localidad||datos.domicilio||datos.direccion)) map.lugar=[datos.localidad,datos.domicilio||datos.direccion].filter(Boolean).join(' · ');
     if(!map.m2 && (datos.m2||datos.metros||datos.superficie)) map.m2=num(datos.m2||datos.metros||datos.superficie);
-    if(!map.zona && (datos.destination||datos.destino)) map.zona=datos.destination||datos.destino;   // el cotizador web usa las mismas claves (retiro/capital/cercanas/argentina)
+    // El cotizador web comparte las claves retiro/capital/cercanas. Su "argentina" (interior genérico) NO se mapea a propósito:
+    // acá el interior se reparte entre Mati y Brio, así que el lead llega sin forma de entrega y la elige Sofía.
+    if(!map.zona && (datos.destination||datos.destino)){ const z=String(datos.destination||datos.destino); if(['retiro','capital','cercanas','mati','particular','brio'].includes(z)) map.zona=z; }
     const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; persist(l); };
 
   // Fuente de alertas EN VIVO: leads nuevos sin contactar + seguimientos vencidos/hoy
