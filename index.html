@@ -3119,10 +3119,19 @@ function buildFilterTable(cfg){
   let caja={saldos:[], movs:[]}, ventas=[], compras=[], cheques=[];
   let unsub={}, editing=null, filtro='30';
   let uidSeq=Date.now(); const newUid=()=>'caj'+(uidSeq++).toString(36);
+  const CUENTAS_DEF=['Efectivo','Banco Macro MAV','Banco Macro VPH'];
 
   // ---------- Ancla: último saldo declarado ----------
   function ancla(){ if(!caja.saldos.length) return null;
     return caja.saldos.slice().sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')) || String(b.ts||'').localeCompare(String(a.ts||'')))[0]; }
+  // Cuentas de un saldo declarado (efectivo + tantos bancos como se hayan cargado).
+  // Compat: los saldos viejos se guardaron con {caja,banco} en vez de {cuentas:[...]}.
+  function cuentasDe(doc){
+    if(doc && Array.isArray(doc.cuentas) && doc.cuentas.length) return doc.cuentas;
+    if(doc && (doc.caja!=null || doc.banco!=null)) return [{nombre:'Efectivo',monto:num(doc.caja)},{nombre:'Banco',monto:num(doc.banco)}];
+    return CUENTAS_DEF.map(n=>({nombre:n,monto:0}));
+  }
+  function totalCuentas(doc){ return cuentasDe(doc).reduce((s,c)=>s+num(c.monto),0); }
 
   // ---------- Movimientos de caja REALES desde el ancla hasta hoy (lo que ya pasó) ----------
   // Devuelve lista {fecha, signo, monto, concepto, tipo}. Excluye cobros/pagos con cheque:
@@ -3141,7 +3150,7 @@ function buildFilterTable(cfg){
     return M.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha))); }
 
   function disponibleHoy(){ const a=ancla(); if(!a) return null;
-    const base=num(a.caja)+num(a.banco); const M=movimientosReales(a.fecha);
+    const base=totalCuentas(a); const M=movimientosReales(a.fecha);
     const ent=M.filter(m=>m.signo>0).reduce((s,m)=>s+m.monto,0), sal=M.filter(m=>m.signo<0).reduce((s,m)=>s+m.monto,0);
     return {base, ent, sal, total: base+ent-sal, desde:a.fecha, ancla:a, movs:M}; }
 
@@ -3173,7 +3182,7 @@ function buildFilterTable(cfg){
       $('caj-kpis').innerHTML = k('Disponible hoy','warn','—','Falta declarar el saldo');
       $('caj-ancla').textContent='';
       $('caj-summary').innerHTML='';
-      $('caj-explica').innerHTML='Para empezar, tocá <b>💰 Declarar saldo real</b> y cargá cuánta plata tenés hoy en <b>caja</b> y en el <b>banco</b>. A partir de ahí, el tablero suma los cobros y resta los pagos que vayas registrando, y te muestra el disponible al día.';
+      $('caj-explica').innerHTML='Para empezar, tocá <b>💰 Declarar saldo real</b> y cargá cuánta plata tenés hoy en cada cuenta (efectivo, Banco Macro MAV, Banco Macro VPH, o las que uses). A partir de ahí, el tablero suma los cobros y resta los pagos que vayas registrando, y te muestra el disponible al día.';
       $('caj-proy-asof').textContent=''; $('caj-tabla-proy').innerHTML=''; $('caj-mov-asof').textContent=''; $('caj-tabla-mov').innerHTML='';
       return;
     }
@@ -3194,14 +3203,15 @@ function buildFilterTable(cfg){
 
     const proyFinal = d.total+proyIn-proyOut;
     $('caj-kpis').innerHTML =
-      k('Disponible hoy', d.total>0?'good':'bad', money(d.total), 'Caja + banco declarado + cobros − pagos')+
+      k('Disponible hoy', d.total>0?'good':'bad', money(d.total), 'Cuentas declaradas + cobros − pagos')+
       k('Por cobrar (todo)','info', fmtM(proyIn), 'Cheques + ventas a cobrar')+
       k('Por pagar (todo)', proyOut?'warn':'good', fmtM(proyOut), 'Cheques + compras + costos fijos')+
       k('Saldo si se cumple todo', proyFinal<0?'bad':'good', money(proyFinal), 'Disponible + por cobrar − por pagar');
 
-    $('caj-ancla').innerHTML='Saldo declarado el <b>'+fmtFecha(d.desde)+'</b>: '+money(d.base)+' · desde entonces entraron '+money(d.ent)+' y salieron '+money(d.sal)+'.';
+    const cuentasAncla=cuentasDe(d.ancla);
+    $('caj-ancla').innerHTML='Saldo declarado el <b>'+fmtFecha(d.desde)+'</b> ('+cuentasAncla.map(c=>esc(c.nombre)+': '+money(num(c.monto))).join(' · ')+') · desde entonces entraron '+money(d.ent)+' y salieron '+money(d.sal)+'.';
     $('caj-summary').innerHTML =
-      cell('Saldo declarado', money(d.base), 'var(--muted)')+
+      cuentasAncla.map(c=>cell(c.nombre, money(num(c.monto)), 'var(--muted)')).join('')+
       cell('Entradas', '+ '+money(d.ent), 'var(--green)')+
       cell('Salidas', '- '+money(d.sal), 'var(--red)')+
       cell('DISPONIBLE HOY', money(d.total), d.total>0?'var(--green)':'var(--red)');
@@ -3245,24 +3255,39 @@ function buildFilterTable(cfg){
     else { caja.movs=caja.movs.filter(x=>x._uid!==uid); caja.saldos=caja.saldos.filter(x=>x._uid!==uid); render(); } }
 
   // ---------- Formularios ----------
-  function abrirSaldo(){ editing={tipo:'saldo', fecha:hoyISO, caja:0, banco:0, nota:''};
+  function abrirSaldo(){
+    editing={tipo:'saldo'};
+    // Arranca con las mismas cuentas del último saldo declarado (para que solo actualices los montos);
+    // si es la primera vez, arranca con Efectivo + Banco Macro MAV + Banco Macro VPH.
+    let filas=cuentasDe(ancla()).map(c=>({nombre:c.nombre, monto:num(c.monto)}));
     $('caj-form-title').textContent='Declarar saldo real';
-    $('caj-form').innerHTML =
-      '<p class="note" style="margin-top:0">Cargá cuánta plata tenés <b>hoy</b>, contada de verdad. Este es el punto de partida: el tablero suma los cobros y resta los pagos que registres a partir de esta fecha.</p>'+
-      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
-        fld('Fecha','','<input type="date" id="caj-f-fecha" value="'+hoyISO+'">')+
-        '<div></div>'+
-        fld('En caja (efectivo) $','','<input id="caj-f-caja" value="0">')+
-        fld('En el banco $','','<input id="caj-f-banco" value="0">')+
-        fld('Nota','col2','<input id="caj-f-nota" placeholder="Ej: cierre del día, arqueo...">')+
-      '</div>'+
-      '<div id="caj-f-total" style="text-align:right;font-weight:800;font-size:16px;margin:4px 0 8px"></div>'+
-      '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-f-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-f-save">Guardar saldo</button></div>';
-    const upd=()=>{ $('caj-f-total').textContent='Total declarado: '+money(num($('caj-f-caja').value)+num($('caj-f-banco').value)); };
-    ['caj-f-caja','caj-f-banco'].forEach(id=>$(id).addEventListener('input',upd)); upd();
-    $('caj-f-cancel').onclick=cerrar;
-    $('caj-f-save').onclick=()=>{ const rec={tipo:'saldo', fecha:$('caj-f-fecha').value||hoyISO, caja:num($('caj-f-caja').value), banco:num($('caj-f-banco').value), nota:$('caj-f-nota').value||'', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)};
-      persist(rec); cerrar(); };
+    const leerFilas=()=> [...document.querySelectorAll('#caj-cuentas [data-cnombre]')].map((el,i)=>({ nombre: el.value, monto: num(document.querySelector('[data-cmonto="'+i+'"]').value) }));
+    function draw(){
+      $('caj-form').innerHTML =
+        '<p class="note" style="margin-top:0">Cargá cuánta plata tenés <b>hoy</b> en cada cuenta, contada de verdad. Este es el punto de partida: el tablero suma los cobros y resta los pagos que registres a partir de esta fecha.</p>'+
+        '<div class="cmp-field" style="margin-bottom:10px;max-width:200px"><label>Fecha</label><input type="date" id="caj-f-fecha" value="'+hoyISO+'"></div>'+
+        '<div id="caj-cuentas">'+filas.map((c,i)=>'<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'+
+          '<input data-cnombre="'+i+'" value="'+esc(c.nombre)+'" placeholder="Nombre de la cuenta" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px">'+
+          '<input data-cmonto="'+i+'" value="'+c.monto+'" placeholder="$" style="width:150px;padding:8px;border:1px solid var(--border);border-radius:8px;text-align:right">'+
+          (filas.length>1?'<button class="cmp-rowbtn" data-crm="'+i+'" title="Quitar cuenta">✕</button>':'')+
+        '</div>').join('')+'</div>'+
+        '<button class="cmp-addline" id="caj-cuenta-add">+ Agregar cuenta</button>'+
+        '<div class="cmp-field" style="margin-top:12px"><label>Nota</label><input id="caj-f-nota" placeholder="Ej: cierre del día, arqueo..."></div>'+
+        '<div id="caj-f-total" style="text-align:right;font-weight:800;font-size:16px;margin:4px 0 8px"></div>'+
+        '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-f-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-f-save">Guardar saldo</button></div>';
+      const upd=()=>{ $('caj-f-total').textContent='Total declarado: '+money(leerFilas().reduce((s,c)=>s+num(c.monto),0)); };
+      document.querySelectorAll('#caj-cuentas input').forEach(el=>el.addEventListener('input',upd)); upd();
+      document.querySelectorAll('[data-crm]').forEach(b=>b.onclick=()=>{ filas=leerFilas(); filas.splice(+b.dataset.crm,1); draw(); });
+      $('caj-cuenta-add').onclick=()=>{ filas=leerFilas(); filas.push({nombre:'',monto:0}); draw(); };
+      $('caj-f-cancel').onclick=cerrar;
+      $('caj-f-save').onclick=()=>{
+        const cuentas=leerFilas().filter(c=>c.nombre.trim()).map(c=>({nombre:c.nombre.trim(), monto:num(c.monto)}));
+        if(!cuentas.length){ alert('Cargá al menos una cuenta con su nombre.'); return; }
+        persist({tipo:'saldo', fecha:$('caj-f-fecha').value||hoyISO, cuentas, nota:$('caj-f-nota').value||'', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)});
+        cerrar();
+      };
+    }
+    draw();
     $('caj-modal').classList.add('open');
   }
   function abrirMov(){ editing={tipo:'mov'};
