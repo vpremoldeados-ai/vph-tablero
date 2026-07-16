@@ -3225,7 +3225,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'m2PorUnidad',l:'m² que cubre cada unidad',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
@@ -3703,7 +3703,7 @@ function buildFilterTable(cfg){
         fld('Cond. IVA','','<select id="cf-cond">'+opt(['A','B','C','M','X'],l.condIva)+'</select>') +
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Pedido</h4>'+
-      '<p class="note" style="margin:0 0 6px">Cargá los <b>m²</b> que necesita y, si el producto tiene definido cuántos m² cubre cada unidad, la <b>cantidad</b> se calcula sola (podés ajustarla a mano).</p>'+
+      '<p class="note" style="margin:0 0 6px">Cargá los <b>m²</b> que necesita y, si el producto tiene definidas las <b>unidades por m²</b> (Base de Datos → Productos), la <b>cantidad</b> se calcula sola (podés ajustarla a mano).</p>'+
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:55%">Producto</th><th>m²</th><th>Cantidad</th><th></th></tr></thead><tbody id="cf-items"></tbody></table></div>'+
       '<button class="cmp-addline" id="cf-addline">+ Agregar producto</button>'+ datalistProd() +
       '<div id="cf-flete-box" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc);font-size:12.5px;line-height:1.5"></div>'+
@@ -3734,17 +3734,20 @@ function buildFilterTable(cfg){
     const v=a*b;
     return (v>0 && v<=10) ? Math.round(v*10000)/10000 : 0;
   }
-  // m² por unidad: manda el campo del catálogo; si no está cargado, se deduce del nombre.
+  // m² por unidad. Prioridad: (1) "Unidades por m²" del catálogo — es como VPH piensa y lo que usa el cotizador
+  // (LC60 = 4,3 losetas por m²); (2) el campo viejo "m² por unidad", invertido; (3) las medidas del nombre.
   function m2PorUnidadInfo(prodNombre){ const p=matchProd(prodNombre);
-    const cat=p?num(p.m2PorUnidad):0; if(cat>0) return {m2:cat, origen:'catálogo'};
-    const der=m2DeNombre(p?p.nombre:prodNombre); return der>0 ? {m2:der, origen:'medidas del nombre'} : {m2:0, origen:''};
+    const uxm2=p?num(p.unidadesPorM2):0; if(uxm2>0) return {m2:1/uxm2, uxm2, origen:'catálogo'};
+    const cat=p?num(p.m2PorUnidad):0; if(cat>0) return {m2:cat, uxm2:1/cat, origen:'catálogo'};
+    const der=m2DeNombre(p?p.nombre:prodNombre); return der>0 ? {m2:der, uxm2:1/der, origen:'medidas del nombre'} : {m2:0, uxm2:0, origen:''};
   }
   function m2PorUnidadDe(prodNombre){ return m2PorUnidadInfo(prodNombre).m2; }
-  function recalcUnidades(i){ const it=editing.items[i]; const m2u=m2PorUnidadDe(it.producto); if(m2u>0 && num(it.m2)>0){ it.cantidad=Math.ceil(num(it.m2)/m2u); return true; } return false; }
+  // Unidades necesarias = m² × unidades por m², redondeado para arriba (ej: 350 m² de LC60 × 4,3 = 1.505 losetas)
+  function recalcUnidades(i){ const it=editing.items[i]; const inf=m2PorUnidadInfo(it.producto); if(inf.uxm2>0 && num(it.m2)>0){ it.cantidad=Math.ceil(num(it.m2)*inf.uxm2); return true; } return false; }
   function drawItems(){
     $('cf-items').innerHTML = editing.items.map((it,i)=>{ const inf=m2PorUnidadInfo(it.producto);
-      const pie = inf.m2>0 ? '<div style="font-size:9px;color:var(--muted)" title="m² que cubre cada unidad, según el '+esc(inf.origen)+'">'+num(inf.m2).toLocaleString('es-AR')+' m²/u'+(inf.origen!=='catálogo'?' ✎':'')+'</div>'
-        : (it.producto&&!/^flete/i.test(it.producto) ? '<div style="font-size:9px;color:var(--amber)" title="Cargá los m² por unidad en Base de Datos → Productos para que la cantidad se calcule sola">sin m²/u</div>' : '');
+      const pie = inf.uxm2>0 ? '<div style="font-size:9px;color:var(--muted)" title="Unidades por m², según '+esc(inf.origen)+'">'+(Math.round(inf.uxm2*100)/100).toLocaleString('es-AR')+' u/m²'+(inf.origen!=='catálogo'?' ✎':'')+'</div>'
+        : (it.producto&&!/^flete/i.test(it.producto) ? '<div style="font-size:9px;color:var(--amber)" title="Cargá las Unidades por m² en Base de Datos → Productos para que la cantidad se calcule sola">sin u/m²</div>' : '');
       return '<tr><td><input class="txt" data-i="'+i+'" data-k="producto" list="crm-prod-list" value="'+esc(it.producto)+'" placeholder="Producto"></td>'+
       '<td><input data-i="'+i+'" data-k="m2" value="'+esc(it.m2||'')+'" style="width:66px" placeholder="m²"></td>'+
       '<td><input data-i="'+i+'" data-k="cantidad" value="'+esc(it.cantidad)+'" style="width:66px">'+pie+'</td>'+
