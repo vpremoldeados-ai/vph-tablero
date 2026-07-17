@@ -1123,18 +1123,29 @@ function pintarSemaforo(){
 }
 
 // --- KPIs Inicio ---
-(function(){
+// KPIs de Inicio. Re-ejecutable: los de Disponible/Deuda vencida se toman EN VIVO de Finanzas
+// (mismos números que esa página); mientras los datos en vivo no llegaron, caen a la foto del cierre.
+// Se repinta desde __refreshAlertas (que corre al abrir y cada 60s), así que se actualiza solo.
+function pintarKpisInicio(){
+  if(!document.getElementById('kpis-inicio')) return;
   const balKg = stockSnapshot.kgEnStock - stockSnapshot.kgVendidosNoEntregados;
   const ult = produccionMensual[produccionMensual.length-1];
   const promDia = Math.round(ult.producidoKg/ult.diasConDato);
   document.getElementById('kpis-inicio').innerHTML =
     kpi('Facturación '+META.mesEnCurso, fmt$(mesEnCurso.ventas), mesEnCurso.cantVentas+' ventas · promedio '+fmt$(mesEnCurso.ventaPromedio), 'info') +
     kpi('Resultado del mes (parcial)', fmt$(mesEnCurso.resultado), 'Ventas - compras facturadas', 'good') +
-    kpi('Disponible (caja+bancos)', fmt$(finanzas.disponible), 'Cajas '+fmtM(finanzas.cajas)+' · Bancos '+fmtM(finanzas.bancos), finanzas.disponible < finanzas.aPagarVencido ? 'warn':'good') +
-    kpi('Deuda vencida a proveedores', fmt$(finanzas.aPagarVencido), (finanzas.aPagarVencido/finanzas.aPagar*100).toFixed(0)+'% del total a pagar', 'bad') +
+    (function(){ const fk=(window.__finanzasKPIs?window.__finanzasKPIs():null);
+      if(fk){ // datos EN VIVO (Ventas/Compras/Cheques/Caja) — mismos que la página Finanzas
+        return kpi('Disponible', fk.disp==null?'—':fmt$(fk.disp), fk.disp==null?'Declaralo en Caja / Liquidez':'En vivo · caja + banco', (fk.disp!=null&&fk.disp<fk.pagVenc)?'warn':'good') +
+          kpi('Deuda vencida a proveedores', fmt$(fk.pagVenc), fk.aPagar?((fk.pagVenc/fk.aPagar*100).toFixed(0)+'% del total a pagar'):'En vivo', fk.pagVenc>0?'bad':'good');
+      } // fallback: foto del cierre (hasta que lleguen los datos en vivo)
+      return kpi('Disponible (caja+bancos)', fmt$(finanzas.disponible), 'Cajas '+fmtM(finanzas.cajas)+' · Bancos '+fmtM(finanzas.bancos), finanzas.disponible < finanzas.aPagarVencido ? 'warn':'good') +
+        kpi('Deuda vencida a proveedores', fmt$(finanzas.aPagarVencido), (finanzas.aPagarVencido/finanzas.aPagar*100).toFixed(0)+'% del total a pagar', 'bad');
+    })() +
     kpi('Producción promedio', promDia.toLocaleString('es-AR')+' kg/día', 'Objetivo: '+META.objetivoKgDia.toLocaleString('es-AR')+' kg/día', promDia>=META.objetivoKgDia?'good':'warn') +
     kpi('Balance stock (kg)', (balKg>0?'+':'')+balKg.toLocaleString('es-AR')+' kg', 'Stock vs pedidos comprometidos', balKg<0?'bad':'good');
-})();
+}
+pintarKpisInicio();
 
 function kpi(label, value, sub, cls){
   return '<div class="kpi '+(cls||'')+'"><div class="label">'+label+'</div><div class="value">'+value+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
@@ -1164,7 +1175,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -3221,7 +3232,7 @@ function buildFilterTable(cfg){
     function draw(){
       $('caj-form').innerHTML =
         '<p class="note" style="margin-top:0">Cargá cuánta plata tenés <b>hoy</b> en cada cuenta, contada de verdad. Este es el punto de partida: el tablero suma los cobros y resta los pagos que registres a partir de esta fecha.</p>'+
-        '<div class="cmp-field" style="margin-bottom:10px;max-width:200px"><label>Fecha</label><input type="date" id="caj-f-fecha" value="'+hoyISO+'"></div>'+
+        '<div class="cmp-field" style="margin-bottom:10px;max-width:200px"><label>Fecha</label><input type="date" id="caj-f-fecha" value="'+hoyISO+'" max="'+hoyISO+'"></div>'+
         '<div id="caj-cuentas">'+filas.map((c,i)=>'<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'+
           '<input data-cnombre="'+i+'" value="'+esc(c.nombre)+'" placeholder="Nombre de la cuenta" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px">'+
           '<input data-cmonto="'+i+'" value="'+c.monto+'" placeholder="$" style="width:150px;padding:8px;border:1px solid var(--border);border-radius:8px;text-align:right">'+
@@ -3341,7 +3352,7 @@ function buildFilterTable(cfg){
   const visa=()=>{ try{ return (finanzas && finanzas.visa) ? finanzas.visa : null; }catch(e){ return null; } };
   const margenCierre=()=>{ try{ return (rentabilidad && rentabilidad.margenPct!=null) ? rentabilidad.margenPct : null; }catch(e){ return null; } };
 
-  let ventas=[], compras=[], cheques=[], unsub={}, charts={};
+  let ventas=[], compras=[], cheques=[], unsub={}, charts={}, _snap=null;
 
   const calcV=v=> window.__ventaCalc? window.__ventaCalc(v) : {total:0,saldo:0,iva:0,cobrado:0};
   // Totales de una compra (el módulo Compras no los expone): neto + IVA + percepciones, con signo NC
@@ -3359,24 +3370,26 @@ function buildFilterTable(cfg){
     ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const s=num(calcV(v).saldo);
       if(s>0.5) R.push({quien:v.cliente||'—', monto:s, venc:String(v.vencimiento||'').slice(0,10)||hoyISO, tipo:'venta'}); });
     cheques.forEach(c=>{ if(c.tipo!=='recibido'||!chqPend(c)) return;
-      R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque'}); });
+      R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
     return R; }
   function porPagar(){ const R=[];
     compras.forEach(c=>{ const t=calcC(c).total; const pag=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const s=t-pag;
       if(s>0.5) R.push({quien:c.proveedor||'—', monto:s, venc:String(c.vencimiento||'').slice(0,10)||hoyISO, tipo:'compra'}); });
     cheques.forEach(c=>{ if(c.tipo!=='emitido'||!chqPend(c)) return;
-      R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque'}); });
+      R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
     return R; }
   const costosPend=()=> (window.__costosFijos?window.__costosFijos():[]).filter(c=>c.estado!=='pagado');
 
-  // Antigüedad: días vencidos respecto de hoy
+  // Días vencidos respecto de hoy. Un cheque DEPOSITADO está en curso normal de acreditación (su vencimiento
+  // ya pasó por definición): no es mora, cuenta como "a vencer".
+  const diasFila=r=> (r.estadoChq==='depositado') ? 0 : dias(r.venc);
   function aging(rows){ const b={avencer:0,d030:0,d3160:0,d6190:0,d90:0};
-    rows.forEach(r=>{ const d=dias(r.venc);
+    rows.forEach(r=>{ const d=diasFila(r);
       if(d<=0) b.avencer+=r.monto; else if(d<=30) b.d030+=r.monto; else if(d<=60) b.d3160+=r.monto; else if(d<=90) b.d6190+=r.monto; else b.d90+=r.monto; });
     return b; }
   function agrupar(rows){ const m={};
     rows.forEach(r=>{ const k=r.quien; const g=m[k]=m[k]||{quien:k, avencer:0, v060:0, v60mas:0, total:0, vencido:0};
-      const d=dias(r.venc); g.total+=r.monto;
+      const d=diasFila(r); g.total+=r.monto;
       if(d<=0) g.avencer+=r.monto; else { g.vencido+=r.monto; if(d<=60) g.v060+=r.monto; else g.v60mas+=r.monto; } });
     return Object.values(m).sort((a,b)=>b.total-a.total); }
 
@@ -3388,12 +3401,15 @@ function buildFilterTable(cfg){
     const aPagarProv=pag.reduce((s,r)=>s+r.monto,0);
     const aPagarCF=cf.reduce((s,c)=>s+num(c.monto),0);
     const aPagar=aPagarProv+aPagarCF;
-    const cobVenc=cob.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0);
-    const pagVenc=pag.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0)+cf.filter(c=>dias(c.vencimiento)>0).reduce((s,c)=>s+num(c.monto),0);
+    const cobVenc=cob.filter(r=>diasFila(r)>0).reduce((s,r)=>s+r.monto,0);
+    const pagVenc=pag.filter(r=>diasFila(r)>0).reduce((s,r)=>s+r.monto,0)+cf.filter(c=>dias(c.vencimiento)>0).reduce((s,c)=>s+num(c.monto),0);
     const caja=window.__cajaDisponible?window.__cajaDisponible():null;
     const disp=caja?caja.total:null;
     const brecha=aCobrar-aPagar;
     const liq=aPagar>0 ? ((disp||0)+aCobrar)/aPagar : null;
+    // Snapshot para la Vista Diaria: que muestre los MISMOS números que esta página (una sola fuente de verdad),
+    // en vez de la foto congelada del cierre.
+    _snap={disp, aCobrar, aPagar, cobVenc, pagVenc};
 
     $('kpis-finanzas').innerHTML =
       kpi('Disponible', disp==null?'—':m$(disp), disp==null?'Declaralo en Caja / Liquidez':'Real, al '+fmtFecha(caja.desde)+' + movimientos', disp==null?'warn':(disp>0?'info':'bad')) +
@@ -3566,6 +3582,10 @@ function buildFilterTable(cfg){
     } }
   // Lo llaman Caja y Costos Fijos cuando cambian sus datos
   window.__finanzasRefresh = ()=>{ try{ render(); }catch(e){} };
+  // KPIs financieros en vivo para la Vista Diaria (mismos números que la página Finanzas).
+  // Devuelve null si todavía no llegaron los datos (ventas/compras): así la Vista Diaria cae a la foto
+  // del cierre hasta que haya datos reales, en vez de mostrar $0.
+  window.__finanzasKPIs = ()=>{ if(!ventas.length && !compras.length && !cheques.length) return null; if(!_snap){ try{ render(); }catch(e){} } return _snap; };
   boot();
 })();
 </script>
