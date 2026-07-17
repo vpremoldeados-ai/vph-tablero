@@ -2151,7 +2151,10 @@ function buildFilterTable(cfg){
     const extras=num(v.percepIva)+num(v.percepIibb)+num(v.impInternos)+num(v.intereses);
     const signo = v.tipoComprobante==='Nota de Crédito' ? -1 : 1;
     const total=(neto+iva+extras)*signo;
-    const cobrado=(v.cobros||[]).reduce((a,c)=>a+num(c.monto),0);
+    // Un cobro cuyo cheque REBOTÓ no es un cobro: el cliente sigue debiendo esa plata.
+    // Si se contara, el saldo daría 0 y esos pesos desaparecían de "A cobrar" y de la proyección de caja
+    // (el cheque rechazado tampoco cuenta como pendiente, así que no quedaba en ningún lado).
+    const cobrado=(v.cobros||[]).reduce((a,c)=>a+(c.chequeRechazado?0:num(c.monto)),0);
     const saldo=round2(total-cobrado);
     let estado;
     if(signo<0) estado='cobrado';   // Nota de Crédito: se considera aplicada, no queda pendiente/vencida
@@ -2758,6 +2761,8 @@ function buildFilterTable(cfg){
       numero:(p.numero||ex.numero||''), banco:(p.banco||ex.banco||''), entidad:(p.entidad||ex.entidad||''),
       fechaEmision:(p.fechaEmision||ex.fechaEmision||hoyISO), fechaVencimiento:(p.fechaVencimiento||ex.fechaVencimiento||p.fechaEmision||hoyISO),
       cuenta:(ex.cuenta||''),   // la cuenta se elige en el módulo Cheques; reeditar el cobro/pago no la pisa
+      fechaMov:(ex.fechaMov||''),   // fecha real en que se cobró/rechazó: si se perdiera, la Caja recalcularía
+                                    // con el vencimiento y un cheque ya cobrado se caería del disponible de golpe
       monto:num(p.monto), estado, nota:(p.refNro?((kind==='pag'?'Pago de la compra ':'Cobro de la venta ')+p.refNro):(kind==='pag'?'Generado desde un pago de Compras':'Generado desde un cobro de Ventas')) };
     persist(rec);
   }
@@ -2809,7 +2814,11 @@ function buildFilterTable(cfg){
   const ESTADOS=[{k:'aconfirmar',l:'A confirmar',c:'#d64541'},{k:'confirmado',l:'Confirmado',c:'#c98a06'},{k:'pagado',l:'Pagado',c:'#1e9e5a'}];
   const MEDIOS=['Transferencia','Débito automático','Efectivo','Cheque','E-Cheq','VISA / Tarjeta'];
   const PENDIENTES=['aconfirmar','confirmado'];
-  let DB={costos:[]}, unsub=null, editing=null, filtro={estado:'pendientes', q:''};
+  const esCheque = m => /cheq/i.test(String(m||''));   // pagado con cheque → la plata sale al hacerse efectivo
+  // Cuentas (Efectivo / Banco Macro MAV / Banco Macro VPH...): las define Caja al declarar el saldo.
+  const cuentasOpt = sel => { const cs=(window.__cajaCuentas?window.__cajaCuentas():[]); if(!cs.length) return '<option value="">—</option>';
+    return cs.map(c=>'<option value="'+esc(c)+'"'+(String(sel||'')===c?' selected':'')+'>'+esc(c)+'</option>').join(''); };
+  let DB={costos:[]}, unsub=null, editing=null, pagando=null, filtro={estado:'pendientes', q:''};
   let uidSeq=Date.now(); const newUid=()=>'cfj'+(uidSeq++).toString(36);
 
   const estadoLbl=k=>{ const e=ESTADOS.find(x=>x.k===k); return e?e.l:k; };
@@ -2824,11 +2833,11 @@ function buildFilterTable(cfg){
   function remove(uid){ if(window.__usaNube){ const x=fb(); if(x&&x.db) x.FS.deleteDoc(x.FS.doc(x.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
     else { DB.costos=DB.costos.filter(y=>y._uid!==uid); render(); } }
 
-  function blank(){ return { concepto:'', proveedor:'', monto:0, vencimiento:hoyISO, estado:'aconfirmar', medio:MEDIOS[0], fechaPago:'', recurrente:false, diaVto:10, nota:'' }; }
+  function blank(){ return { concepto:'', proveedor:'', monto:0, vencimiento:hoyISO, estado:'aconfirmar', medio:MEDIOS[0], cuenta:'', fechaPago:'', recurrente:false, diaVto:10, nota:'' }; }
   function field(l,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+l+'</label>'+inner+'</div>'; }
   function opt(arr,sel){ return arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join(''); }
   function openForm(c){ editing=c?JSON.parse(JSON.stringify(c)):blank(); $('cfj-form-title').textContent=c?'Editar Costo Fijo':'Nuevo Costo Fijo'; drawForm(); $('cfj-modal').classList.add('open'); }
-  function closeForm(){ $('cfj-modal').classList.remove('open'); editing=null; }
+  function closeForm(){ $('cfj-modal').classList.remove('open'); editing=null; pagando=null; }
   function drawForm(){
     const c=editing;
     $('cfj-form').innerHTML =
@@ -2839,12 +2848,13 @@ function buildFilterTable(cfg){
         field('Vencimiento','','<input type="date" id="cfj-venc" value="'+esc(c.vencimiento||'')+'">')+
         field('Estado','','<select id="cfj-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>')+
         field('Medio de pago','','<select id="cfj-medio">'+opt(MEDIOS,c.medio)+'</select>')+
+        field('Cuenta de la que sale','','<select id="cfj-cuenta">'+cuentasOpt(c.cuenta)+'</select>')+
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="cfj-recu"'+(c.recurrente?' checked':'')+'> 🔁 Es recurrente (se repite todos los meses)</label></div>'+
         field('Día de vencimiento (si es recurrente)','','<input id="cfj-diavto" value="'+esc(c.diaVto||10)+'" placeholder="10">')+
         field('Nota','col2','<textarea id="cfj-nota" rows="2">'+esc(c.nota)+'</textarea>')+
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cfj-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cfj-save">Guardar</button></div>';
-    [['cfj-concepto','concepto'],['cfj-prov','proveedor'],['cfj-monto','monto'],['cfj-venc','vencimiento'],['cfj-estado','estado'],['cfj-medio','medio'],['cfj-diavto','diaVto'],['cfj-nota','nota']].forEach(([id,k])=>{
+    [['cfj-concepto','concepto'],['cfj-prov','proveedor'],['cfj-monto','monto'],['cfj-venc','vencimiento'],['cfj-estado','estado'],['cfj-medio','medio'],['cfj-cuenta','cuenta'],['cfj-diavto','diaVto'],['cfj-nota','nota']].forEach(([id,k])=>{
       const el=$(id); if(el) el.addEventListener('input',()=>{ editing[k]=(k==='monto'||k==='diaVto')?num(el.value):el.value; }); });
     $('cfj-recu').addEventListener('change',()=>{ editing.recurrente=$('cfj-recu').checked; });
     $('cfj-cancel').onclick=closeForm;
@@ -2856,24 +2866,73 @@ function buildFilterTable(cfg){
       persist(editing); closeForm(); };
   }
   // Marca pagado: la fecha de pago es la que impacta en la caja
-  function pagar(c){ const f=prompt('¿En qué fecha se pagó? (AAAA-MM-DD)', hoyISO); if(!f) return;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(f)){ alert('Fecha inválida. Usá el formato AAAA-MM-DD.'); return; }
-    const cur=DB.costos.find(x=>x._uid===c._uid)||c; cur.estado='pagado'; cur.fechaPago=f; persist(cur); }
+  // Marca pagado. La fecha de pago y la cuenta son las que impactan en la Caja, así que se piden acá.
+  function pagar(c){
+    const cur=DB.costos.find(x=>x._uid===c._uid)||c;
+    pagando=cur;
+    const ch=esCheque(cur.medio);
+    $('cfj-form-title').textContent='Registrar pago — '+(cur.concepto||'');
+    $('cfj-form').innerHTML =
+      '<p style="margin:0 0 10px;font-size:13px">'+esc(cur.concepto||'')+' · <b>'+money(num(cur.monto))+'</b> · vence '+fmtFecha(cur.vencimiento)+'</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        field('Fecha de pago','','<input type="date" id="cfj-p-fecha" value="'+hoyISO+'" max="'+hoyISO+'">')+
+        field('Medio','','<select id="cfj-p-medio">'+opt(MEDIOS,cur.medio)+'</select>')+
+        '<div class="cmp-field" id="cfj-p-cuenta-wrap" style="display:'+(ch?'none':'')+'"><label>¿De qué cuenta sale?</label><select id="cfj-p-cuenta">'+cuentasOpt(cur.cuenta)+'</select></div>'+
+      '</div>'+
+      '<div id="cfj-p-ch" style="display:'+(ch?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea en el módulo Cheques como emitido)</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('N° de cheque','','<input id="cfj-p-chnum">')+
+          field('Banco','','<input id="cfj-p-chbanco">')+
+          field('Vencimiento del cheque','col2','<input type="date" id="cfj-p-chvenc" value="'+esc(cur.vencimiento||hoyISO)+'">')+
+        '</div></div>'+
+      '<p class="note" style="margin:0">La plata sale de la caja en la <b>fecha de pago</b>. Si pagás con cheque, sale recién cuando el cheque se hace efectivo.</p>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="cfj-p-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cfj-p-save">Confirmar pago</button></div>';
+    $('cfj-p-medio').addEventListener('change',()=>{ const e=esCheque($('cfj-p-medio').value);
+      $('cfj-p-ch').style.display=e?'block':'none'; $('cfj-p-cuenta-wrap').style.display=e?'none':''; });
+    $('cfj-p-cancel').onclick=closeForm;
+    $('cfj-p-save').onclick=()=>{
+      const f=$('cfj-p-fecha').value;
+      if(!fechaValida(f)){ alert('La fecha de pago no es válida.'); return; }
+      if(f>hoyISO){ alert('La fecha de pago no puede ser futura.'); return; }
+      const medio=$('cfj-p-medio').value;
+      pagando.estado='pagado'; pagando.fechaPago=f; pagando.medio=medio;
+      pagando.cuenta = esCheque(medio) ? '' : ($('cfj-p-cuenta')?$('cfj-p-cuenta').value:'');
+      persist(pagando);
+      // Si se paga con cheque, lo crea en el módulo Cheques: la plata sale cuando se hace efectivo.
+      if(esCheque(medio) && window.__upsertChequePago){
+        window.__upsertChequePago({ pagoId:'cf_'+pagando._uid, compraUid:pagando._uid, compraNro:pagando.concepto||'', entidad:pagando.proveedor||pagando.concepto||'',
+          numero:($('cfj-p-chnum')?$('cfj-p-chnum').value.trim():''), banco:($('cfj-p-chbanco')?$('cfj-p-chbanco').value.trim():''),
+          monto:num(pagando.monto), fechaEmision:f, fechaVencimiento:($('cfj-p-chvenc')?$('cfj-p-chvenc').value:'')||f });
+      }
+      pagando=null; closeForm(); };
+    $('cfj-modal').classList.add('open');
+  }
+  // Valida que sea una fecha real: el regex solo no alcanza ('2026-13-45' lo pasa y después nunca impacta en la caja)
+  function fechaValida(s){ if(!/^\d{4}-\d{2}-\d{2}$/.test(String(s||''))) return false;
+    const a=String(s).split('-').map(Number); const d=new Date(a[0],a[1]-1,a[2]);
+    return d.getFullYear()===a[0] && d.getMonth()===a[1]-1 && d.getDate()===a[2]; }
 
   // Crea los recurrentes que falten del mes en curso (no duplica los que ya existen)
   function generarRecurrentes(){
     const per=hoyISO.slice(0,7);
     const yaHay=new Set(DB.costos.filter(c=>periodoDe(c)===per).map(c=>String(c.concepto||'').trim().toLowerCase()));
     const plantillas=[]; const vistos=new Set();
-    DB.costos.filter(c=>c.recurrente).forEach(c=>{ const k=String(c.concepto||'').trim().toLowerCase(); if(!vistos.has(k)){ vistos.add(k); plantillas.push(c); } });
+    // La plantilla tiene que ser la MÁS RECIENTE de cada concepto: si no, Firestore devuelve los docs en
+    // orden arbitrario y el alquiler se podía regenerar con el monto de hace meses (y la caja proyectaba de menos).
+    DB.costos.filter(c=>c.recurrente).slice().sort((a,b)=>String(b.vencimiento||'').localeCompare(String(a.vencimiento||'')))
+      .forEach(c=>{ const k=String(c.concepto||'').trim().toLowerCase(); if(!vistos.has(k)){ vistos.add(k); plantillas.push(c); } });
     const faltan=plantillas.filter(c=>!yaHay.has(String(c.concepto||'').trim().toLowerCase()));
     if(!plantillas.length){ alert('No hay ningún costo fijo marcado como recurrente todavía.\n\nMarcá el checkbox "🔁 Es recurrente" en los que se repiten todos los meses (alquiler, sueldos, etc.).'); return; }
     if(!faltan.length){ alert('Los recurrentes de este mes ya están todos creados 👍'); return; }
     const resumen=faltan.map(c=>'• '+c.concepto+' — '+money(num(c.monto))).join('\n');
     if(!confirm('Voy a crear estos '+faltan.length+' costo(s) fijo(s) para '+per+', en estado "A confirmar":\n\n'+resumen+'\n\n¿Confirmás?')) return;
-    faltan.forEach(c=>{ const dia=Math.min(Math.max(num(c.diaVto)||10,1),28);
+    // El día de vencimiento se recorta al último día REAL del mes (un alquiler que vence el 30 no puede
+    // quedar cargado el 28: dispararía la alerta de vencido dos días antes y la fecha sería incorrecta).
+    const [anio,mes]=per.split('-').map(Number); const ultimoDia=new Date(anio,mes,0).getDate();
+    faltan.forEach(c=>{ const dia=Math.min(Math.max(num(c.diaVto)||10,1),ultimoDia);
       persist({ concepto:c.concepto, proveedor:c.proveedor||'', monto:num(c.monto), vencimiento:per+'-'+p2(dia),
-        estado:'aconfirmar', medio:c.medio||MEDIOS[0], fechaPago:'', recurrente:true, diaVto:dia, nota:c.nota||'', _uid:newUid() }); });
+        estado:'aconfirmar', medio:c.medio||MEDIOS[0], cuenta:c.cuenta||'', fechaPago:'', recurrente:true, diaVto:num(c.diaVto)||10, nota:c.nota||'', _uid:newUid() }); });
   }
 
   function render(){
@@ -3018,7 +3077,9 @@ function buildFilterTable(cfg){
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
       if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||''}); } });
-    (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado!=='pagado') return; const f=String(cf.fechaPago||'').slice(0,10);
+    // Igual que ventas y compras: si el costo fijo se pagó con cheque, la plata sale cuando el cheque se
+    // hace efectivo (lo cuenta el bloque de arriba). Contarlo acá también lo cobraría DOS veces.
+    (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado!=='pagado' || esCheque(cf.medio)) return; const f=String(cf.fechaPago||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(cf.monto)>0) M.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—'), tipo:'costofijo', cuenta:cf.cuenta||''}); });
     caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && f>desde && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid, cuenta:m.cuenta||''}); });
     return M.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha))); }
@@ -3028,7 +3089,9 @@ function buildFilterTable(cfg){
   // para que el total siempre cierre aunque el detalle por cuenta esté incompleto.
   function porCuenta(d){
     const m={}; const orden=[];
-    cuentasDe(d.ancla).forEach(c=>{ const n=c.nombre||'—'; if(!(n in m)){ m[n]=num(c.monto); orden.push(n); } });
+    // Si hay dos cuentas con el mismo nombre hay que ACUMULARLAS, no descartar la segunda:
+    // el total las suma a todas, así que descartarla rompía el invariante (la suma por cuenta ≠ disponible).
+    cuentasDe(d.ancla).forEach(c=>{ const n=c.nombre||'—'; if(n in m){ m[n]+=num(c.monto); } else { m[n]=num(c.monto); orden.push(n); } });
     let sinAsignar=0;
     d.movs.forEach(mv=>{ const delta=mv.signo*mv.monto; const n=mv.cuenta;
       if(n && (n in m)) m[n]+=delta;
@@ -3176,7 +3239,14 @@ function buildFilterTable(cfg){
       $('caj-f-save').onclick=()=>{
         const cuentas=leerFilas().filter(c=>c.nombre.trim()).map(c=>({nombre:c.nombre.trim(), monto:num(c.monto)}));
         if(!cuentas.length){ alert('Cargá al menos una cuenta con su nombre.'); return; }
-        persist({tipo:'saldo', fecha:$('caj-f-fecha').value||hoyISO, cuentas, nota:$('caj-f-nota').value||'', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)});
+        // Una fecha futura CONGELA la caja: el ancla sería siempre la más nueva y ningún cobro/pago entraría
+        // en el filtro (f>desde && f<=hoy). El disponible quedaría clavado y sin forma de arreglarlo desde acá.
+        const f=$('caj-f-fecha').value||hoyISO;
+        if(f>hoyISO){ alert('No se puede declarar un saldo con fecha futura.\n\nEl saldo es lo que tenés HOY, contado de verdad.'); return; }
+        // Nombres repetidos: el total los suma, pero el detalle por cuenta los mezclaría en una sola fila.
+        const nombres=cuentas.map(c=>c.nombre.toLowerCase());
+        if(new Set(nombres).size!==nombres.length){ alert('Hay dos cuentas con el mismo nombre. Poneles nombres distintos.'); return; }
+        persist({tipo:'saldo', fecha:f, cuentas, nota:$('caj-f-nota').value||'', ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)});
         cerrar();
       };
     }
