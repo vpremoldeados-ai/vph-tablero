@@ -2523,7 +2523,15 @@ function buildFilterTable(cfg){
   // --- Catálogo de productos (Base de Datos) para autocompletar precio/IVA ---
   function catProductos(){ return (window.__catalogoProductos ? window.__catalogoProductos() : []); }
   function datalistProd(){ return '<datalist id="vf-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>'; }
-  function matchProducto(val){ const v=(val||'').trim().toLowerCase(); return catProductos().find(p=>(p.nombre||'').toLowerCase()===v || (p.codigo||'').toLowerCase()===v); }
+  // Alias por dimensión: "60x40"/"40x40" (como se pide por WhatsApp) → LC60/LC40 del catálogo ("Loseta
+  // Cribada Rectangular/Cuadrada"). Sin esto, un ítem que llega de un lead con ese nombre no matcheaba
+  // y quedaba sin precio (precioUnit en 0) en el presupuesto/venta generado.
+  const ALIAS_PROD={ LC60:['60x40','60 x 40'], LC40:['40x40','40 x 40'] };
+  function matchProducto(val){ const v=(val||'').trim().toLowerCase(); if(!v) return null;
+    const cat=catProductos();
+    let p=cat.find(p=>(p.nombre||'').toLowerCase()===v || (p.codigo||'').toLowerCase()===v);
+    if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
+    return p; }
   function precioLista(prod, lista){ if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
   function aplicarProducto(it, prod, lista){ it.codigo=prod.codigo||''; const bruto = precioLista(prod,lista) || num(prod.precioMinorista) || num(prod.precioMayorista); const sf=/sin factura/i.test(lista||'');
     if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); } }
@@ -3691,7 +3699,12 @@ function buildFilterTable(cfg){
   // Catálogo de productos/clientes (Base de Datos) para autocompletar
   function catProductos(){ return (window.__catalogoProductos?window.__catalogoProductos():[]); }
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
-  function matchProducto(val){ const v=(val||'').trim().toLowerCase(); return catProductos().find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v); }
+  const ALIAS_PROD={ LC60:['60x40','60 x 40'], LC40:['40x40','40 x 40'] };
+  function matchProducto(val){ const v=(val||'').trim().toLowerCase(); if(!v) return null;
+    const cat=catProductos();
+    let p=cat.find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v);
+    if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
+    return p; }
   function precioLista(prod,lista){ if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
   function aplicarProducto(it,prod,lista){ it.codigo=prod.codigo||''; const bruto=precioLista(prod,lista)||num(prod.precioMinorista)||num(prod.precioMayorista); const sf=/sin factura/i.test(lista||''); if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto);} else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit=al>0?round2(bruto/(1+al/100)):round2(bruto);} }
   function clientesConocidos(){ const m={}; catClientes().forEach(c=>{ if(c.nombre&&!m[c.nombre]) m[c.nombre]={nombre:c.nombre,cuit:c.cuit,cond:c.condIva}; }); DB.presupuestos.forEach(p=>{ if(p.cliente&&!m[p.cliente]) m[p.cliente]={nombre:p.cliente,cuit:p.cuit,cond:p.condIva}; }); return Object.values(m); }
@@ -4258,7 +4271,16 @@ function buildFilterTable(cfg){
   function waLink(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d)return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; }
   function resumenPedido(l){ return (l.items||[]).filter(i=>i && i.producto).map(i=>(num(i.cantidad)||'')+' '+i.producto).join(' · ') || '—'; }
   const catProd=()=> (window.__catalogoProductos? window.__catalogoProductos():[]);
-  const matchProd=val=>{ const v=(val||'').trim().toLowerCase(); return catProd().find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v); };
+  // Alias por dimensión: en el catálogo el producto figura como "Loseta Cribada Rectangular" (LC60),
+  // pero en la calle/WhatsApp se lo conoce como "60x40". Sin esto, el nombre no matcheaba con el catálogo
+  // y el sistema caía a deducir los m²/u de las medidas del nombre (0,24 → 4,17 u/m²) en vez de usar el
+  // valor real cargado en Base de Datos (4,3 u/m², que ya contempla la junta de corte).
+  const ALIAS_PROD={ LC60:['60x40','60 x 40'], LC40:['40x40','40 x 40'] };
+  const matchProd=val=>{ const v=(val||'').trim().toLowerCase(); if(!v) return null;
+    const cat=catProd();
+    let p=cat.find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v);
+    if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
+    return p; };
   // Zonas de flete: las define el módulo Presupuestos (precios editables en Parámetros)
   const zonasOpt=sel=>{ const zs=(window.__fleteZonas?window.__fleteZonas():[{k:'',l:'— Sin definir —'}]); return zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(sel||'')===z.k?' selected':'')+'>'+esc(z.l)+'</option>').join(''); };
   // m² totales del lead: suma de m² por ítem (o el campo viejo l.m2 si no hay ítems con m²)
