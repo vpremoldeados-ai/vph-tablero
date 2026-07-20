@@ -511,6 +511,12 @@
     <!-- Sub-vista: COORDINAR ENTREGAS -->
     <div id="pe-view-coord" style="display:none">
       <section>
+        <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--blue)"></span>Viajes armados — carga por camión</h2>
+        <div class="asof" id="pe-viajes-asof"></div>
+        <div id="pe-viajes"></div>
+        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.</p>
+      </section>
+      <section>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
           <h2 style="margin:0"><span class="dot" style="background:var(--accent)"></span>Entregas a coordinar</h2>
           <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
@@ -4286,6 +4292,9 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Logística', k:'capSanchez', l:'Capacidad camión Sánchez (pallets)',              def:8,  t:'num', hint:'Cuántos pallets entran por viaje. Se usa en Producción y Logística → Coordinar entregas para saber cuánto lugar queda en cada camión.'},
+    {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
+    {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'}
@@ -5216,7 +5225,46 @@ function buildFilterTable(cfg){
   // ---------- Coordinar entregas (pedidos) ----------
   function resumenPed(pe){ return (pe.items||[]).filter(Boolean).filter(i=>i.producto).map(i=>(num(i.cantidad)||'')+' '+(i.codigo||i.producto)).join(' · ') || '—'; }
   function cargaMini(pe){ const t=totCarga(pe); if(!t.pallets) return ''; return '<div style="font-size:11px;color:var(--muted);margin-top:2px">📦 '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')+'</div>'; }
+  // ---------- Planificador de viajes: agrupa por transportista + día y compara con la capacidad ----------
+  // Sofía junta clientes para que salgan en el mismo camión el mismo día, aprovechando al máximo la carga
+  // (ej: el camión de Matías Sánchez lleva 8 pallets). Acá ve cuánto lleva cada viaje y cuánto le queda.
+  const CAP_PARAM={ 'Sánchez':'capSanchez', 'Brío':'capBrio', 'Expreso Biletta':'capBiletta' };
+  const capacidadDe=t=>{ const k=CAP_PARAM[String(t||'').trim()]; return k?Math.max(0,num(window.__param(k,0))):0; };
+  function renderViajes(){
+    const cont=$('pe-viajes'); if(!cont) return;
+    const pend=pedidos.filter(p=>p.estado!=='entregado');
+    const g={};
+    pend.forEach(p=>{ const dia=String(p.diaEntrega||'').trim()||'Sin fecha'; const tr=String(p.transporte||'').trim()||'Sin asignar';
+      const k=dia+'||'+tr; g[k]=g[k]||{dia, tr, peds:[], pallets:0, peso:0};
+      const t=totCarga(p); g[k].peds.push(p); g[k].pallets+=t.pallets; g[k].peso+=t.peso; });
+    const viajes=Object.values(g).sort((a,b)=> String(a.dia==='Sin fecha'?'zzzz':a.dia).localeCompare(String(b.dia==='Sin fecha'?'zzzz':b.dia)) || String(a.tr).localeCompare(String(b.tr)));
+    const asof=$('pe-viajes-asof');
+    if(asof) asof.textContent = viajes.length ? (viajes.length+' viaje'+(viajes.length!==1?'s':'')+' · '+pend.length+' pedido'+(pend.length!==1?'s':'')+' pendiente'+(pend.length!==1?'s':'')) : 'Sin pedidos pendientes';
+    if(!viajes.length){ cont.innerHTML='<div style="text-align:center;color:var(--green);padding:20px;border:1px dashed var(--border);border-radius:12px">✅ No hay entregas pendientes de coordinar.</div>'; return; }
+    cont.innerHTML = viajes.map(v=>{
+      const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
+      const excede=cap>0&&v.pallets>cap;
+      const col = excede?'var(--red)' : (cap>0&&libre<=0?'var(--green)' : (cap>0?'var(--amber)':'var(--muted)'));
+      const estado = cap<=0 ? '<span style="color:var(--muted)">sin capacidad configurada (⚙️ Parámetros)</span>'
+        : excede ? '<b style="color:var(--red)">⚠️ se pasa por '+(v.pallets-cap)+' pallet'+((v.pallets-cap)!==1?'s':'')+' — hay que dividir el viaje</b>'
+        : libre===0 ? '<b style="color:var(--green)">✅ camión completo</b>'
+        : '<b style="color:var(--amber)">quedan '+libre+' pallet'+(libre!==1?'s':'')+' libres</b>';
+      return '<div style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div style="font-weight:800;font-size:14px">🚚 '+esc(v.tr)+'</div>'+
+          '<div style="font-size:12.5px;color:var(--muted)">📅 '+esc(v.dia)+'</div>'+
+          '<div style="margin-left:auto;font-weight:800;font-size:14px;color:'+col+'">'+v.pallets+(cap>0?(' / '+cap):'')+' pallet'+(v.pallets!==1?'s':'')+'</div>'+
+        '</div>'+
+        (cap>0?'<div class="progress" style="height:10px;margin:6px 0"><i style="width:'+pct+'%;background:'+col+'"></i></div>':'<div style="height:6px"></div>')+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)">'+estado+
+          (v.peso>0?'<span>· '+(Math.round(v.peso/100)/10)+' t</span>':'')+
+          '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
+        '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p);
+          return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(p.ciudad?' <span style="color:var(--muted)">· '+esc(p.ciudad)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'; }).join('')+'</div>'+
+      '</div>'; }).join('');
+  }
   function renderCoord(){
+    renderViajes();
     const defs=[['activos','A entregar'],['todos','Todos'],['entregado','Entregados']];
     const cnt={ activos:pedidos.filter(p=>p.estado!=='entregado').length, todos:pedidos.length, entregado:pedidos.filter(p=>p.estado==='entregado').length };
     $('pe-ped-filtros').innerHTML=defs.map(([v,l])=>'<button class="filter-btn'+(filtroPed===v?' active':'')+'" data-pf="'+v+'">'+l+' ('+cnt[v]+')</button>').join('');
