@@ -1196,7 +1196,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -1254,10 +1254,33 @@ window.__pintarPE = function(){
 };
 window.__pintarPE();
 
-/* ================= METAS ================= */
-(function(){
+/* ================= METAS — EN VIVO desde los módulos (antes: foto del cierre) ================= */
+window.__pintarMetas = function(){
+  if(!document.getElementById('tabla-metas') || !Array.isArray(METAS)) return;
   const fmtVal = (v,u) => u==='$' ? fmt$(v) : u==='kg' ? Math.round(v).toLocaleString('es-AR')+' kg' : u==='%' ? (+v).toFixed(1).replace('.0','')+'%' : u==='x' ? (+v).toFixed(2) : Math.round(v).toLocaleString('es-AR');
-  const avanceMes = mesEnCurso.diasHabilesTranscurridos / mesEnCurso.diasHabilesTotales; // % del mes transcurrido
+  // Días hábiles (lun-vie) del mes calculados a HOY (antes venían congelados del cierre).
+  const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
+  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
+  const avanceMes = _tot>0 ? _tra/_tot : (mesEnCurso.diasHabilesTranscurridos/mesEnCurso.diasHabilesTotales);
+
+  // Valor EN VIVO de cada meta desde los módulos (null = sin fuente en vivo → queda el del cierre).
+  function liveActual(m){
+    const rm=window.__resumenMes?window.__resumenMes():null;
+    const rp=window.__resumenProduccion?window.__resumenProduccion():null;
+    const fk=window.__finanzasKPIs?window.__finanzasKPIs():null;
+    const n=(m.nombre||'').toLowerCase();
+    if(n.includes('facturaci')) return rm?rm.ventas:null;
+    if(n.includes('concentraci')) return rm?rm.clienteTopPct:null;
+    if(n.includes('margen bruto')) return null;                 // último mes cerrado — sin fuente en vivo
+    if(n.includes('producidos')) return rp?rp.kgProducidosMes:null;
+    if(n.includes('ritmo')) return rp?rp.ritmoKgDia:null;
+    if(n.includes('faltante')) return rp?rp.faltantes:null;
+    if(n.includes('cubiert')||n.includes('cobertura')) return rp?rp.coberturaPct:null;
+    if(n.includes('deuda vencida')) return (fk&&fk.aPagar>0)?(fk.pagVenc/fk.aPagar*100):null;
+    if(n.includes('liquidez')) return (fk&&fk.aPagar>0)?(((fk.disp||0)+fk.aCobrar)/fk.aPagar):null;
+    if(n.includes('cobranza')) return fk?fk.cobVenc:null;
+    return null;
+  }
 
   function evalMeta(m){
     let pct, falta, cumplida;
@@ -1279,15 +1302,16 @@ window.__pintarPE();
     return { pct: Math.min(pct,100), falta, cumplida, estado, badge };
   }
 
-  const evaluadas = METAS.map(m => ({...m, ...evalMeta(m)}));
+  const evaluadas = METAS.map(m => { const la=liveActual(m); const mm=(la!=null)?{...m, actual:la, _vivo:true}:{...m, _vivo:false}; return {...mm, ...evalMeta(mm)}; });
   const nCump = evaluadas.filter(m=>m.cumplida).length;
   const nCrit = evaluadas.filter(m=>m.badge==='red').length;
+  const nVivo = evaluadas.filter(m=>m._vivo).length;
 
   document.getElementById('kpis-metas').innerHTML =
-    kpi('Metas definidas', String(evaluadas.length), 'Comercial · Producción · Logística · Finanzas', 'info') +
+    kpi('Metas definidas', String(evaluadas.length), nVivo+' en vivo · '+(evaluadas.length-nVivo)+' del cierre', 'info') +
     kpi('Cumplidas', String(nCump), (nCump/evaluadas.length*100).toFixed(0)+'% del total', nCump>=evaluadas.length/2?'good':'warn') +
     kpi('Críticas', String(nCrit), 'Muy por debajo del avance esperado', nCrit?'bad':'good') +
-    kpi('Mes transcurrido', (avanceMes*100).toFixed(0)+'%', mesEnCurso.diasHabilesTranscurridos+' de '+mesEnCurso.diasHabilesTotales+' días hábiles', 'info');
+    kpi('Mes transcurrido', (avanceMes*100).toFixed(0)+'%', _tra+' de '+_tot+' días hábiles', 'info');
 
   const colBadge = {green:'var(--green)', blue:'var(--accent2)', amber:'var(--amber)', red:'var(--red)'};
   let html = '<tr><th>Área</th><th>Indicador</th><th class="num">Actual</th><th class="num">Objetivo</th><th>Avance</th><th class="num">Falta / Exceso</th><th>Estado</th></tr>';
@@ -1296,7 +1320,7 @@ window.__pintarPE();
     const faltaTxt = m.cumplida ? '—' : (m.sentido==='>=' ? 'Faltan ' + fmtVal(m.falta, m.unidad) : 'Reducir ' + fmtVal(m.falta, m.unidad));
     html += '<tr>' +
       '<td>' + (m.area!==areaAnt ? '<b>'+m.area+'</b>' : '') + '</td>' +
-      '<td>' + m.nombre + (m.sentido==='<='?' <span style="color:var(--muted);font-size:11px">(tope)</span>':'') + '</td>' +
+      '<td>' + m.nombre + (m.sentido==='<='?' <span style="color:var(--muted);font-size:11px">(tope)</span>':'') + (m._vivo?'':' <span style="color:var(--muted);font-size:11px">(cierre)</span>') + '</td>' +
       '<td class="num"><b>' + fmtVal(m.actual, m.unidad) + '</b></td>' +
       '<td class="num">' + (m.sentido==='<='?'≤ ':'') + fmtVal(m.objetivo, m.unidad) + '</td>' +
       '<td><div class="bar-cell"><span style="min-width:42px;text-align:right;font-weight:700;font-size:12px">' + m.pct.toFixed(0) + '%</span>' +
@@ -1306,7 +1330,8 @@ window.__pintarPE();
     areaAnt = m.area;
   });
   document.getElementById('tabla-metas').innerHTML = html;
-})();
+};
+window.__pintarMetas();
 
 /* ---------- CHARTS GLOBAL CONFIG ---------- */
 Chart.defaults.font.family = "'Segoe UI',system-ui,Arial";
@@ -4768,6 +4793,9 @@ function buildFilterTable(cfg){
     const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
     const per=hoyISO.slice(0,7); let kgMes=0;
     prod.forEach(x=>{ if(String(x.fecha||'').slice(0,10).slice(0,7)===per) kgMes+=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
+    // Cobertura: qué % de los kg comprometidos (pedidos no entregados) están cubiertos por stock curado.
+    let compKg=0, cubKg=0;
+    filas.forEach(f=>{ const pe=pesoDe(f.k); compKg+=f.comprometido*pe; cubKg+=Math.min(f.comprometido, Math.max(0,f.curado))*pe; });
     const sem=semanaKg();
     return {
       ritmoKgDia: Math.round(ritmoKgDia()),          // kg/día hábil, ventana de 14 días (ritmo real)
@@ -4776,6 +4804,7 @@ function buildFilterTable(cfg){
       kgComprometido: Math.round(kgComp),            // pedidos no entregados
       balanceKg: Math.round(kgStock-kgComp),         // físico − comprometido
       kgProducidosMes: Math.round(kgMes),
+      coberturaPct: compKg>0 ? Math.round(cubKg/compKg*1000)/10 : 100,  // % de comprometido cubierto por stock
       faltantes: filas.filter(f=>f.estado==='falta').length,
       pedidosPend: pedidos.filter(p=>p.estado!=='entregado').length,
       objetivo: OBJ()
@@ -5426,10 +5455,11 @@ function buildFilterTable(cfg){
   function calcularTareas(){
     const T=[];
     // 1) Presupuestos en borrador → enviar al cliente (mensaje + PDF)
-    presupuestos.filter(p=>(p.estado||'borrador')==='borrador').forEach(p=>{ const k=calcV(p);
+    presupuestos.filter(p=>(p.estado||'borrador')==='borrador' && !th(p).enviarOmitido).forEach(p=>{ const k=calcV(p);
       T.push({ ico:'📝', titulo:'Enviar presupuesto '+(p.numero||'')+' a '+(p.cliente||'—'), detalle:money(k.total)+' · válido hasta '+venceP(p),
         prim:{l:'▶ Enviar', run(){ waModal({titulo:'Presupuesto → '+(p.cliente||''), telefono:telDe(p.cliente,p.cuit), adjunto:'Presupuesto '+(p.numero||'')+'.pdf', texto:'Hola '+(primerNombre(p.cliente)||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(k.total)+', válido hasta el '+venceP(p)+'. Cualquier duda me decís 😊', alConfirmar(){ setCampos('vph_presupuestos',p,{estado:'enviado'}); }}); }},
-        doc:{l:'🧾 PDF', run(){ if(window.__imprimir) window.__imprimir.presupuesto({...p, tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISOp(p)}); }} });
+        doc:{l:'🧾 PDF', run(){ if(window.__imprimir) window.__imprimir.presupuesto({...p, tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISOp(p)}); }},
+        omit:{run(){ marcar('vph_presupuestos',p,'enviarOmitido'); }} });
     });
     // 2) Ventas recientes sin aviso al grupo de producción
     ventas.filter(v=> v.fecha>=isoMenos(7) && !['Presupuesto','Nota de Crédito'].includes(v.tipoComprobante) && !th(v).grupo).forEach(v=>{
@@ -5507,7 +5537,7 @@ function buildFilterTable(cfg){
         '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+
           (t.doc?'<button class="cmp-btn" data-doc="'+i+'">'+esc(t.doc.l)+'</button>':'')+
           '<button class="cmp-btn cmp-btn-primary" data-run="'+i+'">'+esc(t.prim.l)+'</button>'+
-          (t.omit?'<button class="cmp-btn" data-omit="'+i+'" title="Marcar como hecha / descartar">✕</button>':'')+
+          (t.omit?'<button class="cmp-btn" data-omit="'+i+'" title="Eliminar esta tarea de la bandeja">✕ Eliminar</button>':'')+
         '</div></div>').join('')
       : '<div style="text-align:center;color:var(--green);padding:26px;border:1px dashed var(--border);border-radius:12px">✅ No hay tareas pendientes. Todo comunicado.</div>';
     $('as-tareas').querySelectorAll('[data-run]').forEach(b=> b.onclick=()=>{ try{ tareas[+b.dataset.run].prim.run(); }catch(e){ alert('Error: '+e.message); } });
