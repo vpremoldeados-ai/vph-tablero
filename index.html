@@ -2648,7 +2648,10 @@ function buildFilterTable(cfg){
   function vendedoresConocidos(){ return [...new Set(VENDEDORES.concat(DB.ventas.map(v=>v.vendedor).filter(Boolean)))]; }
   function datalistVend(){ return '<datalist id="vf-vend-list">'+vendedoresConocidos().map(x=>'<option value="'+esc(x)+'">').join('')+'</datalist>'; }
   // --- Catálogo de productos (Base de Datos) para autocompletar precio/IVA ---
-  function catProductos(){ return (window.__catalogoProductos ? window.__catalogoProductos() : []); }
+  // Se excluye la variante interna de refuerzo de base (ej: LC60 2H): el cliente compra "LC60" a secas y
+  // esa variante no se vende suelta. Sigue visible en Base de Datos y en Producción, que es donde va.
+  function catProductos(){ const a=(window.__catalogoProductos ? window.__catalogoProductos() : []); const up=s=>String(s||'').trim().toUpperCase();
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo)))); }
   function datalistProd(){ return '<datalist id="vf-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>'; }
   // Alias por dimensión: "60x40"/"40x40" (como se pide por WhatsApp) → LC60/LC40 del catálogo ("Loseta
   // Cribada Rectangular/Cuadrada"). Sin esto, un ítem que llega de un lead con ese nombre no matcheaba
@@ -3869,7 +3872,9 @@ function buildFilterTable(cfg){
   function nextNumero(){ let max=0; DB.presupuestos.forEach(p=>{ const m=String(p.numero||'').match(/(\d+)/); if(m){ const n=+m[1]; if(n>max)max=n; } }); return 'P-'+String(max+1).padStart(4,'0'); }
 
   // Catálogo de productos/clientes (Base de Datos) para autocompletar
-  function catProductos(){ return (window.__catalogoProductos?window.__catalogoProductos():[]); }
+  // Excluye la variante interna de refuerzo de base (no se vende suelta al cliente).
+  function catProductos(){ const a=(window.__catalogoProductos?window.__catalogoProductos():[]); const up=s=>String(s||'').trim().toUpperCase();
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo)))); }
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
   const ALIAS_PROD={ LC60:['60x40','60 x 40'], LC40:['40x40','40 x 40'] };
   function matchProducto(val){ const v=(val||'').trim().toLowerCase(); if(!v) return null;
@@ -4512,7 +4517,9 @@ function buildFilterTable(cfg){
 
   function waLink(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d)return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; }
   function resumenPedido(l){ return (l.items||[]).filter(i=>i && i.producto).map(i=>(num(i.cantidad)||'')+' '+i.producto).join(' · ') || '—'; }
-  const catProd=()=> (window.__catalogoProductos? window.__catalogoProductos():[]);
+  // Excluye la variante interna de refuerzo de base (no se cotiza suelta).
+  const catProd=()=>{ const a=(window.__catalogoProductos? window.__catalogoProductos():[]); const up=s=>String(s||'').trim().toUpperCase();
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo)))); };
   // Alias por dimensión: en el catálogo el producto figura como "Loseta Cribada Rectangular" (LC60),
   // pero en la calle/WhatsApp se lo conoce como "60x40". Sin esto, el nombre no matcheaba con el catálogo
   // y el sistema caía a deducir los m²/u de las medidas del nombre (0,24 → 4,17 u/m²) en vez de usar el
@@ -4985,7 +4992,8 @@ function buildFilterTable(cfg){
 
   // ---------- Disponibilidad para presupuestar (Sofía) ----------
   // Dada una cantidad a vender: ¿entrega inmediata, espera de curado, o hay que fabricar?
-  function disponibilidadDe(p, cantidad){
+  // Disponibilidad de UN producto suelto, sin considerar el refuerzo de base (la usa disponibilidadDe).
+  function dispoSimple(p, cantidad){
     const s=stockDe(p); cantidad=Math.ceil(num(cantidad)); if(cantidad<=0) return null;
     if(s.disponible>=cantidad) return { inmediata:true, disponible:s.disponible, texto:'✅ Entrega inmediata ('+nf(s.disponible)+' disponibles)' };
     let falta=cantidad-s.disponible;   // si disponible es negativo, incluye el faltante previo (la venta nueva va al final de la cola)
@@ -4995,6 +5003,24 @@ function buildFilterTable(cfg){
     const diasFab=Math.max(1, peso>0? Math.ceil(kg/ritmo) : 1);
     const listo=addDias(addDiasHabiles(HOY,diasFab), diasCuradoDe(p));
     return { inmediata:false, fecha:listo, fabricar:falta, kg, texto:'🏭 Hay que fabricar '+nf(falta)+' u'+(kg>0?(' (~'+nf(kg)+' kg)'):'')+' → entrega estimada desde el '+fmtF(listo) };
+  }
+  // Disponibilidad REAL: si el producto lleva refuerzo de base, manda el PEOR de los dos. De nada sirve
+  // tener 300 losetas si faltan las bases — antes contestaba "entrega inmediata" y era mentira.
+  function disponibilidadDe(p, cantidad){
+    const cant=Math.ceil(num(cantidad)); if(cant<=0) return null;
+    const r=splitRefuerzo(p, planStd(cant, num(p&&p.udPorPallet)), cant);
+    if(!r) return dispoSimple(p, cant);
+    const a=dispoSimple(p, r.neto), b=dispoSimple(r.pr2, r.cant);
+    if(!a) return b; if(!b) return a;
+    if(a.inmediata && b.inmediata)
+      return { inmediata:true, disponible:Math.min(a.disponible,b.disponible),
+        texto:'✅ Entrega inmediata ('+nf(cant)+' u · incluye '+nf(r.cant)+' de base reforzada)' };
+    const pend=[a,b].filter(x=>!x.inmediata);
+    let peor=pend[0];
+    if(pend.length>1 && pend[0].fecha && pend[1].fecha) peor = (pend[0].fecha>=pend[1].fecha)?pend[0]:pend[1];
+    const limitaBase = (peor===b);
+    return { inmediata:false, fecha:peor.fecha, fabricar:peor.fabricar, kg:peor.kg,
+      texto: peor.texto + (limitaBase ? ' — lo que falta es la BASE reforzada ('+nf(r.cant)+' u de '+esc(r.nombre||'refuerzo')+')' : '') };
   }
   // API para Presupuestos/Ventas: window.__disponibilidadProducto('LC60'|'Loseta...', 46) → {inmediata, fecha?, texto}
   window.__disponibilidadProducto = function(ref, cantidad){ const p=resolverProd(ref,ref); if(!p||(p.tipo||'')==='Servicio') return null; return disponibilidadDe(p,cantidad); };
@@ -5649,8 +5675,19 @@ function buildFilterTable(cfg){
       const out=cont.querySelector('[data-planout="'+i+'"]'); if(!out) return;
       const ok = suma===r.cant;
       const pesoTxt = r.peso>0 ? (' · '+pesos.map(nf).join(' · ')+' kg · total '+nf(totPeso)+' kg') : '';
+      // Requerimiento de base reforzada: sale del MISMO plan de pallets que va a usar la entrega, con
+      // semáforo de stock, para que Gustavo sepa antes de armar si le alcanzan las bases.
+      let refTxt='';
+      if(r.ref){
+        const disp=stockDe(r.ref.pr2).disponible;
+        const falta=r.ref.cant-disp;
+        refTxt='<div style="margin-top:3px">⚙️ Base reforzada: <b>'+nf(r.ref.cant)+'</b> '+esc(r.ref.nombre)+' + '+nf(r.ref.neto)+' '+esc(r.nombre)+
+          ' · '+(falta>0
+            ? '<b style="color:var(--red)">faltan '+nf(falta)+' (hay '+nf(Math.max(0,disp))+')</b>'
+            : '<b style="color:var(--green)">hay '+nf(disp)+' ✓</b>')+'</div>';
+      }
       out.innerHTML = '<b>'+r.pallets.length+'</b> pallet'+(r.pallets.length!==1?'s':'')+' ('+r.pallets.map(nf).join(' + ')+')'+pesoTxt+
-        (ok?'':' <span style="color:var(--red)">⚠ suma '+nf(suma)+' ≠ '+nf(r.cant)+' u</span>');
+        (ok?'':' <span style="color:var(--red)">⚠ suma '+nf(suma)+' ≠ '+nf(r.cant)+' u</span>')+refTxt;
     });
     const tot=cont.querySelector('.pe-plan-tot'); if(tot) tot.innerHTML='Total: '+gPal+' pallet'+(gPal!==1?'s':'')+(gPeso>0?(' · '+nf(gPeso)+' kg ('+(Math.round(gPeso/100)/10)+' t)'):'');
   }
