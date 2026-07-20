@@ -39,6 +39,13 @@
   .health span{font-size:11.5px;font-weight:700;border-radius:20px;padding:6px 13px}
   .h-ok{background:var(--green-bg);color:var(--green)} .h-warn{background:var(--amber-bg);color:var(--amber)} .h-bad{background:var(--red-bg);color:var(--red)}
   .updated{font-size:11.5px;color:var(--muted);margin:2px 0 18px}
+  /* Indicador de conexión en vivo */
+  .conn{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;border-radius:20px;padding:5px 11px;white-space:nowrap;cursor:default}
+  .conn .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .conn.live{background:var(--green-bg);color:var(--green)} .conn.live .dot{background:var(--green);animation:connpulse 1.6s ease-in-out infinite}
+  .conn.warn{background:var(--amber-bg);color:var(--amber)} .conn.warn .dot{background:var(--amber)}
+  .conn.off{background:var(--red-bg);color:var(--red)} .conn.off .dot{background:var(--red)}
+  @keyframes connpulse{0%,100%{opacity:1}50%{opacity:.3}}
 
   .page{display:none;animation:fade .25s ease}
   .page.active{display:block}
@@ -230,6 +237,7 @@
   <div class="topbar">
     <h1 id="page-title">Vista Diaria</h1>
     <span class="date" id="hoy"></span>
+    <span class="conn warn" id="conn-status" title="Estado de conexión con la base de datos en vivo"><span class="dot"></span>Conectando…</span>
     <div class="health" id="health-pills"></div>
   </div>
   <div class="updated" id="updated-line"></div>
@@ -5838,6 +5846,60 @@ function buildFilterTable(cfg){
   }
 
   window.__wa = { modal, telWa, primerNombre, DATOS_FISCALES, COND_PAGO };
+})();
+</script>
+
+<!-- =====================================================================
+     INDICADOR DE CONEXIÓN EN VIVO — muestra si el Tablero está conectado a la base de datos
+     y recibiendo información en tiempo real. Señal: metadata.fromCache de Firestore (cuando pierde
+     el backend, sirve desde caché) + navigator.onLine. Funciona para todos los roles.
+     OJO: informa el estado de la CONEXIÓN DE DATOS (Firebase), no la versión publicada de la app.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const el=()=>document.getElementById('conn-status');
+  const p2=n=>String(n).padStart(2,'0');
+  const horaDe=ms=>{ if(!ms) return '—'; const d=new Date(ms); return p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()); };
+  let unsub=null, fromCache=true, tuvoServidor=false, logueado=false, conectadoDesdeMs=0;
+
+  function calc(){
+    if(!window.__usaNube) return {cls:'off', txt:'Modo local', tip:'El Tablero está en modo local, sin conexión a la nube.'};
+    if(!logueado)         return {cls:'warn', txt:'Sin ingresar', tip:'Ingresá para conectarte a los datos en vivo.'};
+    if(!navigator.onLine) return {cls:'off', txt:'Sin conexión', tip:'Tu dispositivo está sin internet. Lo que ves puede estar desactualizado; se reconecta y actualiza solo al volver la conexión.'};
+    if(!tuvoServidor)     return {cls:'warn', txt:'Conectando…', tip:'Estableciendo conexión con la base de datos en vivo.'};
+    if(fromCache)         return {cls:'warn', txt:'Reconectando…', tip:'Se perdió la conexión con la base de datos. Mostrando lo último recibido; se actualiza solo al reconectar.'};
+    return {cls:'live', txt:'En vivo', tip:'Conectado a la base de datos en tiempo real'+(conectadoDesdeMs?(' (desde las '+horaDe(conectadoDesdeMs)+')'):'')+'. Cualquier cambio aparece al instante en todos los dispositivos.'};
+  }
+  function pintar(){
+    const e=el(); if(!e) return;
+    const s=calc();
+    if(s.cls==='live'){ if(!conectadoDesdeMs) conectadoDesdeMs=Date.now(); } else { conectadoDesdeMs=0; }
+    e.className='conn '+s.cls;
+    e.innerHTML='<span class="dot"></span>'+s.txt;
+    e.title=s.tip;
+  }
+  function subscribir(){
+    const c=window.__fbctx; if(!c||!c.db||!c.auth||!c.auth.currentUser) return;
+    logueado=true; tuvoServidor=false; fromCache=true;
+    if(unsub){ try{ unsub(); }catch(e){} unsub=null; }
+    try{
+      unsub=c.FS.onSnapshot(c.FS.doc(c.db,'vph_roles',c.auth.currentUser.uid), {includeMetadataChanges:true},
+        snap=>{ fromCache=snap.metadata.fromCache; if(!fromCache) tuvoServidor=true; pintar(); },
+        err=>{ fromCache=true; pintar(); });
+    }catch(e){}
+    pintar();
+  }
+  function desSuscribir(){ logueado=false; tuvoServidor=false; conectadoDesdeMs=0; if(unsub){ try{ unsub(); }catch(e){} unsub=null; } pintar(); }
+
+  window.addEventListener('online', pintar);
+  window.addEventListener('offline', pintar);
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  window.__afterLogin.push(subscribir);
+  window.__afterLogout.push(desSuscribir);
+  if(window.__fbctx && window.__fbctx.auth && window.__fbctx.auth.currentUser) subscribir();
+  setInterval(pintar, 8000);   // backstop (los cambios de conexión ya repintan solos)
+  pintar();
 })();
 </script>
 
