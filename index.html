@@ -1073,12 +1073,13 @@ function calcularAlertas(){
   const _cTop = _rm?_rm.clienteTop:mesEnCurso.clienteTop, _cPct = _rm?_rm.clienteTopPct:mesEnCurso.clienteTopPct;
   if (_cPct > 40) A.push({sev:'warn', area:'Comercial', t:'Concentración: ' + _cTop + ' explica el ' + _cPct + '% de la facturación del mes', act:'Impulsar la venta a corralones (ruta de Eduardo) para diversificar la cartera.', go:{page:'Comercial'}});
   const bajoMargen = rentabilidad.clientes.filter(c => c.pct < 50 && c.venta > 0);
-  if (bajoMargen.length) A.push({sev:'info', area:'Comercial', t:'Clientes con margen <50%: ' + bajoMargen.map(c=>c.cliente).join(', '), act:'Revisar precio o costo de flete asignado en la próxima cotización.', go:{page:'Comercial'}});
-  // PRODUCCION / RENTABILIDAD (estratégico, del cierre)
-  const ult = produccionMensual[produccionMensual.length-1];
-  if (ult && ult.vendidoKg != null && ult.vendidoKg > ult.producidoKg) A.push({sev:'warn', area:'Producción', t:'Se vende más rápido de lo que se fabrica: ' + fmtKg(ult.vendidoKg) + ' vendidos vs ' + fmtKg(ult.producidoKg) + ' producidos en el mes', act:'Buena señal comercial, pero exige plan de producción y quizás tercer turno o más mesas.', go:{page:'Producción y Logística'}});
-  if (rentabilidad.capacidadPct > 85) A.push({sev:'warn', area:'Producción', t:'Capacidad utilizada ' + rentabilidad.capacidadPct + '% (junio): cerca del límite', act:'Evaluar inversión en moldes/mesas (proyecto molde LC60) antes de tomar pedidos grandes nuevos.', go:{page:'Producción y Logística'}});
-  A.push({sev:'ok', area:'Comercial', t:'Margen bruto de junio: ' + rentabilidad.margenPct + '% — muy sano para el rubro', act:'El problema no es rentabilidad, es caja: enfocarse en cobrar y ordenar pagos.', go:{page:'Comercial'}});
+  if (bajoMargen.length) A.push({sev:'info', area:'Comercial', t:'Clientes con margen <50% (cierre '+META.mesCerrado+'): ' + bajoMargen.map(c=>c.cliente).join(', '), act:'Revisar precio o costo de flete asignado en la próxima cotización.', go:{page:'Comercial'}});
+  // PRODUCCION — comparación EN VIVO: kg vendidos del mes (Finanzas) vs kg producidos del mes (Producción).
+  // Antes salía de la foto del cierre (produccionMensual/rentabilidad, que ya no se importa de Contagram).
+  const _rp = (window.__resumenProduccion?window.__resumenProduccion():null);
+  if (_rp && _rm && _rm.kgVendidos>0 && _rp.kgProducidosMes>0 && _rm.kgVendidos > _rp.kgProducidosMes)
+    A.push({sev:'warn', area:'Producción', t:'Se vende más rápido de lo que se fabrica: ' + fmtKg(Math.round(_rm.kgVendidos)) + ' vendidos vs ' + fmtKg(_rp.kgProducidosMes) + ' producidos en el mes', act:'Buena señal comercial, pero exige plan de producción y quizás tercer turno o más mesas.', go:{page:'Producción y Logística'}});
+  A.push({sev:'ok', area:'Comercial', t:'Margen bruto (cierre '+META.mesCerrado+'): ' + rentabilidad.margenPct + '% — muy sano para el rubro', act:'El problema no es rentabilidad, es caja: enfocarse en cobrar y ordenar pagos.', go:{page:'Comercial'}});
   return A;
 }
 
@@ -1096,7 +1097,7 @@ function irAPagina(page){ const items=[...document.querySelectorAll('#nav .nav-i
 
 // --- Topbar ---
 document.getElementById('hoy').textContent = new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-document.getElementById('updated-line').textContent = 'Finanzas y ventas: EN VIVO · Producción y stock al ' + META.ultimaActualizacion + ' · Mes cerrado: ' + META.mesCerrado + ' · Cierre automático: día 1 de cada mes';
+document.getElementById('updated-line').textContent = 'Datos EN VIVO desde los módulos del Tablero (ventas, compras, caja, cheques, producción, stock) · Rentabilidad/margen y débito VISA: referencia del último cierre (' + META.mesCerrado + ')';
 
 // --- Semáforo por área + pills (re-ejecutable) ---
 function pintarSemaforo(){
@@ -1130,9 +1131,7 @@ function pintarSemaforo(){
 // Se repinta desde __refreshAlertas (que corre al abrir y cada 60s), así que se actualiza solo.
 function pintarKpisInicio(){
   if(!document.getElementById('kpis-inicio')) return;
-  const balKg = stockSnapshot.kgEnStock - stockSnapshot.kgVendidosNoEntregados;
   const ult = produccionMensual[produccionMensual.length-1];
-  const promDia = Math.round(ult.producidoKg/ult.diasConDato);
   // Facturación y resultado del mes EN VIVO (ventas/compras reales del Tablero). Si aún no llegaron
   // los datos, cae a la foto del cierre (mesEnCurso) para no mostrar $0.
   const rm = (window.__resumenMes?window.__resumenMes():null);
@@ -1140,6 +1139,11 @@ function pintarKpisInicio(){
   const _cant = rm ? rm.cantVentas : mesEnCurso.cantVentas;
   const _prom = rm ? rm.ventaPromedio : mesEnCurso.ventaPromedio;
   const _resu = rm ? rm.resultado : mesEnCurso.resultado;
+  // Producción y stock EN VIVO desde el módulo Producción y Logística (antes salían de la foto del cierre).
+  const rp = (window.__resumenProduccion?window.__resumenProduccion():null);
+  const _promDia = rp ? rp.ritmoKgDia : Math.round(ult.producidoKg/ult.diasConDato);
+  const _objKg   = rp ? rp.objetivo   : META.objetivoKgDia;
+  const _balKg   = rp ? rp.balanceKg  : (stockSnapshot.kgEnStock - stockSnapshot.kgVendidosNoEntregados);
   document.getElementById('kpis-inicio').innerHTML =
     kpi('Facturación '+META.mesEnCurso, fmt$(_fact), _cant+' ventas · promedio '+fmt$(_prom)+(rm?' · en vivo':''), 'info') +
     kpi('Resultado del mes (parcial)', fmt$(_resu), 'Ventas − compras del mes'+(rm?' · en vivo':''), 'good') +
@@ -1151,8 +1155,8 @@ function pintarKpisInicio(){
       return kpi('Disponible (caja+bancos)', fmt$(finanzas.disponible), 'Cajas '+fmtM(finanzas.cajas)+' · Bancos '+fmtM(finanzas.bancos), finanzas.disponible < finanzas.aPagarVencido ? 'warn':'good') +
         kpi('Deuda vencida a proveedores', fmt$(finanzas.aPagarVencido), (finanzas.aPagarVencido/finanzas.aPagar*100).toFixed(0)+'% del total a pagar', 'bad');
     })() +
-    kpi('Producción promedio', promDia.toLocaleString('es-AR')+' kg/día', 'Objetivo: '+META.objetivoKgDia.toLocaleString('es-AR')+' kg/día', promDia>=META.objetivoKgDia?'good':'warn') +
-    kpi('Balance stock (kg)', (balKg>0?'+':'')+balKg.toLocaleString('es-AR')+' kg', 'Stock vs pedidos comprometidos', balKg<0?'bad':'good');
+    kpi('Producción promedio', _promDia.toLocaleString('es-AR')+' kg/día', (rp?'Ritmo real últimos 14 días · objetivo ':'Objetivo: ')+_objKg.toLocaleString('es-AR')+' kg/día'+(rp?' · en vivo':''), _promDia>=_objKg?'good':'warn') +
+    kpi('Balance stock (kg)', (_balKg>0?'+':'')+_balKg.toLocaleString('es-AR')+' kg', (rp?'Físico − comprometido · en vivo':'Stock vs pedidos comprometidos'), _balKg<0?'bad':'good');
 }
 pintarKpisInicio();
 
@@ -3617,13 +3621,17 @@ function buildFilterTable(cfg){
   window.__resumenMes = ()=>{
     if(!ventas.length && !compras.length) return null;
     const per=hoyISO.slice(0,7);
-    let vTot=0, vCant=0, cTot=0; const porCli={};
+    // pesos por código (para kg vendidos del mes — se compara con lo producido)
+    const cat = window.__catalogoProductos?window.__catalogoProductos():[];
+    const pW={}; cat.forEach(p=>{ if(p.codigo) pW[String(p.codigo).toUpperCase()]=num(p.pesoUnit); });
+    let vTot=0, vCant=0, cTot=0, kgV=0; const porCli={};
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
-      const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t; });
+      const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
+      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pW[String(it.codigo||'').toUpperCase()]||0; if(w>0) kgV+=w*num(it.cant); }); });
     compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; cTot+=num(calcC(c).total); });
     let topCli='—', topPct=0; const arr=Object.entries(porCli).sort((a,b)=>b[1]-a[1]);
     if(arr.length && vTot>0){ topCli=arr[0][0]; topPct=Math.round(arr[0][1]/vTot*100); }
-    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct };
+    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV };
   };
   boot();
 })();
@@ -4743,6 +4751,28 @@ function buildFilterTable(cfg){
   }
   // API para Presupuestos/Ventas: window.__disponibilidadProducto('LC60'|'Loseta...', 46) → {inmediata, fecha?, texto}
   window.__disponibilidadProducto = function(ref, cantidad){ const p=resolverProd(ref,ref); if(!p||(p.tipo||'')==='Servicio') return null; return disponibilidadDe(p,cantidad); };
+  // Resumen EN VIVO para la Vista Diaria (antes esos KPIs salían de la foto congelada del cierre —
+  // producción y stock ya NO se importan de Contagram, se calculan desde vph_produccion/entregas/pedidos).
+  window.__resumenProduccion = function(){
+    if(!prods.length) return null;
+    const filas=activos().map(p=>stockDe(p));
+    const kgStock=filas.reduce((a,f)=>a+Math.max(0,f.fisico)*pesoDe(f.k),0);
+    const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
+    const per=hoyISO.slice(0,7); let kgMes=0;
+    prod.forEach(x=>{ if(String(x.fecha||'').slice(0,10).slice(0,7)===per) kgMes+=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
+    const sem=semanaKg();
+    return {
+      ritmoKgDia: Math.round(ritmoKgDia()),          // kg/día hábil, ventana de 14 días (ritmo real)
+      semanaProm: Math.round(sem.prom),              // kg/día hábil de la semana en curso
+      kgStock: Math.round(kgStock),                  // físico en planta
+      kgComprometido: Math.round(kgComp),            // pedidos no entregados
+      balanceKg: Math.round(kgStock-kgComp),         // físico − comprometido
+      kgProducidosMes: Math.round(kgMes),
+      faltantes: filas.filter(f=>f.estado==='falta').length,
+      pedidosPend: pedidos.filter(p=>p.estado!=='entregado').length,
+      objetivo: OBJ()
+    };
+  };
 
   // ---------- Armado de pallets (plan de carga sobre camión) ----------
   // Pallets Arlog 1x1,2m. Cada producto entra una cantidad máxima por pallet (udPorPallet, en el catálogo).
