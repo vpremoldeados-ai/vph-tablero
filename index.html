@@ -942,8 +942,7 @@
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
         <h2 style="margin:0"><span class="dot" style="background:var(--red)"></span>Costos Fijos</h2>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="cmp-btn cmp-btn-primary" id="cfj-nuevo">+ Nuevo Costo Fijo</button>
-          <button class="cmp-btn" id="cfj-generar" title="Crea los costos fijos recurrentes que falten de este mes (alquiler, sueldos, etc.)">🔁 Generar recurrentes del mes</button>
+          <button class="cmp-btn cmp-btn-primary" id="cfj-ir-compras" title="Los costos fijos se cargan como una compra con categoría COSTO FIJO o Mano de Obra">+ Cargar en Compras</button>
           <button class="cmp-btn" id="cfj-export">Exportar JSON</button>
         </div>
       </div>
@@ -954,7 +953,7 @@
         <span class="result-count" id="cfj-count" style="margin:0 0 0 auto"></span>
       </div>
       <div class="tbl-wrap"><table id="cfj-tabla"></table></div>
-      <p class="note">Alquiler, sueldos, servicios, seguros — todo lo que se paga sí o sí. Circuito: <b>A confirmar</b> (Sofía valida monto y fecha) → <b>Confirmado</b> → <b>Pagado</b>. Los <b>recurrentes</b> se regeneran cada mes con el botón de arriba. Lo pendiente entra en la <b>proyección de Caja</b> y avisa en la Vista Diaria cuando se acerca el vencimiento. Datos en la nube (Firestore <code>vph_costosfijos</code>).</p>
+      <p class="note">Alquiler, sueldos, servicios, seguros — todo lo que se paga sí o sí. <b>Esta página es una VISTA</b>: los costos fijos se cargan, se editan y se pagan en el módulo <b>Compras</b>, con la categoría <b>COSTO FIJO</b> o <b>Mano de Obra</b>. Acá los ves juntos, ordenados por vencimiento, para saber qué se viene. Como son compras, ya entran una sola vez en "A pagar" de Finanzas y en la proyección de Caja (sin doble conteo).</p>
     </section>
   </div>
 
@@ -2999,18 +2998,12 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Monto"><b>'+money(num(c.monto))+'</b></td>'+
         '<td data-label="Medio">'+esc(c.medio||'—')+'</td>'+
         '<td data-label="Estado">'+badge(c.estado||'aconfirmar')+'</td>'+
-        '<td data-label="" style="white-space:nowrap">'+
-          ((c.estado||'aconfirmar')==='aconfirmar'?'<button class="cmp-rowbtn" data-a="confirmar" data-id="'+c._uid+'">✓ Confirmar</button>':'')+
-          (esPendiente(c)?'<button class="cmp-rowbtn" data-a="pagar" data-id="'+c._uid+'" title="Marcar como pagado (descuenta de la caja)">💵 Pagar</button>':'')+
-          '<button class="cmp-rowbtn" data-a="edit" data-id="'+c._uid+'">Editar</button>'+
-          '<button class="cmp-rowbtn" data-a="del" data-id="'+c._uid+'">✕</button>'+
-        '</td></tr>'; });
+        '<td data-label="" style="white-space:nowrap"><button class="cmp-rowbtn" data-a="ver" title="Se carga, se edita y se paga en el módulo Compras">→ Ver en Compras</button></td></tr>'; });
     $('cfj-tabla').innerHTML=html;
-    $('cfj-tabla').querySelectorAll('button[data-a]').forEach(b=>b.onclick=()=>{ const c=DB.costos.find(x=>x._uid==b.dataset.id); if(!c)return; const a=b.dataset.a;
-      if(a==='edit') openForm(c);
-      else if(a==='confirmar'){ const cur=DB.costos.find(x=>x._uid===c._uid)||c; cur.estado='confirmado'; persist(cur); }
-      else if(a==='pagar') pagar(c);
-      else if(a==='del'){ if(confirm('¿Eliminar "'+(c.concepto||'')+'" de '+money(num(c.monto))+'?')) remove(c._uid); } });
+    // Esta página es una VISTA: el alta/edición/pago se hace en Compras (una sola fuente de datos).
+    $('cfj-tabla').querySelectorAll('button[data-a="ver"]').forEach(b=>b.onclick=()=>{
+      const nb=[...document.querySelectorAll('#nav .nav-item')].find(x=>{ const t=x.querySelector('.txt'); return t&&t.textContent.trim()==='Compras'; });
+      if(nb) nb.click(); });
     $('cfj-count').textContent=rows.length+' de '+DB.costos.length;
   }
   function k(l,cls,v,sub){ return '<div class="kpi '+cls+'"><div class="label">'+l+'</div><div class="value">'+v+'</div><div class="sub">'+sub+'</div></div>'; }
@@ -3020,32 +3013,52 @@ function buildFilterTable(cfg){
 
   function exportJSON(){ const b=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='VPH_costosfijos_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
 
-  // API para el módulo Caja
+  // API para el módulo Caja / Finanzas
   window.__costosFijos = ()=> DB.costos.slice();
 
+  // ---------- VISTA de Compras (20/07) ----------
+  // Los costos fijos YA se cargan en Compras con las categorías "COSTO FIJO" y "Mano de Obra".
+  // Antes esta página tenía su propia colección (vph_costosfijos): obligaba a cargar todo dos veces y,
+  // peor, el importe se sumaba ADEMÁS del de la compra en "A pagar" de Finanzas y en la proyección de
+  // Caja → DOBLE CONTEO. Ahora hay UNA sola fuente (la compra) y esta página solo la muestra.
+  const CATS_FIJO=['COSTO FIJO','Mano de Obra'];
+  function totalCompra(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
+    (c.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; });
+    neto*=f; iva*=f; const extras=num(c.percepIva)+num(c.percepIibb)+num(c.impInternos)+num(c.intereses);
+    return (neto+iva+extras)*(c.tipoComprobante==='Nota de Crédito'?-1:1); }
+  function desdeCompra(c){
+    const total=totalCompra(c); const pagos=(c.pagos||[]); const pagado=pagos.reduce((s,p)=>s+num(p.monto),0);
+    const saldo=total-pagado; const pagada=saldo<=0.5;
+    const ult=pagos.slice().sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))).pop()||{};
+    const desc=((c.items||[]).filter(Boolean)[0]||{}).desc||'';
+    return { _uid:c._uid, concepto:(desc||c.categoria||'Costo fijo'), proveedor:c.proveedor||'—',
+      vencimiento:String(c.vencimiento||'').slice(0,10), monto:(pagada?total:saldo),
+      estado:(pagada?'pagado':'confirmado'), medio:(ult.medio||''), cuenta:(ult.cuenta||''),
+      fechaPago:(pagada?String(ult.fecha||'').slice(0,10):''), categoria:c.categoria||'', recurrente:false }; }
   function startSync(){ if(window.__rol!=='admin') return; const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
-    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.costos=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); if(window.__cajaRefresh) window.__cajaRefresh(); }, err=>console.error('costosfijos:',err)); }
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,'vph_compras'), snap=>{
+      DB.costos=snap.docs.map(d=>({...d.data(),_uid:d.id})).filter(x=>CATS_FIJO.includes(x.categoria)).map(desdeCompra);
+      render(); if(window.__cajaRefresh) window.__cajaRefresh(); }, err=>console.error('costosfijos (vista de compras):',err)); }
   function stopSync(){ if(unsub){unsub();unsub=null;} }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.costos=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
-  // Fuente de alertas EN VIVO: costos fijos vencidos / por vencer / a confirmar
+  // Fuente de alertas EN VIVO: costos fijos vencidos / por vencer.
+  // (Ya no existe el estado "a confirmar": al ser compras, entran confirmadas y solo resta pagarlas.)
   window.__alertSources = window.__alertSources || [];
   window.__alertSources.push(()=>{ const A=[];
     const venc=DB.costos.filter(vencido);
     if(venc.length) A.push({sev:'bad', area:'Finanzas', t:venc.length+' costo'+(venc.length>1?'s':'')+' fijo'+(venc.length>1?'s':'')+' VENCIDO'+(venc.length>1?'S':'')+' por '+money(venc.reduce((a,c)=>a+num(c.monto),0)), act:'Pagarlos o renegociar la fecha. Fijate en Caja si alcanza.', go:{page:'Costos Fijos'}});
     const en5=DB.costos.filter(c=>esPendiente(c)&&c.vencimiento&&c.vencimiento>=hoyISO&&c.vencimiento<=isoMas(5));
     if(en5.length) A.push({sev:'warn', area:'Finanzas', t:en5.length+' costo'+(en5.length>1?'s':'')+' fijo'+(en5.length>1?'s':'')+' vence'+(en5.length>1?'n':'')+' en 5 días ('+money(en5.reduce((a,c)=>a+num(c.monto),0))+')', act:'Verificar en Caja que haya fondos antes del vencimiento.', go:{page:'Caja / Liquidez'}});
-    const ac=DB.costos.filter(c=>(c.estado||'aconfirmar')==='aconfirmar');
-    if(ac.length) A.push({sev:'info', area:'Finanzas', t:ac.length+' costo'+(ac.length>1?'s':'')+' fijo'+(ac.length>1?'s':'')+' a confirmar', act:'Sofía: validar monto y fecha para que entren en la proyección de caja.', go:{page:'Costos Fijos'}});
     return A; });
 
-  $('cfj-nuevo').onclick=()=>openForm(null);
+  // El alta/edición ya no vive acá: se hace en Compras (categoría COSTO FIJO / Mano de Obra).
+  $('cfj-ir-compras').onclick=()=>{ const nb=[...document.querySelectorAll('#nav .nav-item')].find(x=>{ const t=x.querySelector('.txt'); return t&&t.textContent.trim()==='Compras'; }); if(nb) nb.click(); };
   $('cfj-cerrar').onclick=closeForm;
   $('cfj-export').onclick=exportJSON;
-  $('cfj-generar').onclick=generarRecurrentes;
   $('cfj-buscar').addEventListener('input',e=>{ filtro.q=e.target.value.trim(); render(); });
   $('cfj-modal').addEventListener('click',e=>{ if(e.target===$('cfj-modal')) closeForm(); });
   boot();
@@ -3102,10 +3115,9 @@ function buildFilterTable(cfg){
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
       if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||''}); } });
-    // Igual que ventas y compras: si el costo fijo se pagó con cheque, la plata sale cuando el cheque se
-    // hace efectivo (lo cuenta el bloque de arriba). Contarlo acá también lo cobraría DOS veces.
-    (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado!=='pagado' || esCheque(cf.medio)) return; const f=String(cf.fechaPago||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO && num(cf.monto)>0) M.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—'), tipo:'costofijo', cuenta:cf.cuenta||''}); });
+    // Los COSTOS FIJOS ya se cargan en Compras (categorías "COSTO FIJO" / "Mano de Obra"), así que sus
+    // pagos YA entraron en el bloque de compras de arriba. Sumarlos otra vez acá los contaría DOS VECES.
+    // (La página "Costos Fijos" es solo una vista de esas mismas compras.)
     caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && f>desde && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid, cuenta:m.cuenta||''}); });
     return M.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha))); }
 
@@ -3144,8 +3156,9 @@ function buildFilterTable(cfg){
       if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); } });
     compras.forEach(c=>{ const total=calcCompra(c); const pagado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-pagado;
       if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); } });
-    (window.__costosFijos?window.__costosFijos():[]).forEach(cf=>{ if(cf.estado==='pagado') return; const f=String(cf.vencimiento||'').slice(0,10)||hoyISO;
-      if(num(cf.monto)>0) E.push({fecha:f, signo:-1, monto:num(cf.monto), concepto:'Costo fijo · '+(cf.concepto||'—')}); });
+    // Los costos fijos pendientes YA están en el bloque de compras de arriba (se cargan en Compras con
+    // categoría "COSTO FIJO" / "Mano de Obra"). Proyectarlos aparte los contaría DOS VECES y hundiría
+    // el saldo proyectado sin motivo.
     return E; }
   // Total de una compra (sin depender del módulo): neto + IVA + percepciones, con signo NC
   function calcCompra(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
@@ -3413,10 +3426,13 @@ function buildFilterTable(cfg){
     const cob=porCobrar(), pag=porPagar(), cf=costosPend();
     const aCobrar=cob.reduce((s,r)=>s+r.monto,0);
     const aPagarProv=pag.reduce((s,r)=>s+r.monto,0);
+    // Los costos fijos se cargan en COMPRAS (categorías "COSTO FIJO" / "Mano de Obra"), así que YA están
+    // dentro de aPagarProv. aPagarCF es solo informativo (cuánto de esa deuda es costo fijo): sumarlo
+    // al total lo contaría DOS VECES. Lo mismo para la deuda vencida.
     const aPagarCF=cf.reduce((s,c)=>s+num(c.monto),0);
-    const aPagar=aPagarProv+aPagarCF;
+    const aPagar=aPagarProv;
     const cobVenc=cob.filter(r=>diasFila(r)>0).reduce((s,r)=>s+r.monto,0);
-    const pagVenc=pag.filter(r=>diasFila(r)>0).reduce((s,r)=>s+r.monto,0)+cf.filter(c=>dias(c.vencimiento)>0).reduce((s,c)=>s+num(c.monto),0);
+    const pagVenc=pag.filter(r=>diasFila(r)>0).reduce((s,r)=>s+r.monto,0);
     const caja=window.__cajaDisponible?window.__cajaDisponible():null;
     const disp=caja?caja.total:null;
     const brecha=aCobrar-aPagar;
@@ -3428,15 +3444,16 @@ function buildFilterTable(cfg){
     $('kpis-finanzas').innerHTML =
       kpi('Disponible', disp==null?'—':m$(disp), disp==null?'Declaralo en Caja / Liquidez':'Real, al '+fmtFecha(caja.desde)+' + movimientos', disp==null?'warn':(disp>0?'info':'bad')) +
       kpi('A cobrar', m$(aCobrar), cobVenc?mM(cobVenc)+' vencido':'Todo al día', cobVenc?'warn':'good') +
-      kpi('A pagar', m$(aPagar), (pagVenc?mM(pagVenc)+' vencido · ':'')+'incluye costos fijos', pagVenc?'bad':'good') +
+      kpi('A pagar', m$(aPagar), (pagVenc?mM(pagVenc)+' vencido · ':'')+'incluye costos fijos'+(aPagarCF?' ('+mM(aPagarCF)+')':''), pagVenc?'bad':'good') +
       kpi('Brecha cobrar - pagar', (brecha>0?'+':'')+m$(brecha), brecha>0?'Alcanza para cubrir la deuda':'La deuda supera la cartera', brecha>0?'good':'bad') +
       kpi('Liquidez corriente', liq==null?'—':liq.toFixed(2), 'Referencia sana: > 1,5', liq==null?'info':(liq>=1.5?'good':'warn')) +
       kpi('Próximo débito VISA', visa()?'~'+m$(visa().estimado):'—', visa()?('Del último cierre · se debita el '+visa().debito):'Sin dato del cierre', 'warn');
 
-    // Gráficos de antigüedad (calculados, ya no hardcodeados)
-    const ap=aging(pag.concat(cf.map(c=>({quien:c.proveedor||c.concepto, monto:num(c.monto), venc:String(c.vencimiento||'').slice(0,10)}))));
+    // Gráficos de antigüedad (calculados, ya no hardcodeados).
+    // Los costos fijos NO se concatenan: ya vienen dentro de `pag` (son compras). Sumarlos = doble conteo.
+    const ap=aging(pag);
     const ac=aging(cob);
-    $('asof-pagar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye compras, cheques emitidos y costos fijos';
+    $('asof-pagar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye compras (con los costos fijos) y cheques emitidos';
     $('asof-cobrar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye ventas y cheques a cobrar';
     dibujarDona('chAgingPagar', ['A vencer','Vencido 0-30','Vencido 31-60','Vencido 61-90','Vencido +90'],
       [ap.avencer,ap.d030,ap.d3160,ap.d6190,ap.d90], ['#38b26a','#e0a63a','#e07b3a','#d64541','#8e1f1c']);
@@ -3451,7 +3468,7 @@ function buildFilterTable(cfg){
       [['Todos',()=>true],['Al día',r=>r.vencido<=0.5],['Vencidos',r=>r.vencido>0.5]]);
     const top5=gp.slice(0,5).reduce((s,r)=>s+r.total,0);
     $('note-pagar').innerHTML = gp.length
-      ? 'Los '+Math.min(5,gp.length)+' proveedores más grandes concentran el '+(aPagarProv?Math.round(top5/aPagarProv*100):0)+'% de la deuda comercial. Incluye los cheques emitidos que todavía no se hicieron efectivos. Los <b>costos fijos</b> ('+m$(aPagarCF)+') están en su propia sección más abajo.'
+      ? 'Los '+Math.min(5,gp.length)+' proveedores más grandes concentran el '+(aPagarProv?Math.round(top5/aPagarProv*100):0)+'% de la deuda comercial. Incluye los cheques emitidos que todavía no se hicieron efectivos y los <b>costos fijos</b> ('+m$(aPagarCF)+'), que se cargan en Compras y se ven en detalle más abajo.'
       : 'Sin deuda con proveedores 👍';
 
     // Tabla por cobrar (clientes: ventas + cheques recibidos)
@@ -3573,9 +3590,10 @@ function buildFilterTable(cfg){
   window.__alertSources = window.__alertSources || [];
   window.__alertSources.push(()=>{ const A=[];
     if(!ventas.length && !compras.length) return A;
-    const pag=porPagar(), cf=costosPend();
-    const aPagar=pag.reduce((s,r)=>s+r.monto,0)+cf.reduce((s,c)=>s+num(c.monto),0);
-    const pagVenc=pag.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0)+cf.filter(c=>dias(c.vencimiento)>0).reduce((s,c)=>s+num(c.monto),0);
+    // Los costos fijos ya vienen dentro de porPagar() (son compras): no se suman aparte (doble conteo).
+    const pag=porPagar();
+    const aPagar=pag.reduce((s,r)=>s+r.monto,0);
+    const pagVenc=pag.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0);
     if(aPagar>0 && pagVenc/aPagar>0.5) A.push({sev:'bad', area:'Finanzas', t:'Deuda vencida: '+Math.round(pagVenc/aPagar*100)+'% del total a pagar ('+mM(pagVenc)+')', act:'Acordar plan de pagos con los proveedores vencidos. Priorizar a quien corta el suministro.', go:{page:'Finanzas'}});
     const cob=porCobrar(); const aCobrar=cob.reduce((s,r)=>s+r.monto,0);
     const cobVenc=cob.filter(r=>dias(r.venc)>0).reduce((s,r)=>s+r.monto,0);
