@@ -1069,7 +1069,9 @@ function calcularAlertas(){
   // El débito de VISA sigue saliendo del cierre porque no hay fuente en vivo — va marcado como tal.
   if (finanzas.visa) A.push({sev:'info', area:'Finanzas', t:'Débito automático VISA Business: ~' + fmt$(finanzas.visa.estimado) + ' el ' + finanzas.visa.debito + ' (cierre ' + finanzas.visa.cierre + ')', act:'Dato del último cierre, no en vivo. Asegurar ese saldo en la CC Macro para la fecha del débito — si la cuenta queda corta, el rojo cuesta TNA ~70%.', go:{page:'Finanzas'}});
   // COMERCIAL
-  if (mesEnCurso.clienteTopPct > 40) A.push({sev:'warn', area:'Comercial', t:'Concentración: ' + mesEnCurso.clienteTop + ' explica el ' + mesEnCurso.clienteTopPct + '% de la facturación del mes', act:'Impulsar la venta a corralones (ruta de Eduardo) para diversificar la cartera.', go:{page:'Comercial'}});
+  const _rm = (window.__resumenMes?window.__resumenMes():null);
+  const _cTop = _rm?_rm.clienteTop:mesEnCurso.clienteTop, _cPct = _rm?_rm.clienteTopPct:mesEnCurso.clienteTopPct;
+  if (_cPct > 40) A.push({sev:'warn', area:'Comercial', t:'Concentración: ' + _cTop + ' explica el ' + _cPct + '% de la facturación del mes', act:'Impulsar la venta a corralones (ruta de Eduardo) para diversificar la cartera.', go:{page:'Comercial'}});
   const bajoMargen = rentabilidad.clientes.filter(c => c.pct < 50 && c.venta > 0);
   if (bajoMargen.length) A.push({sev:'info', area:'Comercial', t:'Clientes con margen <50%: ' + bajoMargen.map(c=>c.cliente).join(', '), act:'Revisar precio o costo de flete asignado en la próxima cotización.', go:{page:'Comercial'}});
   // PRODUCCION / RENTABILIDAD (estratégico, del cierre)
@@ -1094,7 +1096,7 @@ function irAPagina(page){ const items=[...document.querySelectorAll('#nav .nav-i
 
 // --- Topbar ---
 document.getElementById('hoy').textContent = new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-document.getElementById('updated-line').textContent = 'Última actualización de datos: ' + META.ultimaActualizacion + ' · Mes cerrado: ' + META.mesCerrado + ' · Cierre automático: día 1 de cada mes';
+document.getElementById('updated-line').textContent = 'Finanzas y ventas: EN VIVO · Producción y stock al ' + META.ultimaActualizacion + ' · Mes cerrado: ' + META.mesCerrado + ' · Cierre automático: día 1 de cada mes';
 
 // --- Semáforo por área + pills (re-ejecutable) ---
 function pintarSemaforo(){
@@ -1131,9 +1133,16 @@ function pintarKpisInicio(){
   const balKg = stockSnapshot.kgEnStock - stockSnapshot.kgVendidosNoEntregados;
   const ult = produccionMensual[produccionMensual.length-1];
   const promDia = Math.round(ult.producidoKg/ult.diasConDato);
+  // Facturación y resultado del mes EN VIVO (ventas/compras reales del Tablero). Si aún no llegaron
+  // los datos, cae a la foto del cierre (mesEnCurso) para no mostrar $0.
+  const rm = (window.__resumenMes?window.__resumenMes():null);
+  const _fact = rm ? rm.ventas : mesEnCurso.ventas;
+  const _cant = rm ? rm.cantVentas : mesEnCurso.cantVentas;
+  const _prom = rm ? rm.ventaPromedio : mesEnCurso.ventaPromedio;
+  const _resu = rm ? rm.resultado : mesEnCurso.resultado;
   document.getElementById('kpis-inicio').innerHTML =
-    kpi('Facturación '+META.mesEnCurso, fmt$(mesEnCurso.ventas), mesEnCurso.cantVentas+' ventas · promedio '+fmt$(mesEnCurso.ventaPromedio), 'info') +
-    kpi('Resultado del mes (parcial)', fmt$(mesEnCurso.resultado), 'Ventas - compras facturadas', 'good') +
+    kpi('Facturación '+META.mesEnCurso, fmt$(_fact), _cant+' ventas · promedio '+fmt$(_prom)+(rm?' · en vivo':''), 'info') +
+    kpi('Resultado del mes (parcial)', fmt$(_resu), 'Ventas − compras del mes'+(rm?' · en vivo':''), 'good') +
     (function(){ const fk=(window.__finanzasKPIs?window.__finanzasKPIs():null);
       if(fk){ // datos EN VIVO (Ventas/Compras/Cheques/Caja) — mismos que la página Finanzas
         return kpi('Disponible', fk.disp==null?'—':fmt$(fk.disp), fk.disp==null?'Declaralo en Caja / Liquidez':'En vivo · caja + banco', (fk.disp!=null&&fk.disp<fk.pagVenc)?'warn':'good') +
@@ -1175,7 +1184,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -1188,7 +1197,11 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
 // El PE en $ depende del MIX mayorista/minorista: PE = Costos Fijos / % contribución marginal.
 // Estimamos la contribución del mes en curso con el costo de MP por kg del último mes cerrado
 // (junio: $9.311.168 / 90.796 kg = $102,55/kg) aplicado a los kg vendidos del mes.
-(function(){
+window.__pintarPE = function(){
+  if(!document.getElementById('pe-widget')) return;
+  // El facturado del mes se toma EN VIVO (ventas reales del Tablero); el % de contribución marginal
+  // se sigue estimando con el mix del último mes cerrado (no hay fuente en vivo de costo de MP por kg).
+  const rm = (window.__resumenMes?window.__resumenMes():null);
   const costoMPkg = rentabilidad.costoMP / rentabilidad.kgVendidos;      // $/kg mes cerrado
   const ultProd = produccionMensual[produccionMensual.length-1];
   const kgVendMes = ultProd.vendidoKg || 0;
@@ -1196,17 +1209,20 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
   const margenMesPct = mesEnCurso.ventas > 0 && kgVendMes > 0 ? (1 - costoMPest/mesEnCurso.ventas) : rentabilidad.margenPct/100;
   const pe = rentabilidad.costosFijos / margenMesPct;                    // PE ajustado al mix del mes
   const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
-  const v = mesEnCurso.ventas;
+  const v = rm ? rm.ventas : mesEnCurso.ventas;                          // facturado EN VIVO
+  // Días hábiles (lun-vie) del mes, calculados a la fecha de HOY (antes venían congelados del cierre).
+  const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
+  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
   const pct = Math.min(v/pe*100, 100);
   const falta = Math.max(pe - v, 0);
-  const dTrans = mesEnCurso.diasHabilesTranscurridos, dTot = mesEnCurso.diasHabilesTotales, dRest = dTot - dTrans;
-  const ritmoActual = v / dTrans;
+  const dTrans = rm ? _tra : mesEnCurso.diasHabilesTranscurridos, dTot = rm ? _tot : mesEnCurso.diasHabilesTotales, dRest = dTot - dTrans;
+  const ritmoActual = dTrans > 0 ? v / dTrans : 0;
   const ritmoNecesario = dRest > 0 ? falta / dRest : 0;
   const proyeccion = ritmoActual * dTot;
   const cubierto = v >= pe;
   const colBar = cubierto ? 'var(--green)' : (pct >= (dTrans/dTot*100) ? 'var(--accent)' : 'var(--amber)');
 
-  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal estimada ' + (margenMesPct*100).toFixed(1) + '%) · PE con mix de junio: ' + fmt$(peBase) + ' · ventas al ' + finanzas.fecha + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
+  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal estimada ' + (margenMesPct*100).toFixed(1) + '%) · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
   document.getElementById('pe-widget').innerHTML =
     '<div class="progress-wrap"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:5px">' +
       '<span>Facturado: ' + fmt$(v) + ' (' + (v/pe*100).toFixed(0) + '% del punto de equilibrio)</span>' +
@@ -1223,7 +1239,8 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
       kpi('Proyección fin de mes', fmt$(Math.round(proyeccion)), 'Ritmo actual × ' + dTot + ' días', proyeccion >= pe ? 'good' : 'bad') +
       kpi('Estado', cubierto ? 'CUBIERTO' : (proyeccion >= pe ? 'EN CAMINO' : 'EN RIESGO'), cubierto ? 'Costos fijos del mes ya pagados con margen' : 'Según proyección al ritmo actual', cubierto || proyeccion >= pe ? 'good' : 'bad') +
     '</div>';
-})();
+};
+window.__pintarPE();
 
 /* ================= METAS ================= */
 (function(){
@@ -3594,6 +3611,20 @@ function buildFilterTable(cfg){
   // Devuelve null si todavía no llegaron los datos (ventas/compras): así la Vista Diaria cae a la foto
   // del cierre hasta que haya datos reales, en vez de mostrar $0.
   window.__finanzasKPIs = ()=>{ if(!ventas.length && !compras.length && !cheques.length) return null; if(!_snap){ try{ render(); }catch(e){} } return _snap; };
+  // Resumen del mes en curso EN VIVO (facturación, resultado, venta promedio, cliente top) — para que la
+  // Vista Diaria y el Punto de Equilibrio NO muestren la foto congelada del cierre (mesEnCurso). Suma las
+  // ventas y compras REALES del mes cargadas en el Tablero. Devuelve null si aún no llegaron los datos.
+  window.__resumenMes = ()=>{
+    if(!ventas.length && !compras.length) return null;
+    const per=hoyISO.slice(0,7);
+    let vTot=0, vCant=0, cTot=0; const porCli={};
+    ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
+      const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t; });
+    compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; cTot+=num(calcC(c).total); });
+    let topCli='—', topPct=0; const arr=Object.entries(porCli).sort((a,b)=>b[1]-a[1]);
+    if(arr.length && vTot>0){ topCli=arr[0][0]; topPct=Math.round(arr[0][1]/vTot*100); }
+    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct };
+  };
   boot();
 })();
 </script>
