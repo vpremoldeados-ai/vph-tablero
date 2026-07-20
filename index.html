@@ -1191,7 +1191,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -1333,33 +1333,56 @@ Chart.defaults.font.family = "'Segoe UI',system-ui,Arial";
 Chart.defaults.color = '#5a6677';
 Chart.defaults.plugins.legend.labels.boxWidth = 12;
 
-// --- Ingresos vs Gastos + resultado (Inicio) ---
-new Chart(document.getElementById('chIngresosGastos'), {
-  data: {
-    labels: ventasMensuales.map(m=>m.mes),
-    datasets: [
-      { type:'bar', label:'Ingresos', data: ventasMensuales.map(m=>m.ventas), backgroundColor:'#38b26a', borderRadius:6 },
-      { type:'bar', label:'Egresos', data: ventasMensuales.map(m=>{const c=comprasMensuales.find(x=>x.mes===m.mes);return c?c.total:0}), backgroundColor:'#d64541', borderRadius:6 },
-      { type:'line', label:'Resultado', data: ventasMensuales.map(m=>{const c=comprasMensuales.find(x=>x.mes===m.mes);return m.ventas-(c?c.total:0)}), borderColor:'#2f6fb2', backgroundColor:'#2f6fb2', tension:.3, pointRadius:5 }
-    ]
-  },
-  options: { responsive:true, maintainAspectRatio:false,
-    plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}} },
-    scales:{ y:{ticks:{callback:v=>fmtM(v)}} } }
-});
-
-// --- Producción diaria (Inicio) ---
-new Chart(document.getElementById('chProdDiaria'), {
-  data: {
-    labels: prodDiaria.map(d=>d.dia),
-    datasets: [
-      { type:'bar', label:'Kg producidos', data: prodDiaria.map(d=>d.kg), backgroundColor: prodDiaria.map(d=>d.kg>=META.objetivoKgDia?'#38b26a':'#e0a63a'), borderRadius:6 },
-      { type:'line', label:'Objetivo '+META.objetivoKgDia.toLocaleString('es-AR'), data: prodDiaria.map(()=>META.objetivoKgDia), borderColor:'#d64541', borderDash:[6,5], pointRadius:0 }
-    ]
-  },
-  options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
-    scales:{ y:{ min:0, ticks:{callback:v=>(v/1000)+'k'} } } }
-});
+// --- Gráficos de la Vista Diaria (Ingresos vs Egresos + Producción diaria) ---
+// Antes se dibujaban UNA sola vez con las series congeladas del import de Contagram, mientras los KPIs de
+// arriba ya eran en vivo (quedaban contradiciéndose). Ahora salen de vph_ventas / vph_compras /
+// vph_produccion y se repintan con __refreshAlertas. Caen a la foto hasta que llegan los datos.
+let _chIngEg=null, _chProdDia=null;
+window.__pintarGraficosInicio = function(){
+  const elIE=document.getElementById('chIngresosGastos'), elPD=document.getElementById('chProdDiaria');
+  // ---- Ingresos vs Egresos ----
+  if(elIE){
+    const vpm = window.__ventasPorMes ? window.__ventasPorMes() : null;
+    const cpm = window.__resumenCompras ? window.__resumenCompras() : null;
+    const vivo = !!(vpm && vpm.length);
+    const labels = vivo ? vpm.map(m=>m.mes) : ventasMensuales.map(m=>m.mes);
+    const ing = vivo ? vpm.map(m=>m.ventas) : ventasMensuales.map(m=>m.ventas);
+    const egr = vivo ? vpm.map(m=>{ const c=(cpm||[]).find(x=>x.mes===m.mes); return c?c.total:0; })
+                     : ventasMensuales.map(m=>{ const c=comprasMensuales.find(x=>x.mes===m.mes); return c?c.total:0; });
+    const res = ing.map((v,i)=> v-(egr[i]||0));
+    const asof=document.querySelector('#chIngresosGastos');
+    if(asof && asof.closest('section')){ const a=asof.closest('section').querySelector('.asof'); if(a) a.textContent = vivo?'Ventas y compras por mes · en vivo':'Ventas y compras por mes (último cierre)'; }
+    if(_chIngEg) _chIngEg.destroy();
+    _chIngEg = new Chart(elIE, {
+      data: { labels, datasets: [
+        { type:'bar', label:'Ingresos', data: ing, backgroundColor:'#38b26a', borderRadius:6 },
+        { type:'bar', label:'Egresos', data: egr, backgroundColor:'#d64541', borderRadius:6 },
+        { type:'line', label:'Resultado', data: res, borderColor:'#2f6fb2', backgroundColor:'#2f6fb2', tension:.3, pointRadius:5 } ] },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}} },
+        scales:{ y:{ticks:{callback:v=>fmtM(v)}} } }
+    });
+  }
+  // ---- Producción diaria del mes en curso ----
+  if(elPD){
+    const pd = window.__prodDiaria ? window.__prodDiaria() : null;
+    const rp = window.__resumenProduccion ? window.__resumenProduccion() : null;
+    const vivo = !!(pd && pd.length);
+    const serie = vivo ? pd : prodDiaria;
+    const obj = rp ? rp.objetivo : META.objetivoKgDia;
+    const asof=elPD.closest('section')?elPD.closest('section').querySelector('.asof'):null;
+    if(asof) asof.textContent = 'Kg por día vs. objetivo '+obj.toLocaleString('es-AR')+' kg/día'+(vivo?' · en vivo':' (último cierre)');
+    if(_chProdDia) _chProdDia.destroy();
+    _chProdDia = new Chart(elPD, {
+      data: { labels: serie.map(d=>d.dia), datasets: [
+        { type:'bar', label:'Kg producidos', data: serie.map(d=>d.kg), backgroundColor: serie.map(d=>d.kg>=obj?'#38b26a':'#e0a63a'), borderRadius:6 },
+        { type:'line', label:'Objetivo '+obj.toLocaleString('es-AR'), data: serie.map(()=>obj), borderColor:'#d64541', borderDash:[6,5], pointRadius:0 } ] },
+      options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
+        scales:{ y:{ min:0, ticks:{callback:v=>(v/1000)+'k'} } } }
+    });
+  }
+};
+window.__pintarGraficosInicio();
 
 /* ================= FINANZAS =================
    La página Finanzas ya NO se dibuja acá con la foto del cierre (vph_reportes).
@@ -1367,14 +1390,28 @@ new Chart(document.getElementById('chProdDiaria'), {
    reales de Ventas, Compras, Cheques, Costos Fijos y Caja. */
 
 /* ================= COMERCIAL ================= */
-(function(){
-  const varVentas = (mesEnCurso.ventas / rentabilidad.facturacion - 1) * 100;
+// Los 3 KPIs del MES EN CURSO (facturación, venta promedio, concentración) salían de la foto congelada
+// del cierre —decían "julio al 08/07" en pleno mes— aunque describen el mes actual. Ahora salen de
+// window.__resumenMes() en vivo, igual que la Vista Diaria. Re-ejecutable desde __refreshAlertas.
+// Lo de junio (margen por cliente/producto, utilidad por tonelada) SÍ es histórico legítimo: no se toca.
+window.__pintarComercial = function(){
+  if(!document.getElementById('kpis-comercial')) return;
+  const rm = window.__resumenMes ? window.__resumenMes() : null;
+  const _fact = rm ? rm.ventas : mesEnCurso.ventas;
+  const _prom = rm ? rm.ventaPromedio : mesEnCurso.ventaPromedio;
+  const _cant = rm ? rm.cantVentas : mesEnCurso.cantVentas;
+  const _top  = rm ? rm.clienteTop : mesEnCurso.clienteTop;
+  const _topP = rm ? rm.clienteTopPct : mesEnCurso.clienteTopPct;
+  const vs = rentabilidad.facturacion ? (_fact/rentabilidad.facturacion*100).toFixed(0) : '—';
   document.getElementById('kpis-comercial').innerHTML =
-    kpi('Facturación junio (cerrado)', fmt$(rentabilidad.facturacion), 'Margen bruto '+rentabilidad.margenPct+'%', 'good') +
-    kpi('Facturación julio (al 08/07)', fmt$(mesEnCurso.ventas), 'Ya lleva el '+(mesEnCurso.ventas/rentabilidad.facturacion*100).toFixed(0)+'% de todo junio en 6 días hábiles', 'good') +
-    kpi('Venta promedio (jul)', fmt$(mesEnCurso.ventaPromedio), mesEnCurso.cantVentas + ' operaciones', 'info') +
-    kpi('Concentración cliente top', mesEnCurso.clienteTopPct+'%', mesEnCurso.clienteTop+' — riesgo si supera 40%', 'warn') +
-    kpi('Utilidad por tonelada (jun)', fmt$(rentabilidad.utilidadPorKg*1000), 'Margen de seguridad '+fmtM(rentabilidad.margenSeguridad), 'good');
+    kpi('Facturación '+META.mesCerrado+' (cerrado)', fmt$(rentabilidad.facturacion), 'Margen bruto '+rentabilidad.margenPct+'%', 'good') +
+    kpi('Facturación '+META.mesEnCurso, fmt$(_fact), 'Va el '+vs+'% de todo '+META.mesCerrado+(rm?' · en vivo':''), 'good') +
+    kpi('Venta promedio del mes', fmt$(_prom), _cant + ' operaciones'+(rm?' · en vivo':''), 'info') +
+    kpi('Concentración cliente top', _topP+'%', _top+' — riesgo si supera 40%'+(rm?' · en vivo':''), _topP>40?'warn':'good') +
+    kpi('Utilidad por tonelada ('+META.mesCerrado+')', fmt$(rentabilidad.utilidadPorKg*1000), 'Margen de seguridad '+fmtM(rentabilidad.margenSeguridad), 'good');
+};
+window.__pintarComercial();
+(function(){
 
   new Chart(document.getElementById('chProductos'), {
     type:'bar',
@@ -1452,19 +1489,79 @@ new Chart(document.getElementById('chProdDiaria'), {
     ).join('') || '<div class="alert info"><span class="aico">📦</span><div><b>Sin notas de logística cargadas</b></div></div>';
 })();
 
-/* ================= COSTOS ================= */
-(function(){
+/* ================= COSTOS (resumen) — EN VIVO desde Compras ================= */
+// Antes esta página ENTERA era la foto del cierre (comprasMensuales/rentabilidad) y podía contradecir a
+// Finanzas EN VIVO y a la vista de Costos Fijos. Ahora sale de vph_compras vía window.__resumenCompras(),
+// usando las MISMAS categorías de "fijo" (COSTO FIJO / Mano de Obra) que la página Costos Fijos, así los
+// dos números coinciden siempre. Re-ejecutable: se repinta con __refreshAlertas. Cae a la foto si aún no
+// llegaron los datos, para no mostrar $0.
+let _chCompras=null, _chMixCompras=null;
+window.__pintarCostos = function(){
+  if(!document.getElementById('kpis-costos')) return;
+  const rc = window.__resumenCompras ? window.__resumenCompras() : null;
+  const rm = window.__resumenMes ? window.__resumenMes() : null;
+  const vivo = !!(rc && rc.length);
+  const margenPct = (rentabilidad && rentabilidad.margenPct) ? rentabilidad.margenPct/100 : 0;
+
+  if(vivo){
+    const ult = rc[rc.length-1];
+    const pe = margenPct>0 ? ult.fijos/margenPct : 0;
+    const fact = rm ? rm.ventas : 0;
+    const seg = fact - pe;
+    document.getElementById('kpis-costos').innerHTML =
+      kpi('Compras '+ult.mes, fmt$(ult.total), 'En vivo desde el módulo Compras', 'info') +
+      kpi('Costos fijos del mes', fmt$(ult.fijos), 'COSTO FIJO + Mano de Obra · en vivo', 'info') +
+      kpi('Punto de equilibrio', pe?fmt$(pe):'—', 'Fijos ÷ margen '+(margenPct*100).toFixed(1)+'% (margen del último cierre)', 'warn') +
+      kpi('Variables / total', ult.total?(ult.variables/ult.total*100).toFixed(0)+'%':'—', 'Materia prima e insumos · en vivo', 'info') +
+      kpi('Resultado del mes', rm?fmt$(rm.resultado):'—', rm?'Ventas − compras · en vivo':'Esperando datos', (rm&&rm.resultado>0)?'good':'warn');
+
+    if(_chCompras) _chCompras.destroy();
+    _chCompras = new Chart(document.getElementById('chCompras'), {
+      type:'bar',
+      data:{ labels: rc.map(m=>m.mes),
+        datasets:[
+          { label:'Costos fijos', data: rc.map(m=>m.fijos), backgroundColor:'#2f6fb2', stack:'s', borderRadius:4 },
+          { label:'Variables (MP e insumos)', data: rc.map(m=>m.variables), backgroundColor:'#38b26a', stack:'s', borderRadius:4 },
+          { label:'Otros', data: rc.map(m=>m.otros), backgroundColor:'#95a5b8', stack:'s', borderRadius:4 }
+        ] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}}},
+        scales:{x:{stacked:true}, y:{stacked:true, ticks:{callback:v=>fmtM(v)}}} }
+    });
+
+    document.getElementById('asof-mix-compras').textContent = ult.mes+' · en vivo, por categoría de compra';
+    const cats = Object.keys(ult.porCat).sort((a,b)=>ult.porCat[b]-ult.porCat[a]);
+    if(_chMixCompras) _chMixCompras.destroy();
+    _chMixCompras = new Chart(document.getElementById('chMixCompras'), {
+      type:'doughnut',
+      data:{ labels:cats, datasets:[{ data:cats.map(c=>ult.porCat[c]),
+        backgroundColor:['#2f6fb2','#38b26a','#e0a63a','#d64541','#8a5cc0','#5aa9c9','#95a5b8'], borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.label+': '+fmt$(c.raw)}}} }
+    });
+
+    document.getElementById('tabla-compras').innerHTML =
+      '<tr><th>Mes</th><th class="num">Costos fijos</th><th class="num">Variables</th><th class="num">Otros</th><th class="num">Total</th></tr>' +
+      rc.map(m=>'<tr><td><b>'+m.mes+'</b></td><td class="num">'+fmt$(m.fijos)+'</td><td class="num">'+fmt$(m.variables)+'</td><td class="num">'+fmt$(m.otros)+'</td><td class="num"><b>'+fmt$(m.total)+'</b></td></tr>').join('');
+
+    document.getElementById('tabla-equilibrio').innerHTML =
+      '<tr><td>Costos fijos del mes (COSTO FIJO + Mano de Obra) — en vivo</td><td class="num">'+fmt$(ult.fijos)+'</td></tr>' +
+      '<tr><td>Margen de contribución estimado <i style="color:var(--muted)">(del último cierre '+(META&&META.mesCerrado?META.mesCerrado:'')+')</i></td><td class="num">'+(margenPct*100).toFixed(1)+'%</td></tr>' +
+      '<tr class="total"><td>Punto de equilibrio (facturación mínima)</td><td class="num"><b>'+(pe?fmt$(pe):'—')+'</b></td></tr>' +
+      '<tr><td>Facturación del mes — en vivo</td><td class="num">'+(rm?fmt$(fact):'—')+'</td></tr>' +
+      '<tr><td>Margen de seguridad</td><td class="num" style="color:'+(seg>=0?'var(--green)':'var(--red)')+'"><b>'+(rm&&pe?((seg>=0?'+':'')+fmt$(seg)):'—')+'</b></td></tr>';
+    return;
+  }
+
+  // ---- Fallback: foto del último cierre (solo hasta que lleguen los datos en vivo) ----
   const ult = comprasMensuales[comprasMensuales.length-1];
   const jun = comprasMensuales[0];
-  const fijosJun = jun.sueldosFijos + jun.otrosFijos;
   document.getElementById('kpis-costos').innerHTML =
-    kpi('Compras '+ult.mes, fmt$(ult.total), 'Facturado en Contagram', 'info') +
+    kpi('Compras '+ult.mes, fmt$(ult.total), 'Del último cierre', 'info') +
     kpi('Costos fijos mensuales (base jun)', fmt$(rentabilidad.costosFijos), 'Incluye provisión de aguinaldo '+fmt$(rentabilidad.aguinaldoProvision||0), 'info') +
     kpi('Punto de equilibrio', fmt$(rentabilidad.puntoEquilibrio), 'Facturación mínima para no perder', 'warn') +
     kpi('Variables / total (jun)', (jun.variables/jun.total*100).toFixed(0)+'%', 'Materia prima, fletes, insumos', 'info') +
     kpi('Utilidad proyectada (jun)', fmt$(rentabilidad.utilidadProyectada), 'Después de costos fijos', 'good');
-
-  new Chart(document.getElementById('chCompras'), {
+  if(_chCompras) _chCompras.destroy();
+  _chCompras = new Chart(document.getElementById('chCompras'), {
     type:'bar',
     data:{ labels: comprasMensuales.map(m=>m.mes),
       datasets:[
@@ -1477,27 +1574,25 @@ new Chart(document.getElementById('chProdDiaria'), {
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}}},
       scales:{x:{stacked:true}, y:{stacked:true, ticks:{callback:v=>fmtM(v)}}} }
   });
-
-  document.getElementById('asof-mix-compras').textContent = ult.mes;
-  new Chart(document.getElementById('chMixCompras'), {
+  document.getElementById('asof-mix-compras').textContent = ult.mes+' (del último cierre)';
+  if(_chMixCompras) _chMixCompras.destroy();
+  _chMixCompras = new Chart(document.getElementById('chMixCompras'), {
     type:'doughnut',
     data:{ labels:['Sueldos fijos','Otros fijos','Aguinaldo','Variables','Otros'],
       datasets:[{ data:[ult.sueldosFijos, ult.otrosFijos, ult.aguinaldo, ult.variables, ult.otros],
         backgroundColor:['#2f6fb2','#5aa9c9','#d64541','#38b26a','#95a5b8'], borderWidth:2 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.label+': '+fmt$(c.raw)}}} }
   });
-
-  const t = document.getElementById('tabla-compras');
-  t.innerHTML = '<tr><th>Mes</th><th class="num">Sueldos fijos</th><th class="num">Otros fijos</th><th class="num">Aguinaldo</th><th class="num">Variables</th><th class="num">Otros</th><th class="num">Total</th></tr>' +
+  document.getElementById('tabla-compras').innerHTML = '<tr><th>Mes</th><th class="num">Sueldos fijos</th><th class="num">Otros fijos</th><th class="num">Aguinaldo</th><th class="num">Variables</th><th class="num">Otros</th><th class="num">Total</th></tr>' +
     comprasMensuales.map(m=>'<tr><td><b>'+m.mes+'</b></td><td class="num">'+fmt$(m.sueldosFijos)+'</td><td class="num">'+fmt$(m.otrosFijos)+'</td><td class="num">'+fmt$(m.aguinaldo)+'</td><td class="num">'+fmt$(m.variables)+'</td><td class="num">'+fmt$(m.otros)+'</td><td class="num"><b>'+fmt$(m.total)+'</b></td></tr>').join('');
-
   document.getElementById('tabla-equilibrio').innerHTML =
     '<tr><td>Costos fijos recurrentes (sueldos, alquiler, servicios, comisiones, sistema)</td><td class="num">'+fmt$(rentabilidad.fijosRecurrentes||0)+'</td></tr>' +
     '<tr><td>Provisión mensual de aguinaldo (semestral / 6)</td><td class="num">'+fmt$(rentabilidad.aguinaldoProvision||0)+'</td></tr>' +
     '<tr class="total"><td>Total costos fijos mensuales</td><td class="num">'+fmt$(rentabilidad.costosFijos)+'</td></tr>' +
     '<tr><td>Punto de equilibrio (facturación mínima)</td><td class="num"><b>'+fmt$(rentabilidad.puntoEquilibrio)+'</b></td></tr>' +
     '<tr><td>Facturación junio → margen de seguridad</td><td class="num" style="color:var(--green)"><b>+'+fmt$(rentabilidad.margenSeguridad)+'</b></td></tr>';
-})();
+};
+window.__pintarCostos();
 
 /* ================= FISCAL ================= */
 (function(){
@@ -1673,6 +1768,27 @@ function buildFilterTable(cfg){
     else { const venc=parseF(c.vencimiento); estado = (venc && venc<HOY) ? 'vencido' : (pagado>0?'parcial':'apagar'); }
     return { neto:round2(neto*signo), iva:round2(iva*signo), ivaCredito:round2((iva+num(c.percepIva))*signo), total:round2(total), pagado:round2(pagado), saldo, estado, signo };
   }
+
+  // Resumen de compras EN VIVO por mes y por categoría — lo consume la página "Costos (resumen)", que
+  // antes mostraba entera la foto del cierre de Contagram (y podía contradecir a Finanzas EN VIVO).
+  // FIJOS = las mismas categorías que usa la vista de Costos Fijos, así los dos números coinciden siempre.
+  const CAT_FIJOS=['COSTO FIJO','Mano de Obra'];
+  const CAT_VARIABLES=['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
+  window.__resumenCompras = ()=>{
+    if(!DB.compras || !DB.compras.length) return null;
+    const meses={};
+    DB.compras.forEach(c=>{
+      const mes=String(c.fecha||'').slice(0,7); if(!mes) return;
+      const t=calc(c).total;
+      const m=meses[mes]=meses[mes]||{mes, total:0, fijos:0, variables:0, otros:0, porCat:{}};
+      const cat=c.categoria||'(sin categoría)';
+      m.total+=t; m.porCat[cat]=(m.porCat[cat]||0)+t;
+      if(CAT_FIJOS.includes(cat)) m.fijos+=t;
+      else if(CAT_VARIABLES.includes(cat)) m.variables+=t;
+      else m.otros+=t;
+    });
+    return Object.values(meses).sort((a,b)=>String(a.mes).localeCompare(String(b.mes)));
+  };
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const round2 = n => Math.round(n*100)/100;
 
@@ -3642,6 +3758,14 @@ function buildFilterTable(cfg){
     if(arr.length && vTot>0){ topCli=arr[0][0]; topPct=Math.round(arr[0][1]/vTot*100); }
     return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV };
   };
+  // Ventas mes a mes EN VIVO — lo consume el gráfico "Ingresos vs Egresos" de la Vista Diaria, que antes
+  // se dibujaba una sola vez con la serie congelada de Contagram.
+  window.__ventasPorMes = ()=>{
+    if(!ventas.length) return null;
+    const m={};
+    ventas.forEach(v=>{ const mes=String(v.fecha||'').slice(0,7); if(!mes) return; m[mes]=(m[mes]||0)+num(calcV(v).total); });
+    return Object.keys(m).sort().map(k=>({mes:k, ventas:m[k]}));
+  };
   boot();
 })();
 </script>
@@ -4903,6 +5027,15 @@ function buildFilterTable(cfg){
       pedidosPend: pedidos.filter(p=>p.estado!=='entregado').length,
       objetivo: OBJ()
     };
+  };
+  // Kg producidos día por día del mes en curso — lo consume el gráfico "Producción diaria" de la Vista
+  // Diaria, que antes se dibujaba una sola vez con la serie congelada (hoja PROD del import viejo).
+  window.__prodDiaria = ()=>{
+    if(!prods.length) return null;
+    const per=hoyISO.slice(0,7); const dias={};
+    prod.forEach(x=>{ const f=String(x.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
+      dias[f]=(dias[f]||0)+num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
+    return Object.keys(dias).sort().map(f=>({dia:String(Number(f.slice(8,10))), kg:Math.round(dias[f])}));
   };
 
   // ---------- Armado de pallets (plan de carga sobre camión) ----------
