@@ -411,27 +411,7 @@
     </section>
   </div>
 
-  <!-- ================= PRODUCCIÓN ================= -->
-  <div class="page" id="page-produccion">
-    <div class="kpis" id="kpis-produccion"></div>
-    <div class="grid2">
-      <section>
-        <h2><span class="dot"></span>Producido vs. vendido (kg) por mes</h2>
-        <div class="asof">Fuente: hoja PROD + ventas Contagram × peso unitario</div>
-        <div class="chart-box"><canvas id="chProduccion"></canvas></div>
-      </section>
-      <section>
-        <h2><span class="dot" style="background:var(--blue)"></span>Mix de producción — último mes</h2>
-        <div class="asof" id="asof-mix"></div>
-        <div class="chart-box"><canvas id="chMixProd"></canvas></div>
-      </section>
-    </div>
-    <section>
-      <h2><span class="dot" style="background:var(--accent2)"></span>Unidades producidas por producto</h2>
-      <div class="asof" id="asof-detalle-prod"></div>
-      <div class="tbl-wrap"><table id="tabla-produccion-detalle"></table></div>
-    </section>
-  </div>
+  <!-- Página "Producción" (foto de Contagram) unificada dentro de "Producción y Logística" (en vivo) el 20/07. -->
 
   <!-- ================= LOGÍSTICA / STOCK ================= -->
   <div class="page" id="page-logistica">
@@ -1020,7 +1000,6 @@ const PAGES = [
   { id:'metas', nombre:'Metas del Mes', ico:'◎' },
   { id:'finanzas', nombre:'Finanzas', ico:'$' },
   { id:'comercial', nombre:'Comercial', ico:'▲' },
-  { id:'produccion', nombre:'Producción', ico:'⚙' },
   { id:'prodent', nombre:'Producción y Logística', ico:'🏭' },
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
@@ -1426,46 +1405,8 @@ new Chart(document.getElementById('chProdDiaria'), {
   render();
 })();
 
-/* ================= PRODUCCIÓN ================= */
-(function(){
-  const ult = produccionMensual[produccionMensual.length-1];
-  const promDia = Math.round(ult.producidoKg/ult.diasConDato);
-  const brecha = ult.vendidoKg != null ? ult.producidoKg - ult.vendidoKg : null;
-  document.getElementById('kpis-produccion').innerHTML =
-    kpi('Producido '+ult.mes, fmtKg(ult.producidoKg), ult.diasConDato+' días con dato', 'info') +
-    kpi('Vendido '+ult.mes, ult.vendidoKg!=null?fmtKg(ult.vendidoKg):'mes en curso', 'Unidades Contagram × peso unitario', 'info') +
-    kpi('Brecha producción - venta', brecha!=null?((brecha>0?'+':'')+fmtKg(brecha)):'—', brecha!=null&&brecha<0?'Se vende más de lo que se fabrica':'Positivo = acumula stock', brecha!=null&&brecha<0?'warn':'good') +
-    kpi('Ritmo diario', promDia.toLocaleString('es-AR')+' kg/día', 'Objetivo '+META.objetivoKgDia.toLocaleString('es-AR')+' kg/día', promDia>=META.objetivoKgDia?'good':'warn') +
-    kpi('Capacidad utilizada (jun)', rentabilidad.capacidadPct+'%', 'Cerca del límite — evaluar molde nuevo', rentabilidad.capacidadPct>85?'warn':'good');
-
-  new Chart(document.getElementById('chProduccion'), {
-    type:'bar',
-    data:{ labels: produccionMensual.map(m=>m.mes),
-      datasets:[
-        { label:'Producido (kg)', data: produccionMensual.map(m=>m.producidoKg), backgroundColor:'#2f6fb2', borderRadius:6 },
-        { label:'Vendido (kg)', data: produccionMensual.map(m=>m.vendidoKg), backgroundColor:'#38b26a', borderRadius:6 }
-      ] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
-      scales:{y:{ticks:{callback:v=>(v/1000)+'k'}}} }
-  });
-
-  const mesUlt = Object.keys(productosPorMes).pop();
-  document.getElementById('asof-mix').textContent = mesUlt;
-  const mix = productosPorMes[mesUlt];
-  new Chart(document.getElementById('chMixProd'), {
-    type:'doughnut',
-    data:{ labels: mix.map(p=>p.producto.split(' ')[0]),
-      datasets:[{ data: mix.map(p=>p.unidades), backgroundColor:['#2f6fb2','#38b26a','#e0a63a','#d64541','#8a5cc0','#5aa9c9','#95a5b8'], borderWidth:2 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
-  });
-
-  document.getElementById('asof-detalle-prod').textContent = mesUlt;
-  const t = document.getElementById('tabla-produccion-detalle');
-  const max = Math.max(...mix.map(p=>p.unidades));
-  t.innerHTML = '<tr><th>Producto</th><th class="num">Unidades</th><th>Participación</th></tr>' +
-    mix.map(p=>'<tr><td>'+p.producto+'</td><td class="num"><b>'+p.unidades.toLocaleString('es-AR')+'</b></td>'+
-      '<td><span class="mini-bar" style="display:inline-block;width:160px;vertical-align:middle"><i style="width:'+(p.unidades/max*100)+'%;background:#2f6fb2"></i></span></td></tr>').join('');
-})();
+/* La página "Producción" (foto de Contagram: producido/vendido por mes, mix, detalle) se unificó
+   dentro de "Producción y Logística" (en vivo) el 20/07. El render viejo se quitó de acá. */
 
 /* ================= LOGÍSTICA ================= */
 (function(){
