@@ -46,6 +46,16 @@
   .conn.warn{background:var(--amber-bg);color:var(--amber)} .conn.warn .dot{background:var(--amber)}
   .conn.off{background:var(--red-bg);color:var(--red)} .conn.off .dot{background:var(--red)}
   @keyframes connpulse{0%,100%{opacity:1}50%{opacity:.3}}
+  /* Selector visual de productos a un clic (Presupuestos) — para no tener que tipear el nombre */
+  .pf-picker{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}
+  .pf-pick{display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:1px solid var(--border);background:var(--card,#fff);border-radius:10px;padding:7px 10px;cursor:pointer;font-family:inherit;text-align:left;transition:.12s;min-width:118px}
+  .pf-pick:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.08);transform:translateY(-1px)}
+  .pf-pick .nm{font-size:12px;font-weight:700;line-height:1.15}
+  .pf-pick .pr{font-size:11px;color:var(--muted)}
+  .pf-pick.on{border-color:var(--green);background:var(--green-bg)}
+  .pf-qty{display:flex;gap:3px;align-items:center}
+  .pf-qty button{width:24px;height:26px;border:1px solid var(--border);background:var(--card,#fff);border-radius:7px;cursor:pointer;font-size:15px;font-weight:800;line-height:1;color:var(--text);padding:0}
+  .pf-qty button:hover{border-color:var(--accent);color:var(--accent)}
 
   .page{display:none;animation:fade .25s ease}
   .page.active{display:block}
@@ -3995,10 +4005,12 @@ function buildFilterTable(cfg){
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
         field('Forma de entrega (flete)','col2','<select id="pf-zona">'+ZONAS.map(z=>'<option value="'+z.k+'"'+((p.zona||'')===z.k?' selected':'')+'>'+z.l+(z.par&&zonaCosto(z.k)>0?' — '+money(zonaCosto(z.k))+'/pallet':'')+'</option>').join('')+'</select>') +
       '</div>'+
-      '<h4 style="margin:6px 0 8px;font-size:13px">Ítems</h4>'+
+      '<h4 style="margin:6px 0 4px;font-size:13px">Ítems</h4>'+
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Tocá un producto para agregarlo (volvé a tocarlo para sumar otra unidad):</div>'+
+      '<div class="pf-picker" id="pf-picker"></div>'+
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead><tbody id="pf-items"></tbody></table></div>'+
-      '<button class="cmp-addline" id="pf-addline">+ Agregar ítem</button>'+ datalistProd() +
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Tip: escribí el nombre o código de un producto del catálogo y trae precio (según la lista) e IVA automáticamente.</div>'+
+      '<button class="cmp-addline" id="pf-addline">+ Agregar ítem en blanco</button>'+ datalistProd() +
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">También podés escribir el nombre o código en el renglón: trae precio (según la lista) e IVA automáticamente.</div>'+
       '<div id="pf-disp" style="margin-top:8px"></div>'+
       '<div class="grid2" style="margin-top:14px">'+
         '<div>'+ field('Nota para el cliente','','<textarea id="pf-notacli" rows="2" placeholder="Aparece en el presupuesto...">'+esc(p.notaCliente)+'</textarea>') +
@@ -4023,11 +4035,45 @@ function buildFilterTable(cfg){
   function itemBase(it){ return num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); }
   function itemAlic(it){ return (it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); }
   function updateRow(i){ const it=editing.items[i], base=itemBase(it), al=itemAlic(it); const s=$('pf-sub-'+i), t=$('pf-tot-'+i); if(s)s.textContent=money(base); if(t)t.textContent=money(base*(1+al/100)); }
+  // ---------- Selector visual: agregar productos a un clic (pedido de Sofía, estilo cotizador web) ----------
+  // Evita tener que tipear el nombre en cada renglón. Un clic agrega el producto con su precio e IVA;
+  // si ya está en la lista, suma una unidad. Reusa aplicarProducto(), así respeta la lista de precios.
+  function agregarRapido(prod){
+    const cod=String(prod.codigo||'').trim().toUpperCase();
+    let i = cod ? editing.items.findIndex(it=>String(it.codigo||'').trim().toUpperCase()===cod) : -1;
+    if(i<0) i = editing.items.findIndex(it=>String(it.desc||'').trim().toUpperCase()===String(prod.nombre||'').trim().toUpperCase());
+    if(i>=0){ editing.items[i].cant = num(editing.items[i].cant)+1; }
+    else {
+      const vacio = editing.items.findIndex(it=>!String(it.desc||'').trim() && !num(it.precioUnit));
+      const it = vacio>=0 ? editing.items[vacio] : {desc:'',codigo:'',cant:0,precioUnit:0,descPct:0,iva:'21'};
+      it.desc=prod.nombre||''; it.cant=1;
+      aplicarProducto(it, prod, editing.listaPrecios);
+      if(vacio<0) editing.items.push(it);
+    }
+    drawItems(); drawTotals();
+  }
+  function drawPicker(){
+    const cont=$('pf-picker'); if(!cont) return;
+    const lista=editing.listaPrecios;
+    const prods=catProductos().filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    if(!prods.length){ cont.innerHTML='<span style="font-size:12px;color:var(--muted)">Sin productos en el catálogo (Base de Datos → Productos).</span>'; return; }
+    const enUso=new Set(editing.items.map(it=>String(it.codigo||'').trim().toUpperCase()).filter(Boolean));
+    cont.innerHTML = prods.map((p,i)=>{
+      const br=precioLista(p,lista)||num(p.precioMinorista)||num(p.precioMayorista);
+      const on=enUso.has(String(p.codigo||'').trim().toUpperCase());
+      return '<button type="button" class="pf-pick'+(on?' on':'')+'" data-pick="'+i+'" title="'+esc(p.nombre)+'">'+
+        '<span class="nm">'+esc(p.nombre)+'</span>'+
+        '<span class="pr">'+(br?money(br):'sin precio')+(p.codigo?(' · '+esc(p.codigo)):'')+'</span></button>';
+    }).join('');
+    cont.querySelectorAll('button[data-pick]').forEach(b=> b.onclick=()=> agregarRapido(prods[+b.dataset.pick]));
+  }
   function drawItems(){
     const o=(arr,sel)=> arr.map(a=>'<option value="'+a.v+'"'+(a.v===sel?' selected':'')+'>'+a.l+'</option>').join('');
     $('pf-items').innerHTML = editing.items.map((it,i)=>{ const base=itemBase(it), al=itemAlic(it);
       return '<tr><td><input class="txt" data-i="'+i+'" data-k="desc" list="pf-prod-list" value="'+esc(it.desc)+'" placeholder="Producto o descripción"></td>'+
-        '<td><input data-i="'+i+'" data-k="cant" value="'+it.cant+'" style="width:60px"></td>'+
+        '<td><div class="pf-qty"><button type="button" data-step="-1" data-si="'+i+'" title="Restar uno">−</button>'+
+          '<input data-i="'+i+'" data-k="cant" value="'+it.cant+'" style="width:52px;text-align:center">'+
+          '<button type="button" data-step="1" data-si="'+i+'" title="Sumar uno">+</button></div></td>'+
         '<td><input data-i="'+i+'" data-k="precioUnit" value="'+it.precioUnit+'" style="width:100px"></td>'+
         '<td><input data-i="'+i+'" data-k="descPct" value="'+it.descPct+'" style="width:55px"></td>'+
         '<td><select data-i="'+i+'" data-k="iva" style="width:80px">'+o(ALICUOTAS,it.iva)+'</select></td>'+
@@ -4037,6 +4083,12 @@ function buildFilterTable(cfg){
     $('pf-items').querySelectorAll('input,select').forEach(el=>{ const ev=el.tagName==='SELECT'?'change':'input'; el.addEventListener(ev,()=>{ const i=+el.dataset.i,kk=el.dataset.k; editing.items[i][kk]=el.value; updateRow(i); drawTotals(); }); });
     $('pf-items').querySelectorAll('input[data-k="desc"]').forEach(el=> el.addEventListener('change',()=>{ const i=+el.dataset.i; const prod=matchProducto(el.value); if(prod){ editing.items[i].desc=prod.nombre; aplicarProducto(editing.items[i],prod,editing.listaPrecios); drawItems(); drawTotals(); } }));
     $('pf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
+    // +/− de cantidad: no hace falta tipear números
+    $('pf-items').querySelectorAll('button[data-step]').forEach(b=> b.onclick=()=>{
+      const i=+b.dataset.si, paso=+b.dataset.step;
+      editing.items[i].cant = Math.max(0, num(editing.items[i].cant)+paso);
+      drawItems(); drawTotals(); });
+    drawPicker();
   }
   function drawTotals(){ const kk=calc(editing);
     $('pf-totbox').innerHTML =
