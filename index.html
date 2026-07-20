@@ -4044,7 +4044,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
@@ -4762,6 +4762,39 @@ function buildFilterTable(cfg){
   // Resolver el código de catálogo a partir de un nombre tipeado (para que las entregas descuenten bien)
   function resolverProd(nombre,codigo){ const c=String(codigo||'').trim(); if(c){ const byc=prods.find(p=>(p.codigo||'').trim().toUpperCase()===c.toUpperCase()); if(byc) return byc; } const n=norm(nombre); const byn=prods.find(p=>norm(p.nombre)===n); return byn||null; }
 
+  // ---------- REFUERZO DE BASE DE PALLET (ej: LC60 lleva 5 "LC60 2H" de doble hierro en la base) ----------
+  // Es un REPARTO, no una suma: 225 losetas = 210 del padre + 15 del refuerzo. El total nunca cambia.
+  // Config en la ficha del producto padre: refuerzoCodigo + refuerzoPorPallet. Vacío => todo se comporta
+  // EXACTAMENTE como antes (default seguro, no hardcodea ningún producto).
+  // ⚠️ UNA SOLA FÓRMULA: los pallets salen SIEMPRE del plan real (cargaRows/planStd), nunca de un
+  // ceil(cant/udPorPallet) recalculado aparte — si el comprometido y la entrega usan cuentas distintas,
+  // el stock del refuerzo se desfasa en silencio en cada pedido.
+  const codUp=s=>String(s||'').trim().toUpperCase();
+  // ¿Este producto es la variante interna de algún otro? Se DERIVA (no se tilda a mano).
+  const esProdRefuerzo=p=> !!p && !!codUp(p.codigo) && prods.some(x=>codUp(x.refuerzoCodigo)===codUp(p.codigo));
+  // Config validada del padre. null = no desdoblar (se comporta como hoy).
+  function cfgRefuerzo(pr){
+    if(!pr || esProdRefuerzo(pr)) return null;                       // guarda anti-recursión
+    const cod=codUp(pr.refuerzoCodigo), porPallet=Math.round(num(pr.refuerzoPorPallet));
+    if(!cod || porPallet<=0) return null;
+    const pr2=resolverProd(cod,cod); if(!pr2) return null;           // apunta a un producto inexistente
+    const kP=keyDe(pr.codigo,pr.nombre), kR=keyDe(pr2.codigo,pr2.nombre);
+    if(kP===kR) return null;                                         // auto-referencia
+    const ud=num(pr.udPorPallet);
+    if(ud<=0 || porPallet>=ud) return null;                          // sin u/pallet o config absurda
+    return { pr2, key:kR, porPallet, ud };
+  }
+  // ÚNICA función del split. `pallets` = array de unidades por pallet (del plan real).
+  // Un pallet lleva base reforzada solo si tiene MÁS unidades que la propia base: así un pedido suelto
+  // (ej. 3 losetas que el cliente retira) no consume refuerzo, y un pallet parcial de 25 sí lleva sus 5.
+  function splitRefuerzo(pr, pallets, cant){
+    const r=cfgRefuerzo(pr); if(!r || !pallets || !pallets.length) return null;
+    const bruto=pallets.reduce((a,u)=>{ const n=Math.max(0,Math.round(num(u))); return a+(n>r.porPallet?r.porPallet:0); },0);
+    const total=Math.round(num(cant));
+    const refCant=Math.min(bruto,total); if(refCant<=0) return null;
+    return { key:r.key, codigo:r.pr2.codigo||'', nombre:r.pr2.nombre||'', pr2:r.pr2, cant:refCant, neto:total-refCant, porPallet:r.porPallet };
+  }
+
   // ---------- Curado, kilos y ritmo de producción ----------
   // Parámetros editables (Base de Datos → ⚙️ Parámetros), leídos en vivo con default de respaldo.
   const OBJ=()=>num(window.__param('objKgDia',6000));   // objetivo kg/día (semáforo de Gustavo)
@@ -4777,7 +4810,18 @@ function buildFilterTable(cfg){
 
   function producidoDe(k){ return prod.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
   function entregadoDe(k){ return ent.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
-  function comprometidoDe(k){ let t=0; pedidos.forEach(pe=>{ if(pe.estado!=='entregado') (pe.items||[]).filter(Boolean).forEach(it=>{ if(keyDe(it.codigo,it.producto)===k) t+=num(it.cantidad); }); }); return t; }
+  // El comprometido REPARTE entre padre y refuerzo con el plan REAL de pallets (cargaRows), nunca con una
+  // cuenta propia: si acá se usara ceil(cant/ud) y la entrega usara el plan que Gustavo editó a mano, el
+  // stock del refuerzo se desfasaría en cada pedido, en silencio. La SUMA total sobre todos los productos
+  // no cambia (225 = 210 + 15): es reparto, no suma.
+  function mapaComprometido(){
+    const m={};
+    pedidos.forEach(pe=>{ if(pe.estado==='entregado') return;
+      cargaRows(pe).forEach(r=>{
+        m[r.key]=(m[r.key]||0)+(r.ref? r.ref.neto : r.cant);
+        if(r.ref) m[r.ref.key]=(m[r.ref.key]||0)+r.ref.cant; }); });
+    return m; }
+  function comprometidoDe(k){ return num(mapaComprometido()[k]); }
   // Separa lo producido en CURADO (fecha + diasCurado <= hoy) y EN CURADO (lotes con fecha en que estarán listos)
   function curadoInfo(k,dias){ let curado=0, enCurado=0; const lotes=[];
     prod.forEach(x=>{ if(keyDe(x.codigo,x.producto)!==k) return; const cant=num(x.cantidad); const f=parseISO(x.fecha);
@@ -4851,7 +4895,11 @@ function buildFilterTable(cfg){
       balanceKg: Math.round(kgStock-kgComp),         // físico − comprometido
       kgProducidosMes: Math.round(kgMes),
       coberturaPct: compKg>0 ? Math.round(cubKg/compKg*1000)/10 : 100,  // % de comprometido cubierto por stock
-      faltantes: filas.filter(f=>f.estado==='falta').length,
+      // Un único problema físico (no alcanzan las losetas de un pedido) no debe contar como DOS faltantes
+      // por el desdoblamiento padre/refuerzo: el faltante del refuerzo se le imputa al producto padre.
+      faltantes: (function(){ const falta={}; filas.forEach(f=>{ if(f.estado==='falta') falta[f.k]=true; });
+        let n=0; activos().forEach(p=>{ if(esProdRefuerzo(p)) return; const k=keyDe(p.codigo,p.nombre); const r=cfgRefuerzo(p);
+          if(falta[k] || (r && falta[r.key])) n++; }); return n; })(),
       pedidosPend: pedidos.filter(p=>p.estado!=='entregado').length,
       objetivo: OBJ()
     };
@@ -4873,7 +4921,10 @@ function buildFilterTable(cfg){
       const ud=pr?num(pr.udPorPallet):0, peso=pr?num(pr.pesoUnit):0, cant=Math.round(num(it.cantidad));
       const guardado = pe.plan && pe.plan[key] && pe.plan[key].length;
       const pallets = guardado ? pe.plan[key].map(x=>Math.round(num(x))) : planStd(cant,ud);
-      rows.push({ key, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets });
+      // Refuerzo de base DERIVADO del plan real (null si el producto no lo usa). Es un CAMPO de la fila,
+      // nunca una fila nueva: el pallet sigue llevando las mismas unidades y los bultos no cambian.
+      const ref = splitRefuerzo(pr, pallets, cant);
+      rows.push({ key, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref });
     });
     return rows;
   }
@@ -5186,7 +5237,9 @@ function buildFilterTable(cfg){
   function clientesEnt(){ return [...new Set(ent.map(e=>e.cliente).concat(pedidos.map(p=>p.cliente)).filter(Boolean))]; }
   function openEnt(){ entItems=[{producto:'',codigo:'',cantidad:1}]; drawEnt(); $('pe-modal-ent').classList.add('open'); }
   function drawEnt(){
-    const prodOpts='<datalist id="pe-prod-dl">'+activos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
+    // Se oculta la variante de refuerzo: se carga sola al entregar el producto padre. Si alguien la
+    // eligiera a mano acá, se descontaría dos veces. (Sigue visible en stock, conteo y carga de producción.)
+    const prodOpts='<datalist id="pe-prod-dl">'+activos().filter(p=>!esProdRefuerzo(p)).map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
     const cliDl='<datalist id="pe-cli-dl">'+clientesEnt().map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>';
     $('pe-form-ent').innerHTML =
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
@@ -5216,11 +5269,25 @@ function buildFilterTable(cfg){
     const its=entItems.filter(it=>it.producto&&num(it.cantidad)>0); if(!its.length){ alert('Cargá al menos un producto con cantidad.'); return; }
     const resumen='Entrega a '+cli+' del '+fmtFecha(fecha)+':\n'+its.map(it=>'• '+it.producto+': '+nf(it.cantidad)).join('\n');
     if(!confirm(resumen+'\n\n¿Confirmás la entrega?')) return;
-    const ids=its.map(it=>{ const pr=resolverProd(it.producto,it.codigo); return registrarEntrega(c,fecha,cli,{producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, ''); });
+    // flatMap (no map): registrarEntrega devuelve un ARRAY de ids porque una entrega puede generar dos
+    // renglones (padre + refuerzo de base). Sin aplanar, "deshacer la última carga" borraría con un array
+    // como id, la excepción se la tragaría el .catch y avisaría "Carga deshecha" igual → stock mal.
+    const ids=its.flatMap(it=>{ const pr=resolverProd(it.producto,it.codigo); return registrarEntrega(c,fecha,cli,{producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, ''); });
     registrarUltimaCarga('vph_entregas', ids, resumen.replace(/\n/g,' · '));
     $('pe-modal-ent').classList.remove('open');
   }
-  function registrarEntrega(c,fecha,cliente,it,pedidoUid){ const id='ent_'+uniq(); c.FS.setDoc(c.FS.doc(c.db,'vph_entregas',id), {fecha, cliente, codigo:it.codigo||'', producto:it.producto, cantidad:num(it.cantidad), usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8), pedidoUid:pedidoUid||''}); return id; }
+  // Escribe la entrega DESDOBLADA: si el producto lleva refuerzo de base, salen DOS renglones (padre neto
+  // + refuerzo) que suman EXACTAMENTE la cantidad entregada — es reparto, no suma. Devuelve ARRAY de ids.
+  function registrarEntrega(c,fecha,cliente,it,pedidoUid,pallets){
+    const ids=[]; const pr=resolverProd(it.producto,it.codigo);
+    const cant=Math.round(num(it.cantidad));
+    const pl=(pallets&&pallets.length)?pallets:planStd(cant, pr?num(pr.udPorPallet):0);
+    const r=splitRefuerzo(pr, pl, cant);
+    const push=(cod,nom,q)=>{ if(q<=0) return; const id='ent_'+uniq(); ids.push(id);
+      c.FS.setDoc(c.FS.doc(c.db,'vph_entregas',id), {fecha, cliente, codigo:cod||'', producto:nom, cantidad:q, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8), pedidoUid:pedidoUid||''}); };
+    if(r){ push(it.codigo||'', it.producto, r.neto); push(r.codigo, r.nombre, r.cant); }
+    else push(it.codigo||'', it.producto, cant);
+    return ids; }
 
   // ---------- Coordinar entregas (pedidos) ----------
   function resumenPed(pe){ return (pe.items||[]).filter(Boolean).filter(i=>i.producto).map(i=>(num(i.cantidad)||'')+' '+(i.codigo||i.producto)).join(' · ') || '—'; }
@@ -5351,9 +5418,20 @@ function buildFilterTable(cfg){
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
   function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
   function marcarEntregado(pe){
-    if(!confirm('¿Marcar como ENTREGADO el pedido de '+(pe.cliente||'—')+'? Se descuenta del stock.')) return;
     const c=fb(); if(!c||!c.db) return;
-    (pe.items||[]).filter(Boolean).forEach(it=>{ if(num(it.cantidad)>0 && it.producto){ const pr=resolverProd(it.producto,it.codigo); registrarEntrega(c, hoyISO, pe.cliente||'', {producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, pe._uid); } });
+    // Los pallets NO se recalculan acá: se usan los del plan REAL del pedido (cargaRows), que es el mismo
+    // que usó el comprometido. Recalcular con ceil(cant/ud) desincronizaría el stock del refuerzo.
+    const rows=cargaRows(pe);
+    const det=rows.filter(r=>r.cant>0).map(r=> r.ref
+      ? ('• '+r.nombre+': '+nf(r.ref.neto)+'  +  '+nf(r.ref.cant)+' '+r.ref.nombre+' (base del pallet)')
+      : ('• '+r.nombre+': '+nf(r.cant))).join('\n');
+    if(!confirm('¿Marcar como ENTREGADO el pedido de '+(pe.cliente||'—')+'?\n\nSe descuenta del stock:\n'+(det||'(sin ítems)'))) return;
+    const ids=[];
+    (pe.items||[]).filter(Boolean).forEach(it=>{ if(num(it.cantidad)>0 && it.producto){
+      const pr=resolverProd(it.producto,it.codigo);
+      const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
+      ids.push.apply(ids, registrarEntrega(c, hoyISO, pe.cliente||'', {producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, pe._uid, r?r.pallets:null)); } });
+    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO));
     pe.estado='entregado'; pe.fechaEntregado=hoyISO; persistPed(pe);
   }
 
@@ -5363,7 +5441,8 @@ function buildFilterTable(cfg){
   function openPed(pe){ editPed = pe?JSON.parse(JSON.stringify(pe)):blankPed(); if(!editPed.items||!editPed.items.length)editPed.items=[{producto:'',codigo:'',cantidad:1}]; $('pe-ped-title').textContent=pe?'Editar pedido':'Nuevo pedido'; drawPed(); $('pe-modal-ped').classList.add('open'); }
   function drawPed(){
     const pe=editPed;
-    const prodOpts='<datalist id="pe-ped-prod-dl">'+activos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
+    // Idem: la variante de refuerzo no se carga como ítem del pedido, se deriva del plan de pallets.
+    const prodOpts='<datalist id="pe-ped-prod-dl">'+activos().filter(p=>!esProdRefuerzo(p)).map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
     const cliDl='<datalist id="pe-ped-cli-dl">'+[...new Set(pedidos.map(p=>p.cliente).filter(Boolean))].map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>';
     const opt=(arr,sel)=>arr.map(o=>'<option value="'+esc(o)+'"'+(String(sel)===String(o)?' selected':'')+'>'+esc(o)+'</option>').join('');
     $('pe-form-ped').innerHTML=
