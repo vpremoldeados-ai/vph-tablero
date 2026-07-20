@@ -1860,6 +1860,10 @@ function buildFilterTable(cfg){
     const periodos = [...new Set(DB.compras.map(c=>c.periodo))].sort().reverse();
     fillSelect($('cmp-filtro-periodo'), [{v:'', l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
     fillSelect($('cmp-filtro-cat'), [{v:'',l:'Todas las categorías'}].concat(CATEGORIAS.map(x=>({v:x,l:x}))), filtro.cat);
+    // Filtrar por categoría a un clic. El <select> se conserva (oculto): su listener está en el top level
+    // de esta IIFE sin guarda, así que sacarlo del DOM mataría el módulo entero. Se repinta en cada
+    // render porque fillSelect vuelve a armar las opciones.
+    if(window.__tarjetas){ window.__tarjetas('cmp-filtro-cat'); const _s=$('cmp-filtro-cat'); if(_s&&_s.__repintar)_s.__repintar(); }
 
     let rows = compras.filter(({c,k})=>{
       if (filtro.periodo && c.periodo!==filtro.periodo) return false;
@@ -2372,6 +2376,8 @@ function buildFilterTable(cfg){
     const periodos=[...new Set(DB.ventas.map(v=>v.periodo))].filter(Boolean).sort().reverse();
     fillSelect($('vnt-filtro-periodo'), [{v:'',l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
     fillSelect($('vnt-filtro-cat'), [{v:'',l:'Todas las categorías'}].concat(CATEGORIAS.map(x=>({v:x,l:x}))), filtro.cat);
+    // Idem Compras: el select queda oculto pero vivo (su listener está en el top level de la IIFE).
+    if(window.__tarjetas){ window.__tarjetas('vnt-filtro-cat'); const _s=$('vnt-filtro-cat'); if(_s&&_s.__repintar)_s.__repintar(); }
 
     let rows = ventas.filter(({v,k})=>{
       if(filtro.periodo && v.periodo!==filtro.periodo) return false;
@@ -4312,11 +4318,11 @@ function buildFilterTable(cfg){
 
   const ENT = {
     clientes: { col:'vph_clientes', label:'Clientes', sing:'Cliente', origen:'vph_ventas', campoOrigen:'cliente',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND},{k:'categoria',l:'Categoría (lista)',t:'select',opts:['',...CATS]},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'localidad',l:'Localidad',t:'text'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'categoria',l:'Categoría (lista)',t:'select',opts:['',...CATS],cards:1},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'localidad',l:'Localidad',t:'text'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'categoria',h:'Categoría'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','email','telefono'] },
     proveedores: { col:'vph_proveedores', label:'Proveedores', sing:'Proveedor', origen:'vph_compras', campoOrigen:'proveedor',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND},{k:'rubro',l:'Rubro',t:'text'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
@@ -4324,7 +4330,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo']},{k:'unidad',l:'Unidad de compra (bolsa, camión, m³, metro)',t:'text'},{k:'precio',l:'Precio de compra $',t:'number'},{k:'contenido',l:'Rinde por compra (ej: 50 = 50 kg por bolsa; 1 si compra = uso)',t:'number'},{k:'unidadUso',l:'Unidad de uso (kg, m³, m)',t:'text'},{k:'iva',l:'IVA',t:'select',opts2:ALIC},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo'],cards:1},{k:'unidad',l:'Unidad de compra (bolsa, camión, m³, metro)',t:'text'},{k:'precio',l:'Precio de compra $',t:'number'},{k:'contenido',l:'Rinde por compra (ej: 50 = 50 kg por bolsa; 1 si compra = uso)',t:'number'},{k:'unidadUso',l:'Unidad de uso (kg, m³, m)',t:'text'},{k:'iva',l:'IVA',t:'select',opts2:ALIC},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'categoria',h:'Categoría'},{k:'unidad',h:'Compra'},{k:'precio',h:'Precio',money:1},{k:'proveedor',h:'Proveedor'},{k:'stock',h:'Stock',num:1} ],
       search:['nombre','categoria','proveedor'] }
   };
@@ -4386,6 +4392,11 @@ function buildFilterTable(cfg){
     $('bd-form').innerHTML='<div class="cmp-form-grid">'+E().fields.map(fld).join('')+'</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="bf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="bf-save">Guardar</button></div>';
     E().fields.forEach(f=>{ const el=$('bf-'+f.k); if(!el)return; el.addEventListener(f.t==='select'||f.t==='checkbox'?'change':'input',()=>{ editing[f.k]= f.t==='checkbox'?el.checked : (f.t==='number'?num(el.value):el.value); }); });
+    // Tarjetas SOLO en los campos marcados con cards:1 en la definición de la entidad. NO se puede
+    // decidir por id: los ids salen de un único generador ('bf-'+f.k) y campos como `categoria` o
+    // `condIva` existen en varias fichas con significados distintos (en Clientes es la lista de precios,
+    // en Insumos es Materia prima/Insumo). Marcarlo en el campo evita que una herede las opciones de otra.
+    if(window.__tarjetas) E().fields.forEach(f=>{ if(f.cards) window.__tarjetas('bf-'+f.k); });
     $('bf-cancel').onclick=closeForm; $('bf-save').onclick=()=>{ if(!String(editing.nombre||'').trim()){ alert('Ingresá el nombre.'); return; } persist(editing); closeForm(); };
   }
 
@@ -5466,6 +5477,8 @@ function buildFilterTable(cfg){
       const id='ins_'+uniq();
       c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',id), {nombre:nom, categoria:$('pe-ins-ncat').value, unidad:($('pe-ins-nunidad').value||'').trim(), stockMinimo:num($('pe-ins-nmin').value), stock:0, fechaConteo:'', usuario:usuario()});
       setTimeout(openConteoIns,600); };
+    // Materia prima / Insumo a un toque (Gustavo carga esto desde el celular).
+    if(window.__tarjetas) window.__tarjetas('pe-ins-ncat');
     $('pe-ins-cancel').onclick=()=>$('pe-modal-ins').classList.remove('open');
     $('pe-ins-save').onclick=()=>{
       const fecha=$('pe-ins-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
