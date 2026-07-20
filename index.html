@@ -237,6 +237,48 @@
   // Fuentes de alertas EN VIVO: cada módulo hace window.__alertSources.push(()=>[...]) al arrancar.
   window.__alertSources = window.__alertSources || [];
   window.__refreshAlertas = window.__refreshAlertas || function(){};   // lo reemplaza el motor de alertas tras el login
+
+  /* ---------- Tarjetas cliqueables en vez de listas desplegables ----------
+     Convierte un <select> YA EXISTENTE en tarjetas, sin tocar nada de la lógica que lo usa:
+     el <select> NO se saca del DOM (queda oculto) y se mantiene sincronizado — al tocar una tarjeta se
+     le setea .value y se disparan 'input' y 'change', igual que haría un usuario. Así siguen andando:
+       · los $('id').value que leen el valor recién al guardar,
+       · los bindings genéricos que persisten el campo en `editing`,
+       · y los handlers propios (re-preciar ítems, mostrar/ocultar el bloque de cheque, recalcular flete).
+     Sacar el nodo rompería cualquiera de esas tres cosas, algunas EN SILENCIO. Por eso nunca se saca.
+     Opciones: {sub:fn(valor)->texto chico, color:fn(valor)->color del borde, omitir:fn(valor)->bool}  */
+  window.__tarjetas = function(id, o){
+    const sel = document.getElementById(id);
+    if(!sel || sel.dataset.tiles==='1') return null;
+    o = o || {};
+    sel.dataset.tiles='1';
+    sel.style.display='none';
+    const cont = document.createElement('div');
+    cont.className = 'tile-picker';
+    sel.parentNode.insertBefore(cont, sel.nextSibling);
+    function pintar(){
+      cont.innerHTML = [...sel.options].map((op,i)=>{
+        if(o.omitir && o.omitir(op.value)) return '';
+        const on  = String(op.value)===String(sel.value);
+        const sub = o.sub ? (o.sub(op.value)||'') : '';
+        const col = (o.color && on) ? (o.color(op.value)||'') : '';
+        return '<button type="button" class="tile'+(sub?'':' mini')+(on?' on':'')+'" data-ti="'+i+'"'+
+          (col?' style="border-color:'+col+'"':'')+'>'+
+          '<span class="nm">'+op.textContent+'</span>'+(sub?'<span class="pr">'+sub+'</span>':'')+'</button>';
+      }).join('');
+      // Se consulta SIEMPRE dentro del contenedor propio: los modales de todos los módulos conviven en
+      // el DOM y un querySelector global agarraría el picker de otro módulo.
+      cont.querySelectorAll('button[data-ti]').forEach(b=> b.onclick=()=>{
+        sel.value = sel.options[+b.dataset.ti].value;
+        sel.dispatchEvent(new Event('input',{bubbles:true}));
+        sel.dispatchEvent(new Event('change',{bubbles:true}));
+        pintar();
+      });
+    }
+    pintar();
+    sel.__repintar = pintar;   // por si el valor se cambia por código y hay que refrescar la marca
+    return pintar;
+  };
 </script>
 
 <aside>
@@ -2011,6 +2053,9 @@ function buildFilterTable(cfg){
     });
     $('f-prov').addEventListener('change',()=>{ const found=proveedoresConocidos().find(p=>p.nombre===$('f-prov').value); if(found && !$('f-cuit').value){ $('f-cuit').value=found.cuit||''; editing.cuit=found.cuit||''; if(found.cond){$('f-cond').value=found.cond; editing.condIva=found.cond;} } });
     $('f-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
+    // Tarjetas: la categoría define si la compra es COSTO FIJO (entra al punto de equilibrio), así que
+    // conviene verla de un vistazo; y el tipo de comprobante distingue una Nota de Crédito de una compra.
+    if(window.__tarjetas){ window.__tarjetas('f-cat'); window.__tarjetas('f-tipo'); }
     $('f-cancel').onclick=closeForm;
     $('f-save').onclick=saveForm;
     drawTotals();
@@ -2092,6 +2137,9 @@ function buildFilterTable(cfg){
     $('p-medio').addEventListener('change',()=>{ const ch=esCheque($('p-medio').value);
       $('p-cheque-extra').style.display = ch?'block':'none';
       $('p-cuenta-wrap').style.display = ch?'none':''; });
+    // Tarjetas: el medio de pago bifurca el formulario (con cheque se abren los datos del cheque y se
+    // esconde la cuenta, y la plata sale recién cuando el cheque se hace efectivo). Verlo ayuda.
+    if(window.__tarjetas){ window.__tarjetas('p-medio'); window.__tarjetas('p-cuenta'); }
     $('p-cancel').onclick=()=>$('cmp-modal-pago').classList.remove('open');
     $('p-save').onclick=()=>{ const c2=DB.compras.find(x=>x._uid===payingUid); if(!c2) return;
       const medio=$('p-medio').value;
@@ -2563,6 +2611,9 @@ function buildFilterTable(cfg){
     $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond;} } });
     $('vf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('vf-lista').value; let ch=false; editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p){ aplicarProducto(it,p,editing.listaPrecios); ch=true; } }); if(ch){ drawItems(); drawTotals(); } });
     $('vf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
+    // Tarjetas para la lista de precios: cambiarla RE-PRECIA todos los ítems, así que verla activa de un
+    // vistazo evita facturar con la lista equivocada. (El select queda oculto y sincronizado.)
+    if(window.__tarjetas) window.__tarjetas('vf-lista');
     $('vf-cancel').onclick=closeForm; $('vf-save').onclick=saveForm; drawTotals();
   }
   function itemBase(it){ return num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); }
@@ -2644,6 +2695,9 @@ function buildFilterTable(cfg){
       $('vc-cuenta-wrap').style.display = ch?'none':''; });
     $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
     $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
+    // Tarjetas: el medio de cobro es lo que más toca Sofía y bifurca el form (cheque → datos del cheque,
+    // sin cuenta, y NO cuenta como plata de hoy). Es donde se rompen los números de caja si se elige mal.
+    if(window.__tarjetas){ window.__tarjetas('vc-medio'); window.__tarjetas('vc-cuenta'); }
     if($('vc-cancel')) $('vc-cancel').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
     if($('vc-cancel-edit')) $('vc-cancel-edit').onclick=()=>{ cobroEdit=null; drawCobro(); };
     $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; }
@@ -2898,6 +2952,12 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="chf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="chf-save">Guardar</button></div>';
     $('chf-tipo').addEventListener('change',()=>{ editing.tipo=$('chf-tipo').value; editing.entidad=''; drawForm(); });
     [['chf-num','numero'],['chf-banco','banco'],['chf-ent','entidad'],['chf-femi','fechaEmision'],['chf-fvenc','fechaVencimiento'],['chf-monto','monto'],['chf-estado','estado'],['chf-cuenta','cuenta'],['chf-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= key==='monto'?num(el.value):el.value; }); });
+    // Tarjetas: el tipo define si el cheque ENTRA o SALE plata (y redibuja el form), y el estado es plata
+    // real (un rechazado cambia toda la caja). Se reusan los colores de ESTADOS del propio módulo.
+    if(window.__tarjetas){
+      window.__tarjetas('chf-tipo');
+      window.__tarjetas('chf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
+    }
     $('chf-cancel').onclick=closeForm;
     $('chf-save').onclick=()=>{ if(!String(editing.entidad||'').trim()){ alert('Ingresá el cliente/proveedor.'); return; } if(!num(editing.monto)){ alert('Ingresá el monto.'); return; } persist(editing); closeForm(); };
   }
@@ -3443,6 +3503,12 @@ function buildFilterTable(cfg){
         fld('Cuenta','col2','<select id="caj-m-cuenta">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-m-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-m-save">Guardar movimiento</button></div>';
+    // Tarjetas: equivocar el signo INVIERTE la plata en la caja. Dos tarjetas (verde entra / roja sale)
+    // hacen imposible confundirse. El select sigue en el DOM porque el guardado lee su .value.
+    if(window.__tarjetas){
+      window.__tarjetas('caj-m-signo', {color:v=> String(v)==='1'?'var(--green)':'var(--red)'});
+      window.__tarjetas('caj-m-cuenta');
+    }
     $('caj-m-cancel').onclick=cerrar;
     $('caj-m-save').onclick=()=>{ const monto=num($('caj-m-monto').value); if(monto<=0){ alert('El monto tiene que ser mayor a 0.'); return; }
       persist({tipo:'mov', signo:num($('caj-m-signo').value)>=0?1:-1, fecha:$('caj-m-fecha').value||hoyISO, monto, concepto:$('caj-m-concepto').value||'Movimiento manual', cuenta:($('caj-m-cuenta')?$('caj-m-cuenta').value:''), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)}); cerrar(); };
@@ -4033,6 +4099,12 @@ function buildFilterTable(cfg){
     // La zona ahora se elige con tarjetas (drawZonas), no con un desplegable: un clic recalcula el
     // renglón "Flete". Si el presupuesto vino de un Lead, la zona del lead ya llega marcada.
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
+    // Tarjetas: lista de precios (re-precia ítems y flete) y estado del presupuesto, con el color que ya
+    // usa el badge del listado, para que se vea igual en el form que en la tabla.
+    if(window.__tarjetas){
+      window.__tarjetas('pf-lista');
+      window.__tarjetas('pf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
+    }
     $('pf-cancel').onclick=closeForm; $('pf-save').onclick=saveForm; drawTotals();
   }
   function itemBase(it){ return num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); }
@@ -4822,6 +4894,13 @@ function buildFilterTable(cfg){
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1}); drawItems(); };
     $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
+    // Tarjetas: origen del lead, etapa del pipeline (con el color de su columna del kanban) y la zona de
+    // flete (al tocarla se recalcula la cotización en vivo, igual que en Presupuestos).
+    if(window.__tarjetas){
+      window.__tarjetas('cf-origen');
+      window.__tarjetas('cf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
+      window.__tarjetas('cf-zona');
+    }
     $('cf-cancel').onclick=closeForm;
     $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } persist(editing); closeForm(); };
   }
@@ -5702,6 +5781,12 @@ function buildFilterTable(cfg){
     [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; }); });
     $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; });
     $('pp-add').onclick=()=>{ editPed.items.push({producto:'',codigo:'',cantidad:1}); drawPedItems(); };
+    // Tarjetas para el transportista: Gustavo carga esto DESDE EL CELULAR y un desplegable de Android
+    // abre una hoja modal que come dos toques; la tarjeta se resuelve con uno. Además alimenta el
+    // planificador de viajes, así que ver los transportes juntos ayuda a elegir el camión con lugar.
+    // OJO: NO se pasa a tarjetas pp-estado — marcar "Entregado" ahí NO descuenta stock (eso lo hace el
+    // botón "✓ Entregado" de la fila), y una tarjeta verde grande invitaría a tocarla creyendo que sí.
+    if(window.__tarjetas) window.__tarjetas('pp-transp');
     $('pp-cancel').onclick=()=>$('pe-modal-ped').classList.remove('open');
     $('pp-save').onclick=()=>{ if(!String(editPed.cliente||'').trim()){ alert('Ingresá el cliente.'); return; } editPed.items=(editPed.items||[]).filter(it=>it && it.producto && num(it.cantidad)>0).map(it=>{ const pr=resolverProd(it.producto,it.codigo); return { producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad) }; });
       const keys=new Set(editPed.items.map(it=>keyDe(it.codigo,it.producto))); const plan={};
