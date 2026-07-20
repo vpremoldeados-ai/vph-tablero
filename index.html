@@ -668,6 +668,17 @@
     </div>
   </div>
 
+  <!-- ================= COSTEO POR PRODUCTO (overlay) ================= -->
+  <div class="cmp-overlay" id="bd-costeo-modal">
+    <div class="cmp-dialog" style="max-width:860px">
+      <div class="cmp-dialog-head">
+        <h3 id="bd-costeo-title">Análisis de costo</h3>
+        <button class="cmp-x" id="bd-costeo-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="bd-costeo-body"></div>
+    </div>
+  </div>
+
   <!-- ================= PARÁMETROS DE CÁLCULO (overlay) ================= -->
   <div class="cmp-overlay" id="params-modal">
     <div class="cmp-dialog" style="max-width:640px">
@@ -4013,8 +4024,8 @@ function buildFilterTable(cfg){
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo']},{k:'unidad',l:'Unidad (bolsa, kg, litro...)',t:'text'},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
-      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'categoria',h:'Categoría'},{k:'unidad',h:'Un.'},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'proveedor',h:'Proveedor'} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo']},{k:'unidad',l:'Unidad de compra (bolsa, camión, m³, metro)',t:'text'},{k:'precio',l:'Precio de compra $',t:'number'},{k:'contenido',l:'Rinde por compra (ej: 50 = 50 kg por bolsa; 1 si compra = uso)',t:'number'},{k:'unidadUso',l:'Unidad de uso (kg, m³, m)',t:'text'},{k:'iva',l:'IVA',t:'select',opts2:ALIC},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'categoria',h:'Categoría'},{k:'unidad',h:'Compra'},{k:'precio',h:'Precio',money:1},{k:'proveedor',h:'Proveedor'},{k:'stock',h:'Stock',num:1} ],
       search:['nombre','categoria','proveedor'] }
   };
 
@@ -4045,11 +4056,11 @@ function buildFilterTable(cfg){
     rows.forEach(r=>{ html+='<tr>'+cols.map(c=>{ let v=r[c.k];
         if(c.money) v=money(num(v)); else if(c.num) v=(num(v)).toLocaleString('es-AR'); else if(c.bool) v=v?'<span class="badge green">Sí</span>':'<span class="badge amber">No</span>'; else v=esc(v||'—');
         return '<td class="'+(c.money||c.num?'num':'')+'">'+(c.b?'<b>'+v+'</b>':v)+'</td>'; }).join('')+
-        '<td style="white-space:nowrap"><button class="cmp-rowbtn" data-act="edit" data-id="'+r._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+r._uid+'">✕</button></td></tr>'; });
+        '<td style="white-space:nowrap">'+(tab==='productos'?'<button class="cmp-rowbtn" data-act="costeo" data-id="'+r._uid+'" title="Análisis de costo por receta">📊 Costeo</button>':'')+'<button class="cmp-rowbtn" data-act="edit" data-id="'+r._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+r._uid+'">✕</button></td></tr>'; });
     const t=$('bd-tabla'); t.innerHTML=html;
     t.querySelectorAll('th[data-sort]').forEach(h=> h.onclick=()=>{ const c=h.dataset.sort; if(sortCol===c) sortDir*=-1; else {sortCol=c;sortDir=1;} render(); });
     t.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const r=data().find(x=>x._uid==b.dataset.id); if(!r)return;
-      if(b.dataset.act==='edit') openForm(r); else if(b.dataset.act==='del'){ if(confirm('¿Eliminar "'+r.nombre+'"?')) remove(r._uid); } });
+      if(b.dataset.act==='edit') openForm(r); else if(b.dataset.act==='costeo') openCosteo(r); else if(b.dataset.act==='del'){ if(confirm('¿Eliminar "'+r.nombre+'"?')) remove(r._uid); } });
     $('bd-count').textContent = rows.length+' de '+data().length+' '+E().label.toLowerCase();
     $('bd-buscar').placeholder='Buscar '+E().label.toLowerCase()+'...';
     $('bd-note').innerHTML = tab==='productos'
@@ -4059,7 +4070,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null;
-  function blank(){ const o={}; E().fields.forEach(f=>{ o[f.k]= f.t==='checkbox'?true : (f.t==='number'?0:''); }); if(o.hasOwnProperty('condIva'))o.condIva='A'; if(o.hasOwnProperty('ivaVenta'))o.ivaVenta='21'; if(o.hasOwnProperty('unidad'))o.unidad='u'; if(o.hasOwnProperty('diasCurado'))o.diasCurado=10; return o; }
+  function blank(){ const o={}; E().fields.forEach(f=>{ o[f.k]= f.t==='checkbox'?true : (f.t==='number'?0:''); }); if(o.hasOwnProperty('condIva'))o.condIva='A'; if(o.hasOwnProperty('ivaVenta'))o.ivaVenta='21'; if(o.hasOwnProperty('iva'))o.iva='21'; if(o.hasOwnProperty('unidad'))o.unidad='u'; if(o.hasOwnProperty('contenido'))o.contenido=1; if(o.hasOwnProperty('diasCurado'))o.diasCurado=10; return o; }
   function openForm(r){ editing = r?JSON.parse(JSON.stringify(r)):blank(); $('bd-form-title').textContent=(r?'Editar ':'Nuevo ')+E().sing; drawForm(); $('bd-modal').classList.add('open'); }
   function closeForm(){ $('bd-modal').classList.remove('open'); editing=null; }
   function drawForm(){
@@ -4076,6 +4087,71 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="bf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="bf-save">Guardar</button></div>';
     E().fields.forEach(f=>{ const el=$('bf-'+f.k); if(!el)return; el.addEventListener(f.t==='select'||f.t==='checkbox'?'change':'input',()=>{ editing[f.k]= f.t==='checkbox'?el.checked : (f.t==='number'?num(el.value):el.value); }); });
     $('bf-cancel').onclick=closeForm; $('bf-save').onclick=()=>{ if(!String(editing.nombre||'').trim()){ alert('Ingresá el nombre.'); return; } persist(editing); closeForm(); };
+  }
+
+  // ---------- Costeo por producto (receta que REFERENCIA el master "Insumos y MP") ----------
+  // La receta lista ingredientes que apuntan al master (por _uid); NO repite precios. Precio de uso =
+  // precio de compra ÷ rinde por compra (ej: bolsa $12.586 ÷ 50 = $251,72/kg). Cambiar un precio en el
+  // master recostea el producto al reabrir/guardar. Cada ingrediente es "por maquinada" (÷ rinde) o
+  // "por unidad" (directo, ej: hierro). Guardado en el producto, campo "costeo".
+  let costeando=null;
+  const mpDe=uid=> (store.vph_insumos||[]).find(x=>x._uid===uid) || null;
+  const mpList=()=> (store.vph_insumos||[]).slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+  function precioUsoDe(uid){ const m=mpDe(uid); if(!m) return 0; const cont=num(m.contenido)>0?num(m.contenido):1; return num(m.precio)/cont; }
+  function ivaFracDe(uid){ const m=mpDe(uid); if(!m) return 0; const iv=(m.iva==='exento'||m.iva==='nogravado')?0:num(m.iva); return iv/(100+iv); }
+  function unidadUsoDe(uid){ const m=mpDe(uid); return m?(m.unidadUso||m.unidad||''):''; }
+  function blankCosteo(){ return { fecha:hoyISO, ing:[], rinde:0, flete:0 }; }
+  function calcCosteo(c){ c=c||{}; const ing=c.ing||[]; const rinde=num(c.rinde);
+    let costoMaq=0, costoDir=0, ivaMaq=0, ivaDir=0;
+    ing.forEach(r=>{ const pu=precioUsoDe(r.insumoUid); const sub=num(r.cantidad)*pu; const ivf=ivaFracDe(r.insumoUid);
+      if(r.porUnidad){ costoDir+=sub; ivaDir+=sub*ivf; } else { costoMaq+=sub; ivaMaq+=sub*ivf; } });
+    const costoHormigon = rinde>0?costoMaq/rinde:0;
+    return { costoMaq, rinde, costoHormigon, costoDir, costoUnidad:costoHormigon+costoDir, ivaCredUnidad:(rinde>0?ivaMaq/rinde:0)+ivaDir };
+  }
+  function margenDe(precioFinal, costoUnidad, ivaPct, flete){ const p=num(precioFinal); const iva=(ivaPct==='exento'||ivaPct==='nogravado')?0:num(ivaPct); const neto=p>0?p/(1+iva/100):0; const m=neto-costoUnidad-num(flete); return {neto, margen:m, pct: neto>0?m/neto*100:0}; }
+  function openCosteo(prod){ costeando=JSON.parse(JSON.stringify(prod)); if(!costeando.costeo||typeof costeando.costeo!=='object') costeando.costeo=blankCosteo(); if(!Array.isArray(costeando.costeo.ing)) costeando.costeo.ing=[]; $('bd-costeo-title').textContent='Análisis de costo — '+(costeando.nombre||''); drawCosteo(); $('bd-costeo-modal').classList.add('open'); }
+  function closeCosteo(){ $('bd-costeo-modal').classList.remove('open'); costeando=null; }
+  function drawCosteo(){
+    const c=costeando.costeo; const mats=mpList();
+    const optsFor=uid=> '<option value="">— elegir materia prima —</option>'+mats.map(m=>'<option value="'+m._uid+'"'+(m._uid===uid?' selected':'')+'>'+esc(m.nombre)+' ('+money(precioUsoDe(m._uid))+'/'+esc(m.unidadUso||m.unidad||'u')+')</option>').join('');
+    const rows=(c.ing||[]).map((r,i)=> '<tr>'+
+      '<td><select data-ingsel="'+i+'" style="min-width:190px">'+optsFor(r.insumoUid)+'</select></td>'+
+      '<td><select data-ingsc="'+i+'"><option value="maq"'+(!r.porUnidad?' selected':'')+'>por maquinada</option><option value="uni"'+(r.porUnidad?' selected':'')+'>por unidad</option></select></td>'+
+      '<td><input data-ingc="'+i+'" inputmode="decimal" value="'+esc(r.cantidad)+'" style="width:86px;text-align:right"> <span style="color:var(--muted);font-size:11px">'+esc(unidadUsoDe(r.insumoUid))+'</span></td>'+
+      '<td class="num">'+money(precioUsoDe(r.insumoUid))+'</td>'+
+      '<td class="num" data-ingsub="'+i+'">'+money(num(r.cantidad)*precioUsoDe(r.insumoUid))+'</td>'+
+      '<td><button class="cmp-rowbtn" data-ingdel="'+i+'">✕</button></td></tr>').join('');
+    $('bd-costeo-body').innerHTML=
+      '<p class="note" style="margin-top:0">Cada ingrediente sale del master <b>Insumos y MP</b> (ahí están los precios). <b>Por maquinada</b> = se divide por el rinde; <b>por unidad</b> = va directo (ej: hierro). Si cambiás un precio en el master, se recostea al reabrir.</p>'+
+      (mats.length?'':'<p class="note" style="color:var(--red)">⚠️ Todavía no hay materias primas cargadas. Cargalas primero en la pestaña <b>Insumos y MP</b> con precio, unidad de compra, rinde e IVA.</p>')+
+      '<div class="tbl-wrap"><table><tr><th>Materia prima (del master)</th><th>Uso</th><th class="num">Cantidad</th><th class="num">Precio uso</th><th class="num">Subtotal</th><th></th></tr>'+rows+'</table></div>'+
+      '<button class="cmp-btn" id="cst-add" style="margin:6px 0">+ Ingrediente</button>'+
+      '<div class="cmp-form-grid" style="margin:10px 0"><div class="cmp-field"><label>Rinde (unidades por maquinada)</label><input id="cst-rinde" inputmode="decimal" value="'+esc(c.rinde)+'"></div><div class="cmp-field"><label>Flete por unidad (opcional)</label><input id="cst-flete" inputmode="decimal" value="'+esc(c.flete||0)+'"></div></div>'+
+      '<h4 style="margin:12px 0 4px">Resultado</h4>'+
+      '<div class="kpis" id="cst-resumen" style="margin:0"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="cst-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cst-save">Guardar costeo</button></div>';
+    $('bd-costeo-body').querySelectorAll('select[data-ingsel]').forEach(el=> el.addEventListener('change',()=>{ c.ing[+el.dataset.ingsel].insumoUid=el.value; drawCosteo(); }));
+    $('bd-costeo-body').querySelectorAll('select[data-ingsc]').forEach(el=> el.addEventListener('change',()=>{ c.ing[+el.dataset.ingsc].porUnidad=(el.value==='uni'); updateResumen(); }));
+    $('bd-costeo-body').querySelectorAll('input[data-ingc]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.ingc; c.ing[i].cantidad=num(el.value); const sub=$('bd-costeo-body').querySelector('[data-ingsub="'+i+'"]'); if(sub) sub.textContent=money(num(c.ing[i].cantidad)*precioUsoDe(c.ing[i].insumoUid)); updateResumen(); }));
+    $('bd-costeo-body').querySelectorAll('[data-ingdel]').forEach(b=> b.onclick=()=>{ c.ing.splice(+b.dataset.ingdel,1); drawCosteo(); });
+    $('cst-add').onclick=()=>{ c.ing.push({insumoUid:'',cantidad:0,porUnidad:false}); drawCosteo(); };
+    $('cst-rinde').addEventListener('input',()=>{ c.rinde=num($('cst-rinde').value); updateResumen(); });
+    $('cst-flete').addEventListener('input',()=>{ c.flete=num($('cst-flete').value); updateResumen(); });
+    $('cst-cancel').onclick=closeCosteo;
+    $('cst-save').onclick=()=>{ const r=calcCosteo(c); costeando.costo=Math.round(r.costoUnidad*100)/100; costeando.costeo.fecha=hoyISO; persist(costeando); closeCosteo(); };
+    updateResumen();
+  }
+  function updateResumen(){ if(!costeando) return; const c=costeando.costeo; const r=calcCosteo(c);
+    const mMin=margenDe(costeando.precioMinorista, r.costoUnidad, costeando.ivaVenta, c.flete);
+    const mMay=margenDe(costeando.precioMayorista, r.costoUnidad, costeando.ivaVenta, c.flete);
+    const cls=m=> m.margen<0?'bad':(m.pct<30?'warn':'good');
+    const K=(label,cl,value,sub)=>'<div class="kpi '+(cl||'')+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+(sub||'')+'</div></div>';
+    const el=$('cst-resumen'); if(!el) return;
+    el.innerHTML=
+      K('Costo maquinada','info',money(r.costoMaq), r.rinde>0?('rinde '+Math.round(r.rinde)+' u → hormigón '+money(r.costoHormigon)+'/u'):'⚠️ falta cargar el rinde') +
+      K('Costo por unidad','info',money(r.costoUnidad),'Hormigón '+money(r.costoHormigon)+' + directos '+money(r.costoDir)+' · IVA créd. '+money(r.ivaCredUnidad)) +
+      K('Margen Minorista', num(costeando.precioMinorista)?cls(mMin):'', num(costeando.precioMinorista)?(money(mMin.margen)+' · '+mMin.pct.toFixed(1)+'%'):'—', num(costeando.precioMinorista)?('sobre neto '+money(mMin.neto)):'Sin precio minorista en el catálogo') +
+      K('Margen Mayorista', num(costeando.precioMayorista)?cls(mMay):'', num(costeando.precioMayorista)?(money(mMay.margen)+' · '+mMay.pct.toFixed(1)+'%'):'—', num(costeando.precioMayorista)?('sobre neto '+money(mMay.neto)):'Sin precio mayorista en el catálogo');
   }
 
   // ---------- Importar desde ventas/compras ----------
@@ -4154,11 +4230,13 @@ function buildFilterTable(cfg){
 
   $('bd-nuevo').onclick=()=>openForm(null);
   $('bd-cerrar').onclick=closeForm;
+  $('bd-costeo-cerrar').onclick=closeCosteo;
   $('bd-import').onclick=importar;
   $('bd-export').onclick=exportJSON;
   $('bd-backup').onclick=backupCompleto;
   $('bd-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('bd-modal').addEventListener('click',e=>{ if(e.target===$('bd-modal')) closeForm(); });
+  $('bd-costeo-modal').addEventListener('click',e=>{ if(e.target===$('bd-costeo-modal')) closeCosteo(); });
   pintarBackupAsof();
   boot();
 })();
