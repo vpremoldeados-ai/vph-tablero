@@ -4003,7 +4003,7 @@ function buildFilterTable(cfg){
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
         field('Lista de precios','','<select id="pf-lista">'+opt(LISTAS,p.listaPrecios)+'</select>') +
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
-        field('Forma de entrega (flete)','col2','<select id="pf-zona">'+ZONAS.map(z=>'<option value="'+z.k+'"'+((p.zona||'')===z.k?' selected':'')+'>'+z.l+(z.par&&zonaCosto(z.k)>0?' — '+money(zonaCosto(z.k))+'/pallet':'')+'</option>').join('')+'</select>') +
+        field('Forma de entrega (flete)','col2','<div class="pf-picker" id="pf-zona-picker" style="margin:2px 0 0"></div>') +
       '</div>'+
       '<h4 style="margin:6px 0 4px;font-size:13px">Ítems</h4>'+
       '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Tocá un producto para agregarlo (volvé a tocarlo para sumar otra unidad):</div>'+
@@ -4025,10 +4025,8 @@ function buildFilterTable(cfg){
       const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); }); });
     $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } });
     $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); } });
-    // Cambiar la zona recalcula el renglón "Flete" (podés editarlo/borrarlo a mano después: solo se rehace si volvés a tocar la zona)
-    $('pf-zona').addEventListener('change',()=>{ editing.zona=$('pf-zona').value; const f=aplicarFlete(editing); drawItems(); drawTotals();
-      // Solo avisa si la forma de entrega SÍ tiene precio cargado y aun así no se pudo calcular (= faltan ítems).
-      if(zonaCosto(editing.zona)>0 && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.'); });
+    // La zona ahora se elige con tarjetas (drawZonas), no con un desplegable: un clic recalcula el
+    // renglón "Flete". Si el presupuesto vino de un Lead, la zona del lead ya llega marcada.
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     $('pf-cancel').onclick=closeForm; $('pf-save').onclick=saveForm; drawTotals();
   }
@@ -4051,6 +4049,26 @@ function buildFilterTable(cfg){
       if(vacio<0) editing.items.push(it);
     }
     drawItems(); drawTotals();
+  }
+  // Tarjetas de forma de entrega (flete) — un clic en vez del desplegable. La que viene del Lead queda
+  // marcada sola, porque armarDesdeLead ya dejó editing.zona con la zona que cargó Sofía en el CRM.
+  function drawZonas(){
+    const cont=$('pf-zona-picker'); if(!cont) return;
+    cont.innerHTML = ZONAS.map((z,i)=>{
+      const c = z.k ? zonaCosto(z.k) : 0;
+      const on = String(editing.zona||'')===String(z.k);
+      return '<button type="button" class="pf-pick'+(on?' on':'')+'" data-zona="'+i+'" title="'+esc(z.l)+'">'+
+        '<span class="nm">'+esc(z.l)+'</span>'+
+        '<span class="pr">'+(z.k ? (c>0 ? money(c)+' /pallet' : 'sin cargo') : '—')+'</span></button>';
+    }).join('');
+    cont.querySelectorAll('button[data-zona]').forEach(b=> b.onclick=()=>{
+      const z=ZONAS[+b.dataset.zona];
+      editing.zona=z.k;
+      const f=aplicarFlete(editing);
+      drawItems(); drawTotals();
+      // Solo avisa si la forma de entrega SÍ tiene precio cargado y aun así no se pudo calcular (= faltan ítems).
+      if(zonaCosto(editing.zona)>0 && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.');
+    });
   }
   function drawPicker(){
     const cont=$('pf-picker'); if(!cont) return;
@@ -4088,7 +4106,7 @@ function buildFilterTable(cfg){
       const i=+b.dataset.si, paso=+b.dataset.step;
       editing.items[i].cant = Math.max(0, num(editing.items[i].cant)+paso);
       drawItems(); drawTotals(); });
-    drawPicker();
+    drawPicker(); drawZonas();
   }
   function drawTotals(){ const kk=calc(editing);
     $('pf-totbox').innerHTML =
