@@ -5492,6 +5492,11 @@ function buildFilterTable(cfg){
     const c=fb(); if(!c||!c.db) return;
     c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {estado:'resuelto'}).catch(e=>alert('Error: '+e.message));
   }
+  function aprobarEnvio(uid){
+    const c=fb(); if(!c||!c.db) return;
+    if(!confirm('¿Enviar esta respuesta por WhatsApp ahora?')) return;
+    c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {aprobado:true}).catch(e=>alert('Error: '+e.message));
+  }
 
   function render(){
     let items=DB.pendientes.slice().sort((a,b)=> (b.creadoEn&&b.creadoEn.seconds||0) - (a.creadoEn&&a.creadoEn.seconds||0));
@@ -5517,17 +5522,21 @@ function buildFilterTable(cfg){
       const et=ETIQUETAS[i.tipo]||{l:i.tipo,c:'#7a8699'};
       const link=waLink(i.telefono);
       const resuelto=(i.estado||'pendiente')==='resuelto';
+      const tieneSugerencia = !!i.respuestaPropuesta;
+      const yaEnviada = !!i.enviado;
       return '<div class="kb-card" style="margin-bottom:8px'+(resuelto?';opacity:.55':'')+'">'+
-        '<div class="cli">'+esc(i.nombre||i.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span>'+(i.fueraDeHorario?' <span class="badge amber">Fuera de horario</span>':'')+(i.autoRespondido?' <span class="badge green">🤖 Auto-respondido</span>':'')+'</div>'+
+        '<div class="cli">'+esc(i.nombre||i.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span>'+(i.fueraDeHorario?' <span class="badge amber">Fuera de horario</span>':'')+(yaEnviada?' <span class="badge green">✓ Respuesta enviada</span>':(i.aprobado?' <span class="badge blue">⏳ Aprobada, enviando…</span>':''))+'</div>'+
         '<div class="ped">'+esc(i.mensaje||'')+'</div>'+
-        (i.autoRespondido&&i.respuestaAuto?'<div class="ped" style="color:var(--green)">🤖 '+esc(i.respuestaAuto)+'</div>':'')+
+        (tieneSugerencia?'<div class="ped" style="color:var(--blue)">🤖 Sugerencia: '+esc(i.respuestaPropuesta)+'</div>':'')+
         '<div class="meta">'+esc(i.telefono||'')+' · '+fmtFecha(i.creadoEn)+'</div>'+
         '<div class="acts">'+
           (link?'<a class="kb-wa" href="'+link+'" target="_blank">💬 Abrir WhatsApp</a>':'')+
+          (tieneSugerencia&&!i.aprobado?'<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-a="'+i._uid+'">✅ Aprobar y enviar</button>':'')+
           (!resuelto?'<button class="kb-move" data-r="'+i._uid+'">✓ Marcar resuelto</button>':'')+
         '</div></div>';
     }).join('') : '<div class="kb-empty">No hay mensajes'+(filtroTipo||!mostrarResueltos?' con este filtro':'')+'.</div>';
     $('wab-lista').querySelectorAll('button[data-r]').forEach(b=> b.onclick=()=>marcarResuelto(b.dataset.r));
+    $('wab-lista').querySelectorAll('button[data-a]').forEach(b=> b.onclick=()=>aprobarEnvio(b.dataset.a));
   }
 
   function startSync(){
