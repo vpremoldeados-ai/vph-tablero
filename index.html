@@ -6745,10 +6745,10 @@ function buildFilterTable(cfg){
       .doc-fisc{ text-align:right; font-size:11px; line-height:1.5; }
       .doc-cli{ display:flex; justify-content:space-between; gap:20px; border:1px solid #999; border-radius:4px; padding:8px 10px; margin-bottom:10px; font-size:11.5px; line-height:1.5; }
       .doc-cli .r{ text-align:right; }
-      table.doc-tab{ width:100%; border-collapse:collapse; font-size:11px; margin-bottom:10px; }
-      table.doc-tab th{ background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 6px; text-align:left; }
-      table.doc-tab td{ border:1px solid #e2e8f0; padding:5px 6px; }
-      table.doc-tab td.n, table.doc-tab th.n{ text-align:right; white-space:nowrap; }
+      table.doc-tab{ width:100%; max-width:100%; table-layout:fixed; border-collapse:collapse; font-size:10.5px; margin-bottom:10px; }
+      table.doc-tab th{ background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 5px; text-align:left; overflow-wrap:break-word; }
+      table.doc-tab td{ border:1px solid #e2e8f0; padding:5px 5px; overflow-wrap:break-word; }
+      table.doc-tab td.n, table.doc-tab th.n{ text-align:right; white-space:normal; }
       .doc-tot{ width:52%; margin-left:48%; font-size:12px; }
       .doc-tot .row{ display:flex; justify-content:space-between; padding:3px 0; }
       .doc-tot .row.big{ border-top:2px solid #111; font-weight:800; font-size:13px; padding-top:5px; margin-top:3px; }
@@ -6812,22 +6812,37 @@ function buildFilterTable(cfg){
       '<br>Domicilio: '+esc(dom);
     const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—')+
       '<br>Categoría: '+esc(v.categoria||'—')+'<br>Vendedor: '+esc(v.vendedor||'—');
+    // Al consumidor final no hace falta discriminarle el IVA (no lo usa para nada, y desdoblar
+    // Neto/Alícuota/c-IVA en 8 columnas es lo que hacía desbordar el ancho de la hoja A4). Se le
+    // muestra directamente el precio final por renglón y el total, sin el desglose.
+    const esConsumidorFinal = /consumidor final/i.test(v.listaPrecios||'');
     let filas = (v.items||[]).filter(it=>it&&(it.desc||it.codigo)).map(it=>{
       const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100);
       const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
       const cIva=base*(1+al/100);
+      if(esConsumidorFinal){
+        const precioFinal = num(it.precioUnit)*(1+al/100);
+        return '<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td>'+
+          '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(precioFinal)+'</td>'+
+          '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(cIva)+'</td></tr>';
+      }
       return '<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td>'+
         '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(it.precioUnit)+'</td>'+
         '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(base)+'</td>'+
         '<td class="n">'+alicLbl(it.iva)+'</td><td class="n">'+money(cIva)+'</td></tr>';
     }).join('');
-    const tabla='<table class="doc-tab"><tr><th>Código</th><th>Descripción</th><th class="n">Cant.</th>'+
-      '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th><th class="n">Alicuota</th><th class="n">Subtotal c/IVA</th></tr>'+filas+'</table>';
+    const tabla = esConsumidorFinal
+      ? '<table class="doc-tab"><tr><th>Código</th><th>Descripción</th><th class="n">Cant.</th>'+
+        '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th></tr>'+filas+'</table>'
+      : '<table class="doc-tab"><tr><th>Código</th><th>Descripción</th><th class="n">Cant.</th>'+
+        '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th><th class="n">Alicuota</th><th class="n">Subtotal c/IVA</th></tr>'+filas+'</table>';
     const d=desglose(v), k=calcVenta(v);
     let tot='';
-    if(d.netoGrav>0) tot+='<div class="row"><span>Importe Neto Gravado</span><b>'+money(d.netoGrav)+'</b></div>';
-    Object.keys(d.porAlic).sort((a,b)=>b-a).forEach(al=>{ tot+='<div class="row"><span>IVA '+alicLbl(al)+'</span><b>'+money(d.porAlic[al]*num(al)/100)+'</b></div>'; });
-    if(d.netoNoGrav>0) tot+='<div class="row"><span>Importe Neto No Gravado</span><b>'+money(d.netoNoGrav)+'</b></div>';
+    if(!esConsumidorFinal){
+      if(d.netoGrav>0) tot+='<div class="row"><span>Importe Neto Gravado</span><b>'+money(d.netoGrav)+'</b></div>';
+      Object.keys(d.porAlic).sort((a,b)=>b-a).forEach(al=>{ tot+='<div class="row"><span>IVA '+alicLbl(al)+'</span><b>'+money(d.porAlic[al]*num(al)/100)+'</b></div>'; });
+      if(d.netoNoGrav>0) tot+='<div class="row"><span>Importe Neto No Gravado</span><b>'+money(d.netoNoGrav)+'</b></div>';
+    }
     [['percepIva','Perc. IVA'],['percepIibb','Perc. IIBB'],['impInternos','Imp. Internos'],['intereses','Intereses']].forEach(([f,l])=>{ if(num(v[f])) tot+='<div class="row"><span>'+l+'</span><b>'+money(v[f])+'</b></div>'; });
     tot+='<div class="row big"><span>Total '+(esPresupuesto?'Presupuesto':'Venta')+'</span><b>'+money(k.total)+'</b></div>';
     if(!esPresupuesto){ tot+='<div class="row"><span>Total Cobrado</span><b>'+money(k.cobrado)+'</b></div>'+
