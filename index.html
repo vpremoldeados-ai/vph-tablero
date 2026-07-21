@@ -195,6 +195,14 @@
   .kb-card .acts{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap;align-items:center}
   .kb-wa{background:#25d366;color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;gap:4px;align-items:center}
   .kb-move{font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 6px;background:#fff;color:#54637a;cursor:pointer}
+  .kb-viewbtn{font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:#fff;color:#54637a;cursor:pointer;font-weight:700}
+  .kb-viewbtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .crm-tbl{width:100%;border-collapse:collapse}
+  .crm-tbl th,.crm-tbl td{padding:7px 8px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;vertical-align:top;white-space:normal}
+  .crm-tbl th{background:#f7f9fc;color:#54637a;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;position:sticky;top:0}
+  .crm-tbl tbody tr:hover{background:#f7f9fc}
+  .crm-tbl .est-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;color:#fff;white-space:nowrap}
+  .crm-tbl .acts{display:flex;gap:5px;flex-wrap:wrap}
 
   /* ---------- PRODUCCIÓN / ENTREGAS (mobile-first) ---------- */
   .pe-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
@@ -656,9 +664,13 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         <input type="text" class="search-box" id="crm-buscar" placeholder="Buscar cliente, teléfono, producto, lugar..." style="margin-left:0">
+        <button class="kb-viewbtn" id="crm-view-lista" title="Vista en lista, con filtros por columna">📋 Lista</button>
+        <button class="kb-viewbtn" id="crm-view-tablero" title="Vista en columnas por etapa">🗂 Tablero</button>
         <span class="result-count" id="crm-count" style="margin:0 0 0 auto"></span>
       </div>
+      <div class="filter-bar" id="crm-filtros" style="display:none"></div>
       <div class="kb-board" id="crm-board"></div>
+      <div class="tbl-wrap" id="crm-tabla-wrap" style="display:none"><table class="crm-tbl" id="crm-tabla"></table></div>
       <p class="note">Cada lead lleva el pedido, el teléfono con <b>link directo a WhatsApp</b> y el seguimiento. Cuando se confirma, <b>"→ Venta"</b> abre la venta ya cargada con el cliente y los productos (trayendo precios del catálogo). Pensado para recibir automáticamente lo que arma el cotizador de la web (próxima etapa).</p>
     </section>
   </div>
@@ -4682,6 +4694,10 @@ function buildFilterTable(cfg){
   const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
 
   let DB={leads:[]}, q='', unsub=null, uidSeq=Date.now();
+  // Vista Lista: alternativa al kanban horizontal, pensada para leer rápido sin scrollear a los costados
+  // y con filtros por columna (Estado / Producto / Zona / Origen), como pidió Sofía.
+  let VIEW = localStorage.getItem('vph_crm_view')==='lista' ? 'lista' : 'tablero';
+  let filtro = {estado:'', producto:'', zona:'', origen:''};
   const newUid=()=> 'l'+(uidSeq++).toString(36);
   function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(KEY)); if(d&&Array.isArray(d.leads))return d; }catch(e){} return {leads:[]}; }
   function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
@@ -4715,6 +4731,11 @@ function buildFilterTable(cfg){
     normalizarLeads();
     let leads=DB.leads.slice();
     if(q){ const s=q.toLowerCase(); leads=leads.filter(l=> (l.cliente+' '+l.telefono+' '+l.lugar+' '+resumenPedido(l)).toLowerCase().includes(s)); }
+    renderFiltros(leads);
+    if(filtro.estado) leads=leads.filter(l=>(l.estado||'nuevo')===filtro.estado);
+    if(filtro.producto) leads=leads.filter(l=>(l.items||[]).some(it=>it&&it.producto===filtro.producto));
+    if(filtro.zona) leads=leads.filter(l=>(l.zona||'')===filtro.zona);
+    if(filtro.origen) leads=leads.filter(l=>(l.origen||'')===filtro.origen);
     // KPIs
     const activos=leads.filter(l=>ACTIVOS.includes(l.estado));
     const valorPipe=activos.reduce((a,l)=>a+num(l.monto),0);
@@ -4723,14 +4744,31 @@ function buildFilterTable(cfg){
       k('En gestión','warn', String(activos.length), 'Nuevos, cotizados y en reconsulta') +
       k('Valor en pipeline','info', money(valorPipe), 'Suma de montos estimados activos') +
       k('Confirmados','good', String(leads.filter(l=>l.estado==='confirmado').length), 'Listos para venta/entrega');
-    // Board
-    $('crm-board').innerHTML = ESTADOS.map(e=>{
-      const cards=leads.filter(l=>(l.estado||'nuevo')===e.k).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
-      return '<div class="kb-col"><div class="kb-col-head" style="border-top-color:'+e.c+'">'+e.l+'<span class="cnt">'+cards.length+'</span></div>'+
-        '<div class="kb-cards">'+ (cards.length?cards.map(l=>{ try{ return cardHtml(l); }catch(err){ return '<div class="kb-card" style="border-color:var(--red)"><b>Lead con datos inválidos</b><div class="acts"><button class="cmp-rowbtn" data-act="del" data-id="'+esc(l._uid)+'">Eliminar</button></div></div>'; } }).join(''):'<div class="kb-empty">—</div>') +'</div></div>';
-    }).join('');
-    // eventos de cards
-    $('crm-board').querySelectorAll('[data-act]').forEach(el=> el.onclick=()=>{ const l=DB.leads.find(x=>x._uid==el.dataset.id); if(!l)return; const a=el.dataset.act;
+    if(VIEW==='lista') drawTabla(leads); else drawBoard(leads);
+    $('crm-count').textContent = leads.length+' leads';
+  }
+  // Dropdowns de filtro por columna (Estado / Producto / Zona / Origen). Las opciones salen del
+  // set de leads recibido (ya con la búsqueda de texto aplicada, pero antes de los filtros de columna,
+  // así una opción elegida no hace desaparecer a las demás del combo).
+  function renderFiltros(source){
+    const productos=[...new Set(source.flatMap(l=>(l.items||[]).map(it=>it&&it.producto).filter(Boolean)))].sort();
+    const zonas=[...new Set(source.map(l=>l.zona).filter(Boolean))];
+    const zLabel=zk=>{ const z=(window.__fleteZonas?window.__fleteZonas():[]).find(z=>z.k===zk); return z?z.l:zk; };
+    const origenes=[...new Set(source.map(l=>l.origen).filter(Boolean))];
+    const sel=(id,label,valor,opts)=> '<select id="'+id+'" title="'+label+'" style="padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;max-width:170px">'+
+      '<option value="">'+label+' (todos)</option>'+ opts.map(([v,l])=>'<option value="'+esc(v)+'"'+(valor===v?' selected':'')+'>'+esc(l)+'</option>').join('') +'</select>';
+    $('crm-filtros').innerHTML =
+      sel('crm-f-estado','Estado',filtro.estado, ESTADOS.map(e=>[e.k,e.l])) +
+      sel('crm-f-producto','Producto',filtro.producto, productos.map(p=>[p,p])) +
+      sel('crm-f-zona','Zona',filtro.zona, zonas.map(z=>[z,zLabel(z)])) +
+      sel('crm-f-origen','Origen',filtro.origen, origenes.map(o=>[o,o])) +
+      (filtro.estado||filtro.producto||filtro.zona||filtro.origen ? '<button class="cmp-rowbtn" id="crm-f-limpiar">✕ Limpiar filtros</button>' : '');
+    [['crm-f-estado','estado'],['crm-f-producto','producto'],['crm-f-zona','zona'],['crm-f-origen','origen']].forEach(([id,key])=>{
+      const el=$(id); if(el) el.onchange=()=>{ filtro[key]=el.value; render(); }; });
+    if($('crm-f-limpiar')) $('crm-f-limpiar').onclick=()=>{ filtro={estado:'',producto:'',zona:'',origen:''}; render(); };
+  }
+  function bindAcciones(root){
+    root.querySelectorAll('[data-act]').forEach(el=> el.onclick=()=>{ const l=DB.leads.find(x=>x._uid==el.dataset.id); if(!l)return; const a=el.dataset.act;
       if(a==='edit') openForm(l);
       else if(a==='preg') openPreg(l);
       else if(a==='plant') openPlant(l);
@@ -4744,9 +4782,49 @@ function buildFilterTable(cfg){
           if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); }   // el lead pasa a "Cotizado"
           if(window.__presupuestoImprimir) window.__presupuestoImprimir(p);   // abre la vista previa para descargar/imprimir el PDF
         }); } });
-    $('crm-board').querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ l.estado=sel.value; persist(l); } });
-    $('crm-count').textContent = leads.length+' leads';
+    root.querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ l.estado=sel.value; persist(l); } });
   }
+  function drawBoard(leads){
+    $('crm-board').innerHTML = ESTADOS.map(e=>{
+      const cards=leads.filter(l=>(l.estado||'nuevo')===e.k).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+      return '<div class="kb-col"><div class="kb-col-head" style="border-top-color:'+e.c+'">'+e.l+'<span class="cnt">'+cards.length+'</span></div>'+
+        '<div class="kb-cards">'+ (cards.length?cards.map(l=>{ try{ return cardHtml(l); }catch(err){ return '<div class="kb-card" style="border-color:var(--red)"><b>Lead con datos inválidos</b><div class="acts"><button class="cmp-rowbtn" data-act="del" data-id="'+esc(l._uid)+'">Eliminar</button></div></div>'; } }).join(''):'<div class="kb-empty">—</div>') +'</div></div>';
+    }).join('');
+    bindAcciones($('crm-board'));
+  }
+  // Vista Lista: una fila por lead, sin scroll horizontal (columnas acotadas a lo esencial, el resto
+  // queda a un clic en "Editar"), pensada para leer rápido el embudo completo de un vistazo.
+  function drawTabla(leads){
+    const rows=leads.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(l=>{ try{
+      const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
+      const wa=waLink(l.telefono);
+      return '<tr>'+
+        '<td><b>'+esc(l.cliente||'(sin nombre)')+'</b>'+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700">✓</span>':'')+
+          (l.telefono?'<div style="color:var(--muted);font-size:11px">'+(wa?'<a href="'+wa+'" target="_blank" rel="noopener" style="color:var(--green)">📞 '+esc(l.telefono)+'</a>':esc(l.telefono))+'</div>':'')+'</td>'+
+        '<td><span class="est-chip" style="background:'+e.c+'">'+e.l+'</span></td>'+
+        '<td>'+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</td>'+
+        '<td>'+esc(l.lugar||'—')+'</td>'+
+        '<td>'+(num(l.monto)?money(num(l.monto)):'—')+'</td>'+
+        '<td>'+esc(l.origen||'—')+'</td>'+
+        '<td>'+seguiBadge(l)+'</td>'+
+        '<td class="acts">'+
+          '<button class="cmp-rowbtn" data-act="edit" data-id="'+l._uid+'">Editar</button>'+
+          '<button class="cmp-rowbtn" data-act="pdf" data-id="'+l._uid+'" style="border-color:var(--accent);color:var(--accent);font-weight:800" title="Presupuesto PDF">⚡</button>'+
+          '<button class="cmp-rowbtn" data-act="venta" data-id="'+l._uid+'" title="Crear venta">→ Venta</button>'+
+          '<button class="cmp-rowbtn" data-act="del" data-id="'+l._uid+'">✕</button>'+
+        '</td></tr>';
+      }catch(err){ return '<tr><td colspan="8" style="color:var(--red)">Lead con datos inválidos <button class="cmp-rowbtn" data-act="del" data-id="'+esc(l._uid)+'">Eliminar</button></td></tr>'; } }).join('');
+    $('crm-tabla').innerHTML = '<thead><tr><th>Cliente</th><th>Estado</th><th>Pedido</th><th>Lugar</th><th>Monto</th><th>Origen</th><th>Seguimiento</th><th>Acciones</th></tr></thead>'+
+      '<tbody>'+(rows||'<tr><td colspan="8" style="text-align:center;color:var(--muted)">Sin leads que coincidan con los filtros.</td></tr>')+'</tbody>';
+    bindAcciones($('crm-tabla'));
+  }
+  function setView(v){ VIEW=v; localStorage.setItem('vph_crm_view', v);
+    $('crm-view-lista').classList.toggle('active', v==='lista');
+    $('crm-view-tablero').classList.toggle('active', v==='tablero');
+    $('crm-filtros').style.display = v==='lista' ? 'flex' : 'none';
+    $('crm-board').style.display = v==='tablero' ? '' : 'none';
+    $('crm-tabla-wrap').style.display = v==='lista' ? '' : 'none';
+    render(); }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function seguiBadge(l){ if(!l.proximoSeguimiento) return '';
     const venc=l.proximoSeguimiento<hoyISO, hoy=l.proximoSeguimiento===hoyISO;
@@ -5002,7 +5080,8 @@ function buildFilterTable(cfg){
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.leads=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('crm:',err));
     pregSubscribe(); plantSubscribe(); }
   function stopSync(){ if(unsub){unsub();unsub=null;} if(pregUnsub){pregUnsub();pregUnsub=null;} if(plantUnsub){plantUnsub();plantUnsub=null;} }
-  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  function boot(){ setView(VIEW);
+    if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.leads=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { DB=loadLocal(); pregSubscribe(); plantSubscribe(); render(); } }
@@ -5026,6 +5105,8 @@ function buildFilterTable(cfg){
     const segui=DB.leads.filter(l=>l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO && ACTIVOS.includes(l.estado||'nuevo'));
     if(segui.length) A.push({sev:'warn', area:'Comercial', t:segui.length+' seguimiento'+(segui.length>1?'s':'')+' de lead pendiente'+(segui.length>1?'s':'')+' (vencido u hoy)', act:'Retomar el contacto prometido antes de que se enfríe.', go:{page:'CRM / Leads'}});
     return A; });
+  $('crm-view-lista').onclick=()=>setView('lista');
+  $('crm-view-tablero').onclick=()=>setView('tablero');
   $('crm-nuevo').onclick=()=>openForm(null);
   $('crm-preg-edit').onclick=()=>openPreg(null);
   $('crm-preg-cerrar').onclick=closePreg;
