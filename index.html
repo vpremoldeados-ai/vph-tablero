@@ -671,6 +671,7 @@
         <input type="text" class="search-box" id="crm-buscar" placeholder="Buscar cliente, teléfono, producto, lugar..." style="margin-left:0">
         <button class="kb-viewbtn" id="crm-view-lista" title="Vista en lista, con filtros por columna">📋 Lista</button>
         <button class="kb-viewbtn" id="crm-view-tablero" title="Vista en columnas por etapa">🗂 Tablero</button>
+        <button class="kb-viewbtn" id="crm-ver-archivados" title="Los leads Confirmados (venta) y Perdidos se archivan solos y no aparecen en el listado — tocá acá para verlos igual">📦 Ver archivados</button>
         <span class="result-count" id="crm-count" style="margin:0 0 0 auto"></span>
       </div>
       <div class="filter-bar" id="crm-filtros" style="display:none"></div>
@@ -4982,6 +4983,11 @@ function buildFilterTable(cfg){
   // y con filtros por columna (Estado / Producto / Zona / Origen), como pidió Sofía.
   let VIEW = localStorage.getItem('vph_crm_view')==='lista' ? 'lista' : 'tablero';
   let filtro = {estado:'', producto:'', zona:'', origen:''};
+  // Los leads Confirmados (ya se convirtieron en venta) y Perdidos no "requieren seguimiento" — quedan
+  // archivados y ocultos del listado/tablero por defecto, para que Sofía solo vea lo que sigue en gestión.
+  // "Ver archivados" los vuelve a mostrar; elegir el estado a mano en el filtro también los muestra.
+  const ARCHIVADOS = ['confirmado','perdido'];
+  let verArchivados = false;
   const newUid=()=> 'l'+(uidSeq++).toString(36);
   function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(KEY)); if(d&&Array.isArray(d.leads))return d; }catch(e){} return {leads:[]}; }
   function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
@@ -5036,8 +5042,14 @@ function buildFilterTable(cfg){
       k('En gestión','warn', String(activos.length), 'Nuevos, cotizados y en reconsulta') +
       k('Valor en pipeline','info', money(valorPipe), 'Suma de montos estimados activos') +
       k('Confirmados','good', String(leads.filter(l=>l.estado==='confirmado').length), 'Listos para venta/entrega');
-    if(VIEW==='lista') drawTabla(leads); else drawBoard(leads);
-    $('crm-count').textContent = leads.length+' leads';
+    // El listado/tablero solo muestra lo que sigue en gestión: Confirmado (ya es venta) y Perdido quedan
+    // archivados y ocultos, salvo que Sofía tilde "Ver archivados" o filtre ese estado a mano.
+    const ocultarArchivados = !verArchivados && !filtro.estado;
+    const leadsVista = ocultarArchivados ? leads.filter(l=>!ARCHIVADOS.includes(l.estado||'nuevo')) : leads;
+    if(VIEW==='lista') drawTabla(leadsVista); else drawBoard(leadsVista);
+    const archivados = leads.length - leadsVista.length;
+    $('crm-count').textContent = leadsVista.length+' leads'+(archivados?' · '+archivados+' archivados ocultos':'');
+    $('crm-ver-archivados').classList.toggle('active', verArchivados);
   }
   // Dropdowns de filtro por columna (Estado / Producto / Zona / Origen). Las opciones salen del
   // set de leads recibido (ya con la búsqueda de texto aplicada, pero antes de los filtros de columna,
@@ -5454,6 +5466,7 @@ function buildFilterTable(cfg){
     return A; });
   $('crm-view-lista').onclick=()=>setView('lista');
   $('crm-view-tablero').onclick=()=>setView('tablero');
+  $('crm-ver-archivados').onclick=()=>{ verArchivados=!verArchivados; render(); };
   $('crm-nuevo').onclick=()=>openForm(null);
   $('crm-preg-edit').onclick=()=>openPreg(null);
   $('crm-preg-cerrar').onclick=closePreg;
