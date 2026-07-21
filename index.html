@@ -2236,11 +2236,15 @@ function buildFilterTable(cfg){
           const ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
           const path = 'tickets_compras/'+newUid()+'-'+Date.now()+'.'+ext;
           const sref = ctx.ST.ref(ctx.storage, path);
-          await ctx.ST.uploadBytes(sref, file, {contentType:file.type});
-          url = await ctx.ST.getDownloadURL(sref);
+          // Si Storage no está habilitado en el proyecto (no se hizo "Get started" en Firebase Console),
+          // uploadBytes NO rechaza — queda COLGADO para siempre. Por eso el límite de tiempo: archivar
+          // es opcional, así que nunca puede trabar la lectura del ticket (que sí importa).
+          const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('sin respuesta de Storage')), 8000));
+          await Promise.race([ctx.ST.uploadBytes(sref, file, {contentType:file.type}), timeout]);
+          url = await Promise.race([ctx.ST.getDownloadURL(sref), timeout]);
           editing.ticketUrl=url; editing.ticketPath=path;
         }
-      }catch(e){ console.warn('no se pudo archivar el ticket (no es grave, sigue la lectura):', e); }
+      }catch(e){ console.warn('no se pudo archivar el ticket (no es grave, sigue la lectura):', e); url=''; }
 
       ticketEstado('⏳ Cargando el lector (solo la primera vez)…');
       const { createWorker } = await cargarTesseract();
