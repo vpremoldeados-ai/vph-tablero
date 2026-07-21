@@ -2138,22 +2138,30 @@ function buildFilterTable(cfg){
         if(!num(it.precioUnit) && num(prod.costo)) it.precioUnit=num(prod.costo);
         if(prod.ivaVenta) it.iva=String(prod.ivaVenta);
         drawItems(); drawTotals(); return; }
-      it.codigo=''; const bt=$('cmp-prodbtn-'+i); if(bt) bt.innerHTML=itemProdBtn(i,it);
+      it.codigo=''; wireProdBtn(i);
     }));
-    $('f-items').querySelectorAll('button[data-edprod]').forEach(b=> b.onclick=()=>{
-      const i=+b.dataset.edprod; const it=editing.items[i]; const prod=String(it.codigo||'').trim()?matchProducto(it.codigo):matchProducto(it.desc);
+    editing.items.forEach((it,i)=> wireProdBtn(i));
+    $('f-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
+  }
+  // Repinta el botón ✎ Editar / + Nuevo de la fila `i` Y le vuelve a enganchar el click — si solo se
+  // toca el innerHTML (como hace el listener de arriba cuando NO matchea) el botón nuevo queda sin
+  // handler. Por eso este es el ÚNICO lugar que arma el HTML de este botón y lo cablea, sea cual sea
+  // el motivo del repintado (drawItems completo o el ajuste puntual de una fila).
+  function wireProdBtn(i){
+    const it=editing.items[i]; const bt=$('cmp-prodbtn-'+i); if(!bt) return;
+    bt.innerHTML=itemProdBtn(i,it);
+    const be=bt.querySelector('button[data-edprod]');
+    if(be) be.onclick=()=>{ const prod=String(it.codigo||'').trim()?matchProducto(it.codigo):matchProducto(it.desc);
       if(!prod) return;
-      window.__abrirProducto({ uid:prod._uid, onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||''; drawItems(); drawTotals(); } });
-    });
-    $('f-items').querySelectorAll('button[data-nvprod]').forEach(b=> b.onclick=()=>{
-      const i=+b.dataset.nvprod; const it=editing.items[i];
+      window.__abrirProducto({ uid:prod._uid, onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||''; drawItems(); drawTotals(); } }); };
+    const bn=bt.querySelector('button[data-nvprod]');
+    if(bn) bn.onclick=()=>{
       window.__abrirProducto({ nombreSugerido: it.desc, tipoSugerido: tipoSugeridoDesdeCompra(),
         onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||'';
           if(!num(it.precioUnit) && num(rec.costo)) it.precioUnit=num(rec.costo);
           if(rec.ivaVenta) it.iva=String(rec.ivaVenta);
           drawItems(); drawTotals(); } });
-    });
-    $('f-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
+    };
   }
 
   function drawTotals(){
