@@ -4205,9 +4205,11 @@ function buildFilterTable(cfg){
     if(f.costo>0){
       const sf=/sin facturar|sin factura/i.test(p.listaPrecios||'');
       const iva= sf?'nogravado':'21';
-      // El precio de zona es FINAL (con IVA), igual que en el cotizador → se netea para el renglón, como hace aplicarProducto con los productos.
-      const precioUnit = sf ? round2(f.costo) : round2(f.costo/1.21);
-      p.items.push({desc:'Flete — '+zonaLabel(p.zona)+' ('+f.pallets+' pallet'+(f.pallets>1?'s':'')+')', codigo:'FLETE', cant:1, precioUnit, descPct:0, iva});
+      // El precio de zona es FINAL (con IVA) por pallet, igual que en el cotizador → se netea para el renglón,
+      // como hace aplicarProducto con los productos. Descripción simple: "Flete", cantidad = pallets,
+      // precio unitario = costo por pallet — sin repetir el nombre de la zona ni el conteo entre paréntesis.
+      const precioUnit = sf ? round2(zonaCosto(p.zona)) : round2(zonaCosto(p.zona)/1.21);
+      p.items.push({desc:'Flete', codigo:'FLETE', cant:f.pallets, precioUnit, descPct:0, iva});
     }
     return f;
   }
@@ -6811,6 +6813,17 @@ function buildFilterTable(cfg){
         'Las fechas de entrega pueden variar en función de la logística y las condiciones climáticas.</div>'+
     '</div>';
 
+  // Fotos de producto para el PDF: archivos en vph-tablero/Productos/, nombrados por código de catálogo.
+  // Si un código no tiene foto (Flete, o uno nuevo sin cargar), simplemente no se agrega — no rompe el documento.
+  const IMG_PRODUCTO = {
+    ULC60:'ULC60.png', ULC40:'ULC40.png', UGB35:'UGB.png', UGC35:'UGC.png', UGR35:'UGR.png',
+    TEC50:'TEC50.png', TET50:'TET50.png', ULL50:'ULL50.png', UCC10:'UCC10.png',
+    TET100:'TET100.png', TER100:'TER100.png'
+  };
+  function celdaCodigo(codigo){
+    const img = IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()];
+    return (img?'<img src="Productos/'+img+'" alt="" style="width:24px;height:24px;object-fit:cover;border-radius:3px;vertical-align:middle;margin-right:4px" onerror="this.remove()">':'')+esc(codigo||'');
+  }
   // ---------- Detalle de Venta / Presupuesto ----------
   function detalle(v, esPresupuesto){
     const cli=buscarCliente(v.cliente,v.cuit)||{};
@@ -6835,11 +6848,11 @@ function buildFilterTable(cfg){
       const cIva=base*(1+al/100);
       if(esConsumidorFinal){
         const precioFinal = num(it.precioUnit)*(1+al/100);
-        return '<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td>'+
+        return '<tr><td>'+celdaCodigo(it.codigo)+'</td><td>'+esc(it.desc||'')+'</td>'+
           '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(precioFinal)+'</td>'+
           '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(cIva)+'</td></tr>';
       }
-      return '<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td>'+
+      return '<tr><td>'+celdaCodigo(it.codigo)+'</td><td>'+esc(it.desc||'')+'</td>'+
         '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(it.precioUnit)+'</td>'+
         '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(base)+'</td>'+
         '<td class="n">'+alicLbl(it.iva)+'</td><td class="n">'+money(cIva)+'</td></tr>';
