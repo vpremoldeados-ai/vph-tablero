@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// Mismo criterio que las reglas de Firestore (REGLAS_FIRESTORE_v2_por_rol.txt): solo el rol admin
+// (Marcelo/Sofía) puede subir y leer los tickets de compra escaneados. Gustavo (rol produccion) no
+// los necesita y no los ve. Fail-closed: sin rol asignado, sin acceso.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function esAdmin() {
+      return request.auth != null &&
+        firestore.get(/databases/(default)/documents/vph_roles/$(request.auth.uid)).data.rol == 'admin';
+    }
+
+    match /tickets_compras/{archivo} {
+      allow read, write: if esAdmin();
+      // Ticket individual: máx 15 MB, solo PDF o imagen.
+      allow write: if esAdmin()
+        && request.resource.size < 15 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+    }
+
+    // Todo lo demás, cerrado por defecto.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

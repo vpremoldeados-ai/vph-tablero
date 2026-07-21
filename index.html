@@ -2047,6 +2047,10 @@ function buildFilterTable(cfg){
     const c = editing;
     const opt = (arr,sel,valFn,labFn)=> arr.map(x=>{ const v=valFn?valFn(x):x, l=labFn?labFn(x):x; return '<option value="'+v+'"'+(String(sel)===String(v)?' selected':'')+'>'+l+'</option>'; }).join('');
     $('cmp-form').innerHTML =
+      // "Leer ticket" solo tiene sentido en un alta nueva (una compra ya cargada no se reprocesa).
+      // La Cloud Function que lo procesa puede no estar desplegada todavía (ver DESPLEGAR_TICKETS_COMPRA.md);
+      // el botón queda igual, y si falla avisa con un mensaje claro en vez de romper el formulario.
+      (!c._uid ? ticketBoxHtml() : '') +
       '<div class="cmp-form-grid">'+
         field('Proveedor','col2','<input id="f-prov" list="f-prov-list" value="'+esc(c.proveedor)+'" placeholder="Nombre del proveedor">'+datalistProv()) +
         field('CUIT / DNI','','<input id="f-cuit" value="'+esc(c.cuit)+'" placeholder="00-00000000-0">') +
@@ -2093,6 +2097,7 @@ function buildFilterTable(cfg){
     // Tarjetas: la categoría define si la compra es COSTO FIJO (entra al punto de equilibrio), así que
     // conviene verla de un vistazo; y el tipo de comprobante distingue una Nota de Crédito de una compra.
     if(window.__tarjetas){ window.__tarjetas('f-cat'); window.__tarjetas('f-tipo'); }
+    wireTicketBox();
     $('f-cancel').onclick=closeForm;
     $('f-save').onclick=saveForm;
     drawTotals();
@@ -2167,6 +2172,82 @@ function buildFilterTable(cfg){
           if(rec.ivaVenta) it.iva=String(rec.ivaVenta);
           drawItems(); drawTotals(); } });
     };
+  }
+
+  // ---------- Leer ticket de compra (foto/PDF → Cloud Function → precarga el formulario) ----------
+  // Sube el archivo a Storage (carpeta tickets_compras/) y llama a la función "procesarTicketCompra",
+  // que lo lee con IA y devuelve un BORRADOR de datos — nunca se guarda solo, siempre hay que revisar
+  // y darle a "Guardar compra". Si la función todavía no está desplegada (ver
+  // DESPLEGAR_TICKETS_COMPRA.md), avisa con un mensaje claro en vez de romper el formulario.
+  let ticketBusy=false;
+  function ticketBoxHtml(){
+    return '<div id="f-ticket-box" style="border:1px dashed var(--border);border-radius:12px;padding:12px 14px;margin-bottom:14px;background:var(--bg,#f8fafc)">'+
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+        '<div style="font-size:13px"><b>📎 Leer ticket de compra</b> <span style="color:var(--muted)">— subí la foto o el PDF y precarga los datos solos</span></div>'+
+        '<button type="button" class="cmp-btn" id="f-ticket-btn" style="margin-left:auto">Elegir archivo…</button>'+
+        '<input type="file" id="f-ticket-file" accept="image/jpeg,image/png,image/webp,application/pdf" style="display:none">'+
+      '</div>'+
+      '<div id="f-ticket-status" style="font-size:12px;color:var(--muted);margin-top:6px"></div>'+
+    '</div>';
+  }
+  function wireTicketBox(){
+    const btn=$('f-ticket-btn'), file=$('f-ticket-file');
+    if(!btn||!file) return;   // compra ya existente: no se dibuja el cuadro
+    btn.onclick=()=> file.click();
+    file.onchange=()=>{ const f=file.files&&file.files[0]; if(f) procesarTicket(f); file.value=''; };
+  }
+  function ticketEstado(html, cls){ const el=$('f-ticket-status'); if(el){ el.innerHTML=html; el.style.color = cls==='bad'?'var(--red)':cls==='good'?'var(--green)':'var(--muted)'; } }
+  async function procesarTicket(file){
+    if(ticketBusy) return; ticketBusy=true;
+    const ctx=window.__fbctx;
+    if(!USA_NUBE || !fbDb){ ticketEstado('Iniciá sesión primero.','bad'); ticketBusy=false; return; }
+    if(!ctx||!ctx.storage||!ctx.functions){ ticketEstado('⚠️ Esta función todavía no está activada en este dispositivo (hace falta desplegar la Cloud Function — ver DESPLEGAR_TICKETS_COMPRA.md). Cargá los datos a mano por ahora.','bad'); ticketBusy=false; return; }
+    const tiposOk=['image/jpeg','image/png','image/webp','application/pdf'];
+    if(!tiposOk.includes(file.type)){ ticketEstado('Formato no soportado: subí una foto (JPG/PNG) o un PDF.','bad'); ticketBusy=false; return; }
+    if(file.size > 15*1024*1024){ ticketEstado('El archivo pesa más de 15 MB — probá con una foto más liviana.','bad'); ticketBusy=false; return; }
+    const ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
+    const path = 'tickets_compras/'+newUid()+'-'+Date.now()+'.'+ext;
+    let url='';
+    try{
+      ticketEstado('⏳ Subiendo el archivo…');
+      const sref = ctx.ST.ref(ctx.storage, path);
+      await ctx.ST.uploadBytes(sref, file, {contentType:file.type});
+      url = await ctx.ST.getDownloadURL(sref);
+      ticketEstado('⏳ Leyendo el ticket (puede tardar unos segundos)…');
+      const llamar = ctx.FNS.httpsCallable(ctx.functions, 'procesarTicketCompra');
+      const res = await llamar({path});
+      aplicarDatosTicket(res.data||{});
+      editing.ticketUrl = url; editing.ticketPath = path;
+      ticketEstado('✅ Datos precargados desde el ticket — <a href="'+url+'" target="_blank" rel="noopener">ver archivo</a>. <b>Revisá todo antes de guardar</b>, el OCR puede equivocarse.'+((res.data&&res.data.avisos)?(' ⚠️ '+esc(res.data.avisos)):''), 'good');
+    }catch(e){
+      console.error('procesarTicket:', e);
+      const msg = (e&&e.code==='functions/not-found') ? 'La función de lectura no está desplegada todavía.' : (e&&e.message)||'Error desconocido.';
+      ticketEstado((url?'El archivo se subió (<a href="'+url+'" target="_blank" rel="noopener">verlo</a>) pero no se pudo leer automáticamente: ':'No se pudo leer el ticket: ')+esc(msg)+'. Cargá los datos a mano.', 'bad');
+    } finally { ticketBusy=false; }
+  }
+  // Vuelca lo que devolvió la IA en el formulario. Solo pisa campos que vinieron con datos (no borra lo
+  // que la persona ya haya tipeado), y siempre deja que se revise: no guarda nada solo.
+  function aplicarDatosTicket(d){
+    if(d.proveedor) editing.proveedor=d.proveedor;
+    if(d.cuit) editing.cuit=d.cuit;
+    if(d.condIva && COND_IVA.includes(d.condIva)) editing.condIva=d.condIva;
+    if(d.tipoComprobante && TIPOS_COMPROB.includes(d.tipoComprobante)) editing.tipoComprobante=d.tipoComprobante;
+    if(d.categoria && CATEGORIAS.includes(d.categoria)) editing.categoria=d.categoria;
+    if(d.fecha) editing.fecha=d.fecha;
+    if(d.vencimiento) editing.vencimiento=d.vencimiento; else if(d.fecha) editing.vencimiento=d.fecha;
+    if(d.fecha) editing.periodo=String(d.fecha).slice(0,7);
+    if(d.puntoVenta) editing.puntoVenta=d.puntoVenta;
+    if(d.nroFactura) editing.nroFactura=d.nroFactura;
+    if(num(d.descGeneral)) editing.descGeneral=num(d.descGeneral);
+    if(num(d.percepIva)) editing.percepIva=num(d.percepIva);
+    if(num(d.percepIibb)) editing.percepIibb=num(d.percepIibb);
+    if(num(d.impInternos)) editing.impInternos=num(d.impInternos);
+    if(num(d.intereses)) editing.intereses=num(d.intereses);
+    if(Array.isArray(d.items) && d.items.length){
+      const ivaOk=v=> ALICUOTAS.some(a=>a.v===String(v));
+      editing.items = d.items.map(it=>({ desc:String(it.desc||''), codigo:'', cant:num(it.cant)||1, precioUnit:num(it.precioUnit)||0, descPct:num(it.descPct)||0, iva: ivaOk(it.iva)?String(it.iva):'21' }));
+    }
+    drawForm();
   }
 
   function drawTotals(){
@@ -2276,13 +2357,19 @@ function buildFilterTable(cfg){
   }
   async function initFirebase(){
     const base='https://www.gstatic.com/firebasejs/'+FB_VER+'/';
-    const [appM, authM, fsM] = await Promise.all([
-      import(base+'firebase-app.js'), import(base+'firebase-auth.js'), import(base+'firebase-firestore.js')
+    // Storage y Functions se suman para "Leer ticket de compra" (subir foto/PDF + Cloud Function que lo
+    // interpreta). Si algún día fallan al cargar (CDN caído), el resto del Tablero sigue andando: se
+    // guardan en window.__fbctx como null y el botón de tickets simplemente se desactiva.
+    const [appM, authM, fsM, stM, fnM] = await Promise.all([
+      import(base+'firebase-app.js'), import(base+'firebase-auth.js'), import(base+'firebase-firestore.js'),
+      import(base+'firebase-storage.js').catch(()=>null), import(base+'firebase-functions.js').catch(()=>null)
     ]);
     AUTH=authM; FS=fsM;
     fbApp = appM.initializeApp(firebaseConfig);
     fbAuth = authM.getAuth(fbApp); fbDb = fsM.getFirestore(fbApp);
-    window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth };   // compartido con otros módulos (Ventas, etc.)
+    const fbStorage = stM ? stM.getStorage(fbApp) : null;
+    const fbFns = fnM ? fnM.getFunctions(fbApp) : null;
+    window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth, ST:stM, storage:fbStorage, FNS:fnM, functions:fbFns };   // compartido con otros módulos (Ventas, etc.)
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
