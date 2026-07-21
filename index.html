@@ -708,6 +708,20 @@
     </div>
   </div>
 
+  <!-- ================= BANDEJA WHATSAPP (bot copiloto) ================= -->
+  <div class="page" id="page-wabandeja">
+    <div class="kpis" id="wab-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="margin:0"><span class="dot" style="background:var(--accent2)"></span>Bandeja WhatsApp</h2>
+        <span class="result-count" id="wab-count" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="filter-bar" id="wab-filtros"></div>
+      <div id="wab-lista"></div>
+      <p class="note">Cada mensaje entrante de WhatsApp aparece acá, clasificado solo (Fábrica / Proveedor / Cliente / Lead) por el bot. Fuera del horario de atención (L a V 9 a 17hs) el bot ya le avisó al remitente que lo van a atender al abrir. <b>Marcar resuelto</b> lo saca de la lista; <b>Abrir WhatsApp</b> va directo al chat. Datos en la nube (Firestore <code>vph_wa_pendientes</code>), los escribe el bot que corre aparte.</p>
+    </section>
+  </div>
+
   <!-- ================= BASE DE DATOS (ABM clientes/proveedores/productos) ================= -->
   <div class="page" id="page-basedatos">
     <section>
@@ -1087,6 +1101,7 @@ const PAGES = [
   { id:'comercial', nombre:'Comercial', ico:'▲' },
   { id:'prodent', nombre:'Producción y Logística', ico:'🏭' },
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
+  { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'compras', nombre:'Compras', ico:'🧾' },
@@ -5120,6 +5135,87 @@ function buildFilterTable(cfg){
   $('crm-import-file').onchange=e=>{ if(e.target.files[0])importJSON(e.target.files[0]); e.target.value=''; };
   $('crm-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('crm-modal').addEventListener('click',e=>{ if(e.target===$('crm-modal')) closeForm(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO BANDEJA WHATSAPP — lee lo que escribe el bot copiloto (proceso Node
+     aparte, no vive en esta página). Colección vph_wa_pendientes.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fb=()=>window.__fbctx;
+  const COL='vph_wa_pendientes';
+  const ETIQUETAS={ fabrica:{l:'Fábrica',c:'#2f6fb2'}, proveedor:{l:'Proveedor',c:'#c98a06'}, cliente:{l:'Cliente',c:'#1e9e5a'}, lead_existente:{l:'Lead (seguimiento)',c:'#8a5cc0'}, lead_nuevo:{l:'Lead nuevo',c:'#4aa3ff'} };
+  const waLink=tel=>{ let d=String(tel||'').replace(/\D/g,''); if(!d)return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; };
+  const fmtFecha=ts=>{ if(!ts) return '—'; const d = ts.toDate ? ts.toDate() : new Date(ts); return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+
+  let DB={pendientes:[]}, filtroTipo='', mostrarResueltos=false, unsub=null;
+
+  function marcarResuelto(uid){
+    const c=fb(); if(!c||!c.db) return;
+    c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {estado:'resuelto'}).catch(e=>alert('Error: '+e.message));
+  }
+
+  function render(){
+    let items=DB.pendientes.slice().sort((a,b)=> (b.creadoEn&&b.creadoEn.seconds||0) - (a.creadoEn&&a.creadoEn.seconds||0));
+    if(!mostrarResueltos) items=items.filter(i=>(i.estado||'pendiente')==='pendiente');
+    if(filtroTipo) items=items.filter(i=>i.tipo===filtroTipo);
+
+    const pendientes=DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente');
+    const fuera=pendientes.filter(i=>i.fueraDeHorario);
+    $('wab-kpis').innerHTML =
+      '<div class="kpi info"><div class="label">Pendientes</div><div class="value">'+pendientes.length+'</div><div class="sub">Sin marcar como resueltos</div></div>'+
+      '<div class="kpi warn"><div class="label">Fuera de horario</div><div class="value">'+fuera.length+'</div><div class="sub">Llegaron fuera de L-V 9 a 17hs</div></div>'+
+      '<div class="kpi good"><div class="label">Leads nuevos</div><div class="value">'+pendientes.filter(i=>i.tipo==='lead_nuevo').length+'</div><div class="sub">Creados solos en el CRM</div></div>';
+
+    $('wab-filtros').innerHTML = ['','fabrica','proveedor','cliente','lead_existente','lead_nuevo'].map(t=>{
+      const label = t? (ETIQUETAS[t]?ETIQUETAS[t].l:t) : 'Todos';
+      return '<button class="filter-btn'+(filtroTipo===t?' active':'')+'" data-t="'+t+'">'+esc(label)+'</button>';
+    }).join('') + '<button class="filter-btn'+(mostrarResueltos?' active':'')+'" id="wab-toggle-resueltos" style="margin-left:auto">'+(mostrarResueltos?'Ocultar resueltos':'Ver resueltos también')+'</button>';
+    $('wab-filtros').querySelectorAll('button[data-t]').forEach(b=> b.onclick=()=>{ filtroTipo=b.dataset.t; render(); });
+    $('wab-toggle-resueltos').onclick=()=>{ mostrarResueltos=!mostrarResueltos; render(); };
+
+    $('wab-count').textContent = items.length+' mensaje'+(items.length!==1?'s':'');
+    $('wab-lista').innerHTML = items.length ? items.map(i=>{
+      const et=ETIQUETAS[i.tipo]||{l:i.tipo,c:'#7a8699'};
+      const link=waLink(i.telefono);
+      const resuelto=(i.estado||'pendiente')==='resuelto';
+      return '<div class="kb-card" style="margin-bottom:8px'+(resuelto?';opacity:.55':'')+'">'+
+        '<div class="cli">'+esc(i.nombre||i.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span>'+(i.fueraDeHorario?' <span class="badge amber">Fuera de horario</span>':'')+'</div>'+
+        '<div class="ped">'+esc(i.mensaje||'')+'</div>'+
+        '<div class="meta">'+esc(i.telefono||'')+' · '+fmtFecha(i.creadoEn)+'</div>'+
+        '<div class="acts">'+
+          (link?'<a class="kb-wa" href="'+link+'" target="_blank">💬 Abrir WhatsApp</a>':'')+
+          (!resuelto?'<button class="kb-move" data-r="'+i._uid+'">✓ Marcar resuelto</button>':'')+
+        '</div></div>';
+    }).join('') : '<div class="kb-empty">No hay mensajes'+(filtroTipo||!mostrarResueltos?' con este filtro':'')+'.</div>';
+    $('wab-lista').querySelectorAll('button[data-r]').forEach(b=> b.onclick=()=>marcarResuelto(b.dataset.r));
+  }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.pendientes=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('wa_pendientes:',err));
+  }
+  function stopSync(){ if(unsub){unsub();unsub=null;} }
+  function boot(){
+    window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+    window.__afterLogin.push(startSync);
+    window.__afterLogout.push(()=>{ stopSync(); DB.pendientes=[]; render(); });
+    if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+    render();
+  }
+
+  // Fuente de alertas EN VIVO: pendientes fuera de horario acumulados
+  window.__alertSources.push(()=>{ const A=[];
+    const fuera=DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente' && i.fueraDeHorario);
+    if(fuera.length) A.push({sev:'info', area:'WhatsApp', t:fuera.length+' mensaje'+(fuera.length>1?'s':'')+' llegado'+(fuera.length>1?'s':'')+' fuera de horario', act:'Revisar la Bandeja WhatsApp al abrir.', go:{page:'Bandeja WhatsApp'}});
+    return A; });
+
   boot();
 })();
 </script>
