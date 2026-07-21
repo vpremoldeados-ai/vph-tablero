@@ -2203,14 +2203,27 @@ function buildFilterTable(cfg){
   // Carga perezosa de las librerías (una sola vez por sesión de navegador). Vía import() de ESM desde
   // jsdelivr con el sufijo "+esm" (empaqueta cualquier paquete npm como módulo, sin instalar nada).
   async function cargarTesseract(){ if(!tesseractCache) tesseractCache = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/+esm'); return tesseractCache; }
+  // OJO con esto: "pdfjs-dist@4/+esm" (el wrapper genérico de jsdelivr) resuelve a una build pensada
+  // para Node.js, no para navegador, y tira un TypeError. Por eso acá se usa la build oficial de
+  // navegador (build/pdf.mjs) con versión FIJA — y el worker, además, se descarga y se envuelve en un
+  // blob: del mismo origen, porque los navegadores bloquean crear un Worker apuntando a otro dominio
+  // (si no se hace así, pdf.js cae a un modo interno lento que puede quedarse colgado para siempre).
+  const PDFJS_VER='4.10.38';
   async function cargarPdfjs(){
     if(pdfjsCache) return pdfjsCache;
-    const m = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4/+esm');
-    m.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4/build/pdf.worker.min.mjs';
+    const m = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@'+PDFJS_VER+'/build/pdf.mjs');
+    const workerTxt = await (await fetch('https://cdn.jsdelivr.net/npm/pdfjs-dist@'+PDFJS_VER+'/build/pdf.worker.mjs')).text();
+    m.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([workerTxt], {type:'application/javascript'}));
     pdfjsCache = m; return m;
   }
   // Renderiza la primera página del PDF a un <canvas> (Tesseract puede leer un canvas directamente).
+  // Con límite de tiempo: si algo del pipeline de PDF se traba (pasó en las pruebas, por bloqueos de
+  // seguridad del navegador con workers de otro origen), esto avisa en vez de colgar el formulario.
   async function pdfAPrimeraPaginaCanvas(file){
+    const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('No se pudo leer el PDF en este navegador (tardó demasiado). Probá subiendo una FOTO del ticket en cambio.')), 25000));
+    return Promise.race([pdfAPrimeraPaginaCanvasInterno(file), timeout]);
+  }
+  async function pdfAPrimeraPaginaCanvasInterno(file){
     const pdfjs = await cargarPdfjs();
     const buf = await file.arrayBuffer();
     const pdf = await pdfjs.getDocument({data:buf}).promise;
@@ -2237,11 +2250,15 @@ function buildFilterTable(cfg){
           const ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
           const path = 'tickets_compras/'+newUid()+'-'+Date.now()+'.'+ext;
           const sref = ctx.ST.ref(ctx.storage, path);
-          await ctx.ST.uploadBytes(sref, file, {contentType:file.type});
-          url = await ctx.ST.getDownloadURL(sref);
+          // Si Storage no está habilitado en el proyecto (no se hizo "Get started" en Firebase Console),
+          // uploadBytes NO rechaza — queda COLGADO para siempre. Por eso el límite de tiempo: archivar
+          // es opcional, así que nunca puede trabar la lectura del ticket (que sí importa).
+          const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('sin respuesta de Storage')), 8000));
+          await Promise.race([ctx.ST.uploadBytes(sref, file, {contentType:file.type}), timeout]);
+          url = await Promise.race([ctx.ST.getDownloadURL(sref), timeout]);
           editing.ticketUrl=url; editing.ticketPath=path;
         }
-      }catch(e){ console.warn('no se pudo archivar el ticket (no es grave, sigue la lectura):', e); }
+      }catch(e){ console.warn('no se pudo archivar el ticket (no es grave, sigue la lectura):', e); url=''; }
 
       ticketEstado('⏳ Cargando el lector (solo la primera vez)…');
       const { createWorker } = await cargarTesseract();
