@@ -2174,16 +2174,18 @@ function buildFilterTable(cfg){
     };
   }
 
-  // ---------- Leer ticket de compra (foto/PDF → Cloud Function → precarga el formulario) ----------
-  // Sube el archivo a Storage (carpeta tickets_compras/) y llama a la función "procesarTicketCompra",
-  // que lo lee con IA y devuelve un BORRADOR de datos — nunca se guarda solo, siempre hay que revisar
-  // y darle a "Guardar compra". Si la función todavía no está desplegada (ver
-  // DESPLEGAR_TICKETS_COMPRA.md), avisa con un mensaje claro en vez de romper el formulario.
-  let ticketBusy=false;
+  // ---------- Leer ticket de compra (foto/PDF → OCR EN EL NAVEGADOR → precarga el formulario) ----------
+  // 100% GRATIS y sin backend: el reconocimiento corre en la propia máquina con Tesseract.js (OCR) y,
+  // para PDF, pdf.js para pasar la primera página a imagen. Las dos librerías se cargan desde un CDN
+  // público SOLO la primera vez que se usa el botón (no pesan en la carga normal del Tablero). Después
+  // se aplican reglas propias (fechas, CUIT, totales) para adivinar los campos — mismo estilo que ya usa
+  // el Asistente para leer un chat de WhatsApp. SIEMPRE hay que revisar antes de "Guardar compra": el
+  // OCR se equivoca con fotos torcidas, borrosas o manuscritas.
+  let ticketBusy=false, tesseractCache=null, pdfjsCache=null;
   function ticketBoxHtml(){
     return '<div id="f-ticket-box" style="border:1px dashed var(--border);border-radius:12px;padding:12px 14px;margin-bottom:14px;background:var(--bg,#f8fafc)">'+
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
-        '<div style="font-size:13px"><b>📎 Leer ticket de compra</b> <span style="color:var(--muted)">— subí la foto o el PDF y precarga los datos solos</span></div>'+
+        '<div style="font-size:13px"><b>📎 Leer ticket de compra</b> <span style="color:var(--muted)">— subí la foto o el PDF y precarga los datos solos (gratis, corre en tu navegador)</span></div>'+
         '<button type="button" class="cmp-btn" id="f-ticket-btn" style="margin-left:auto">Elegir archivo…</button>'+
         '<input type="file" id="f-ticket-file" accept="image/jpeg,image/png,image/webp,application/pdf" style="display:none">'+
       '</div>'+
@@ -2197,33 +2199,114 @@ function buildFilterTable(cfg){
     file.onchange=()=>{ const f=file.files&&file.files[0]; if(f) procesarTicket(f); file.value=''; };
   }
   function ticketEstado(html, cls){ const el=$('f-ticket-status'); if(el){ el.innerHTML=html; el.style.color = cls==='bad'?'var(--red)':cls==='good'?'var(--green)':'var(--muted)'; } }
+  // Carga perezosa de las librerías (una sola vez por sesión de navegador). Vía import() de ESM desde
+  // jsdelivr con el sufijo "+esm" (empaqueta cualquier paquete npm como módulo, sin instalar nada).
+  async function cargarTesseract(){ if(!tesseractCache) tesseractCache = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/+esm'); return tesseractCache; }
+  async function cargarPdfjs(){
+    if(pdfjsCache) return pdfjsCache;
+    const m = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4/+esm');
+    m.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4/build/pdf.worker.min.mjs';
+    pdfjsCache = m; return m;
+  }
+  // Renderiza la primera página del PDF a un <canvas> (Tesseract puede leer un canvas directamente).
+  async function pdfAPrimeraPaginaCanvas(file){
+    const pdfjs = await cargarPdfjs();
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({data:buf}).promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({scale:2.2});   // resolución alta: mejora mucho el OCR
+    const canvas = document.createElement('canvas');
+    canvas.width=viewport.width; canvas.height=viewport.height;
+    await page.render({canvasContext:canvas.getContext('2d'), viewport}).promise;
+    return canvas;
+  }
   async function procesarTicket(file){
     if(ticketBusy) return; ticketBusy=true;
-    const ctx=window.__fbctx;
-    if(!USA_NUBE || !fbDb){ ticketEstado('Iniciá sesión primero.','bad'); ticketBusy=false; return; }
-    if(!ctx||!ctx.storage||!ctx.functions){ ticketEstado('⚠️ Esta función todavía no está activada en este dispositivo (hace falta desplegar la Cloud Function — ver DESPLEGAR_TICKETS_COMPRA.md). Cargá los datos a mano por ahora.','bad'); ticketBusy=false; return; }
     const tiposOk=['image/jpeg','image/png','image/webp','application/pdf'];
     if(!tiposOk.includes(file.type)){ ticketEstado('Formato no soportado: subí una foto (JPG/PNG) o un PDF.','bad'); ticketBusy=false; return; }
-    if(file.size > 15*1024*1024){ ticketEstado('El archivo pesa más de 15 MB — probá con una foto más liviana.','bad'); ticketBusy=false; return; }
-    const ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
-    const path = 'tickets_compras/'+newUid()+'-'+Date.now()+'.'+ext;
+    if(file.size > 20*1024*1024){ ticketEstado('El archivo pesa más de 20 MB — probá con una foto más liviana.','bad'); ticketBusy=false; return; }
     let url='';
     try{
-      ticketEstado('⏳ Subiendo el archivo…');
-      const sref = ctx.ST.ref(ctx.storage, path);
-      await ctx.ST.uploadBytes(sref, file, {contentType:file.type});
-      url = await ctx.ST.getDownloadURL(sref);
-      ticketEstado('⏳ Leyendo el ticket (puede tardar unos segundos)…');
-      const llamar = ctx.FNS.httpsCallable(ctx.functions, 'procesarTicketCompra');
-      const res = await llamar({path});
-      aplicarDatosTicket(res.data||{});
-      editing.ticketUrl = url; editing.ticketPath = path;
-      ticketEstado('✅ Datos precargados desde el ticket — <a href="'+url+'" target="_blank" rel="noopener">ver archivo</a>. <b>Revisá todo antes de guardar</b>, el OCR puede equivocarse.'+((res.data&&res.data.avisos)?(' ⚠️ '+esc(res.data.avisos)):''), 'good');
+      // Archivo a Storage: OPCIONAL, para poder ver el original después. Si falla (no está configurado
+      // Storage, sin conexión, etc.) NO corta el flujo — la lectura del ticket no depende de esto.
+      try{
+        const ctx=window.__fbctx;
+        if(USA_NUBE && ctx && ctx.storage){
+          ticketEstado('⏳ Guardando una copia del archivo…');
+          const ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
+          const path = 'tickets_compras/'+newUid()+'-'+Date.now()+'.'+ext;
+          const sref = ctx.ST.ref(ctx.storage, path);
+          await ctx.ST.uploadBytes(sref, file, {contentType:file.type});
+          url = await ctx.ST.getDownloadURL(sref);
+          editing.ticketUrl=url; editing.ticketPath=path;
+        }
+      }catch(e){ console.warn('no se pudo archivar el ticket (no es grave, sigue la lectura):', e); }
+
+      ticketEstado('⏳ Cargando el lector (solo la primera vez)…');
+      const { createWorker } = await cargarTesseract();
+      const origen = (file.type==='application/pdf') ? await pdfAPrimeraPaginaCanvas(file) : file;
+
+      ticketEstado('⏳ Leyendo el ticket (puede tardar 10-30 segundos)…');
+      const worker = await createWorker('spa');
+      const { data:{ text } } = await worker.recognize(origen);
+      await worker.terminate();
+
+      const d = parsearTicketTexto(text);
+      aplicarDatosTicket(d);
+      ticketEstado('✅ Datos precargados desde el ticket'+(url?' — <a href="'+url+'" target="_blank" rel="noopener">ver archivo</a>':'')+'. <b>Revisá todo antes de guardar</b>: la lectura automática es aproximada.'+(d.avisos?(' ⚠️ '+esc(d.avisos)):''), 'good');
     }catch(e){
       console.error('procesarTicket:', e);
-      const msg = (e&&e.code==='functions/not-found') ? 'La función de lectura no está desplegada todavía.' : (e&&e.message)||'Error desconocido.';
-      ticketEstado((url?'El archivo se subió (<a href="'+url+'" target="_blank" rel="noopener">verlo</a>) pero no se pudo leer automáticamente: ':'No se pudo leer el ticket: ')+esc(msg)+'. Cargá los datos a mano.', 'bad');
+      ticketEstado((url?'El archivo se guardó (<a href="'+url+'" target="_blank" rel="noopener">verlo</a>) pero no se pudo leer automáticamente: ':'No se pudo leer el ticket: ')+esc((e&&e.message)||'error desconocido')+'. Cargá los datos a mano.', 'bad');
     } finally { ticketBusy=false; }
+  }
+
+  // ---------- Reglas para adivinar los campos a partir del texto crudo del OCR ----------
+  // Mismo espíritu que el "pegar chat de WhatsApp" del Asistente: heurísticas simples, nunca inventa
+  // valores que no estén en el texto, y deja todo marcado para que la persona revise.
+  function parsearTicketTexto(texto){
+    const lineas = String(texto||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const avisos=[];
+    // CUIT: 11 dígitos, con o sin guiones, empezando por un prefijo típico de CUIT/CUIL.
+    let cuit='';
+    const mCuit = texto.match(/\b(20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/);
+    if(mCuit) cuit = mCuit[0].replace(/[^\d]/g,'').replace(/(\d{2})(\d{8})(\d)/,'$1-$2-$3');
+    else avisos.push('no se encontró CUIT');
+    // Fecha: dd/mm/aaaa o dd-mm-aaaa (con año de 2 o 4 dígitos) → YYYY-MM-DD.
+    let fecha='';
+    const mFecha = texto.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
+    if(mFecha){ let [,d,m,a]=mFecha; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
+      if(+m>=1 && +m<=12 && +d>=1 && +d<=31) fecha=a+'-'+m+'-'+d; }
+    if(!fecha) avisos.push('no se encontró fecha');
+    // Punto de venta + número de comprobante: patrón 0000-00000000 (con o sin la palabra "Nº"/"Comp.").
+    let puntoVenta='', nroFactura='';
+    const mComp = texto.match(/\b(\d{4,5})[-\s]+(\d{6,8})\b/);
+    if(mComp){ puntoVenta=mComp[1].padStart(4,'0'); nroFactura=mComp[2]; }
+    // Proveedor: mejor esfuerzo — primera línea "de letras" que no sea un rótulo típico de ticket ni un
+    // renglón numérico. Es lo menos confiable del parser: siempre lo marca para revisar.
+    let proveedor='';
+    const rotulos=/^(factura|ticket|comprobante|fecha|cuit|cliente|razon social|domicilio|iva|total|subtotal)\b/i;
+    for(const l of lineas.slice(0,8)){
+      if(l.length>=3 && l.length<=60 && /[a-zA-ZÁÉÍÓÚáéíóúñÑ]{3,}/.test(l) && !rotulos.test(l) && !/^\d+([.,]\d+)?$/.test(l)){ proveedor=l; break; }
+    }
+    if(!proveedor) avisos.push('no se pudo adivinar el proveedor — completalo a mano');
+    else avisos.push('proveedor adivinado de la primera línea del ticket — confirmalo');
+    // Totales: busca un renglón "Neto"/"Subtotal" y uno de "IVA" por separado; si no los encuentra,
+    // toma el "TOTAL" como neto (queda marcado como aproximado, puede incluir IVA sin discriminar).
+    const buscarMonto = re=>{ const m=texto.match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
+    let neto = buscarMonto(/(?:neto|subtotal)[^\d\n]{0,15}([\d.,]+)/i);
+    let ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);
+    let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
+    let itemNeto=0, itemIva='21';
+    if(neto>0){ itemNeto=neto; if(ivaMonto>0){ const pct=Math.round(ivaMonto/neto*100); itemIva = [21,10.5,27].includes(pct)?String(pct):'21'; } }
+    else if(total>0){ itemNeto=total; avisos.push('el total puede incluir IVA sin discriminar — revisar el importe'); }
+    else avisos.push('no se encontró el total — completalo a mano');
+    return {
+      proveedor, cuit, condIva:'A', tipoComprobante:'Compra', categoria:'',
+      fecha, vencimiento:fecha, puntoVenta, nroFactura,
+      items: itemNeto>0 ? [{desc:'Según ticket (revisar detalle)', cant:1, precioUnit:round2(itemNeto), descPct:0, iva:itemIva}] : [],
+      descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0,
+      avisos: avisos.join(' · ')
+    };
   }
   // Vuelca lo que devolvió la IA en el formulario. Solo pisa campos que vinieron con datos (no borra lo
   // que la persona ya haya tipeado), y siempre deja que se revise: no guarda nada solo.
@@ -2357,19 +2440,18 @@ function buildFilterTable(cfg){
   }
   async function initFirebase(){
     const base='https://www.gstatic.com/firebasejs/'+FB_VER+'/';
-    // Storage y Functions se suman para "Leer ticket de compra" (subir foto/PDF + Cloud Function que lo
-    // interpreta). Si algún día fallan al cargar (CDN caído), el resto del Tablero sigue andando: se
-    // guardan en window.__fbctx como null y el botón de tickets simplemente se desactiva.
-    const [appM, authM, fsM, stM, fnM] = await Promise.all([
+    // Storage se suma SOLO para archivar una copia del ticket leído en "Leer ticket de compra" — es
+    // opcional (si no está configurado o falla, la lectura del ticket sigue andando igual, no depende
+    // de esto). Ya no hace falta Cloud Functions: la lectura corre gratis en el propio navegador.
+    const [appM, authM, fsM, stM] = await Promise.all([
       import(base+'firebase-app.js'), import(base+'firebase-auth.js'), import(base+'firebase-firestore.js'),
-      import(base+'firebase-storage.js').catch(()=>null), import(base+'firebase-functions.js').catch(()=>null)
+      import(base+'firebase-storage.js').catch(()=>null)
     ]);
     AUTH=authM; FS=fsM;
     fbApp = appM.initializeApp(firebaseConfig);
     fbAuth = authM.getAuth(fbApp); fbDb = fsM.getFirestore(fbApp);
     const fbStorage = stM ? stM.getStorage(fbApp) : null;
-    const fbFns = fnM ? fnM.getFunctions(fbApp) : null;
-    window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth, ST:stM, storage:fbStorage, FNS:fnM, functions:fbFns };   // compartido con otros módulos (Ventas, etc.)
+    window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth, ST:stM, storage:fbStorage };   // compartido con otros módulos (Ventas, etc.)
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
