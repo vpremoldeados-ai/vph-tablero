@@ -2031,7 +2031,8 @@ function buildFilterTable(cfg){
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr>'+
         '<th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead>'+
         '<tbody id="f-items"></tbody></table></div>'+
-      '<button class="cmp-addline" id="f-addline">+ Agregar ítem</button>'+
+      '<button class="cmp-addline" id="f-addline">+ Agregar ítem</button>'+ datalistProdCmp() +
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Tip: escribí el nombre o código de un producto/servicio de Base de Datos — si existe lo reconoce (y podés editarlo); si no, te deja darlo de alta sin salir de acá.</div>'+
       '<div class="grid2" style="margin-top:14px">'+
         '<div>'+ field('Nota interna','','<textarea id="f-nota" rows="3" placeholder="Notas...">'+esc(c.nota)+'</textarea>') +
           '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px">'+
@@ -2073,12 +2074,21 @@ function buildFilterTable(cfg){
     if(s) s.textContent=money(base);
     if(t) t.textContent=money(base*(1+al/100));
   }
+  // Botón bajo la descripción del ítem: ✎ Editar (si matchea un producto/servicio existente) o
+  // + Nuevo (si hay texto y no matchea ninguno). Sin botón si el renglón está vacío.
+  function itemProdBtn(i,it){
+    const prod = String(it.codigo||'').trim() ? matchProducto(it.codigo) : matchProducto(it.desc);
+    if(prod) return '<button type="button" class="cmp-rowbtn" data-edprod="'+i+'" title="Editar en Base de Datos">✎ Editar</button>';
+    if(String(it.desc||'').trim()) return '<button type="button" class="cmp-rowbtn" data-nvprod="'+i+'" title="No está en Base de Datos — darlo de alta">+ Nuevo</button>';
+    return '';
+  }
   function drawItems(){
     const opt = (arr,sel)=> arr.map(a=>'<option value="'+a.v+'"'+(a.v===sel?' selected':'')+'>'+a.l+'</option>').join('');
     $('f-items').innerHTML = editing.items.map((it,i)=>{
       const base = itemBase(it), al=itemAlic(it);
       return '<tr>'+
-        '<td><input class="txt" data-i="'+i+'" data-k="desc" value="'+esc(it.desc)+'" placeholder="Descripción"></td>'+
+        '<td><input class="txt" data-i="'+i+'" data-k="desc" list="f-prod-list" value="'+esc(it.desc)+'" placeholder="Descripción">'+
+          '<div id="cmp-prodbtn-'+i+'" style="margin-top:3px">'+itemProdBtn(i,it)+'</div></td>'+
         '<td><input data-i="'+i+'" data-k="cant" value="'+it.cant+'" style="width:60px"></td>'+
         '<td><input data-i="'+i+'" data-k="precioUnit" value="'+it.precioUnit+'" style="width:100px"></td>'+
         '<td><input data-i="'+i+'" data-k="descPct" value="'+it.descPct+'" style="width:55px"></td>'+
@@ -2091,6 +2101,30 @@ function buildFilterTable(cfg){
     $('f-items').querySelectorAll('input,select').forEach(el=>{
       const ev = el.tagName==='SELECT' ? 'change' : 'input';
       el.addEventListener(ev, ()=>{ const i=+el.dataset.i, kk=el.dataset.k; editing.items[i][kk]=el.value; updateRow(i); drawTotals(); });
+    });
+    // Al tipear/elegir la descripción: busca el producto/servicio en Base de Datos. Si matchea, trae
+    // código, costo e IVA (autocompleta solo si el renglón todavía no tiene precio cargado, para no
+    // pisar un precio que ya se tipeó a mano). Repinta SOLO el botón de esa fila, sin perder el foco.
+    $('f-items').querySelectorAll('input[data-k="desc"]').forEach(el=> el.addEventListener('change',()=>{
+      const i=+el.dataset.i; const it=editing.items[i]; const prod=matchProducto(el.value);
+      if(prod){ it.desc=prod.nombre; it.codigo=prod.codigo||'';
+        if(!num(it.precioUnit) && num(prod.costo)) it.precioUnit=num(prod.costo);
+        if(prod.ivaVenta) it.iva=String(prod.ivaVenta);
+        drawItems(); drawTotals(); return; }
+      it.codigo=''; const bt=$('cmp-prodbtn-'+i); if(bt) bt.innerHTML=itemProdBtn(i,it);
+    }));
+    $('f-items').querySelectorAll('button[data-edprod]').forEach(b=> b.onclick=()=>{
+      const i=+b.dataset.edprod; const it=editing.items[i]; const prod=String(it.codigo||'').trim()?matchProducto(it.codigo):matchProducto(it.desc);
+      if(!prod) return;
+      window.__abrirProducto({ uid:prod._uid, onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||''; drawItems(); drawTotals(); } });
+    });
+    $('f-items').querySelectorAll('button[data-nvprod]').forEach(b=> b.onclick=()=>{
+      const i=+b.dataset.nvprod; const it=editing.items[i];
+      window.__abrirProducto({ nombreSugerido: it.desc, tipoSugerido: tipoSugeridoDesdeCompra(),
+        onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||'';
+          if(!num(it.precioUnit) && num(rec.costo)) it.precioUnit=num(rec.costo);
+          if(rec.ivaVenta) it.iva=String(rec.ivaVenta);
+          drawItems(); drawTotals(); } });
     });
     $('f-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
   }
@@ -2159,6 +2193,17 @@ function buildFilterTable(cfg){
   // ---------- Proveedores conocidos (para autocompletar) ----------
   function proveedoresConocidos(){ const m={}; DB.compras.forEach(c=>{ if(c.proveedor && !m[c.proveedor]) m[c.proveedor]={nombre:c.proveedor,cuit:c.cuit,cond:c.condIva}; }); return Object.values(m); }
   function datalistProv(){ return '<datalist id="f-prov-list">'+proveedoresConocidos().map(p=>'<option value="'+esc(p.nombre)+'">').join('')+'</datalist>'; }
+
+  // ---------- Catálogo de Productos/Servicios (Base de Datos) para los ítems de la compra ----------
+  function catProductos(){ return (window.__catalogoProductos?window.__catalogoProductos():[]); }
+  function matchProducto(v){ v=String(v||'').trim(); if(!v) return null; const up=v.toUpperCase();
+    const cat=catProductos();
+    return cat.find(p=>String(p.codigo||'').trim().toUpperCase()===up) ||
+           cat.find(p=>String(p.nombre||'').trim().toUpperCase()===up) || null; }
+  function datalistProdCmp(){ return '<datalist id="f-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+(p.tipo?' · '+esc(p.tipo):'')+'</option>').join('')+'</datalist>'; }
+  // Tipo sugerido al dar de alta un producto/servicio nuevo desde una compra: si la categoría de la
+  // compra es de gasto (costo fijo, mano de obra, gastos varios), lo más común es que sea un Servicio.
+  function tipoSugeridoDesdeCompra(){ return ['COSTO FIJO','Mano de Obra','gastos varios'].includes(editing.categoria) ? 'Servicio' : ''; }
 
   // ---------- Export / Import ----------
   function exportJSON(){
@@ -4375,10 +4420,12 @@ function buildFilterTable(cfg){
   }
 
   // ---------- Form ----------
-  let editing=null;
+  let editing=null, onSavedExterno=null;
   function blank(){ const o={}; E().fields.forEach(f=>{ o[f.k]= f.t==='checkbox'?true : (f.t==='number'?0:''); }); if(o.hasOwnProperty('condIva'))o.condIva='A'; if(o.hasOwnProperty('ivaVenta'))o.ivaVenta='21'; if(o.hasOwnProperty('iva'))o.iva='21'; if(o.hasOwnProperty('unidad'))o.unidad='u'; if(o.hasOwnProperty('contenido'))o.contenido=1; if(o.hasOwnProperty('diasCurado'))o.diasCurado=10; return o; }
-  function openForm(r){ editing = r?JSON.parse(JSON.stringify(r)):blank(); $('bd-form-title').textContent=(r?'Editar ':'Nuevo ')+E().sing; drawForm(); $('bd-modal').classList.add('open'); }
-  function closeForm(){ $('bd-modal').classList.remove('open'); editing=null; }
+  // onSaved(rec): opcional, para que OTRO módulo (ej. Compras) se entere del alta/edición sin duplicar
+  // el catálogo. defaults: campos a precargar SOLO en un alta nueva (ej. nombre tipeado en Compras).
+  function openForm(r, onSaved, defaults){ editing = r?JSON.parse(JSON.stringify(r)):blank(); if(!r && defaults) Object.assign(editing, defaults); onSavedExterno = onSaved||null; $('bd-form-title').textContent=(r?'Editar ':'Nuevo ')+E().sing; drawForm(); $('bd-modal').classList.add('open'); }
+  function closeForm(){ $('bd-modal').classList.remove('open'); editing=null; onSavedExterno=null; }
   function drawForm(){
     const fld=f=>{
       const id='bf-'+f.k; let inner;
@@ -4397,7 +4444,8 @@ function buildFilterTable(cfg){
     // `condIva` existen en varias fichas con significados distintos (en Clientes es la lista de precios,
     // en Insumos es Materia prima/Insumo). Marcarlo en el campo evita que una herede las opciones de otra.
     if(window.__tarjetas) E().fields.forEach(f=>{ if(f.cards) window.__tarjetas('bf-'+f.k); });
-    $('bf-cancel').onclick=closeForm; $('bf-save').onclick=()=>{ if(!String(editing.nombre||'').trim()){ alert('Ingresá el nombre.'); return; } persist(editing); closeForm(); };
+    $('bf-cancel').onclick=closeForm; $('bf-save').onclick=()=>{ if(!String(editing.nombre||'').trim()){ alert('Ingresá el nombre.'); return; }
+      const cb=onSavedExterno; persist(editing); const rec={...editing}; closeForm(); if(cb) cb(rec); };
   }
 
   // ---------- Costeo por producto (receta que REFERENCIA el master "Insumos y MP") ----------
@@ -4554,6 +4602,15 @@ function buildFilterTable(cfg){
 
   // Catálogo de productos accesible para los formularios de Ventas/Compras
   window.__catalogoProductos = ()=> store.vph_productos.slice();
+  // API para abrir la ficha de un Producto/Servicio desde OTRO módulo (ej. Compras, al tipear un ítem).
+  // Con uid: abre esa ficha para EDITAR. Sin uid: abre una ficha NUEVA, con `defaults` precargados
+  // (ej. el nombre que se tipeó). onSaved(rec) se dispara recién si se guarda de verdad (patrón onSaved
+  // ya usado en el resto del tablero) — así el llamador puede completar el renglón con el producto real.
+  window.__abrirProducto = function(opts){
+    opts=opts||{}; tab='productos';
+    const rec = opts.uid ? (store.vph_productos.find(x=>x._uid===opts.uid)||null) : null;
+    openForm(rec, opts.onSaved, rec?null:{ nombre:opts.nombreSugerido||'', tipo:opts.tipoSugerido||'' });
+  };
   window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
   window.__catalogoProveedores = ()=> store.vph_proveedores.slice();   // para el módulo Cheques (emitidos)
 
