@@ -2167,7 +2167,10 @@ function buildFilterTable(cfg){
       window.__abrirProducto({ uid:prod._uid, onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||''; drawItems(); drawTotals(); } }); };
     const bn=bt.querySelector('button[data-nvprod]');
     if(bn) bn.onclick=()=>{
-      window.__abrirProducto({ nombreSugerido: it.desc, tipoSugerido: tipoSugeridoDesdeCompra(),
+      // seVenderSugerido:false — lo que se da de alta desde una compra (sueldos, alquiler, insumos...)
+      // por defecto NO tiene que aparecer para vender en Ventas/Presupuestos/CRM. Si alguna vez SÍ fuera
+      // un producto terminado que se compra para revender, se destilda a mano en la ficha.
+      window.__abrirProducto({ nombreSugerido: it.desc, tipoSugerido: tipoSugeridoDesdeCompra(), seVenderSugerido:false,
         onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||'';
           if(!num(it.precioUnit) && num(rec.costo)) it.precioUnit=num(rec.costo);
           if(rec.ivaVenta) it.iva=String(rec.ivaVenta);
@@ -2997,8 +3000,11 @@ function buildFilterTable(cfg){
   // --- Catálogo de productos (Base de Datos) para autocompletar precio/IVA ---
   // Se excluye la variante interna de refuerzo de base (ej: LC60 2H): el cliente compra "LC60" a secas y
   // esa variante no se vende suelta. Sigue visible en Base de Datos y en Producción, que es donde va.
+  // También se excluye todo lo marcado seVende:false — son productos/servicios dados de alta desde el
+  // "+ Nuevo" de un ítem de Compras (sueldos, alquiler, etc.), que quedan en el mismo catálogo pero NO
+  // son algo que se fabrique ni se venda. seVende ausente (catálogo real de siempre) cuenta como true.
   function catProductos(){ const a=(window.__catalogoProductos ? window.__catalogoProductos() : []); const up=s=>String(s||'').trim().toUpperCase();
-    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo)))); }
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false); }
   function datalistProd(){ return '<datalist id="vf-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>'; }
   // Alias por dimensión: "60x40"/"40x40" (como se pide por WhatsApp) → LC60/LC40 del catálogo ("Loseta
   // Cribada Rectangular/Cuadrada"). Sin esto, un ítem que llega de un lead con ese nombre no matcheaba
@@ -4231,9 +4237,11 @@ function buildFilterTable(cfg){
   function nextNumero(){ let max=0; DB.presupuestos.forEach(p=>{ const m=String(p.numero||'').match(/(\d+)/); if(m){ const n=+m[1]; if(n>max)max=n; } }); return 'P-'+String(max+1).padStart(4,'0'); }
 
   // Catálogo de productos/clientes (Base de Datos) para autocompletar
-  // Excluye la variante interna de refuerzo de base (no se vende suelta al cliente).
+  // Excluye la variante interna de refuerzo de base (no se vende suelta al cliente) y lo marcado
+  // seVende:false (altas hechas desde el "+ Nuevo" de Compras: sueldos, alquiler, etc. — no son
+  // productos que se fabriquen ni se vendan). Ausente = true (catálogo real de siempre).
   function catProductos(){ const a=(window.__catalogoProductos?window.__catalogoProductos():[]); const up=s=>String(s||'').trim().toUpperCase();
-    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo)))); }
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false); }
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
   const ALIAS_PROD={ LC60:['60x40','60 x 40'], LC40:['40x40','40 x 40'] };
   function matchProducto(val){ const v=(val||'').trim().toLowerCase(); if(!v) return null;
@@ -4607,7 +4615,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seVende',l:'Aparece en Ventas/Presupuestos/CRM (es algo que fabricamos, o el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
@@ -4845,7 +4853,11 @@ function buildFilterTable(cfg){
   window.__abrirProducto = function(opts){
     opts=opts||{}; tab='productos';
     const rec = opts.uid ? (store.vph_productos.find(x=>x._uid===opts.uid)||null) : null;
-    openForm(rec, opts.onSaved, rec?null:{ nombre:opts.nombreSugerido||'', tipo:opts.tipoSugerido||'' });
+    const defaults = rec ? null : { nombre:opts.nombreSugerido||'', tipo:opts.tipoSugerido||'' };
+    // seVenderSugerido: para que el "+ Nuevo" desde un ítem de Compras (sueldos, alquiler, etc.) NO
+    // aparezca por default en Ventas/Presupuestos/CRM — blank() tildaría seVende=true por ser checkbox.
+    if(defaults && opts.seVenderSugerido!=null) defaults.seVende = !!opts.seVenderSugerido;
+    openForm(rec, opts.onSaved, defaults);
   };
   window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
   window.__catalogoProveedores = ()=> store.vph_proveedores.slice();   // para el módulo Cheques (emitidos)
@@ -5016,9 +5028,10 @@ function buildFilterTable(cfg){
 
   function waLink(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d)return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; }
   function resumenPedido(l){ return (l.items||[]).filter(i=>i && i.producto).map(i=>(num(i.cantidad)||'')+' '+i.producto).join(' · ') || '—'; }
-  // Excluye la variante interna de refuerzo de base (no se cotiza suelta).
+  // Excluye la variante interna de refuerzo de base (no se cotiza suelta) y lo marcado seVende:false
+  // (altas desde el "+ Nuevo" de Compras: sueldos, alquiler, etc.). Ausente = true (catálogo de siempre).
   const catProd=()=>{ const a=(window.__catalogoProductos? window.__catalogoProductos():[]); const up=s=>String(s||'').trim().toUpperCase();
-    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo)))); };
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false); };
   // Alias por dimensión: en el catálogo el producto figura como "Loseta Cribada Rectangular" (LC60),
   // pero en la calle/WhatsApp se lo conoce como "60x40". Sin esto, el nombre no matcheaba con el catálogo
   // y el sistema caía a deducir los m²/u de las medidas del nombre (0,24 → 4,17 u/m²) en vez de usar el
