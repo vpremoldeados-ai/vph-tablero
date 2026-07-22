@@ -2576,7 +2576,7 @@ function buildFilterTable(cfg){
   const round2 = n => Math.round(n*100)/100;
 
   const CATEGORIAS = ['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
-  const LISTAS = ['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto'];
+  const LISTAS = ['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto','4 Lista Promedio'];
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
   const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
@@ -3015,7 +3015,7 @@ function buildFilterTable(cfg){
     let p=cat.find(p=>(p.nombre||'').toLowerCase()===v || (p.codigo||'').toLowerCase()===v);
     if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
     return p; }
-  function precioLista(prod, lista){ if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
+  function precioLista(prod, lista){ if(/promedio/i.test(lista||'')) return round2((num(prod.precioMinorista)+num(prod.precioMayorista))/2); if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
   function aplicarProducto(it, prod, lista){ it.codigo=prod.codigo||''; const bruto = precioLista(prod,lista) || num(prod.precioMinorista) || num(prod.precioMayorista); const sf=/sin factura/i.test(lista||'');
     if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); } }
 
@@ -4158,7 +4158,7 @@ function buildFilterTable(cfg){
 
   const COL='vph_presupuestos', KEY='vph_presupuestos_v1';
   const CATEGORIAS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
-  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto'];
+  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto','4 Lista Promedio'];
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
   const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
@@ -4251,7 +4251,7 @@ function buildFilterTable(cfg){
     let p=cat.find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v);
     if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
     return p; }
-  function precioLista(prod,lista){ if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
+  function precioLista(prod,lista){ if(/promedio/i.test(lista||'')) return round2((num(prod.precioMinorista)+num(prod.precioMayorista))/2); if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
   function aplicarProducto(it,prod,lista){ it.codigo=prod.codigo||''; const bruto=precioLista(prod,lista)||num(prod.precioMinorista)||num(prod.precioMayorista); const sf=/sin factura/i.test(lista||''); if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto);} else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit=al>0?round2(bruto/(1+al/100)):round2(bruto);} }
   function clientesConocidos(){ const m={}; catClientes().forEach(c=>{ if(c.nombre&&!m[c.nombre]) m[c.nombre]={nombre:c.nombre,cuit:c.cuit,cond:c.condIva}; }); DB.presupuestos.forEach(p=>{ if(p.cliente&&!m[p.cliente]) m[p.cliente]={nombre:p.cliente,cuit:p.cuit,cond:p.condIva}; }); return Object.values(m); }
   function datalistCli(){ return '<datalist id="pf-cli-list">'+clientesConocidos().map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
@@ -5004,7 +5004,7 @@ function buildFilterTable(cfg){
   const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Teléfono','Referido','Manual'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
-  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto'];
+  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto','4 Lista Promedio'];
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
   const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
@@ -5051,7 +5051,7 @@ function buildFilterTable(cfg){
   // usa el presupuesto al convertir el lead — no hace falta re-tipear precios en dos lugares.
   const round2 = n => Math.round(n*100)/100;
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
-  const precioLista=(prod,lista)=>{ if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); };
+  const precioLista=(prod,lista)=>{ if(/promedio/i.test(lista||'')) return round2((num(prod.precioMinorista)+num(prod.precioMayorista))/2); if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); };
   function aplicarProducto(it,prod,lista){ it.codigo=prod.codigo||''; const bruto=precioLista(prod,lista)||num(prod.precioMinorista)||num(prod.precioMayorista); const sf=/sin factura/i.test(lista||'');
     if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); } }
   // m² totales del lead: suma de m² por ítem (o el campo viejo l.m2 si no hay ítems con m²)
