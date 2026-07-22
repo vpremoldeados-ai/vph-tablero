@@ -5023,6 +5023,12 @@ function buildFilterTable(cfg){
   function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(KEY)); if(d&&Array.isArray(d.leads))return d; }catch(e){} return {leads:[]}; }
   function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
   function persist(l){ if(!l._uid)l._uid=newUid();
+    // Sella la fecha la PRIMERA vez que el lead pasa por Confirmado/Perdido (para medir tiempo de
+    // cierre después) — no se pisa en los guardados siguientes, así que no importa si vuelve a pasar
+    // por el mismo estado más adelante. Leads que ya estaban confirmados/perdidos ANTES de este
+    // agregado no tienen esta fecha — quedan afuera del promedio, no se las inventa.
+    if(l.estado==='confirmado' && !l.fechaConfirmado) l.fechaConfirmado=hoyISO;
+    if(l.estado==='perdido' && !l.fechaPerdido) l.fechaPerdido=hoyISO;
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL,l._uid),{...l}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
     else { const i=DB.leads.findIndex(x=>x._uid===l._uid); if(i>=0)DB.leads[i]=l; else DB.leads.push(l); saveLocal(); render(); } }
   function remove(uid){ if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
@@ -5069,11 +5075,29 @@ function buildFilterTable(cfg){
     // KPIs
     const activos=leads.filter(l=>ACTIVOS.includes(l.estado));
     const valorPipe=activos.reduce((a,l)=>a+num(l.monto),0);
+    // Tasa de conversión: sobre los leads ya DECIDIDOS (confirmado o perdido) — a un lead que sigue en
+    // gestión todavía no se le puede saber el resultado, así que no cuenta ni suma ni resta.
+    const confirmados=leads.filter(l=>l.estado==='confirmado');
+    const perdidos=leads.filter(l=>l.estado==='perdido');
+    const decididos=confirmados.length+perdidos.length;
+    const tasaConv = decididos>0 ? Math.round(confirmados.length/decididos*100) : null;
+    // Tiempo de cierre: promedio de días entre la fecha del lead y fechaConfirmado — SOLO para los que
+    // tienen esa fecha sellada (se empezó a guardar recién ahora; los confirmados de antes no la tienen
+    // y quedan afuera del promedio en vez de inventarles una fecha).
+    const diasEntre=(a,b)=>{ const pa=String(a||'').slice(0,10).split('-').map(Number), pb=String(b||'').slice(0,10).split('-').map(Number);
+      if(pa.length<3||!pa[0]||pb.length<3||!pb[0]) return null;
+      return Math.round((new Date(pb[0],pb[1]-1,pb[2]) - new Date(pa[0],pa[1]-1,pa[2]))/86400000); };
+    const diasCierre = confirmados.map(l=>diasEntre(l.fecha,l.fechaConfirmado)).filter(d=>d!=null && d>=0);
+    const promDias = diasCierre.length ? Math.round(diasCierre.reduce((s,d)=>s+d,0)/diasCierre.length*10)/10 : null;
     $('crm-kpis').innerHTML =
       k('Leads totales','info', String(leads.length), 'En todo el pipeline') +
       k('En gestión','warn', String(activos.length), 'Nuevos, cotizados y en reconsulta') +
       k('Valor en pipeline','info', money(valorPipe), 'Suma de montos estimados activos') +
-      k('Confirmados','good', String(leads.filter(l=>l.estado==='confirmado').length), 'Listos para venta/entrega');
+      k('Confirmados','good', String(confirmados.length), 'Listos para venta/entrega') +
+      k('Tasa de conversión', tasaConv==null?'info':(tasaConv>=40?'good':'warn'), tasaConv==null?'—':tasaConv+'%',
+        decididos>0 ? ('Confirmados / decididos · '+confirmados.length+' de '+decididos) : 'Todavía no hay leads Confirmados ni Perdidos') +
+      k('Tiempo de cierre', promDias==null?'info':'good', promDias==null?'—':promDias+' días',
+        diasCierre.length ? ('Promedio de '+diasCierre.length+' lead'+(diasCierre.length!==1?'s':'')+' · fecha de creación → Confirmado') : 'Se empieza a medir desde ahora (leads confirmados antes de hoy no quedaron registrados)');
     // El listado/tablero solo muestra lo que sigue en gestión: Confirmado (ya es venta) y Perdido quedan
     // archivados y ocultos, salvo que Sofía tilde "Ver archivados" o filtre ese estado a mano.
     const ocultarArchivados = !verArchivados && !filtro.estado;
