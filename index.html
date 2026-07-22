@@ -6760,7 +6760,7 @@ function buildFilterTable(cfg){
       .doc-fisc{ text-align:right; font-size:11px; line-height:1.5; }
       .doc-cli{ display:flex; justify-content:space-between; gap:20px; border:1px solid #999; border-radius:4px; padding:8px 10px; margin-bottom:10px; font-size:11.5px; line-height:1.5; }
       .doc-cli .r{ text-align:right; }
-      table.doc-tab{ width:100%; max-width:100%; table-layout:fixed; border-collapse:collapse; font-size:10.5px; margin-bottom:10px; }
+      table.doc-tab{ width:100%; max-width:100%; table-layout:auto; border-collapse:collapse; font-size:10.5px; margin-bottom:10px; }
       table.doc-tab th{ background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 5px; text-align:left; overflow-wrap:break-word; }
       table.doc-tab td{ border:1px solid #e2e8f0; padding:5px 5px; overflow-wrap:break-word; }
       table.doc-tab td.n, table.doc-tab th.n{ text-align:right; white-space:normal; }
@@ -6782,12 +6782,28 @@ function buildFilterTable(cfg){
     const ov=document.createElement('div'); ov.id='doc-overlay';
     ov.innerHTML = '<div id="doc-bar"><button class="pr">🖨️ Imprimir / PDF</button><button class="cl">Cerrar</button></div><div id="doc-sheet-wrap"></div>';
     document.body.appendChild(ov);
-    ov.querySelector('.pr').onclick=()=>window.print();
+    // El nombre sugerido al "Guardar como PDF" del navegador sale del <title> de la página en el
+    // momento de imprimir — no hay otra forma de controlarlo. Se pisa justo antes y se restaura después.
+    const tituloOriginal = document.title;
+    ov.querySelector('.pr').onclick=()=>{ if(docFileName) document.title=docFileName; window.print();
+      setTimeout(()=>{ document.title=tituloOriginal; }, 800); };
+    window.addEventListener('afterprint', ()=>{ document.title=tituloOriginal; });
     ov.querySelector('.cl').onclick=()=>ov.classList.remove('open');
     ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
   }
-  function mostrar(sheetHtml){ ensureLayer(); const ov=document.getElementById('doc-overlay');
+  let docFileName='';
+  function mostrar(sheetHtml, fileName){ ensureLayer(); const ov=document.getElementById('doc-overlay');
+    docFileName = fileName||'';
     document.getElementById('doc-sheet-wrap').innerHTML='<div class="doc-sheet">'+sheetHtml+'</div>'; ov.classList.add('open'); ov.scrollTop=0; }
+  // Nombre de archivo sugerido: "DD-MM Tipo N° <número> <Cliente>" (pedido de Sofía, para poder
+  // ordenar/buscar los PDF ya descargados sin abrirlos). Sin caracteres inválidos para Windows.
+  const dm = s => { if(!s) return p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate()); const m=String(s).slice(0,10);
+    if(/^\d{4}-\d{2}-\d{2}/.test(m)){ const [,me,d]=m.split('-'); return d+'-'+me; } return p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate()); };
+  const sanitizeArchivo = s => String(s||'').replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,' ').trim();
+  function nombreArchivo(tipo, numero, cliente, fechaISO){
+    let n = dm(fechaISO)+' '+tipo; if(numero) n+=' N° '+numero; if(cliente) n+=' '+cliente;
+    return sanitizeArchivo(n);
+  }
 
   // ---------- Bloques compartidos ----------
   function encabezado(letra, titulo, numero, fecha, extrasDer){
@@ -6926,10 +6942,10 @@ function buildFilterTable(cfg){
   }
 
   window.__imprimir = {
-    detalleVenta: v => mostrar(detalle(v,false)),
-    presupuesto:  v => mostrar(detalle(v,true)),
-    recibo:       v => mostrar(recibo(v)),
-    remito:       o => mostrar(remito(o))
+    detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):(v._uid||''), v.cliente, v.fecha)),
+    presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
+    recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
+    remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha))
   };
 })();
 </script>
