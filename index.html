@@ -292,6 +292,69 @@
     sel.__repintar = pintar;   // por si el valor se cambia por código y hay que refrescar la marca
     return pintar;
   };
+
+  /* ---------- Ordenar cualquier tabla por columna con un clic (global) ----------
+     Toma una <table> YA renderizada y hace clicable cada encabezado: 1er clic ordena de MAYOR a menor,
+     2do de menor a mayor. Trabaja sobre el DOM, sin tocar la lógica del módulo que la dibuja. El estado
+     (columna + sentido) se guarda en el propio elemento (el.__sort), que SOBREVIVE a los t.innerHTML=…
+     de cada render — por eso el módulo lo vuelve a llamar al final de su render y el orden se conserva.
+     Detecta si la columna es número / fecha (dd/mm/aa) / texto muestreando sus celdas; entiende el
+     formato argentino ($ 1.234,56 · 45 kg · 38% · -). Las filas de "Total" (class 'total') y los
+     placeholders ("sin datos", una sola celda con colspan) quedan pinneados abajo. NO usar en tablas de
+     ítems editables de un formulario ni en la matriz mensual (encabezados con colspan).
+     Tablas que YA ordenan solas (Compras, Ventas, Cheques, Presupuestos, Base de Datos, Finanzas,
+     Comercial→clientes) NO deben llamar a esto: tienen su propio orden y se pisarían. */
+  window.__ordenable = function(elOrId){
+    const el = (typeof elOrId==='string') ? document.getElementById(elOrId) : elOrId;
+    if(!el || el.tagName!=='TABLE') return;
+    const head = [...el.rows].find(r=> r.querySelector('th'));   // primera fila con <th>
+    if(!head) return;
+    const parse = v=>{ let s=String(v==null?'':v).trim();
+      if(s===''||s==='—'||s==='-') return {n:null, s:''};
+      const md=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);     // fecha dd/mm/aa(aa)
+      if(md){ let a=md[3]; if(a.length===2)a='20'+a; return {n:+(a+md[2].padStart(2,'0')+md[1].padStart(2,'0')), s}; }
+      let t=s.replace(/[^\d,.\-]/g,'');                          // número (AR: miles '.', decimal ',')
+      if(t && /\d/.test(t)){
+        if(t.indexOf(',')>=0) t=t.replace(/\./g,'').replace(',','.');
+        else if(/^-?\d{1,3}(\.\d{3})+$/.test(t)) t=t.replace(/\./g,'');
+        const n=parseFloat(t); if(!isNaN(n)) return {n, s};
+      }
+      return {n:null, s:s.toLowerCase()};
+    };
+    const valCel = (row,i)=>{ const c=row.cells[i]; if(!c) return {n:null,s:''};
+      return parse((c.dataset&&c.dataset.sortval!=null)?c.dataset.sortval:c.textContent); };
+    function partes(){
+      const body=[...el.querySelectorAll('tr')].filter(r=> r.querySelector('td') && !r.querySelector('th'));
+      const datos=[], totales=[], otros=[];
+      body.forEach(r=>{ if(r.cells.length===1 && r.cells[0].hasAttribute('colspan')) otros.push(r);
+        else if(/\btotal\b/i.test(r.className)) totales.push(r); else datos.push(r); });
+      return {datos, totales, otros};
+    }
+    function decorar(){
+      const st=el.__sort;
+      [...head.cells].forEach((th,i)=>{ const prev=th.querySelector('.sortarrow'); if(prev) prev.remove();
+        if(!th.textContent.trim()) return;                      // columna sin título (acciones) → no ordena
+        th.style.cursor='pointer'; th.style.userSelect='none';
+        if(st && st.idx===i){ const a=document.createElement('span'); a.className='sortarrow'; a.textContent = st.dir<0?' ▼':' ▲'; th.appendChild(a); }
+      });
+    }
+    function aplicar(){
+      decorar();
+      const st=el.__sort; if(!st) return;
+      const {datos, totales, otros}=partes(); if(datos.length<2) return;
+      const cont=datos[0].parentNode; if(!cont) return;
+      const numerico = datos.filter(r=>valCel(r,st.idx).n!=null).length >= Math.ceil(datos.length*0.6);
+      datos.sort((a,b)=>{ const va=valCel(a,st.idx), vb=valCel(b,st.idx); let r;
+        if(numerico) r=(va.n==null?-Infinity:va.n)-(vb.n==null?-Infinity:vb.n);
+        else r=va.s.localeCompare(vb.s,'es',{numeric:true});
+        return st.dir<0?-r:r; });
+      [...datos, ...otros, ...totales].forEach(r=> cont.appendChild(r));   // reordena dentro del mismo tbody (no toca el thead)
+    }
+    [...head.cells].forEach((th,i)=>{ if(!th.textContent.trim()) return;
+      th.onclick=()=>{ if(el.__sort && el.__sort.idx===i) el.__sort.dir=-el.__sort.dir; else el.__sort={idx:i, dir:-1}; aplicar(); };
+    });
+    aplicar();   // reaplica el orden guardado tras un re-render (o solo decora si todavía no se ordenó)
+  };
 </script>
 
 <aside>
@@ -1415,6 +1478,7 @@ window.__pintarMetas = function(){
     areaAnt = m.area;
   });
   document.getElementById('tabla-metas').innerHTML = html;
+  window.__ordenable('tabla-metas');
 };
 window.__pintarMetas();
 
@@ -1631,6 +1695,7 @@ window.__pintarCostos = function(){
     document.getElementById('tabla-compras').innerHTML =
       '<tr><th>Mes</th><th class="num">Costos fijos</th><th class="num">Variables</th><th class="num">Otros</th><th class="num">Total</th></tr>' +
       rc.map(m=>'<tr><td><b>'+m.mes+'</b></td><td class="num">'+fmt$(m.fijos)+'</td><td class="num">'+fmt$(m.variables)+'</td><td class="num">'+fmt$(m.otros)+'</td><td class="num"><b>'+fmt$(m.total)+'</b></td></tr>').join('');
+    window.__ordenable('tabla-compras');
 
     document.getElementById('tabla-equilibrio').innerHTML =
       '<tr><td>Costos fijos del mes (COSTO FIJO + Mano de Obra) — en vivo</td><td class="num">'+fmt$(ult.fijos)+'</td></tr>' +
@@ -1675,6 +1740,7 @@ window.__pintarCostos = function(){
   });
   document.getElementById('tabla-compras').innerHTML = '<tr><th>Mes</th><th class="num">Sueldos fijos</th><th class="num">Otros fijos</th><th class="num">Aguinaldo</th><th class="num">Variables</th><th class="num">Otros</th><th class="num">Total</th></tr>' +
     comprasMensuales.map(m=>'<tr><td><b>'+m.mes+'</b></td><td class="num">'+fmt$(m.sueldosFijos)+'</td><td class="num">'+fmt$(m.otrosFijos)+'</td><td class="num">'+fmt$(m.aguinaldo)+'</td><td class="num">'+fmt$(m.variables)+'</td><td class="num">'+fmt$(m.otros)+'</td><td class="num"><b>'+fmt$(m.total)+'</b></td></tr>').join('');
+  window.__ordenable('tabla-compras');
   document.getElementById('tabla-equilibrio').innerHTML =
     '<tr><td>Costos fijos recurrentes (sueldos, alquiler, servicios, comisiones, sistema)</td><td class="num">'+fmt$(rentabilidad.fijosRecurrentes||0)+'</td></tr>' +
     '<tr><td>Provisión mensual de aguinaldo (semestral / 6)</td><td class="num">'+fmt$(rentabilidad.aguinaldoProvision||0)+'</td></tr>' +
@@ -2029,7 +2095,7 @@ function buildFilterTable(cfg){
     arr.forEach(r=> html+='<tr><td>'+r.p+'</td><td class="num"><b>'+money(r.saldo)+'</b></td><td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td></tr>');
     const tot=arr.reduce((a,r)=>a+r.saldo,0), totV=arr.reduce((a,r)=>a+r.venc,0);
     if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totV)+'</td></tr>';
-    $('cmp-tabla-prov').innerHTML=html;
+    $('cmp-tabla-prov').innerHTML=html; window.__ordenable('cmp-tabla-prov');
   }
 
   // ---------- Formulario alta/edición ----------
@@ -2839,7 +2905,7 @@ function buildFilterTable(cfg){
     arr.forEach(r=> html+='<tr><td>'+r.c+'</td><td class="num"><b>'+money(r.saldo)+'</b></td><td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td></tr>');
     const tot=arr.reduce((a,r)=>a+r.saldo,0), totV=arr.reduce((a,r)=>a+r.venc,0);
     if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totV)+'</td></tr>';
-    $('vnt-tabla-cli').innerHTML=html;
+    $('vnt-tabla-cli').innerHTML=html; window.__ordenable('vnt-tabla-cli');
   }
 
   // ---------- Formulario ----------
@@ -3485,6 +3551,7 @@ function buildFilterTable(cfg){
         '<td data-label="" style="white-space:nowrap"><button class="cmp-rowbtn" data-a="ver" title="Se carga, se edita y se paga en el módulo Compras">→ Ver en Compras</button></td></tr>'; });
     $('cfj-tabla').innerHTML=html;
     // Esta página es una VISTA: el alta/edición/pago se hace en Compras (una sola fuente de datos).
+    window.__ordenable('cfj-tabla');
     $('cfj-tabla').querySelectorAll('button[data-a="ver"]').forEach(b=>b.onclick=()=>{
       const nb=[...document.querySelectorAll('#nav .nav-item')].find(x=>{ const t=x.querySelector('.txt'); return t&&t.textContent.trim()==='Compras'; });
       if(nb) nb.click(); });
@@ -3709,7 +3776,7 @@ function buildFilterTable(cfg){
       '<td class="num" data-label="Entra" style="color:var(--green)">'+(r.inn?money(r.inn):'')+'</td>'+
       '<td class="num" data-label="Sale" style="color:var(--red)">'+(r.out?money(r.out):'')+'</td>'+
       '<td class="num" data-label="Saldo" style="font-weight:800;color:'+(r.saldo<0?'var(--red)':'var(--text)')+'">'+money(r.saldo)+'</td></tr>'; });
-    $('caj-tabla-proy').innerHTML=ph;
+    $('caj-tabla-proy').innerHTML=ph; window.__ordenable('caj-tabla-proy');
     $('caj-proy-asof').textContent='Arranca del disponible de hoy y suma/resta por fecha de vencimiento · horizonte '+(filtro==='todos'?'completo':filtro+' días');
 
     // Movimientos reales desde el ancla
@@ -3719,7 +3786,7 @@ function buildFilterTable(cfg){
     d.movs.forEach(m=>{ mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Concepto">'+esc(m.concepto)+(m.tipo==='manual'?' <button class="cmp-rowbtn" data-delmov="'+m.uid+'" title="Eliminar este movimiento manual">✕</button>':'')+'</td>'+
       '<td class="num" data-label="Entra" style="color:var(--green)">'+(m.signo>0?money(m.monto):'')+'</td>'+
       '<td class="num" data-label="Sale" style="color:var(--red)">'+(m.signo<0?money(m.monto):'')+'</td></tr>'; });
-    $('caj-tabla-mov').innerHTML=mh;
+    $('caj-tabla-mov').innerHTML=mh; window.__ordenable('caj-tabla-mov');
     $('caj-tabla-mov').querySelectorAll('button[data-delmov]').forEach(b=>b.onclick=()=>{ if(confirm('¿Eliminar este movimiento manual?')) removeDoc(b.dataset.delmov); });
   }
   function k(l,cls,v,sub){ return '<div class="kpi '+cls+'"><div class="label">'+l+'</div><div class="value" style="font-size:20px">'+v+'</div><div class="sub">'+sub+'</div></div>'; }
@@ -4013,6 +4080,7 @@ function buildFilterTable(cfg){
         const dTxt = p.estado==='pagado' ? '—' : d<0 ? '<b style="color:var(--red)">vencido '+Math.abs(d)+'d</b>' : d===0 ? '<b style="color:var(--red)">HOY</b>' : d<=3 ? '<b style="color:var(--amber)">'+d+'d</b>' : d+'d';
         return '<tr><td data-label="Vencimiento"><b>'+fmtFecha(p.vencimiento)+'</b></td><td data-label="Concepto">'+esc(p.concepto||'')+'</td><td data-label="Proveedor">'+esc(p.proveedor||'—')+'</td>'+
           '<td class="num" data-label="Monto">'+(num(p.monto)?m$(num(p.monto)):'<i style="color:var(--muted)">a definir</i>')+'</td><td data-label="Medio">'+esc(p.medio||'—')+'</td><td data-label="Días">'+dTxt+'</td><td data-label="Estado">'+bEst(p.estado||'aconfirmar')+'</td></tr>'; }).join('');
+    window.__ordenable('tabla-cf');
   }
 
   function renderIVA(){
@@ -5176,7 +5244,7 @@ function buildFilterTable(cfg){
       }catch(err){ return '<tr><td colspan="8" style="color:var(--red)">Lead con datos inválidos <button class="cmp-rowbtn" data-act="del" data-id="'+esc(l._uid)+'">Eliminar</button></td></tr>'; } }).join('');
     $('crm-tabla').innerHTML = '<thead><tr><th>Cliente</th><th>Estado</th><th>Pedido</th><th>Lugar</th><th>Monto</th><th>Origen</th><th>Seguimiento</th><th>Acciones</th></tr></thead>'+
       '<tbody>'+(rows||'<tr><td colspan="8" style="text-align:center;color:var(--muted)">Sin leads que coincidan con los filtros.</td></tr>')+'</tbody>';
-    bindAcciones($('crm-tabla'));
+    bindAcciones($('crm-tabla')); window.__ordenable('crm-tabla');
   }
   function setView(v){ VIEW=v; localStorage.setItem('vph_crm_view', v);
     $('crm-view-lista').classList.toggle('active', v==='lista');
@@ -5911,7 +5979,7 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Compr." style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
         '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.disponible)+'</td>'+
         '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td></tr>'; });
-    $('pe-tabla-stock').innerHTML=html;
+    $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = curado − comprometido (curado = fabricado hace 10+ días)';
     renderPlan(filas);
     // movimientos
@@ -5921,7 +5989,7 @@ function buildFilterTable(cfg){
     movs.forEach(m=>{ const tb=m.tipo==='Producción'?'<span class="badge blue">Producción</span>':m.tipo==='Entrega'?'<span class="badge green">Entrega</span>':'<span class="badge amber">Ajuste conteo</span>';
       const cant=m.tipo==='Entrega'?('-'+nf(num(m.cantidad))):m.tipo==='Ajuste'?((num(m.cantidad)>=0?'+':'')+nf(num(m.cantidad))):('+'+nf(num(m.cantidad)));
       mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
-    $('pe-tabla-mov').innerHTML=mh;
+    $('pe-tabla-mov').innerHTML=mh; window.__ordenable('pe-tabla-mov');
   }
 
   // ---------- Plan de producción (qué fabricar y en qué orden) ----------
@@ -6011,7 +6079,7 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Mínimo" style="color:var(--muted)">'+(num(x.stockMinimo)>0?nf(num(x.stockMinimo)):'—')+'</td>'+
         '<td data-label="Últ. conteo">'+fmtFecha(x.fechaConteo||'')+'</td>'+
         '<td data-label="Estado">'+(bajo?'<span class="pe-est falta">PEDIR</span>':'<span class="pe-est ok">OK</span>')+'</td></tr>'; });
-    $('pe-tabla-insumos').innerHTML=html;
+    $('pe-tabla-insumos').innerHTML=html; window.__ordenable('pe-tabla-insumos');
     const nBajo=insumos.filter(insBajo).length;
     const ultIns=insumos.map(x=>x.fechaConteo||'').sort().reverse()[0]||'';
     $('pe-ins-asof').textContent=(ultIns?('Último conteo: '+fmtFecha(ultIns)+' · '):'')+insumos.length+' ítems'+(nBajo?(' · '+nBajo+' bajo mínimo → armar pedido de compra'):'');
@@ -6024,7 +6092,7 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Teórico">'+(a.teorico!=null?nf(num(a.teorico)):'—')+'</td><td class="num" data-label="Contado">'+(a.real!=null?nf(num(a.real)):'—')+'</td>'+
         '<td class="num" data-label="Ajuste" style="font-weight:800;color:'+(d<0?'var(--red)':'var(--green)')+'">'+(d>=0?'+':'')+nf(d)+'</td>'+
         '<td data-label="Usuario" style="font-size:11px;color:var(--muted)">'+esc(a.usuario||'')+'</td></tr>'; });
-    $('pe-tabla-ajustes').innerHTML=ah;
+    $('pe-tabla-ajustes').innerHTML=ah; window.__ordenable('pe-tabla-ajustes');
     const ultAju=ajustes.map(a=>a.fecha||'').sort().reverse()[0]||'';
     $('pe-aju-asof').textContent = ultAju ? ('Último conteo de productos: '+fmtFecha(ultAju)) : 'Sin conteos registrados aún';
   }
@@ -6286,7 +6354,7 @@ function buildFilterTable(cfg){
         '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
-    $('pe-tabla-ped').innerHTML=html;
+    $('pe-tabla-ped').innerHTML=html; window.__ordenable('pe-tabla-ped');
     $('pe-tabla-ped').querySelectorAll('button[data-pact]').forEach(b=> b.onclick=()=>{ const pe=pedidos.find(x=>x._uid==b.dataset.id); if(!pe)return; const a=b.dataset.pact;
       if(a==='edit') openPed(pe);
       else if(a==='del'){ if(confirm('¿Eliminar el pedido de '+(pe.cliente||'—')+'?')) delPed(pe._uid); }
