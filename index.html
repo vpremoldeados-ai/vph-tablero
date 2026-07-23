@@ -218,9 +218,13 @@
   .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)}
   .pe-bigbtn:active{transform:scale(.98)}
   .pe-qty{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--card)}
-  .pe-qty .nm{font-weight:700;font-size:14px}
+  .pe-qty .nm{font-weight:700;font-size:14px;flex:1}
   .pe-qty .cd{font-size:11px;color:var(--muted)}
   .pe-qty .st{font-size:11px;color:var(--muted)}
+  .pe-qty-move{display:flex;flex-direction:column;gap:3px}
+  .pe-qty-move button{width:30px;height:24px;border-radius:6px;border:1px solid var(--border);background:#eef2f7;font-size:11px;font-weight:800;cursor:pointer;color:#3c4c63;line-height:1;padding:0}
+  .pe-qty-move button:disabled{opacity:.3;cursor:default}
+  .pe-qty input[data-qi]{width:88px;height:46px;text-align:center;font-size:18px;font-weight:800;border:1px solid var(--border);border-radius:10px;color:var(--text)}
   .pe-stepper{display:flex;align-items:center;gap:8px}
   .pe-stepper button{width:40px;height:40px;border-radius:10px;border:1px solid var(--border);background:#eef2f7;font-size:20px;font-weight:800;cursor:pointer;color:#3c4c63;line-height:1}
   .pe-stepper input{width:70px;height:40px;text-align:center;font-size:17px;font-weight:800;border:1px solid var(--border);border-radius:10px;color:var(--text)}
@@ -6285,17 +6289,47 @@ function buildFilterTable(cfg){
     alert('Carga deshecha.');
   }
 
-  // ---------- Cargar producción (steppers, id único por evento) ----------
-  function stepperRow(idx,nombre,codigo,sub){ return '<div class="pe-qty"><div><div class="nm">'+esc(nombre)+'</div><div class="cd">'+esc(codigo||'')+(sub?' · '+esc(sub):'')+'</div></div>'+
-    '<div class="pe-stepper"><button data-step="-1" data-i="'+idx+'">−</button><input data-qi="'+idx+'" inputmode="numeric" value="0"><button data-step="1" data-i="'+idx+'">+</button></div></div>'; }
+  // ---------- Cargar producción (orden por preferencia, id único por evento) ----------
+  // Orden guardado EN ESTE DISPOSITIVO (no en Firestore): vph_productos es de escritura solo-admin
+  // (ver REGLAS_FIRESTORE_v2_por_rol.txt), así que si Gustavo reordenara y lo guardáramos ahí, le
+  // tiraría error de permisos. Cada celular/PC recuerda su propio orden preferido con localStorage.
+  const ORDEN_PROD_KEY='vph_orden_produccion_v1';
+  function keyOrdenProd(p){ return (p.codigo||p.nombre||'').trim().toUpperCase(); }
+  function leerOrdenProd(){ try{ return JSON.parse(localStorage.getItem(ORDEN_PROD_KEY))||[]; }catch(e){ return []; } }
+  function guardarOrdenProd(arr){ try{ localStorage.setItem(ORDEN_PROD_KEY, JSON.stringify(arr)); }catch(e){} }
+  function ordenarPorPreferencia(lista){
+    const orden=leerOrdenProd(); const pos=k=>{ const i=orden.indexOf(k); return i<0?9999:i; };
+    return lista.slice().sort((a,b)=> pos(keyOrdenProd(a))-pos(keyOrdenProd(b)));
+  }
+  function filaProd(i,nombre,total){
+    return '<div class="pe-qty">'+
+      '<div class="pe-qty-move"><button type="button" data-mv="-1" data-i="'+i+'"'+(i===0?' disabled':'')+' title="Subir">▲</button>'+
+      '<button type="button" data-mv="1" data-i="'+i+'"'+(i===total-1?' disabled':'')+' title="Bajar">▼</button></div>'+
+      '<div class="nm">'+esc(nombre)+'</div>'+
+      '<input data-qi="'+i+'" inputmode="numeric" placeholder="0" value="">'+
+    '</div>';
+  }
   function openProd(){
-    const act=activos();
+    let act=ordenarPorPreferencia(activos());
     $('pe-form-prod').innerHTML =
       '<div class="cmp-field" style="margin-bottom:12px"><label>Fecha</label><input type="date" id="pe-prod-fecha" value="'+hoyISO+'" style="max-width:200px"></div>'+
-      '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Ingresá la cantidad fabricada de cada producto (se SUMA a lo ya cargado).</p>'+
-      '<div id="pe-prod-list">'+ act.map((p,i)=>stepperRow(i,p.nombre,p.codigo,'físico '+nf(stockDe(p).fisico))).join('') +'</div>'+
+      '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Ingresá la cantidad fabricada de cada producto (se SUMA a lo ya cargado). Con ▲▼ podés reordenar la lista a tu gusto.</p>'+
+      '<div id="pe-prod-list"></div>'+
       '<div id="pe-prod-kg" style="margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc);font-size:13px;line-height:1.5"></div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-prod-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-prod-save">Guardar producción</button></div>';
+    function dibujarLista(){
+      $('pe-prod-list').innerHTML = act.map((p,i)=>filaProd(i,p.nombre,act.length)).join('');
+      $('pe-form-prod').querySelectorAll('button[data-mv]').forEach(b=> b.onclick=()=>{
+        const i=+b.dataset.i, j=i+(+b.dataset.mv); if(j<0||j>=act.length) return;
+        const valores=act.map((p,k)=> ($('pe-form-prod').querySelector('input[data-qi="'+k+'"]')||{}).value||'');
+        [act[i],act[j]]=[act[j],act[i]]; [valores[i],valores[j]]=[valores[j],valores[i]];
+        guardarOrdenProd(act.map(keyOrdenProd));
+        dibujarLista();
+        act.forEach((p,k)=>{ const el=$('pe-form-prod').querySelector('input[data-qi="'+k+'"]'); if(el) el.value=valores[k]; });
+        updProdKg();
+      });
+      $('pe-form-prod').querySelectorAll('input[data-qi]').forEach(el=> el.addEventListener('input',updProdKg));
+    }
     // Kilos del día + promedio de la semana en curso vs objetivo (lo ve Gustavo mientras carga)
     function updProdKg(){
       const fecha=$('pe-prod-fecha').value||hoyISO; let carga=0;
@@ -6307,8 +6341,7 @@ function buildFilterTable(cfg){
       $('pe-prod-kg').innerHTML='📊 Kilos del '+fmtFecha(fecha)+': <b>'+nf(tot)+' kg</b>'+(carga>0?' (esta carga: '+nf(carga)+' kg'+(ya>0?' + '+nf(ya)+' ya cargados':'')+')':'')+' '+(okDia?'✅':'⚠️')+
         '<br>Semana en curso: <b>'+nf(prom)+' kg/día</b> de objetivo '+nf(OBJ())+' kg/día '+(okSem?'✅ objetivo cumplido':'⚠️ por debajo del objetivo');
     }
-    $('pe-form-prod').querySelectorAll('button[data-step]').forEach(b=> b.onclick=()=>{ const inp=$('pe-form-prod').querySelector('input[data-qi="'+b.dataset.i+'"]'); inp.value=Math.max(0,num(inp.value)+num(b.dataset.step)); updProdKg(); });
-    $('pe-form-prod').querySelectorAll('input[data-qi]').forEach(el=> el.addEventListener('input',updProdKg));
+    dibujarLista();
     $('pe-prod-fecha').addEventListener('change',updProdKg);
     updProdKg();
     $('pe-prod-cancel').onclick=()=>$('pe-modal-prod').classList.remove('open');
