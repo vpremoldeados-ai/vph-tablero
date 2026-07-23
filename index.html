@@ -2692,6 +2692,77 @@ function buildFilterTable(cfg){
     else { DB.ventas=DB.ventas.filter(x=>x._uid!==uid); saveLocal(); render(); }
   }
 
+  // ---------- Facturación electrónica ARCA (vía el Worker de Cloudflare) ----------
+  // El Worker es el único que toca el certificado de ARCA; el Tablero solo le manda
+  // los datos de la venta + el login de Firebase y recibe el CAE. Ver C:\VPH\facturacion-arca.
+  const FACT_URL='https://vph-facturacion-arca.vpremoldeados.workers.dev';
+  const IVA_ARCA_ID={ '21':5, '10.5':4, '27':6, '5':8, '2.5':9, '0':3 };   // tasa → código de alícuota ARCA
+  const fmtCae=s=>{ s=String(s||''); return s.length===8 ? s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4) : s; };
+  // Condición de IVA del receptor (RG 5616): Factura A siempre a Responsable Inscripto (1);
+  // Factura B por defecto Consumidor Final (5), salvo Monotributo (6). Los casos fiscales finos
+  // (exento, etc.) se afinan antes de pasar a producción.
+  function condIvaReceptorDe(v, cbteTipo){
+    if(cbteTipo===1) return 1;
+    return String(v.condIva||'').toUpperCase()==='M' ? 6 : 5;
+  }
+  async function facturarVenta(v){
+    if(v.cae){ alert('Esta venta ya está facturada.\nCAE '+v.cae+' · comprobante '+(v.puntoVenta||'')+'-'+(v.nroFactura||'')); return; }
+    const cbteTipo = v.tipoComprobante==='Factura A'?1 : v.tipoComprobante==='Factura B'?6 : 0;
+    if(!cbteTipo){ alert('Solo se factura electrónicamente Factura A o Factura B.\nEsta venta es "'+(v.tipoComprobante||'—')+'".'); return; }
+    const k=calc(v);
+    if(!(k.total>0)){ alert('El total de la venta tiene que ser mayor a $0 para facturar.'); return; }
+    // Documento del receptor
+    const cuit=String(v.cuit||'').replace(/\D/g,'');
+    let docTipo, docNro;
+    if(cbteTipo===1){
+      if(cuit.length!==11){ alert('La Factura A necesita el CUIT del cliente (11 dígitos).\nCargalo en la venta y volvé a intentar.'); return; }
+      docTipo=80; docNro=cuit;
+    } else {
+      if(cuit.length===11){ docTipo=80; docNro=cuit; }
+      else if(cuit.length===7||cuit.length===8){ docTipo=96; docNro=cuit; }   // DNI
+      else { docTipo=99; docNro='0'; }   // consumidor final sin identificar
+    }
+    // Alícuotas de IVA agrupadas por tasa; exento/no gravado → impuesto no gravado (ImpOpEx)
+    const factor=1-num(v.descGeneral)/100;
+    const grp={}; let opEx=0;
+    (v.items||[]).forEach(it=>{ if(!it || (!it.desc && !it.codigo)) return;
+      const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*factor;
+      if(base<=0) return;
+      if(it.iva==='exento'||it.iva==='nogravado'){ opEx+=base; return; }
+      const id=IVA_ARCA_ID[String(num(it.iva))];
+      if(id==null){ opEx+=base; return; }
+      grp[id]=grp[id]||{id:id, rate:num(it.iva), baseImp:0}; grp[id].baseImp+=base;
+    });
+    const alicuotas=Object.values(grp).map(g=>({id:g.id, baseImp:round2(g.baseImp), importe:round2(g.baseImp*g.rate/100)}));
+    if(!alicuotas.length){ alert('Esta venta no tiene ítems gravados con IVA; no se puede facturar electrónicamente así.'); return; }
+    const impTrib=round2(num(v.percepIva)+num(v.percepIibb)+num(v.impInternos)+num(v.intereses));
+    const payload={ cbteTipo, docTipo, docNro, condIvaReceptor:condIvaReceptorDe(v,cbteTipo),
+      alicuotas, impOpEx:round2(opEx), impTrib };   // ptoVta NO se envía: el Worker usa el configurado
+    const c=fb(); if(!c||!c.auth||!c.auth.currentUser){ alert('Iniciá sesión en el Tablero para poder facturar.'); return; }
+    // ¿En qué ambiente está el Worker? En homologación las facturas son de PRUEBA (sin validez fiscal).
+    let ambiente='homologacion';
+    try{ const s=await (await fetch(FACT_URL+'/salud')).json(); ambiente=s.ambiente||'homologacion'; }catch(e){}
+    const avisoPrueba = ambiente!=='produccion'
+      ? '⚠️ MODO PRUEBA (homologación)\nEsta factura NO tiene validez fiscal, es solo para probar el sistema.\n\n' : '';
+    // Emitir una factura es un acto fiscal irreversible → confirmar antes.
+    if(!confirm(avisoPrueba+'Vas a emitir la '+v.tipoComprobante+' en ARCA para '+(v.cliente||'—')+'\nTotal '+money(k.total)+'.\n\n¿Confirmás?')) return;
+    try{
+      const tok=await c.auth.currentUser.getIdToken();
+      const r=await fetch(FACT_URL+'/facturar',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify(payload)});
+      let data={}; try{ data=await r.json(); }catch(e){}
+      if(!r.ok || !data.cae){ alert('ARCA no autorizó la factura:\n\n'+(data.error||('error HTTP '+r.status))); return; }
+      // Guardar el CAE y los datos del comprobante en la venta
+      v.cae=data.cae; v.caeVto=data.caeVto; v.qr=data.qr;
+      v.arcaAmbiente=data.ambiente||ambiente;   // "homologacion" o "produccion" → el PDF marca las de prueba
+      v.puntoVenta=String(data.ptoVta).padStart(4,'0');
+      v.nroFactura=String(data.nroCbte).padStart(8,'0');
+      v.arca='Aprobado';
+      persistVenta(v);
+      alert((v.arcaAmbiente!=='produccion'?'⚠️ FACTURA DE PRUEBA (sin validez fiscal)\n\n':'✅ Factura autorizada por ARCA\n\n')+
+        'Comprobante '+v.puntoVenta+'-'+v.nroFactura+'\nCAE '+data.cae+' (vence '+fmtCae(data.caeVto)+')');
+    }catch(e){ alert('No se pudo conectar con el sistema de facturación.\n'+e.message); }
+  }
+
   // ---------- Cálculo ----------
   function calc(v){
     const factor = 1 - (num(v.descGeneral)/100);
@@ -2792,7 +2863,9 @@ function buildFilterTable(cfg){
   const arcaBadge=e=> e==='Aprobado'?'<span class="badge green">Aprobado</span>':e==='Pendiente'?'<span class="badge amber">Pendiente</span>':'<span style="color:var(--muted)">—</span>';
   function facLabel(v){ if(v.tipoComprobante==='Sin factura') return '<span class="badge" style="background:#eceffb;color:#5b6b9a">Sin factura</span>'; return (v.puntoVenta||v.nroFactura)?((v.condIva||'')+' '+(v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).trim():'—'; }
   function accionesCell(v,k){ const tieneCobros=(v.cobros||[]).length>0; const esNC=v.tipoComprobante==='Nota de Crédito';
+    const esFactAB=/^Factura [AB]$/.test(v.tipoComprobante||'');
     return (((!esNC&&k.saldo>0.5)||tieneCobros)?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">'+((!esNC&&k.saldo>0.5)?'Cobrar':'Cobros')+'</button>':'')+
+      (v.cae?'<span class="badge green" title="Factura electrónica autorizada · CAE '+esc(v.cae)+'" style="margin-right:4px">✓ CAE</span>':(esFactAB?'<button class="cmp-rowbtn" data-act="facturar" data-id="'+v._uid+'" style="border-color:var(--green);color:var(--green);font-weight:800" title="Emitir la factura electrónica en ARCA y obtener el CAE">🧾 Facturar</button>':''))+
       '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'+
       '<button class="cmp-rowbtn" data-act="print" data-id="'+v._uid+'" title="Imprimir documentos">🖨️</button>'+
       '<button class="cmp-rowbtn" data-act="wa" data-id="'+v._uid+'" title="Mensajes de WhatsApp">📲</button>'+
@@ -2826,6 +2899,7 @@ function buildFilterTable(cfg){
     t.querySelectorAll('th[data-sort]').forEach(h=> h.onclick=()=>{ const c=h.dataset.sort; if(filtro.sortCol===c) filtro.sortDir*=-1; else {filtro.sortCol=c;filtro.sortDir=-1;} render(); });
     t.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const v=DB.ventas.find(x=>x._uid==b.dataset.id); if(!v)return;
       if(b.dataset.act==='edit') openForm(v); else if(b.dataset.act==='cobro') openCobro(v);
+      else if(b.dataset.act==='facturar') facturarVenta(v);
       else if(b.dataset.act==='entrega'){ if(window.__pedidoDesdeVenta){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Producción y Logística')); if(nav)nav.click(); window.__pedidoDesdeVenta(v); } else alert('Módulo de Producción/Entregas no disponible.'); }
       else if(b.dataset.act==='print') menuImprimir(v);
       else if(b.dataset.act==='wa') menuWhatsapp(v);
@@ -6956,7 +7030,8 @@ function buildFilterTable(cfg){
   function detalle(v, esPresupuesto){
     const cli=buscarCliente(v.cliente,v.cuit)||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
-    const numero = esc(v.nroFactura||v._uid||'');
+    // Comprobante ya facturado: "puntoVenta-nroFactura" (ej 0001-00000002); si no, lo de siempre.
+    const numero = esc(v.cae ? ((v.puntoVenta||'')+'-'+(v.nroFactura||'')) : (v.nroFactura||v._uid||''));
     const titulo = esPresupuesto ? 'PRESUPUESTO' : 'DETALLE DE VENTA';
     let extrasDer='';
     if(esPresupuesto){ extrasDer='<div style="margin-top:4px"><b>Vto. del Presupuesto:</b> '+dmy(v.vencimiento)+'</div>'; }
@@ -7004,8 +7079,23 @@ function buildFilterTable(cfg){
     let obs='';
     if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; obs+=CONDICIONES_PRESUP; }
     else if(v.notaCliente){ obs+='<div class="doc-obs">'+esc(v.notaCliente)+'</div>'; }
-    return encabezado('X', (esPresupuesto?'PRESUPUESTO':'DETALLE DE VENTA'), numero, dmy(v.fecha), extrasDer)+
-      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+obs+pie();
+    // Venta con factura electrónica autorizada: mostrar CAE, vencimiento y comprobante.
+    // (El QR escaneable de ARCA se agrega en el próximo paso.)
+    let caeBlock='';
+    if(!esPresupuesto && v.cae){
+      const vto=String(v.caeVto||''); const vtoFmt = vto.length===8 ? vto.slice(6,8)+'/'+vto.slice(4,6)+'/'+vto.slice(0,4) : vto;
+      // Las facturas de homologación NO tienen validez fiscal → banner bien visible para no confundir.
+      const esPrueba = v.arcaAmbiente && v.arcaAmbiente!=='produccion';
+      if(esPrueba) caeBlock+='<div style="margin-top:10px;background:#fff3cd;border:1px solid #e0a800;color:#7a5b00;text-align:center;font-weight:800;padding:6px;font-size:12px;border-radius:4px">COMPROBANTE DE PRUEBA · SIN VALIDEZ FISCAL (homologación)</div>';
+      caeBlock+='<div style="margin-top:'+(esPrueba?'6px':'12px')+';border-top:1px solid #cbd5e1;padding-top:6px;font-size:11.5px;display:flex;justify-content:space-between">'+
+        '<div><b>CAE N°:</b> '+esc(v.cae)+'</div><div><b>Vto. CAE:</b> '+esc(vtoFmt)+'</div>'+
+        '<div><b>'+(esPrueba?'Emitido en ambiente de prueba':'Comprobante autorizado por ARCA')+'</b></div></div>';
+    }
+    // Título/letra: si es una venta ya facturada (con CAE), mostrar FACTURA A/B; si no, el detalle interno.
+    const letraFac = v.cae ? (v.tipoComprobante==='Factura A'?'A':v.tipoComprobante==='Factura B'?'B':'X') : 'X';
+    const tituloFac = v.cae ? (v.tipoComprobante||'FACTURA').toUpperCase() : (esPresupuesto?'PRESUPUESTO':'DETALLE DE VENTA');
+    return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer)+
+      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+obs+caeBlock+pie();
   }
 
   // ---------- Recibo de Cobranza ----------
