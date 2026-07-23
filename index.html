@@ -2243,7 +2243,7 @@ function buildFilterTable(cfg){
       // seVenderSugerido:false — lo que se da de alta desde una compra (sueldos, alquiler, insumos...)
       // por defecto NO tiene que aparecer para vender en Ventas/Presupuestos/CRM. Si alguna vez SÍ fuera
       // un producto terminado que se compra para revender, se destilda a mano en la ficha.
-      window.__abrirProducto({ nombreSugerido: it.desc, tipoSugerido: tipoSugeridoDesdeCompra(), seVenderSugerido:false,
+      window.__abrirProducto({ nombreSugerido: it.desc, tipoSugerido: tipoSugeridoDesdeCompra(), seVenderSugerido:false, seFabricaSugerido:false,
         onSaved(rec){ it.desc=rec.nombre; it.codigo=rec.codigo||'';
           if(!num(it.precioUnit) && num(rec.costo)) it.precioUnit=num(rec.costo);
           if(rec.ivaVenta) it.iva=String(rec.ivaVenta);
@@ -4692,7 +4692,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seVende',l:'Aparece en Ventas/Presupuestos/CRM (es algo que fabricamos, o el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
@@ -4934,6 +4934,7 @@ function buildFilterTable(cfg){
     // seVenderSugerido: para que el "+ Nuevo" desde un ítem de Compras (sueldos, alquiler, etc.) NO
     // aparezca por default en Ventas/Presupuestos/CRM — blank() tildaría seVende=true por ser checkbox.
     if(defaults && opts.seVenderSugerido!=null) defaults.seVende = !!opts.seVenderSugerido;
+    if(defaults && opts.seFabricaSugerido!=null) defaults.seFabrica = !!opts.seFabricaSugerido;
     openForm(rec, opts.onSaved, defaults);
   };
   window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
@@ -5735,7 +5736,15 @@ function buildFilterTable(cfg){
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
   function usuario(){ const c=fb(); return (c&&c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||''; }
-  function activos(){ return prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio'); }
+  // ¿El producto es en realidad una MATERIA PRIMA (mismo código o mismo nombre que un ítem del master
+  // "Insumos y MP")? Entonces NO es algo que fabricamos — se coló en el catálogo de productos (ej. Arena
+  // Gruesa, Piedra Binder) y no debe aparecer donde Gustavo carga producción / cuenta stock.
+  function esMateriaPrima(p){ if(!p) return false;
+    const cod=String(p.codigo||'').trim().toUpperCase(), nom=norm(p.nombre);
+    return (insumos||[]).some(x=> (cod && String(x.codigo||'').trim().toUpperCase()===cod) || (nom && norm(x.nombre)===nom)); }
+  // `activos` = lo que se fabrica. Excluye Servicios, lo marcado seFabrica:false, y las materias primas.
+  // seFabrica ausente cuenta como true (los productos reales de siempre no tienen el campo y siguen igual).
+  function activos(){ return prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio' && p.seFabrica!==false && !esMateriaPrima(p)); }
   // Resolver el código de catálogo a partir de un nombre tipeado (para que las entregas descuenten bien)
   function resolverProd(nombre,codigo){ const c=String(codigo||'').trim(); if(c){ const byc=prods.find(p=>(p.codigo||'').trim().toUpperCase()===c.toUpperCase()); if(byc) return byc; } const n=norm(nombre); const byn=prods.find(p=>norm(p.nombre)===n); return byn||null; }
 
