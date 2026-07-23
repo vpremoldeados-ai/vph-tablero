@@ -6909,6 +6909,231 @@ function buildFilterTable(cfg){
 })();
 </script>
 
+<!-- GENERADOR DE QR (propio, cero deps) para el QR fiscal de ARCA. Verificado con jsQR. -->
+<script>
+// Generador de código QR autocontenido (byte mode, ECC nivel M, versiones 1-40).
+// Basado en el algoritmo estándar (misma lógica que la lib de Nayuki, dominio público).
+// Devuelve una matriz booleana; helpers para SVG (PDF) y para test.
+// Cero dependencias — pensado para embeber en el Tablero (PDF offline).
+(function(global){
+  'use strict';
+
+  // --- Galois field GF(256), primitivo 0x11D ---
+  const EXP=new Uint8Array(256), LOG=new Uint8Array(256);
+  (function(){ let x=1; for(let i=0;i<255;i++){ EXP[i]=x; LOG[x]=i; x<<=1; if(x&0x100) x^=0x11D; } EXP[255]=EXP[0]; })();
+  function gmul(a,b){ if(a===0||b===0) return 0; return EXP[(LOG[a]+LOG[b])%255]; }
+
+  // --- Reed-Solomon ---
+  function rsGenPoly(deg){ let poly=[1];
+    for(let i=0;i<deg;i++){ const np=new Array(poly.length+1).fill(0);
+      for(let j=0;j<poly.length;j++){ np[j]^=gmul(poly[j],1); np[j+1]^=gmul(poly[j],EXP[i]); }
+      poly=np; }
+    return poly; }
+  function rsEncode(data, ecLen){ const gen=rsGenPoly(ecLen); const res=new Array(ecLen).fill(0);
+    for(let i=0;i<data.length;i++){ const factor=data[i]^res[0];
+      res.shift(); res.push(0);
+      for(let j=0;j<ecLen;j++) res[j]^=gmul(gen[j+1],factor); }
+    return res; }
+
+  // --- Tablas por versión (índice 0 = placeholder) ---
+  const ECC_CW_PER_BLOCK_M=[-1,10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28];
+  const NUM_EC_BLOCKS_M=[-1,1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,17,17,18,20,21,23,25,26,28,29,31,33,35,37,38,40,43,45,47,49];
+  // Total de codewords (datos+ec) por versión = floor(nbits/8) menos remainder. Tabla estándar:
+  const TOTAL_CW=[-1,26,44,70,100,134,172,196,242,292,346,404,466,532,581,655,733,815,901,991,1085,1156,1258,1364,1474,1588,1706,1828,1921,2051,2185,2323,2465,2611,2761,2876,3034,3196,3362,3532,3706];
+
+  function alignPositions(ver){
+    if(ver===1) return [];
+    const numAlign=Math.floor(ver/7)+2;
+    const step=(ver===32)?26:Math.floor((ver*4+numAlign*2+1)/(numAlign*2-2))*2;
+    const size=ver*4+17;
+    const result=[]; let pos=size-7;
+    for(let i=0;i<numAlign-1;i++){ result.unshift(pos); pos-=step; }
+    result.unshift(6);
+    return result;
+  }
+
+  const dataCapacityBytes=(ver)=>{ const totalCw=TOTAL_CW[ver]; const ecTotal=ECC_CW_PER_BLOCK_M[ver]*NUM_EC_BLOCKS_M[ver]; return totalCw-ecTotal; };
+
+  // Bits del campo de longitud (byte mode) según versión
+  function charCountBits(ver){ if(ver<=9) return 8; if(ver<=26) return 16; return 16; }
+
+  // Elegir la versión mínima (nivel M) que entra
+  function chooseVersion(dataLen){
+    for(let v=1;v<=40;v++){
+      const cap=dataCapacityBytes(v);
+      const headerBytes=Math.ceil((4+charCountBits(v))/8);   // modo + count
+      if(dataLen + headerBytes <= cap) return v;
+    }
+    throw new Error('dato demasiado largo para QR');
+  }
+
+  function buildBitStream(bytes, ver){
+    const capBytes=dataCapacityBytes(ver);
+    const bits=[];
+    const push=(val,len)=>{ for(let i=len-1;i>=0;i--) bits.push((val>>i)&1); };
+    push(4,4);                        // modo byte = 0100
+    push(bytes.length, charCountBits(ver));
+    for(const b of bytes) push(b,8);
+    // terminador
+    const capBits=capBytes*8;
+    const term=Math.min(4, capBits-bits.length); for(let i=0;i<term;i++) bits.push(0);
+    while(bits.length%8!==0) bits.push(0);
+    // padding 0xEC 0x11
+    const pads=[0xEC,0x11]; let pi=0;
+    while(bits.length < capBits){ push(pads[pi%2],8); pi++; }
+    // a bytes
+    const out=new Array(bits.length/8);
+    for(let i=0;i<out.length;i++){ let v=0; for(let j=0;j<8;j++) v=(v<<1)|bits[i*8+j]; out[i]=v; }
+    return out;
+  }
+
+  // Intercalado de bloques + ec
+  function makeCodewords(dataCw, ver){
+    const numBlocks=NUM_EC_BLOCKS_M[ver];
+    const ecLen=ECC_CW_PER_BLOCK_M[ver];
+    const totalCw=TOTAL_CW[ver];
+    const numDataCw=totalCw-ecLen*numBlocks;
+    const shortBlockLen=Math.floor(numDataCw/numBlocks);
+    const numShort=numBlocks - (numDataCw % numBlocks);
+    const blocks=[]; let idx=0;
+    for(let b=0;b<numBlocks;b++){
+      const dlen=shortBlockLen + (b<numShort?0:1);
+      const d=dataCw.slice(idx, idx+dlen); idx+=dlen;
+      const ec=rsEncode(d, ecLen);
+      blocks.push({d, ec});
+    }
+    const result=[];
+    const maxD=Math.max(...blocks.map(b=>b.d.length));
+    for(let i=0;i<maxD;i++) for(const b of blocks) if(i<b.d.length) result.push(b.d[i]);
+    for(let i=0;i<ecLen;i++) for(const b of blocks) result.push(b.ec[i]);
+    return result;
+  }
+
+  // Construcción de la matriz
+  function buildMatrix(ver, codewords){
+    const size=ver*4+17;
+    const m=[], reserved=[];
+    for(let r=0;r<size;r++){ m.push(new Array(size).fill(0)); reserved.push(new Array(size).fill(false)); }
+    const set=(r,c,v)=>{ m[r][c]=v?1:0; reserved[r][c]=true; };
+    // Finder + separadores
+    function finder(r0,c0){ for(let r=-1;r<=7;r++) for(let c=-1;c<=7;c++){ const rr=r0+r, cc=c0+c; if(rr<0||cc<0||rr>=size||cc>=size) continue;
+      const inr=(r>=0&&r<=6&&(c===0||c===6))||(c>=0&&c<=6&&(r===0||r===6))||(r>=2&&r<=4&&c>=2&&c<=4); set(rr,cc,inr?1:0); } }
+    finder(0,0); finder(0,size-7); finder(size-7,0);
+    // Timing
+    for(let i=8;i<size-8;i++){ if(!reserved[6][i]) set(6,i,(i%2===0)?1:0); if(!reserved[i][6]) set(i,6,(i%2===0)?1:0); }
+    // Alignment: en todas las combinaciones MENOS las 3 esquinas que chocan con los finders.
+    // (Los que caen sobre la línea de tiempo SÍ van — la pisan, es correcto.)
+    const ap=alignPositions(ver); const na=ap.length;
+    for(let i=0;i<na;i++) for(let j=0;j<na;j++){
+      if((i===0&&j===0)||(i===0&&j===na-1)||(i===na-1&&j===0)) continue;
+      const r=ap[i], c=ap[j];
+      for(let dr=-2;dr<=2;dr++) for(let dc=-2;dc<=2;dc++){ const on=Math.max(Math.abs(dr),Math.abs(dc))!==1; set(r+dr,c+dc,on?1:0); }
+    }
+    // Dark module
+    set(size-8,8,1);
+    // Información de versión (solo v7+): BCH(18,6) con generador 0x1F25, sin máscara.
+    if(ver>=7){
+      let rem=ver; for(let i=0;i<12;i++) rem=(rem<<1)^(((rem>>11)&1)?0x1F25:0);
+      const vbits=(ver<<12)|rem;
+      for(let i=0;i<18;i++){ const bit=(vbits>>i)&1; const a=size-11+(i%3), b=Math.floor(i/3);
+        set(a,b,bit); set(b,a,bit); }
+    }
+    // Reservar áreas de formato (se pintan después, en applyMaskAndFormat)
+    for(let i=0;i<9;i++){ if(!reserved[8][i]) reserved[8][i]=true; if(!reserved[i][8]) reserved[i][8]=true; }
+    for(let i=0;i<8;i++){ reserved[8][size-1-i]=true; reserved[size-1-i][8]=true; }
+
+    // Colocar datos en zig-zag
+    let bitIdx=0; const totalBits=codewords.length*8;
+    const getBit=()=>{ if(bitIdx>=totalBits) return 0; const byte=codewords[bitIdx>>3]; const b=(byte>>(7-(bitIdx&7)))&1; bitIdx++; return b; };
+    let up=true;
+    for(let col=size-1; col>0; col-=2){
+      if(col===6) col=5;
+      for(let i=0;i<size;i++){
+        const row=up? size-1-i : i;
+        for(let c=0;c<2;c++){ const cc=col-c;
+          if(reserved[row][cc]) continue;
+          m[row][cc]=getBit();
+        }
+      }
+      up=!up;
+    }
+    return {m, reserved, size};
+  }
+
+  const MASKS=[
+    (r,c)=>(r+c)%2===0,
+    (r,c)=>r%2===0,
+    (r,c)=>c%3===0,
+    (r,c)=>(r+c)%3===0,
+    (r,c)=>(Math.floor(r/2)+Math.floor(c/3))%2===0,
+    (r,c)=>((r*c)%2)+((r*c)%3)===0,
+    (r,c)=>(((r*c)%2)+((r*c)%3))%2===0,
+    (r,c)=>(((r+c)%2)+((r*c)%3))%2===0
+  ];
+
+  function applyMaskAndFormat(base, maskIdx){
+    const {m, reserved, size}=base;
+    const g=[]; for(let r=0;r<size;r++) g.push(m[r].slice());
+    const mask=MASKS[maskIdx];
+    for(let r=0;r<size;r++) for(let c=0;c<size;c++) if(!reserved[r][c] && mask(r,c)) g[r][c]^=1;
+    // Format info (nivel M = 00, máscara)
+    const eclBits=0; // M
+    let data=(eclBits<<3)|maskIdx;
+    let rem=data;
+    for(let i=0;i<10;i++) rem=(rem<<1)^(((rem>>9)&1)?0x537:0);
+    let fmt=((data<<10)|rem)^0x5412;
+    for(let i=0;i<15;i++){ const bit=(fmt>>(14-i))&1;   // el estándar coloca el bit MÁS significativo primero
+      // Copia 1 (alrededor del finder superior-izquierdo)
+      if(i<6) g[8][i]=bit; else if(i<8) g[8][i+1]=bit; else if(i===8) g[7][8]=bit; else g[14-i][8]=bit;
+      // Copia 2 (bits 0-6 en columna 8 abajo-izq; bits 7-14 en fila 8 arriba-der)
+      if(i<7) g[size-1-i][8]=bit; else g[8][size-15+i]=bit;
+    }
+    // (el módulo oscuro ya se colocó en buildMatrix, en (size-8, 8))
+    return g;
+  }
+
+  function penalty(g){ const size=g.length; let p=0;
+    // Regla 1: corridas ≥5
+    for(let r=0;r<size;r++){ let run=1; for(let c=1;c<size;c++){ if(g[r][c]===g[r][c-1]){ run++; if(run===5)p+=3; else if(run>5)p++; } else run=1; } }
+    for(let c=0;c<size;c++){ let run=1; for(let r=1;r<size;r++){ if(g[r][c]===g[r-1][c]){ run++; if(run===5)p+=3; else if(run>5)p++; } else run=1; } }
+    // Regla 2: bloques 2x2
+    for(let r=0;r<size-1;r++) for(let c=0;c<size-1;c++){ const v=g[r][c]; if(v===g[r][c+1]&&v===g[r+1][c]&&v===g[r+1][c+1]) p+=3; }
+    // Regla 3: patrón 1011101 con 4 claros
+    const pat1=[1,0,1,1,1,0,1,0,0,0,0], pat2=[0,0,0,0,1,0,1,1,1,0,1];
+    const match=(arr,i,pat)=>{ for(let k=0;k<pat.length;k++){ if(i+k>=arr.length||arr[i+k]!==pat[k]) return false; } return true; };
+    for(let r=0;r<size;r++){ const row=g[r]; for(let c=0;c<size;c++){ if(match(row,c,pat1)||match(row,c,pat2)) p+=40; } }
+    for(let c=0;c<size;c++){ const col=[]; for(let r=0;r<size;r++) col.push(g[r][c]); for(let r=0;r<size;r++){ if(match(col,r,pat1)||match(col,r,pat2)) p+=40; } }
+    // Regla 4: balance
+    let dark=0; for(let r=0;r<size;r++) for(let c=0;c<size;c++) if(g[r][c]) dark++;
+    const pct=dark*100/(size*size); const k=Math.floor(Math.abs(pct-50)/5); p+=k*10;
+    return p;
+  }
+
+  function encode(text){
+    const bytes=[]; for(const ch of unescape(encodeURIComponent(text))) bytes.push(ch.charCodeAt(0));
+    const ver=chooseVersion(bytes.length);
+    const dataCw=buildBitStream(bytes, ver);
+    const codewords=makeCodewords(dataCw, ver);
+    const base=buildMatrix(ver, codewords);
+    let best=null, bestP=Infinity;
+    for(let mk=0;mk<8;mk++){ const g=applyMaskAndFormat(base, mk); const p=penalty(g); if(p<bestP){ bestP=p; best=g; } }
+    return best;   // matriz booleana size×size
+  }
+
+  function toSvg(text, opts){
+    opts=opts||{}; const g=encode(text); const size=g.length;
+    const quiet=opts.quiet==null?4:opts.quiet; const dim=size+quiet*2;
+    const px=opts.px||3; const total=dim*px;
+    let rects='';
+    for(let r=0;r<size;r++) for(let c=0;c<size;c++) if(g[r][c]) rects+='<rect x="'+((c+quiet)*px)+'" y="'+((r+quiet)*px)+'" width="'+px+'" height="'+px+'"/>';
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="'+total+'" height="'+total+'" viewBox="0 0 '+total+' '+total+'" shape-rendering="crispEdges"><rect width="'+total+'" height="'+total+'" fill="#fff"/><g fill="#000">'+rects+'</g></svg>';
+  }
+
+  global.VPHQR={ encode, toSvg };
+})(typeof window!=='undefined'?window:globalThis);
+
+</script>
+
 <!-- =====================================================================
      MÓDULO DOCUMENTOS — impresión A4 (Detalle de Venta, Presupuesto,
      Recibo de Cobranza, Remito). Formato de comprobante propio. Vista previa
@@ -7112,17 +7337,22 @@ function buildFilterTable(cfg){
     let obs='';
     if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; obs+=CONDICIONES_PRESUP; }
     else if(v.notaCliente){ obs+='<div class="doc-obs">'+esc(v.notaCliente)+'</div>'; }
-    // Venta con factura electrónica autorizada: mostrar CAE, vencimiento y comprobante.
-    // (El QR escaneable de ARCA se agrega en el próximo paso.)
+    // Venta con factura electrónica autorizada: CAE, vencimiento y el QR fiscal escaneable de ARCA.
     let caeBlock='';
     if(!esPresupuesto && v.cae){
       const vto=String(v.caeVto||''); const vtoFmt = vto.length===8 ? vto.slice(6,8)+'/'+vto.slice(4,6)+'/'+vto.slice(0,4) : vto;
       // Las facturas de homologación NO tienen validez fiscal → banner bien visible para no confundir.
       const esPrueba = v.arcaAmbiente && v.arcaAmbiente!=='produccion';
       if(esPrueba) caeBlock+='<div style="margin-top:10px;background:#fff3cd;border:1px solid #e0a800;color:#7a5b00;text-align:center;font-weight:800;padding:6px;font-size:12px;border-radius:4px">COMPROBANTE DE PRUEBA · SIN VALIDEZ FISCAL (homologación)</div>';
-      caeBlock+='<div style="margin-top:'+(esPrueba?'6px':'12px')+';border-top:1px solid #cbd5e1;padding-top:6px;font-size:11.5px;display:flex;justify-content:space-between">'+
-        '<div><b>CAE N°:</b> '+esc(v.cae)+'</div><div><b>Vto. CAE:</b> '+esc(vtoFmt)+'</div>'+
-        '<div><b>'+(esPrueba?'Emitido en ambiente de prueba':'Comprobante autorizado por ARCA')+'</b></div></div>';
+      // QR obligatorio (RG 4892). Si por algún motivo no se puede generar, no rompe el documento.
+      let qrSvg=''; try{ if(v.qr && window.VPHQR) qrSvg=window.VPHQR.toSvg(v.qr,{px:3,quiet:4}); }catch(e){}
+      caeBlock+='<div style="margin-top:'+(esPrueba?'6px':'12px')+';border-top:1px solid #cbd5e1;padding-top:8px;display:flex;align-items:center;gap:14px">'+
+        (qrSvg?'<div style="flex:0 0 auto;width:26mm;height:26mm">'+qrSvg.replace('<svg ','<svg style="width:100%;height:100%;display:block" ')+'</div>':'')+
+        '<div style="font-size:11.5px;line-height:1.7">'+
+          '<div><b>CAE N°:</b> '+esc(v.cae)+'</div>'+
+          '<div><b>Vto. del CAE:</b> '+esc(vtoFmt)+'</div>'+
+          '<div style="color:#555">'+(esPrueba?'Emitido en ambiente de prueba (ARCA homologación)':'Comprobante autorizado por ARCA')+'</div>'+
+        '</div></div>';
     }
     // Título/letra: si es una venta ya facturada (con CAE), mostrar FACTURA A/B; si no, el detalle interno.
     const letraFac = v.cae ? (v.tipoComprobante==='Factura A'?'A':v.tipoComprobante==='Factura B'?'B':'X') : 'X';
