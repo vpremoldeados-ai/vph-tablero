@@ -338,12 +338,16 @@
         if(st && st.idx===i){ const a=document.createElement('span'); a.className='sortarrow'; a.textContent = st.dir<0?' ▼':' ▲'; th.appendChild(a); }
       });
     }
+    // ¿La columna i es numérica? (mayoría de sus celdas parsean como número/fecha). Define tanto el tipo
+    // de comparación como el SENTIDO del primer clic.
+    function esNumerica(i){ const {datos}=partes(); if(!datos.length) return false;
+      return datos.filter(r=>valCel(r,i).n!=null).length >= Math.ceil(datos.length*0.6); }
     function aplicar(){
       decorar();
       const st=el.__sort; if(!st) return;
       const {datos, totales, otros}=partes(); if(datos.length<2) return;
       const cont=datos[0].parentNode; if(!cont) return;
-      const numerico = datos.filter(r=>valCel(r,st.idx).n!=null).length >= Math.ceil(datos.length*0.6);
+      const numerico = esNumerica(st.idx);
       datos.sort((a,b)=>{ const va=valCel(a,st.idx), vb=valCel(b,st.idx); let r;
         if(numerico) r=(va.n==null?-Infinity:va.n)-(vb.n==null?-Infinity:vb.n);
         else r=va.s.localeCompare(vb.s,'es',{numeric:true});
@@ -351,7 +355,10 @@
       [...datos, ...otros, ...totales].forEach(r=> cont.appendChild(r));   // reordena dentro del mismo tbody (no toca el thead)
     }
     [...head.cells].forEach((th,i)=>{ if(!th.textContent.trim()) return;
-      th.onclick=()=>{ if(el.__sort && el.__sort.idx===i) el.__sort.dir=-el.__sort.dir; else el.__sort={idx:i, dir:-1}; aplicar(); };
+      th.onclick=()=>{ if(el.__sort && el.__sort.idx===i) el.__sort.dir=-el.__sort.dir;
+        // Primer clic según el tipo: TEXTO arranca A→Z (dir 1); NÚMEROS/FECHAS arrancan de mayor a
+        // menor (dir -1), que es lo que se espera de una columna de plata o cantidades.
+        else el.__sort={idx:i, dir: esNumerica(i) ? -1 : 1}; aplicar(); };
     });
     aplicar();   // reaplica el orden guardado tras un re-render (o solo decora si todavía no se ordenó)
   };
