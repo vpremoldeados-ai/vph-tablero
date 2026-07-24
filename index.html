@@ -2629,11 +2629,25 @@ function buildFilterTable(cfg){
     // ANTES del rótulo de asociados, los campos quedan VACÍOS a propósito: en blanco se nota y se
     // completa mirando el ticket; un número equivocado pasa de largo (ya pasó: tomó 00001-00000001).
     let puntoVenta='', nroFactura='';
+    // Regla ESTRUCTURAL (la más fuerte): en un tique fiscal el N° del comprobante está en el ENCABEZADO,
+    // siempre ANTES del bloque del comprador ("VPH S.A.S. / CUIT 30-71784004-2" o "Consumidor Final").
+    // Los "comprobantes asociados" vienen DESPUÉS de ese bloque. Con poca tinta el encabezado puede
+    // quedar ilegible Y la palabra "ASOCIADOS" también (pasó en producción: el corte fuzzy no la vio y
+    // igual agarró el 00001-00000001) — pero el bloque del comprador se imprime nítido casi siempre,
+    // así que su posición es un tope confiable: nada que aparezca después puede ser el N° principal.
+    const iComprador = (()=>{
+      const cands=[ texto.search(/30[-\s.]?71784004[-\s.]?2/),          // CUIT de VPH como cliente
+                    texto.search(/consumidor\s+final/i),
+                    texto.search(/\bvph\s+s\.?a\.?s/i) ]
+        .filter(i=>i>=0);
+      return cands.length ? Math.min.apply(null,cands) : -1;
+    })();
     const variantesTxt=[texto, String(texto).replace(/[Oo]/g,'0')];
     for(const t2 of variantesTxt){
       if(puntoVenta) break;
       const iAsoc=t2.search(/as[o0]c[i1l]ad/i);
-      const lim = iAsoc<0 ? t2.length : iAsoc;
+      let lim = iAsoc<0 ? t2.length : iAsoc;
+      if(iComprador>=0 && iComprador<lim) lim=iComprador;
       let got=null, m2;
       const reL=/\bn\s*[°ºo*.:]?\s*(\d{4,5})[-\s]+(\d{6,8})\b/gi;      // con rótulo N°/Nro
       while(m2=reL.exec(t2)){ if(m2.index<lim){ got=m2; break; } }
@@ -2649,6 +2663,9 @@ function buildFilterTable(cfg){
         if(!nroFactura){ const mNro=texto.match(/comp(?:robante)?\.?\s*(?:nro|n[°º]|numero)[:\.\s]*(\d{4,8})/i); if(mNro) nroFactura=mNro[1]; }
       }
     }
+    // Si es un ticket fiscal (dice factura/tique) y no se pudo leer el N°, avisar en vez de inventar.
+    if(!puntoVenta && /factura|tique/i.test(texto))
+      avisos.push('no se pudo leer el N° de comprobante (zona borrosa) — completalo mirando el ticket');
     // Proveedor adivinado (respaldo): primera línea "de letras" que no sea un rótulo típico ni numérica.
     // Se saltea cualquier línea de VPH: VPH es el COMPRADOR, nunca el proveedor (aparece en el membrete
     // propio de un remito, o como "facturado a: VPH SAS" en una factura de combustible).
