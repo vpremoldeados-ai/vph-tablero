@@ -8,7 +8,7 @@
      HTTP, por eso va por meta-tag. connect-src es DELIBERADAMENTE amplio en los hosts de Google/Firebase
      para no cortar la base de datos en vivo. Si algo dejara de cargar, este meta es el primer sospechoso:
      se puede quitar esta línea y vuelve al estado anterior. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://www.gstatic.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://*.firebaseapp.com; connect-src 'self' https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasestorage.app https://*.firebaseapp.com https://firebasestorage.googleapis.com https://firestore.googleapis.com https://vph-facturacion-arca.vpremoldeados.workers.dev https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://tessdata.projectnaptha.com; object-src 'none'; base-uri 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://www.gstatic.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://*.firebaseapp.com; connect-src 'self' data: blob: https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasestorage.app https://*.firebaseapp.com https://firebasestorage.googleapis.com https://firestore.googleapis.com https://vph-facturacion-arca.vpremoldeados.workers.dev https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://tessdata.projectnaptha.com; object-src 'none'; base-uri 'self'">
 <title>VPH · Tablero de Dirección</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js" integrity="sha384-DhxhYObIMeMNGyAG7iK11OHzBIKyEIeRL0ad1iFPAOwZB8iirUlTT0O/WJJUk8+o" crossorigin="anonymous"></script>
 <style>
@@ -2606,10 +2606,15 @@ function buildFilterTable(cfg){
     // Fecha del comprobante → YYYY-MM-DD. Preferir la rotulada "Fecha"/"Fecha de Emisión": un ticket trae
     // OTRAS fechas antes ("Inicio de Actividades: 01/03/1983", "Fecha Vto. CAE", el período desde/hasta).
     // Si no hay rótulo, tomar la primera fecha que NO sea de inicio de actividades / vencimiento / CAE.
+    // El rótulo tolera la F perdida por poca tinta ("echa 21/07/2026" — pasó en producción) y el AÑO
+    // tiene chequeo de sanidad: el OCR leyó "2076" por "2026"; una compra solo puede ser de 2020 hasta
+    // el año que viene — fuera de eso se descarta el candidato (mejor vacío que una compra en 2076).
     let fecha='';
+    const anioMax = HOY.getFullYear()+1;
     const armarFecha = mm => { if(!mm) return ''; let [,d,m,a]=mm; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
+      if(+a<2020 || +a>anioMax) return '';
       return (+m>=1 && +m<=12 && +d>=1 && +d<=31) ? a+'-'+m+'-'+d : ''; };
-    fecha = armarFecha(texto.match(/fecha(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
+    fecha = armarFecha(texto.match(/\bf?echa(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
     if(!fecha){
       const reF=/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g; let mm;
       while(mm=reF.exec(texto)){
