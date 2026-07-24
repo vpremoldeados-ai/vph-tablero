@@ -238,7 +238,7 @@
      demás, que sí gana por ser inline — se ocultan igual). */
   @media(max-width:760px){
     #page-prodent{display:flex;flex-direction:column}
-    #page-prodent>#pe-view-stock,#page-prodent>#pe-view-conteo,#page-prodent>#pe-view-coord,#page-prodent>#pe-view-mensual{display:contents}
+    #page-prodent>#pe-view-stock,#page-prodent>#pe-view-conteo,#page-prodent>#pe-view-coord,#page-prodent>#pe-view-semanal,#page-prodent>#pe-view-mensual{display:contents}
     #page-prodent>#pe-tabs{order:-2}
     #page-prodent .pe-actions{order:-1}
     #page-prodent>#pe-kpis{order:0}
@@ -704,6 +704,17 @@
         <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-ped-buscar" placeholder="Buscar cliente, producto, ciudad..." style="margin-left:0"></div>
         <div class="tbl-wrap"><table id="pe-tabla-ped"></table></div>
         <p class="note">Cada pedido es una venta pendiente de entregar. Al marcar <b>Entregado</b> se descuenta del stock físico y sale de lo comprometido. Los pedidos se crean con <b>"→ Entrega"</b> desde una Venta, o a mano acá.</p>
+      </section>
+    </div>
+
+    <!-- Sub-vista: PRODUCCIÓN DE LA SEMANA (semana en curso, hoy resaltado, marcar feriados) -->
+    <div id="pe-view-semanal" style="display:none">
+      <section>
+        <h2><span class="dot" style="background:var(--blue)"></span>Producción de la semana en curso</h2>
+        <div class="asof" id="pe-semanal-asof"></div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado · la columna de <b>hoy</b> queda resaltada. Con el botón de cada día podés marcar/sacar un <b>feriado o día sin producción</b> (lluvia, paro, rotura) — eso lo saca de los días hábiles para no ensuciar el promedio de kg/día en ningún lado del Tablero.</div>
+        <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-semanal" class="pe-tbl-matriz" style="font-size:12px"></table></div>
+        <p class="note">Semana de lunes a domingo. Filas = productos con movimiento esta semana. Fila <b>TOTAL kg</b> = kilos fabricados por día.</p>
       </section>
     </div>
 
@@ -1414,8 +1425,9 @@ window.__pintarPE = function(){
   const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
   const v = rm ? rm.ventas : mesEnCurso.ventas;                          // facturado EN VIVO
   // Días hábiles (lun-vie) del mes, calculados a la fecha de HOY (antes venían congelados del cierre).
+  // Los feriados/días sin producción que carga Producción y Logística (window.__esFeriado) se excluyen acá también.
   const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
-  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
+  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd<1||wd>5) continue; const _iso=_y+'-'+String(_m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); if(window.__esFeriado&&window.__esFeriado(_iso)) continue; _tot++; if(d<=_h.getDate())_tra++; }
   const pct = Math.min(v/pe*100, 100);
   const falta = Math.max(pe - v, 0);
   const dTrans = rm ? _tra : mesEnCurso.diasHabilesTranscurridos, dTot = rm ? _tot : mesEnCurso.diasHabilesTotales, dRest = dTot - dTrans;
@@ -1450,8 +1462,9 @@ window.__pintarMetas = function(){
   if(!document.getElementById('tabla-metas') || !Array.isArray(METAS)) return;
   const fmtVal = (v,u) => u==='$' ? fmt$(v) : u==='kg' ? Math.round(v).toLocaleString('es-AR')+' kg' : u==='%' ? (+v).toFixed(1).replace('.0','')+'%' : u==='x' ? (+v).toFixed(2) : Math.round(v).toLocaleString('es-AR');
   // Días hábiles (lun-vie) del mes calculados a HOY (antes venían congelados del cierre).
+  // Los feriados/días sin producción que carga Producción y Logística (window.__esFeriado) se excluyen acá también.
   const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
-  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
+  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd<1||wd>5) continue; const _iso=_y+'-'+String(_m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); if(window.__esFeriado&&window.__esFeriado(_iso)) continue; _tot++; if(d<=_h.getDate())_tra++; }
   const avanceMes = _tot>0 ? _tra/_tot : (mesEnCurso.diasHabilesTranscurridos/mesEnCurso.diasHabilesTotales);
 
   // Valor EN VIVO de cada meta desde los módulos (null = sin fuente en vivo → queda el del cierre).
@@ -4973,7 +4986,7 @@ function buildFilterTable(cfg){
   // todavía salen el débito VISA y el margen histórico) y roles (para poder reconstruir los permisos).
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
-    'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles'];
+    'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles','vph_feriados'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -5841,7 +5854,7 @@ function buildFilterTable(cfg){
   const TRANSPORTES=['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro'];
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[];
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[];
   let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
@@ -5895,7 +5908,12 @@ function buildFilterTable(cfg){
   // Parámetros editables (Base de Datos → ⚙️ Parámetros), leídos en vivo con default de respaldo.
   const OBJ=()=>num(window.__param('objKgDia',6000));   // objetivo kg/día (semáforo de Gustavo)
   const modoProd=()=>String(window.__param('diasProd','lunvie'));   // días de producción
-  const esHabil=d=>{ const w=d.getDay(); const m=modoProd(); if(m==='todos') return true; if(m==='lunsab') return w!==0; return w>=1&&w<=5; };
+  const isoDe=d=> d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());
+  // Feriados / días sin producción (vph_feriados, doc id = fecha ISO): cargados por Gustavo o Marcelo
+  // desde la vista semanal. Se restan de los días hábiles acá Y en Reportes (PE, Metas) vía
+  // window.__esFeriado, así el promedio de kg/día no queda inflado por un día que no se trabajó.
+  const esFeriado=iso=> feriados.some(f=>f.fecha===iso);
+  const esHabil=d=>{ const w=d.getDay(); const m=modoProd(); if(esFeriado(isoDe(d))) return false; if(m==='todos') return true; if(m==='lunsab') return w!==0; return w>=1&&w<=5; };
   const parseISO=s=>{ if(!s) return null; const a=String(s).slice(0,10).split('-').map(Number); if(a.length<3||!a[0]) return null; const d=new Date(a[0],a[1]-1,a[2]); return isNaN(d)?null:d; };
   const addDias=(d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
   function addDiasHabiles(d,n){ const x=new Date(d); let c=0, guard=0; while(c<n && guard++<400){ x.setDate(x.getDate()+1); if(esHabil(x)) c++; } return x; }
@@ -5903,6 +5921,16 @@ function buildFilterTable(cfg){
   const diasCuradoDe=p=>{ const d=num(p&&p.diasCurado); return d>0?d:num(window.__param('diasCurado',10)); };
   const pesoDe=k=>{ const p=prods.find(pp=>keyDe(pp.codigo,pp.nombre)===k); return p?num(p.pesoUnit):0; };
   function lunesDe(d){ const x=new Date(d); const dw=(x.getDay()+6)%7; x.setDate(x.getDate()-dw); x.setHours(0,0,0,0); return x; }
+  function toggleFeriado(iso){
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    const ex=feriados.find(f=>f.fecha===iso);
+    if(ex){ if(!confirm('¿Sacar el feriado del '+fmtFecha(iso)+(ex.motivo?' ('+ex.motivo+')':'')+'?')) return;
+      c.FS.deleteDoc(c.FS.doc(c.db,'vph_feriados',iso)).catch(e=>alert('Error: '+e.message)); return; }
+    const motivo=prompt('Motivo (feriado, lluvia, paro, rotura...)', ''); if(motivo===null) return;
+    c.FS.setDoc(c.FS.doc(c.db,'vph_feriados',iso), {fecha:iso, motivo:motivo.trim()||'Feriado', usuario:usuario(), ts:iso+'T'+new Date().toTimeString().slice(0,8)}).catch(e=>alert('Error: '+e.message));
+  }
+  window.__esFeriado = iso=>esFeriado(iso);
+  window.__feriados = ()=>feriados.slice();
 
   function producidoDe(k){ return prod.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
   function entregadoDe(k){ return ent.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
@@ -6057,14 +6085,15 @@ function buildFilterTable(cfg){
   // ---------- Render principal ----------
   function render(){
     const aPedir=insumos.filter(x=>num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo)).length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['semanal','📈 Producción de la semana'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
+    $('pe-view-semanal').style.display = tab==='semanal'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
     renderKpis();
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='semanal') renderSemanal(); else if(tab==='mensual') renderMensual(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -6150,6 +6179,49 @@ function buildFilterTable(cfg){
       '<td data-label="Urgencia">'+motivo(it)+'</td><td data-label="Fabricado est.">'+fmtF(it.finFab)+'</td><td data-label="Disponible desde"><b>'+fmtF(it.listo)+'</b></td></tr>'; });
     cont.innerHTML=html; window.__ordenable('pe-tabla-plan');
     const asof=$('pe-plan-asof'); if(asof) asof.textContent='Ritmo estimado: '+nf(ritmo)+' kg/día hábil (promedio últimos '+nf(window.__param('ritmoDias',14))+' días'+(ritmo===OBJ()?' — sin datos, usa el objetivo':'')+') · fechas en orden de esta cola + curado';
+  }
+
+  // ---------- Vista SEMANAL: semana en curso (lun-dom), hoy resaltado, marcar feriados ----------
+  function renderSemanal(){
+    const cont=$('pe-tabla-semanal'); if(!cont) return;
+    const lun=lunesDe(HOY), isoHoy=isoDe(HOY);
+    const dias=[]; for(let i=0;i<7;i++) dias.push(addDias(lun,i));
+    const dowL=['Do','Lu','Ma','Mi','Ju','Vi','Sa'];
+    const fab={}, entr={};
+    const acum=(store,arr)=>{ arr.forEach(x=>{ const f=String(x.fecha||'').slice(0,10); const kk=keyDe(x.codigo,x.producto); (store[kk]=store[kk]||{}); store[kk][f]=(store[kk][f]||0)+num(x.cantidad); }); };
+    acum(fab,prod); acum(entr,ent);
+    const isos=dias.map(isoDe);
+    const keys=new Set([...Object.keys(fab),...Object.keys(entr)].filter(kk=> isos.some(f=>(fab[kk]&&fab[kk][f])||(entr[kk]&&entr[kk][f]))));
+    const rows=activos().filter(p=>keys.has(keyDe(p.codigo,p.nombre))).map(p=>({p,k:keyDe(p.codigo,p.nombre)}));
+    const stick='position:sticky;left:0;background:var(--card,#fff);z-index:2';
+    let h='<thead><tr><th style="'+stick+';text-align:left;min-width:150px">Producto</th>';
+    dias.forEach(d=>{ const iso=isoDe(d); const esHoy=iso===isoHoy; const fer=feriados.find(f=>f.fecha===iso); const wknd=(d.getDay()===0||d.getDay()===6);
+      let st='text-align:center;min-width:72px;';
+      if(esHoy) st+='background:var(--blue-bg,#eaf2ff);border-top:3px solid var(--blue);';
+      else if(fer) st+='background:var(--red-bg,#fdeaea);';
+      else if(wknd) st+='color:var(--muted);';
+      h+='<th style="'+st+'">'+dowL[d.getDay()]+'<br>'+p2(d.getDate())+'/'+p2(d.getMonth()+1)+
+        '<br><button type="button" data-fer="'+iso+'" title="'+(fer?('Sacar feriado ('+esc(fer.motivo||'')+')'):'Marcar feriado / sin producción')+'" style="margin-top:3px;font-size:9.5px;padding:1px 5px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:'+(fer?'var(--red)':'#eef2f7')+';color:'+(fer?'#fff':'#3c4c63')+'">'+(fer?'🎌':'—')+'</button>'+
+        '</th>'; });
+    h+='<th style="text-align:center;border-left:2px solid var(--border);min-width:80px">Total semana</th></tr></thead><tbody>';
+    if(!rows.length) h+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas esta semana.</td></tr>';
+    rows.forEach(({p,k})=>{ let totF=0,totE=0;
+      h+='<tr><td style="'+stick+';text-align:left;font-weight:600">'+esc(p.nombre)+'</td>';
+      dias.forEach(d=>{ const iso=isoDe(d); const f=(fab[k]&&fab[k][iso])||0, e=(entr[k]&&entr[k][iso])||0; totF+=f; totE+=e;
+        const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':'';
+        h+='<td style="text-align:center;white-space:nowrap;'+bg+'">'+((f||e)?('<span style="color:var(--green);font-weight:700">'+(f?'+'+nf(f):'')+'</span>'+(f&&e?' ':'')+'<span style="color:var(--red)">'+(e?'−'+nf(e):'')+'</span>'):'<span style="color:#ccc">·</span>')+'</td>'; });
+      h+='<td style="text-align:center;border-left:2px solid var(--border);white-space:nowrap"><span style="color:var(--green);font-weight:700">+'+nf(totF)+'</span> / <span style="color:var(--red)">−'+nf(totE)+'</span></td></tr>'; });
+    h+='<tr style="border-top:2px solid var(--border);font-weight:700"><td style="'+stick+';text-align:left">TOTAL kg</td>';
+    let semKgF=0;
+    dias.forEach(d=>{ const iso=isoDe(d); let kgF=0; keys.forEach(kk=> kgF+=((fab[kk]&&fab[kk][iso])||0)*pesoDe(kk)); semKgF+=kgF;
+      const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':''; h+='<td style="text-align:center;'+bg+'">'+(kgF?nf(kgF):'')+'</td>'; });
+    h+='<td style="text-align:center;border-left:2px solid var(--border)">'+nf(semKgF)+' kg</td></tr>';
+    h+='</tbody>';
+    cont.innerHTML=h;
+    cont.querySelectorAll('button[data-fer]').forEach(b=> b.onclick=()=> toggleFeriado(b.dataset.fer));
+    const sem=semanaKg();
+    const feriadosSemana=feriados.filter(f=>{ const d=parseISO(f.fecha); return d&&d>=lun&&d<=addDias(lun,6); });
+    const asof=$('pe-semanal-asof'); if(asof) asof.textContent='Semana del '+fmtF(lun)+' al '+fmtF(addDias(lun,6))+' · promedio '+nf(sem.prom)+' kg/día hábil ('+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' hasta hoy) de objetivo '+nf(OBJ())+' kg/día'+(feriadosSemana.length?(' · '+feriadosSemana.length+' feriado'+(feriadosSemana.length!==1?'s':'')+' esta semana (excluido'+(feriadosSemana.length!==1?'s':'')+' del promedio): '+feriadosSemana.map(f=>fmtFecha(f.fecha)+(f.motivo?' ('+f.motivo+')':'')).join(', ')):'');
   }
 
   // ---------- Conteo semanal (Gustavo): teórico vs real + insumos/MP ----------
@@ -6705,10 +6777,10 @@ function buildFilterTable(cfg){
   // ---------- Sync ----------
   function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
     unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('pe '+col+':',err)); }
-  function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a); sub('vph_pedidos',a=>pedidos=a); sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); }
+  function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a); sub('vph_pedidos',a=>pedidos=a); sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); sub('vph_feriados',a=>feriados=a); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
