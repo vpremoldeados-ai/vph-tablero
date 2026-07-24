@@ -3,8 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Content-Security-Policy (segunda barrera ante XSS: acota a dónde puede conectar la página, así un
+     script inyectado no puede exfiltrar datos a un dominio cualquiera). GitHub Pages no permite cabeceras
+     HTTP, por eso va por meta-tag. connect-src es DELIBERADAMENTE amplio en los hosts de Google/Firebase
+     para no cortar la base de datos en vivo. Si algo dejara de cargar, este meta es el primer sospechoso:
+     se puede quitar esta línea y vuelve al estado anterior. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://www.gstatic.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://*.firebaseapp.com; connect-src 'self' https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasestorage.app https://*.firebaseapp.com https://firebasestorage.googleapis.com https://firestore.googleapis.com https://vph-facturacion-arca.vpremoldeados.workers.dev https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://tessdata.projectnaptha.com; object-src 'none'; base-uri 'self'">
 <title>VPH · Tablero de Dirección</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js" integrity="sha384-DhxhYObIMeMNGyAG7iK11OHzBIKyEIeRL0ad1iFPAOwZB8iirUlTT0O/WJJUk8+o" crossorigin="anonymous"></script>
 <style>
   :root{
     --sidebar:#0e1726; --sidebar2:#152238; --accent:#38b26a; --accent2:#4aa3ff;
@@ -2442,6 +2448,18 @@ function buildFilterTable(cfg){
   function soloDigitos(s){ return String(s||'').replace(/\D/g,''); }
   function normCuit(s){ const d=soloDigitos(s); return d.length===11 ? d : ''; }
   function fmtCuit(d){ d=soloDigitos(d); return d.length===11 ? d.replace(/(\d{2})(\d{8})(\d)/,'$1-$2-$3') : ''; }
+  // Dígito verificador del CUIT (algoritmo oficial de AFIP, módulo 11). Es un checksum matemático:
+  // si el OCR leyó mal UN dígito por poca tinta, el CUIT no valida — sirve como "chequeo contra ARCA"
+  // pero offline y gratis (el padrón online de ARCA requiere un servidor con certificado fiscal, que
+  // este Tablero no tiene a propósito: sin backend, sin costos). Un CUIT que valida no garantiza que
+  // exista, pero uno que NO valida es seguro que está mal leído → se avisa para revisar.
+  function cuitValido(d){
+    d=soloDigitos(d); if(d.length!==11) return false;
+    const pesos=[5,4,3,2,7,6,5,4,3,2];
+    let s=0; for(let i=0;i<10;i++) s+=+d[i]*pesos[i];
+    let dv=11-(s%11); if(dv===11) dv=0; if(dv===10) return false;   // DV 10 no existe en CUITs válidos
+    return dv===+d[10];
+  }
   const CUIT_STOP = new Set(['SA','SAS','SRL','SACI','SCA','SH','LTDA','S','A','R','L']);
   function normNombre(s){
     return String(s||'').toUpperCase()
@@ -2560,11 +2578,17 @@ function buildFilterTable(cfg){
     let cuit='', vioCuitVPH=false;
     const todosCuit=[...String(texto).matchAll(/\b(20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/g)]
       .map(m=>m[0].replace(/\D/g,'')).filter(d=>d.length===11);
+    const candCuit=[];
     for(const d of todosCuit){
       if(d===VPH_CUIT){ vioCuitVPH=true; continue; }
       if(/^0+$/.test(d)) continue;
-      cuit=fmtCuit(d); break;
+      candCuit.push(d);
     }
+    // Preferir un candidato con dígito verificador VÁLIDO (chequeo matemático oficial de AFIP): con
+    // poca tinta el OCR puede errar un dígito, y el checksum lo detecta al toque.
+    const valido = candCuit.find(cuitValido);
+    if(valido) cuit=fmtCuit(valido);
+    else if(candCuit.length) cuit=fmtCuit(candCuit[0]);
     // Respaldo: "CUIT ..." con posible ruido del OCR (O→0, I/l→1) y validando prefijo + 11 dígitos.
     if(!cuit){
       const mLbl = texto.match(/c\.?\s*u\.?\s*i\.?\s*t\.?[^\dOoIl]{0,6}([\dOoIl\-.\s]{11,18})/i);
@@ -2573,17 +2597,33 @@ function buildFilterTable(cfg){
     }
     if(!cuit && vioCuitVPH) avisos.push('solo aparece el CUIT de VPH — ¿es una compra o un documento propio (remito/factura de VPH)?');
     else if(!cuit) avisos.push('no se encontró CUIT');
-    // Fecha: dd/mm/aaaa o dd-mm-aaaa (con año de 2 o 4 dígitos) → YYYY-MM-DD.
+    else if(!cuitValido(cuit)) avisos.push('el CUIT leído ('+cuit+') NO pasa el dígito verificador — el OCR pudo leer mal un número por poca tinta, corregilo mirando el ticket');
+    else infos.push('CUIT verificado (dígito verificador correcto)');
+    // Fecha del comprobante → YYYY-MM-DD. Preferir la rotulada "Fecha"/"Fecha de Emisión": un ticket trae
+    // OTRAS fechas antes ("Inicio de Actividades: 01/03/1983", "Fecha Vto. CAE", el período desde/hasta).
+    // Si no hay rótulo, tomar la primera fecha que NO sea de inicio de actividades / vencimiento / CAE.
     let fecha='';
-    const mFecha = texto.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
-    if(mFecha){ let [,d,m,a]=mFecha; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
-      if(+m>=1 && +m<=12 && +d>=1 && +d<=31) fecha=a+'-'+m+'-'+d; }
+    const armarFecha = mm => { if(!mm) return ''; let [,d,m,a]=mm; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
+      return (+m>=1 && +m<=12 && +d>=1 && +d<=31) ? a+'-'+m+'-'+d : ''; };
+    fecha = armarFecha(texto.match(/fecha(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
+    if(!fecha){
+      const reF=/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g; let mm;
+      while(mm=reF.exec(texto)){
+        const antes = texto.slice(Math.max(0,mm.index-32), mm.index).toLowerCase();
+        if(/inicio|activid|vto|vencim|\bcae\b|desde|hasta/.test(antes)) continue;   // no es la fecha de emisión
+        fecha = armarFecha(mm); if(fecha) break;
+      }
+    }
     if(!fecha) avisos.push('no se encontró fecha');
-    // Punto de venta + número de comprobante. Formatos vistos en tickets reales:
-    //  · "N° 00063-00395689" / "0001-00012345"  · "P. Venta: 00016  Comp. Nro.: 00101856"
+    // Punto de venta + número de comprobante. Formatos: "N° 00063-00395689" / "0001-00012345" /
+    // "P. Venta: 00016  Comp. Nro.: 00101856". OJO: un ticket puede traer "Comprobantes ASOCIADOS"
+    // (ej. combustible: "00001-00000001") que NO es el número de esta factura — se descartan los que
+    // aparecen después del rótulo "asociados".
     let puntoVenta='', nroFactura='';
-    const mComp = texto.match(/\b(\d{4,5})[-\s]+(\d{6,8})\b/);
-    if(mComp){ puntoVenta=mComp[1].padStart(4,'0'); nroFactura=mComp[2]; }
+    const asocIdx = texto.toLowerCase().indexOf('asociad');
+    const reC=/\b(\d{4,5})[-\s]+(\d{6,8})\b/g; let mc; const compCands=[];
+    while(mc=reC.exec(texto)){ if(asocIdx<0 || mc.index<asocIdx) compCands.push([mc[1],mc[2]]); }
+    if(compCands.length){ puntoVenta=compCands[0][0].padStart(4,'0'); nroFactura=compCands[0][1]; }
     if(!puntoVenta){
       const mPV=texto.match(/p(?:unto|to)?\.?\s*(?:de\s*)?venta[:\s]*(\d{1,5})/i);
       if(mPV){ puntoVenta=mPV[1].padStart(4,'0');
@@ -2623,6 +2663,10 @@ function buildFilterTable(cfg){
     let neto = buscarMonto(/(?:neto|subtotal)[^\d\n]{0,15}([\d.,]+)/i);
     let ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);
     let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
+    // Impuestos internos / otros tributos (ej. combustible: "IMPORTE TOTAL OTROS TRIBUTOS 10470,07").
+    // NO son IVA: van a su propio campo del form. Sin esto, el Total del ticket no cierra (queda corto).
+    let impInternos = buscarMonto(/(?:otros\s+tributos|impuestos?\s+internos?)[^\d\n]{0,20}([\d.,]+)/i);
+    if(impInternos>0) avisos.push('lleva impuesto interno / otros tributos ('+money(impInternos)+') — cargado en su campo, revisá');
     let itemIva='21';
     if(neto>0 && ivaMonto>0){ const pct=Math.round(ivaMonto/neto*100); itemIva = [21,10.5,27].includes(pct)?String(pct):'21'; }
     // Intentar discriminar los renglones reales del ticket. Solo se usan si RECONCILIAN con el neto/total
@@ -2642,7 +2686,7 @@ function buildFilterTable(cfg){
       proveedor, cuit, condIva, tipoComprobante, categoria,
       fecha, vencimiento:fecha, puntoVenta, nroFactura,
       items,
-      descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0,
+      descGeneral:0, percepIva:0, percepIibb:0, impInternos:round2(impInternos), intereses:0,
       avisos: avisos.join(' · '),
       info: infos.join(' · ')
     };
