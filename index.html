@@ -2083,7 +2083,7 @@ function buildFilterTable(cfg){
       html += '<tr>'+
         '<td>'+badgeEstado[k.estado]+'</td>'+
         '<td>'+fmtFecha(c.fecha)+'</td>'+
-        '<td><b>'+c.proveedor+'</b>'+(c.tipoComprobante!=='Compra'?' <span class="badge blue">'+c.tipoComprobante+'</span>':'')+'</td>'+
+        '<td><b>'+esc(c.proveedor)+'</b>'+(c.tipoComprobante!=='Compra'?' <span class="badge blue">'+esc(c.tipoComprobante)+'</span>':'')+'</td>'+
         '<td>'+c.categoria+'</td>'+
         '<td style="font-variant-numeric:tabular-nums">'+fac+'</td>'+
         '<td class="num"><b>'+money(k.total)+'</b></td>'+
@@ -2359,7 +2359,7 @@ function buildFilterTable(cfg){
   function ticketEstado(html, cls){ const el=$('f-ticket-status'); if(el){ el.innerHTML=html; el.style.color = cls==='bad'?'var(--red)':cls==='good'?'var(--green)':'var(--muted)'; } }
   // Carga perezosa de las librerías (una sola vez por sesión de navegador). Vía import() de ESM desde
   // jsdelivr con el sufijo "+esm" (empaqueta cualquier paquete npm como módulo, sin instalar nada).
-  async function cargarTesseract(){ if(!tesseractCache) tesseractCache = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/+esm'); return tesseractCache; }
+  async function cargarTesseract(){ if(!tesseractCache) tesseractCache = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/+esm'); return tesseractCache; }
   // OJO con esto: "pdfjs-dist@4/+esm" (el wrapper genérico de jsdelivr) resuelve a una build pensada
   // para Node.js, no para navegador, y tira un TypeError. Por eso acá se usa la build oficial de
   // navegador (build/pdf.mjs) con versión FIJA — y el worker, además, se descarga y se envuelve en un
@@ -2395,7 +2395,7 @@ function buildFilterTable(cfg){
     if(ticketBusy) return; ticketBusy=true;
     const tiposOk=['image/jpeg','image/png','image/webp','application/pdf'];
     if(!tiposOk.includes(file.type)){ ticketEstado('Formato no soportado: subí una foto (JPG/PNG) o un PDF.','bad'); ticketBusy=false; return; }
-    if(file.size > 20*1024*1024){ ticketEstado('El archivo pesa más de 20 MB — probá con una foto más liviana.','bad'); ticketBusy=false; return; }
+    if(file.size > 15*1024*1024){ ticketEstado('El archivo pesa más de 15 MB — probá con una foto más liviana.','bad'); ticketBusy=false; return; }
     let url='';
     try{
       // Archivo a Storage: OPCIONAL, para poder ver el original después. Si falla (no está configurado
@@ -2404,7 +2404,8 @@ function buildFilterTable(cfg){
         const ctx=window.__fbctx;
         if(USA_NUBE && ctx && ctx.storage){
           ticketEstado('⏳ Guardando una copia del archivo…');
-          const ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
+          let ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
+          ext = String(ext).toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5) || 'bin';   // saneo: sin barras/puntos → no puede crear segmentos de ruta extra
           const path = 'tickets_compras/'+newUid()+'-'+Date.now()+'.'+ext;
           const sref = ctx.ST.ref(ctx.storage, path);
           // Si Storage no está habilitado en el proyecto (no se hizo "Get started" en Firebase Console),
@@ -2425,6 +2426,9 @@ function buildFilterTable(cfg){
       const worker = await createWorker('spa');
       const { data:{ text } } = await worker.recognize(origen);
       await worker.terminate();
+      // Texto crudo a la consola (F12): si un campo sale mal, copiar esto es la forma de diagnosticar
+      // QUÉ leyó el OCR de verdad (con poca tinta suele diferir de lo que dice el papel).
+      console.log('[ticket OCR] texto crudo leído:\n'+text);
 
       const d = parsearTicketTexto(text);
       aplicarDatosTicket(d);
@@ -2617,13 +2621,26 @@ function buildFilterTable(cfg){
     if(!fecha) avisos.push('no se encontró fecha');
     // Punto de venta + número de comprobante. Formatos: "N° 00063-00395689" / "0001-00012345" /
     // "P. Venta: 00016  Comp. Nro.: 00101856". OJO: un ticket puede traer "Comprobantes ASOCIADOS"
-    // (ej. combustible: "00001-00000001") que NO es el número de esta factura — se descartan los que
-    // aparecen después del rótulo "asociados".
+    // (ej. combustible: "00001-00000001") que NO es el número de esta factura — se descarta todo lo
+    // que aparezca después de ese rótulo. Con poca tinta el OCR garabatea tanto el número principal
+    // como la palabra "ASOCIADOS" (→ "AS0CIADOS"), así que: el corte es FUZZY, se prueba primero el
+    // formato CON rótulo "N°" (el del encabezado, que el renglón de asociados no tiene), y si el texto
+    // crudo no dio nada se reintenta con una pasada O→0 (confusión típica del OCR). Si nada aparece
+    // ANTES del rótulo de asociados, los campos quedan VACÍOS a propósito: en blanco se nota y se
+    // completa mirando el ticket; un número equivocado pasa de largo (ya pasó: tomó 00001-00000001).
     let puntoVenta='', nroFactura='';
-    const asocIdx = texto.toLowerCase().indexOf('asociad');
-    const reC=/\b(\d{4,5})[-\s]+(\d{6,8})\b/g; let mc; const compCands=[];
-    while(mc=reC.exec(texto)){ if(asocIdx<0 || mc.index<asocIdx) compCands.push([mc[1],mc[2]]); }
-    if(compCands.length){ puntoVenta=compCands[0][0].padStart(4,'0'); nroFactura=compCands[0][1]; }
+    const variantesTxt=[texto, String(texto).replace(/[Oo]/g,'0')];
+    for(const t2 of variantesTxt){
+      if(puntoVenta) break;
+      const iAsoc=t2.search(/as[o0]c[i1l]ad/i);
+      const lim = iAsoc<0 ? t2.length : iAsoc;
+      let got=null, m2;
+      const reL=/\bn\s*[°ºo*.:]?\s*(\d{4,5})[-\s]+(\d{6,8})\b/gi;      // con rótulo N°/Nro
+      while(m2=reL.exec(t2)){ if(m2.index<lim){ got=m2; break; } }
+      if(!got){ const reC=/\b(\d{4,5})[-\s]+(\d{6,8})\b/g;             // sin rótulo
+        while(m2=reC.exec(t2)){ if(m2.index<lim){ got=m2; break; } } }
+      if(got){ puntoVenta=got[1].padStart(4,'0'); nroFactura=got[2]; }
+    }
     if(!puntoVenta){
       const mPV=texto.match(/p(?:unto|to)?\.?\s*(?:de\s*)?venta[:\s]*(\d{1,5})/i);
       if(mPV){ puntoVenta=mPV[1].padStart(4,'0');
@@ -2740,7 +2757,7 @@ function buildFilterTable(cfg){
   function openPago(c){
     payingUid=c._uid; const kk=calc(c);
     $('cmp-form-pago').innerHTML =
-      '<p style="margin:0 0 12px;font-size:13px">'+c.proveedor+' — saldo <b>'+money(kk.saldo)+'</b></p>'+
+      '<p style="margin:0 0 12px;font-size:13px">'+esc(c.proveedor)+' — saldo <b>'+money(kk.saldo)+'</b></p>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="p-monto" value="'+kk.saldo+'">') +
         field('Fecha','','<input type="date" id="p-fecha" value="'+hoyISO+'">') +
@@ -3283,7 +3300,7 @@ function buildFilterTable(cfg){
     {k:'estado', h:'Estado', opt:true, cell:r=>badgeEstado[r.k.estado]||''},
     {k:'arca', h:'ARCA', opt:true, off:true, cell:r=>arcaBadge(r.v.arca)},
     {k:'fecha', h:'Emisión', sort:'fecha', opt:true, cell:r=>fmtFecha(r.v.fecha)},
-    {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<b>'+(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+r.v.tipoComprobante+'</span>':'')},
+    {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')},
     {k:'categoria', h:'Categoría', opt:true, off:true, cell:r=>r.v.categoria||'—'},
     {k:'factura', h:'N° Factura', opt:true, cell:r=>'<span style="font-variant-numeric:tabular-nums">'+facLabel(r.v)+'</span>'},
     {k:'total', h:'Total', sort:'total', num:true, cell:r=>'<b>'+money(r.k.total)+'</b>'},
@@ -3513,7 +3530,7 @@ function buildFilterTable(cfg){
     const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO, medioDef = ed ? ed.medio : MEDIOS_COBRO[0];
     const chShow = esCheque(medioDef);
     $('vnt-form-cobro').innerHTML =
-      '<p style="margin:0 0 10px;font-size:13px">'+(v.cliente||'—')+' — total <b>'+money(kk.total)+'</b> · cobrado <b style="color:var(--green)">'+money(kk.cobrado)+'</b> · saldo <b style="color:'+(kk.saldo>0.5?'var(--amber)':'var(--green)')+'">'+money(kk.saldo)+'</b></p>'+
+      '<p style="margin:0 0 10px;font-size:13px">'+esc(v.cliente||'—')+' — total <b>'+money(kk.total)+'</b> · cobrado <b style="color:var(--green)">'+money(kk.cobrado)+'</b> · saldo <b style="color:'+(kk.saldo>0.5?'var(--amber)':'var(--green)')+'">'+money(kk.saldo)+'</b></p>'+
       '<div style="margin-bottom:10px">'+lista+'</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">'+(cobroEdit!=null?'✏️ Editar cobro':'Registrar nuevo cobro')+'</h4>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
@@ -6161,7 +6178,7 @@ function buildFilterTable(cfg){
         (tieneSugerencia?'<div class="ped" style="color:var(--blue)">🤖 Sugerencia: '+esc(i.respuestaPropuesta)+'</div>':'')+
         '<div class="meta">'+esc(i.telefono||'')+' · '+fmtFecha(i.creadoEn)+'</div>'+
         '<div class="acts">'+
-          (link?'<a class="kb-wa" href="'+link+'" target="_blank">💬 Abrir WhatsApp</a>':'')+
+          (link?'<a class="kb-wa" href="'+link+'" target="_blank" rel="noopener">💬 Abrir WhatsApp</a>':'')+
           (tieneSugerencia&&!i.aprobado?'<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-a="'+i._uid+'">✅ Aprobar y enviar</button>':'')+
           (!resuelto?'<button class="kb-move" data-r="'+i._uid+'">✓ Marcar resuelto</button>':'')+
         '</div></div>';

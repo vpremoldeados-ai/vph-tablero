@@ -12,8 +12,10 @@ service firebase.storage {
     }
 
     match /tickets_compras/{archivo} {
-      allow read, write: if esAdmin();
-      // Ticket individual: máx 15 MB, solo PDF o imagen.
+      // OJO: las reglas son ADITIVAS (OR). Antes había un 'allow read, write: if esAdmin()' que concedía
+      // el write SIN límites, dejando MUERTA la validación de abajo (tamaño/tipo nunca se aplicaban).
+      // Ahora el read va por su cuenta y la ÚNICA vía de write es la validada: máx 15 MB, solo PDF o imagen.
+      allow read: if esAdmin();
       allow write: if esAdmin()
         && request.resource.size < 15 * 1024 * 1024
         && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
