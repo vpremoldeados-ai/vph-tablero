@@ -658,6 +658,7 @@
       <section>
         <h2><span class="dot" style="background:var(--blue)"></span>Últimos movimientos</h2>
         <div class="tbl-wrap"><table id="pe-tabla-mov"></table></div>
+        <p class="note">Las filas de <b>Producción</b> tienen ✎ para corregir la cantidad si se cargó mal, y 🗑 para borrarlas. Entregas y ajustes de conteo no se editan acá.</p>
       </section>
     </div>
 
@@ -727,7 +728,7 @@
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado. Última fila: total de kilogramos por día.</div>
         <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" class="pe-tbl-matriz" style="font-size:12px"></table></div>
-        <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
+        <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período. Tocá el encabezado de un día para marcarlo/sacarlo como <b>feriado o sin producción</b> (🎌) — se aplica igual que desde "Producción de la semana".</p>
       </section>
     </div>
   </div>
@@ -6137,14 +6138,33 @@ function buildFilterTable(cfg){
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = curado − comprometido (curado = fabricado hace 10+ días)';
     renderPlan(filas);
-    // movimientos
+    // movimientos (los de Producción se pueden editar/borrar acá si Gustavo cargó mal algo)
     const movs=prod.map(x=>({...x,tipo:'Producción'})).concat(ent.map(x=>({...x,tipo:'Entrega'}))).concat(ajustes.map(x=>({...x,tipo:'Ajuste'}))).sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,40);
-    let mh='<tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th class="num">Cant.</th><th>Cliente / Usuario</th></tr>';
-    if(!movs.length) mh+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
+    let mh='<tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th class="num">Cant.</th><th>Cliente / Usuario</th><th></th></tr>';
+    if(!movs.length) mh+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
     movs.forEach(m=>{ const tb=m.tipo==='Producción'?'<span class="badge blue">Producción</span>':m.tipo==='Entrega'?'<span class="badge green">Entrega</span>':'<span class="badge amber">Ajuste conteo</span>';
       const cant=m.tipo==='Entrega'?('-'+nf(num(m.cantidad))):m.tipo==='Ajuste'?((num(m.cantidad)>=0?'+':'')+nf(num(m.cantidad))):('+'+nf(num(m.cantidad)));
-      mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
+      const acciones = m.tipo==='Producción' ? ('<div class="acts" style="display:flex;gap:4px;flex-wrap:wrap"><button type="button" class="cmp-rowbtn" data-editprod="'+m._uid+'" title="Editar la cantidad cargada">✎</button><button type="button" class="cmp-rowbtn" data-delprod="'+m._uid+'" title="Borrar esta carga" style="color:var(--red)">🗑</button></div>') : '';
+      mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td><td data-label="">'+acciones+'</td></tr>'; });
     $('pe-tabla-mov').innerHTML=mh; window.__ordenable('pe-tabla-mov');
+    $('pe-tabla-mov').querySelectorAll('button[data-editprod]').forEach(b=> b.onclick=()=> editarProduccion(b.dataset.editprod));
+    $('pe-tabla-mov').querySelectorAll('button[data-delprod]').forEach(b=> b.onclick=()=> borrarProduccion(b.dataset.delprod));
+  }
+  // Corrección manual de una carga de producción ya guardada (ej. Gustavo tipeó mal la cantidad).
+  function editarProduccion(uid){
+    const cur=prod.find(x=>x._uid===uid); if(!cur) return;
+    const val=prompt('Nueva cantidad para "'+(cur.producto||cur.codigo||'')+'" del '+fmtFecha(cur.fecha)+' (actual: '+nf(num(cur.cantidad))+'):', num(cur.cantidad));
+    if(val===null) return;
+    const n=num(val);
+    if(n<=0){ alert('La cantidad tiene que ser mayor a 0. Para eliminar el registro usá el botón 🗑 Borrar.'); return; }
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    c.FS.updateDoc(c.FS.doc(c.db,'vph_produccion',uid), {cantidad:n}).catch(e=>alert('Error: '+e.message));
+  }
+  function borrarProduccion(uid){
+    const cur=prod.find(x=>x._uid===uid); if(!cur) return;
+    if(!confirm('¿Borrar esta carga de producción?\n\n'+(cur.producto||cur.codigo||'')+': '+nf(num(cur.cantidad))+' — '+fmtFecha(cur.fecha))) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    c.FS.deleteDoc(c.FS.doc(c.db,'vph_produccion',uid)).catch(e=>alert('Error: '+e.message));
   }
 
   // ---------- Plan de producción (qué fabricar y en qué orden) ----------
@@ -6249,7 +6269,8 @@ function buildFilterTable(cfg){
     let h='<thead><tr><th rowspan="2" style="'+stick+';text-align:left;min-width:150px">Producto</th>';
     semanas.forEach((s,i)=> h+='<th colspan="'+s.count+'" style="text-align:center;border-left:2px solid var(--border)">Sem '+(i+1)+'</th>');
     h+='<th rowspan="2" style="text-align:center;border-left:2px solid var(--border);min-width:74px">Total mes</th></tr><tr>';
-    dias.forEach(x=>{ const wknd=(x.dow===0||x.dow===6); h+='<th style="text-align:center;min-width:50px;'+(x.dow===1?'border-left:2px solid var(--border);':'')+(wknd?'color:var(--muted)':'')+'">'+dowL[x.dow]+'<br>'+x.d+'</th>'; });
+    dias.forEach(x=>{ const wknd=(x.dow===0||x.dow===6); const iso=Y+'-'+p2(M)+'-'+p2(x.d); const fer=feriados.find(f=>f.fecha===iso);
+      h+='<th data-fer="'+iso+'" title="'+(fer?('Feriado ('+esc(fer.motivo||'')+') — click para sacar'):'Click para marcar feriado / sin producción')+'" style="text-align:center;min-width:50px;cursor:pointer;'+(x.dow===1?'border-left:2px solid var(--border);':'')+(fer?'background:var(--red-bg,#fdeaea);':(wknd?'color:var(--muted)':''))+'">'+dowL[x.dow]+'<br>'+x.d+(fer?' 🎌':'')+'</th>'; });
     h+='</tr></thead><tbody>';
     if(!rows.length){ h+='<tr><td colspan="'+(nDias+2)+'" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas en este mes.</td></tr>'; }
     rows.forEach(({p,k})=>{ let totF=0,totE=0;
@@ -6264,6 +6285,7 @@ function buildFilterTable(cfg){
       h+='<td style="text-align:center;border-left:2px solid var(--border)"><span style="color:var(--green)">'+nf(mesKgF)+'</span> kg<br><span style="color:var(--red)">'+nf(mesKgE)+'</span> kg</td></tr>'; }
     h+='</tbody>';
     cont.innerHTML=h;
+    cont.querySelectorAll('th[data-fer]').forEach(th=> th.onclick=()=> toggleFeriado(th.dataset.fer));
   }
 
   function renderConteo(){
