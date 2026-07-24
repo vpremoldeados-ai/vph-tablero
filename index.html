@@ -230,6 +230,11 @@
   .pe-stepper input{width:70px;height:40px;text-align:center;font-size:17px;font-weight:800;border:1px solid var(--border);border-radius:10px;color:var(--text)}
   .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
   .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
+  /* Matriz de "Producción de la semana" — clases (no inline width) para poder comprimirla en mobile
+     sin pelear con estilos en línea. Ver override mobile más abajo. */
+  .pe-sem-prod{position:sticky;left:0;background:var(--card,#fff);z-index:2;text-align:left;min-width:150px}
+  .pe-sem-day{text-align:center;min-width:72px;white-space:nowrap}
+  .pe-sem-tot{text-align:center;border-left:2px solid var(--border);min-width:80px;white-space:nowrap}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
   /* Mobile: subir pestañas (Stock y faltantes/Conteo/Coordinar/Mensual) y los botones de acción
      (Cargar producción, Cargar entrega, Contar productos, etc.) arriba de las tarjetas con indicadores.
@@ -277,6 +282,16 @@
     #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td[data-label=""]::before{content:none}
     #page-prodent .pe-stepper button{width:46px;height:46px;font-size:22px}
     #page-prodent .cmp-rowbtn{padding:7px 12px;font-size:12.5px}
+    /* Producción de la semana: comprimir para que entren las columnas sin desplazarse a la derecha.
+       Se saca el ancho mínimo (pensado para escritorio) y se achica todo — un nombre largo de producto
+       puede pasar a 2 líneas, preferible a tener que scrollear. La columna Total semana se oculta acá:
+       el mismo dato ya está en la tarjeta "Promedio semana en curso" de arriba de la tabla. */
+    #pe-tabla-semanal{font-size:10px}
+    #pe-tabla-semanal th,#pe-tabla-semanal td{padding:3px 2px}
+    #pe-tabla-semanal .pe-sem-prod{min-width:0;max-width:58px;white-space:normal;font-size:9.5px;line-height:1.15}
+    #pe-tabla-semanal .pe-sem-day{min-width:0;white-space:normal}
+    #pe-tabla-semanal .pe-sem-day button[data-fer]{font-size:8.5px;padding:0 3px;margin-top:1px}
+    #pe-tabla-semanal .pe-sem-tot{display:none}
   }
 </style>
 </head>
@@ -6233,29 +6248,28 @@ function buildFilterTable(cfg){
     const isos=dias.map(isoDe);
     const keys=new Set([...Object.keys(fab),...Object.keys(entr)].filter(kk=> isos.some(f=>(fab[kk]&&fab[kk][f])||(entr[kk]&&entr[kk][f]))));
     const rows=activos().filter(p=>keys.has(keyDe(p.codigo,p.nombre))).map(p=>({p,k:keyDe(p.codigo,p.nombre)}));
-    const stick='position:sticky;left:0;background:var(--card,#fff);z-index:2';
-    let h='<thead><tr><th style="'+stick+';text-align:left;min-width:150px">Producto</th>';
+    let h='<thead><tr><th class="pe-sem-prod">Producto</th>';
     dias.forEach(d=>{ const iso=isoDe(d); const esHoy=iso===isoHoy; const fer=feriados.find(f=>f.fecha===iso); const wknd=(d.getDay()===0||d.getDay()===6);
-      let st='text-align:center;min-width:72px;';
-      if(esHoy) st+='background:var(--blue-bg,#eaf2ff);border-top:3px solid var(--blue);';
-      else if(fer) st+='background:var(--red-bg,#fdeaea);';
-      else if(wknd) st+='color:var(--muted);';
-      h+='<th style="'+st+'">'+dowL[d.getDay()]+'<br>'+p2(d.getDate())+'/'+p2(d.getMonth()+1)+
+      let st='';
+      if(esHoy) st='background:var(--blue-bg,#eaf2ff);border-top:3px solid var(--blue);';
+      else if(fer) st='background:var(--red-bg,#fdeaea);';
+      else if(wknd) st='color:var(--muted);';
+      h+='<th class="pe-sem-day" style="'+st+'">'+dowL[d.getDay()]+'<br>'+p2(d.getDate())+'/'+p2(d.getMonth()+1)+
         '<br><button type="button" data-fer="'+iso+'" title="'+(fer?('Sacar feriado ('+esc(fer.motivo||'')+')'):'Marcar feriado / sin producción')+'" style="margin-top:3px;font-size:9.5px;padding:1px 5px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:'+(fer?'var(--red)':'#eef2f7')+';color:'+(fer?'#fff':'#3c4c63')+'">'+(fer?'🎌':'—')+'</button>'+
         '</th>'; });
-    h+='<th style="text-align:center;border-left:2px solid var(--border);min-width:80px">Total semana</th></tr></thead><tbody>';
+    h+='<th class="pe-sem-tot">Total semana</th></tr></thead><tbody>';
     if(!rows.length) h+='<tr><td colspan="'+(dias.length+2)+'" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas esta semana.</td></tr>';
     rows.forEach(({p,k})=>{ let totF=0,totE=0;
-      h+='<tr><td style="'+stick+';text-align:left;font-weight:600">'+esc(p.nombre)+'</td>';
+      h+='<tr><td class="pe-sem-prod" style="font-weight:600">'+esc(p.nombre)+'</td>';
       dias.forEach(d=>{ const iso=isoDe(d); const f=(fab[k]&&fab[k][iso])||0, e=(entr[k]&&entr[k][iso])||0; totF+=f; totE+=e;
         const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':'';
-        h+='<td style="text-align:center;white-space:nowrap;'+bg+'">'+((f||e)?('<span style="color:var(--green);font-weight:700">'+(f?'+'+nf(f):'')+'</span>'+(f&&e?' ':'')+'<span style="color:var(--red)">'+(e?'−'+nf(e):'')+'</span>'):'<span style="color:#ccc">·</span>')+'</td>'; });
-      h+='<td style="text-align:center;border-left:2px solid var(--border);white-space:nowrap"><span style="color:var(--green);font-weight:700">+'+nf(totF)+'</span> / <span style="color:var(--red)">−'+nf(totE)+'</span></td></tr>'; });
-    h+='<tr style="border-top:2px solid var(--border);font-weight:700"><td style="'+stick+';text-align:left">TOTAL kg</td>';
+        h+='<td class="pe-sem-day" style="'+bg+'">'+((f||e)?('<span style="color:var(--green);font-weight:700">'+(f?'+'+nf(f):'')+'</span>'+(f&&e?' ':'')+'<span style="color:var(--red)">'+(e?'−'+nf(e):'')+'</span>'):'<span style="color:#ccc">·</span>')+'</td>'; });
+      h+='<td class="pe-sem-tot"><span style="color:var(--green);font-weight:700">+'+nf(totF)+'</span> / <span style="color:var(--red)">−'+nf(totE)+'</span></td></tr>'; });
+    h+='<tr style="border-top:2px solid var(--border);font-weight:700"><td class="pe-sem-prod">TOTAL kg</td>';
     let semKgF=0;
     dias.forEach(d=>{ const iso=isoDe(d); let kgF=0; keys.forEach(kk=> kgF+=((fab[kk]&&fab[kk][iso])||0)*pesoDe(kk)); semKgF+=kgF;
-      const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':''; h+='<td style="text-align:center;'+bg+'">'+(kgF?nf(kgF):'')+'</td>'; });
-    h+='<td style="text-align:center;border-left:2px solid var(--border)">'+nf(semKgF)+' kg</td></tr>';
+      const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':''; h+='<td class="pe-sem-day" style="'+bg+'">'+(kgF?nf(kgF):'')+'</td>'; });
+    h+='<td class="pe-sem-tot">'+nf(semKgF)+' kg</td></tr>';
     h+='</tbody>';
     cont.innerHTML=h;
     cont.querySelectorAll('button[data-fer]').forEach(b=> b.onclick=()=> toggleFeriado(b.dataset.fer));
