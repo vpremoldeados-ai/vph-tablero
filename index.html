@@ -2400,9 +2400,14 @@ function buildFilterTable(cfg){
     try{
       // Archivo a Storage: OPCIONAL, para poder ver el original después. Si falla (no está configurado
       // Storage, sin conexión, etc.) NO corta el flujo — la lectura del ticket no depende de esto.
+      // APAGADO (24/07): verificado en Firebase Console que habilitar Storage en este proyecto EXIGE
+      // pasar al plan Blaze (tarjeta), y Marcelo no quiere. Sin el flag, cada lectura perdía ~8s
+      // intentando subir a un bucket inexistente (y llenaba la consola de errores CORS). Si algún día
+      // se activa Blaze + Storage + storage.rules, poner ARCHIVAR_TICKETS=true y listo.
+      const ARCHIVAR_TICKETS = false;
       try{
         const ctx=window.__fbctx;
-        if(USA_NUBE && ctx && ctx.storage){
+        if(ARCHIVAR_TICKETS && USA_NUBE && ctx && ctx.storage){
           ticketEstado('⏳ Guardando una copia del archivo…');
           let ext = file.name.includes('.') ? file.name.split('.').pop() : (file.type.split('/')[1]||'bin');
           ext = String(ext).toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5) || 'bin';   // saneo: sin barras/puntos → no puede crear segmentos de ruta extra
