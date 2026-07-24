@@ -37,11 +37,6 @@
   .topbar .date{color:var(--muted);font-size:13px}
   .health{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
   .health span{font-size:11.5px;font-weight:700;border-radius:20px;padding:6px 13px}
-  /* Los pills "Finanzas: CRÍTICO / Comercial: ATENCIÓN" (#health-pills, en el topbar, arriba de TODOS
-     los módulos) solo tienen que verse en Vista Diaria — en cualquier otra página distraían sin poder
-     hacer nada al respecto desde ahí. */
-  #health-pills{display:none}
-  main:has(#page-inicio.active) #health-pills{display:flex}
   .h-ok{background:var(--green-bg);color:var(--green)} .h-warn{background:var(--amber-bg);color:var(--amber)} .h-bad{background:var(--red-bg);color:var(--red)}
   .updated{font-size:11.5px;color:var(--muted);margin:2px 0 18px}
   /* Indicador de conexión en vivo */
@@ -235,44 +230,7 @@
   .pe-stepper input{width:70px;height:40px;text-align:center;font-size:17px;font-weight:800;border:1px solid var(--border);border-radius:10px;color:var(--text)}
   .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
   .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
-  /* Matriz de "Producción de la semana" — clases (no inline width) para poder comprimirla en mobile
-     sin pelear con estilos en línea. Ver override mobile más abajo. */
-  .pe-sem-prod{position:sticky;left:0;background:var(--card,#fff);z-index:2;text-align:left;min-width:150px}
-  .pe-sem-day{text-align:center;min-width:72px;white-space:nowrap}
-  .pe-sem-tot{text-align:center;border-left:2px solid var(--border);min-width:80px;white-space:nowrap}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
-  /* Mobile: subir pestañas (Stock y faltantes/Conteo/Coordinar/Mensual) y los botones de acción
-     (Cargar producción, Cargar entrega, Contar productos, etc.) arriba de las tarjetas con indicadores.
-     display:contents "aplana" la sub-vista activa dentro del flex de #page-prodent sin tocar el JS que
-     alterna las sub-vistas (asigna style.display='' a la activa, que no pisa esta regla; y 'none' a las
-     demás, que sí gana por ser inline — se ocultan igual). */
-  @media(max-width:760px){
-    /* OJO: tiene que ir con .active — un selector por id sin esa clase (#page-prodent{display:flex})
-       gana por especificidad a .page{display:none} SIEMPRE, dejando esta página visible aunque no
-       esté activa y tapando/mezclándose con cualquier otro módulo (bug real, visto 24/07). */
-    #page-prodent.active{display:flex;flex-direction:column}
-    #page-prodent.active>#pe-view-stock,#page-prodent.active>#pe-view-conteo,#page-prodent.active>#pe-view-coord,#page-prodent.active>#pe-view-semanal,#page-prodent.active>#pe-view-mensual{display:contents}
-    #page-prodent.active>#pe-tabs{order:-2}
-    #page-prodent.active .pe-actions{order:-1}
-    #page-prodent.active>#pe-kpis{order:0}
-  }
-  /* Mobile, Producción y Logística: ocultar la leyenda "Datos EN VIVO…/último cierre" (ocupa una
-     línea entera y no aporta nada a Gustavo/Marcelo mirando el celular) y comprimir los espacios
-     (kpis, tarjetas, secciones, títulos) para escrolear menos. Acotado a que ESTA página esté activa
-     — :has() no toca ninguna otra pantalla ni el resto de la app. */
-  @media(max-width:760px){
-    main:has(#page-prodent.active) #updated-line{display:none}
-    main:has(#page-prodent.active) .topbar{padding:14px 0 4px}
-    #page-prodent .kpis{gap:8px;margin-bottom:10px}
-    #page-prodent .kpi{padding:10px 12px}
-    #page-prodent section{padding:12px 14px;margin-bottom:10px}
-    #page-prodent h2{font-size:14px;margin:0 0 4px}
-    #page-prodent .asof{margin:2px 0 8px}
-    #page-prodent .note{margin-top:6px;font-size:11.5px}
-    #page-prodent .filter-bar{margin-bottom:8px;gap:6px}
-    #page-prodent .pe-actions{margin-bottom:10px;gap:8px}
-    #page-prodent .pe-bigbtn{padding:12px 14px}
-  }
   /* Celular de Gustavo: tablas densas (Stock, Plan, Conteo) pasan de filas horizontales a tarjetas apiladas.
      La grilla mensual (.pe-tbl-matriz) queda excluida a propósito: es una matriz día×producto, se lee mejor con scroll horizontal + columna fija. */
   @media(max-width:640px){
@@ -287,16 +245,6 @@
     #page-prodent .tbl-wrap table:not(.pe-tbl-matriz) td[data-label=""]::before{content:none}
     #page-prodent .pe-stepper button{width:46px;height:46px;font-size:22px}
     #page-prodent .cmp-rowbtn{padding:7px 12px;font-size:12.5px}
-    /* Producción de la semana: comprimir para que entren las columnas sin desplazarse a la derecha.
-       Se saca el ancho mínimo (pensado para escritorio) y se achica todo — un nombre largo de producto
-       puede pasar a 2 líneas, preferible a tener que scrollear. La columna Total semana se oculta acá:
-       el mismo dato ya está en la tarjeta "Promedio semana en curso" de arriba de la tabla. */
-    #pe-tabla-semanal{font-size:10px}
-    #pe-tabla-semanal th,#pe-tabla-semanal td{padding:3px 2px}
-    #pe-tabla-semanal .pe-sem-prod{min-width:0;max-width:58px;white-space:normal;font-size:9.5px;line-height:1.15}
-    #pe-tabla-semanal .pe-sem-day{min-width:0;white-space:normal}
-    #pe-tabla-semanal .pe-sem-day button[data-fer]{font-size:8.5px;padding:0 3px;margin-top:1px}
-    #pe-tabla-semanal .pe-sem-tot{display:none}
   }
 </style>
 </head>
@@ -660,6 +608,11 @@
 
     <!-- Sub-vista: STOCK -->
     <div id="pe-view-stock">
+      <div class="pe-actions">
+        <button class="pe-bigbtn prod" id="pe-btn-prod">🏭 Cargar producción</button>
+        <button class="pe-bigbtn ent" id="pe-btn-ent">🚚 Cargar entrega directa</button>
+        <button class="cmp-btn" id="pe-btn-deshacer" style="display:none;border-color:var(--red);color:var(--red)" title="Deshace la última carga (disponible por 5 minutos)">↩️ Deshacer última carga</button>
+      </div>
       <section>
         <h2><span class="dot" style="background:var(--red)"></span>Stock y faltantes</h2>
         <div class="asof" id="pe-stock-asof"></div>
@@ -676,7 +629,6 @@
       <section>
         <h2><span class="dot" style="background:var(--blue)"></span>Últimos movimientos</h2>
         <div class="tbl-wrap"><table id="pe-tabla-mov"></table></div>
-        <p class="note">Las filas de <b>Producción</b> tienen ✎ para corregir la cantidad si se cargó mal, y 🗑 para borrarlas. Entregas y ajustes de conteo no se editan acá.</p>
       </section>
     </div>
 
@@ -726,23 +678,6 @@
       </section>
     </div>
 
-    <!-- Sub-vista: PRODUCCIÓN DE LA SEMANA (semana en curso, hoy resaltado, marcar feriados) -->
-    <div id="pe-view-semanal" style="display:none">
-      <div class="pe-actions">
-        <button class="pe-bigbtn prod" id="pe-btn-prod">🏭 Cargar producción</button>
-        <button class="pe-bigbtn ent" id="pe-btn-ent">🚚 Cargar entrega directa</button>
-        <button class="cmp-btn" id="pe-btn-deshacer" style="display:none;border-color:var(--red);color:var(--red)" title="Deshace la última carga (disponible por 5 minutos)">↩️ Deshacer última carga</button>
-      </div>
-      <section>
-        <h2><span class="dot" style="background:var(--blue)"></span>Producción de la semana en curso</h2>
-        <div class="kpis" id="pe-kpis-semanal" style="margin-bottom:10px"></div>
-        <div class="asof" id="pe-semanal-asof"></div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado · la columna de <b>hoy</b> queda resaltada. Con el botón de cada día podés marcar/sacar un <b>feriado o día sin producción</b> (lluvia, paro, rotura) — eso lo saca de los días hábiles para no ensuciar el promedio de kg/día en ningún lado del Tablero.</div>
-        <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-semanal" class="pe-tbl-matriz" style="font-size:12px"></table></div>
-        <p class="note">Semana de lunes a domingo. Filas = productos con movimiento esta semana. Fila <b>TOTAL kg</b> = kilos fabricados por día.</p>
-      </section>
-    </div>
-
     <!-- Sub-vista: PRODUCCIÓN MENSUAL (calendario fabricado/entregado) -->
     <div id="pe-view-mensual" style="display:none">
       <section>
@@ -750,10 +685,9 @@
           <h2 style="margin:0"><span class="dot" style="background:var(--blue)"></span>Producción y entregas del mes</h2>
           <input type="month" id="pe-mes" class="cmp-select" style="margin-left:auto;max-width:170px">
         </div>
-        <div class="kpis" id="pe-kpis-mensual" style="margin-bottom:10px"></div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado. Última fila: total de kilogramos por día.</div>
         <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" class="pe-tbl-matriz" style="font-size:12px"></table></div>
-        <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período. Tocá el encabezado de un día para marcarlo/sacarlo como <b>feriado o sin producción</b> (🎌) — se aplica igual que desde "Producción de la semana".</p>
+        <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
       </section>
     </div>
   </div>
@@ -1043,6 +977,7 @@
         <span id="cmp-periodo-lbl" style="font-size:12px;color:var(--muted)"></span>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="cmp-nueva">+ Nueva Compra</button>
+          <button class="cmp-btn cmp-btn-primary" id="cmp-pago-prov-btn" style="background:var(--amber)">💰 Pago a proveedor</button>
           <button class="cmp-btn" id="cmp-export">Exportar JSON</button>
           <button class="cmp-btn" id="cmp-import">Importar JSON</button>
           <input type="file" id="cmp-import-file" accept="application/json" style="display:none">
@@ -1094,6 +1029,17 @@
         <button class="cmp-x" id="cmp-pago-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="cmp-form-pago"></div>
+    </div>
+  </div>
+
+  <!-- ================= PAGO A PROVEEDOR (gestor multi-factura) ================= -->
+  <div class="cmp-overlay" id="cmp-modal-pago-prov">
+    <div class="cmp-dialog" style="max-width:650px">
+      <div class="cmp-dialog-head">
+        <h3>Registrar pago a proveedor</h3>
+        <button class="cmp-x" id="cmp-pago-prov-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="cmp-form-pago-prov"></div>
     </div>
   </div>
 
@@ -1451,9 +1397,8 @@ window.__pintarPE = function(){
   const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
   const v = rm ? rm.ventas : mesEnCurso.ventas;                          // facturado EN VIVO
   // Días hábiles (lun-vie) del mes, calculados a la fecha de HOY (antes venían congelados del cierre).
-  // Los feriados/días sin producción que carga Producción y Logística (window.__esFeriado) se excluyen acá también.
   const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
-  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd<1||wd>5) continue; const _iso=_y+'-'+String(_m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); if(window.__esFeriado&&window.__esFeriado(_iso)) continue; _tot++; if(d<=_h.getDate())_tra++; }
+  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
   const pct = Math.min(v/pe*100, 100);
   const falta = Math.max(pe - v, 0);
   const dTrans = rm ? _tra : mesEnCurso.diasHabilesTranscurridos, dTot = rm ? _tot : mesEnCurso.diasHabilesTotales, dRest = dTot - dTrans;
@@ -1488,9 +1433,8 @@ window.__pintarMetas = function(){
   if(!document.getElementById('tabla-metas') || !Array.isArray(METAS)) return;
   const fmtVal = (v,u) => u==='$' ? fmt$(v) : u==='kg' ? Math.round(v).toLocaleString('es-AR')+' kg' : u==='%' ? (+v).toFixed(1).replace('.0','')+'%' : u==='x' ? (+v).toFixed(2) : Math.round(v).toLocaleString('es-AR');
   // Días hábiles (lun-vie) del mes calculados a HOY (antes venían congelados del cierre).
-  // Los feriados/días sin producción que carga Producción y Logística (window.__esFeriado) se excluyen acá también.
   const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
-  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd<1||wd>5) continue; const _iso=_y+'-'+String(_m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); if(window.__esFeriado&&window.__esFeriado(_iso)) continue; _tot++; if(d<=_h.getDate())_tra++; }
+  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
   const avanceMes = _tot>0 ? _tra/_tot : (mesEnCurso.diasHabilesTranscurridos/mesEnCurso.diasHabilesTotales);
 
   // Valor EN VIVO de cada meta desde los módulos (null = sin fuente en vivo → queda el del cierre).
@@ -2218,6 +2162,7 @@ function buildFilterTable(cfg){
         '<tbody id="f-items"></tbody></table></div>'+
       '<button class="cmp-addline" id="f-addline">+ Agregar ítem</button>'+ datalistProdCmp() +
       '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Tip: escribí el nombre o código de un producto/servicio de Base de Datos — si existe lo reconoce (y podés editarlo); si no, te deja darlo de alta sin salir de acá.</div>'+
+      (c.pagos && c.pagos.length ? '<h4 style="margin:14px 0 8px;font-size:13px">Pagos registrados</h4><div class="tbl-wrap"><table style="font-size:12px;width:100%"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px">Fecha</th><th style="text-align:right;padding:6px">Monto</th><th style="text-align:left;padding:6px">Medio</th><th style="text-align:center;padding:6px">Acciones</th></tr></thead><tbody id="f-pagos-list"></tbody></table></div>' : '') +
       '<div class="grid2" style="margin-top:14px">'+
         '<div>'+ field('Nota interna','','<textarea id="f-nota" rows="3" placeholder="Notas...">'+esc(c.nota)+'</textarea>') +
           '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px">'+
@@ -2236,6 +2181,7 @@ function buildFilterTable(cfg){
       '</div>';
 
     drawItems();
+    drawPagos();
     // listeners de cabecera
     ['f-prov:proveedor','f-cuit:cuit','f-cond:condIva','f-cat:categoria','f-tipo:tipoComprobante','f-fecha:fecha','f-venc:vencimiento','f-per:periodo','f-pv:puntoVenta','f-nro:nroFactura','f-nota:nota','f-descg:descGeneral','f-piva:percepIva','f-piibb:percepIibb','f-impint:impInternos','f-int:intereses'].forEach(pair=>{
       const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
@@ -2324,6 +2270,60 @@ function buildFilterTable(cfg){
           if(rec.ivaVenta) it.iva=String(rec.ivaVenta);
           drawItems(); drawTotals(); } });
     };
+  }
+
+  // ---------- Pagos: editar/eliminar ----------
+  function drawPagos(){
+    const el=$('f-pagos-list'); if(!el) return;
+    if(!editing.pagos || !editing.pagos.length){ el.parentElement.parentElement.style.display='none'; return; }
+    el.parentElement.parentElement.style.display='';
+    el.innerHTML = editing.pagos.map((p,i)=>{
+      const medio=p.medio||'—', cuenta=p.cuenta?'('+p.cuenta+')':'';
+      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
+    }).join('');
+    el.querySelectorAll('button[data-ep]').forEach(b=> b.onclick=()=>{ openEditPago(+b.dataset.ep); });
+    el.querySelectorAll('button[data-dp]').forEach(b=> b.onclick=()=>{ if(confirm('¿Eliminar este pago de '+money(editing.pagos[+b.dataset.dp].monto)+'?')) deletePago(+b.dataset.dp); });
+  }
+  function openEditPago(idx){
+    const p=editing.pagos[idx];
+    $('cmp-form-pago').innerHTML=
+      '<p style="margin:0 0 12px;font-size:13px">Editando pago #'+(idx+1)+'</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        field('Monto','','<input id="p-monto" value="'+p.monto+'">') +
+        field('Fecha','','<input type="date" id="p-fecha" value="'+p.fecha+'">') +
+        field('Medio','','<select id="p-medio">'+['Efectivo','Cheque','E-Cheque','Transferencia','Cuenta Corriente'].map(m=>'<option'+(m===p.medio?' selected':'')+'>'+ m+'</option>').join('')+'</select>') +
+        '<div class="cmp-field" id="p-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="p-cuenta">'+cuentasOpt(p.cuenta||'')+'</select></div>' +
+      '</div>'+
+      '<div id="p-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">Datos del cheque/e-cheque</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('N° de cheque','','<input id="p-ch-num" value="'+(p.chNumero||'')+'">') +
+          field('Banco','','<input id="p-ch-banco" value="'+(p.chBanco||'')+'">') +
+          field('Vencimiento','col2','<input type="date" id="p-ch-venc" value="'+(p.chVenc||p.fecha)+'">') +
+        '</div></div>'+
+      '<div class="cmp-form-foot">'+
+        '<button class="cmp-btn" id="p-cancel">Cancelar</button>'+
+        '<button class="cmp-btn cmp-btn-primary" id="p-save">Guardar cambios</button>'+
+      '</div>';
+
+    $('p-medio').addEventListener('change',()=>{ const ch=$('p-medio').value==='Cheque'||$('p-medio').value==='E-Cheque';
+      $('p-cheque-extra').style.display=ch?'block':'none';
+      $('p-cuenta-wrap').style.display=(ch||$('p-medio').value==='Cuenta Corriente')?'none':''; });
+    if(window.__tarjetas){ window.__tarjetas('p-medio'); window.__tarjetas('p-cuenta'); }
+    const ch=p.medio==='Cheque'||p.medio==='E-Cheque'; $('p-cheque-extra').style.display=ch?'block':'none';
+    $('p-cancel').onclick=()=>$('cmp-modal-pago').classList.remove('open');
+    $('p-save').onclick=()=>{
+      editing.pagos[idx]={ id:p.id, fecha:$('p-fecha').value, monto:num($('p-monto').value), medio:$('p-medio').value };
+      if($('p-medio').value==='Cheque'||$('p-medio').value==='E-Cheque'){ editing.pagos[idx].chNumero=$('p-ch-num').value.trim(); editing.pagos[idx].chBanco=$('p-ch-banco').value.trim(); editing.pagos[idx].chVenc=$('p-ch-venc').value; }
+      else { editing.pagos[idx].cuenta=$('p-cuenta')?$('p-cuenta').value:''; }
+      drawPagos(); drawTotals(); $('cmp-modal-pago').classList.remove('open');
+    };
+    $('cmp-modal-pago').classList.add('open');
+  }
+  function deletePago(idx){
+    editing.pagos.splice(idx,1);
+    drawPagos();
+    drawTotals();
   }
 
   // ---------- Leer ticket de compra (foto/PDF → OCR EN EL NAVEGADOR → precarga el formulario) ----------
@@ -2422,24 +2422,84 @@ function buildFilterTable(cfg){
 
       const d = parsearTicketTexto(text);
       aplicarDatosTicket(d);
-      ticketEstado('✅ Datos precargados desde el ticket'+(url?' — <a href="'+url+'" target="_blank" rel="noopener">ver archivo</a>':'')+'. <b>Revisá todo antes de guardar</b>: la lectura automática es aproximada.'+(d.avisos?(' ⚠️ '+esc(d.avisos)):''), 'good');
+      ticketEstado('✅ Datos precargados desde el ticket'+(url?' — <a href="'+url+'" target="_blank" rel="noopener">ver archivo</a>':'')+'. <b>Revisá todo antes de guardar</b>: la lectura automática es aproximada.'+(d.info?(' ✅ '+esc(d.info)):'')+(d.avisos?(' ⚠️ '+esc(d.avisos)):''), 'good');
     }catch(e){
       console.error('procesarTicket:', e);
       ticketEstado((url?'El archivo se guardó (<a href="'+url+'" target="_blank" rel="noopener">verlo</a>) pero no se pudo leer automáticamente: ':'No se pudo leer el ticket: ')+esc((e&&e.message)||'error desconocido')+'. Cargá los datos a mano.', 'bad');
     } finally { ticketBusy=false; }
   }
 
+  // ---------- Directorio de proveedores RECURRENTES (aprendido del historial de compras) ----------
+  // La clave más confiable de un ticket es el CUIT (11 dígitos: el OCR difícilmente los erra todos).
+  // Para cada proveedor ya cargado alguna vez, este directorio guarda su NOMBRE canónico (el que se
+  // escribió más veces), su condición de IVA, y la CATEGORÍA y el TIPO que usa habitualmente (la moda
+  // de su historial). Así, cuando el OCR lee el CUIT de un ticket de un proveedor recurrente, el
+  // formulario se precarga con el nombre EXACTO de siempre y la categoría que le corresponde —
+  // en vez de adivinar el nombre de la primera línea. Es "reconocer al proveedor recurrente".
+  // Ojo: el mismo proveedor suele estar escrito de varias formas ("Santa Barbara S.A." / "SANTA
+  // BARBARA SA" / "SANTA BARBARA S A") pero con el mismo CUIT — por eso el CUIT manda, y el nombre
+  // se normaliza (sin tildes, sin S.A./S.R.L./SAS, sin puntuación) para el match de respaldo.
+  function soloDigitos(s){ return String(s||'').replace(/\D/g,''); }
+  function normCuit(s){ const d=soloDigitos(s); return d.length===11 ? d : ''; }
+  function fmtCuit(d){ d=soloDigitos(d); return d.length===11 ? d.replace(/(\d{2})(\d{8})(\d)/,'$1-$2-$3') : ''; }
+  const CUIT_STOP = new Set(['SA','SAS','SRL','SACI','SCA','SH','LTDA','S','A','R','L']);
+  function normNombre(s){
+    return String(s||'').toUpperCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g,'')     // saca tildes
+      .replace(/[^A-Z0-9]+/g,' ').trim()
+      .split(' ').filter(t=>t && !CUIT_STOP.has(t)).join(' ');
+  }
+  function modaValor(arr){ const m={}; let best='',bn=0; arr.forEach(v=>{ v=String(v||'').trim(); if(!v) return; m[v]=(m[v]||0)+1; if(m[v]>bn){bn=m[v];best=v;} }); return best; }
+  function directorioProveedores(){
+    const porCuit={}, porNom={};
+    const rec=(ent,c)=>{ ent.nombres.push(c.proveedor); ent.cats.push(c.categoria); ent.conds.push(c.condIva); ent.tipos.push(c.tipoComprobante); ent.n++; };
+    (DB.compras||[]).forEach(c=>{
+      if(!c || !c.proveedor) return;
+      const cu=normCuit(c.cuit), nk=normNombre(c.proveedor);
+      if(cu){ (porCuit[cu]=porCuit[cu]||{nombres:[],cats:[],conds:[],tipos:[],n:0}); rec(porCuit[cu],c); }
+      if(nk){ (porNom[nk]=porNom[nk]||{nombres:[],cats:[],conds:[],tipos:[],n:0}); rec(porNom[nk],c); }
+    });
+    const resumir=ent=>({ nombre:modaValor(ent.nombres), categoria:modaValor(ent.cats), cond:modaValor(ent.conds), tipo:modaValor(ent.tipos), veces:ent.n });
+    const outCuit={}, outNom={};
+    for(const k in porCuit) outCuit[k]=resumir(porCuit[k]);
+    for(const k in porNom) outNom[k]=resumir(porNom[k]);
+    return { porCuit:outCuit, porNom:outNom };
+  }
+  // Match del proveedor leído contra el directorio. Prioridad: CUIT exacto > nombre exacto (normalizado)
+  // > nombre parcial (uno contiene al otro). Devuelve el registro conocido + cómo se reconoció, o null.
+  function matchProveedorConocido(cuitLeido, nombreLeido){
+    const dir=directorioProveedores();
+    const cu=normCuit(cuitLeido);
+    if(cu && dir.porCuit[cu]) return { ...dir.porCuit[cu], via:'CUIT' };
+    const nk=normNombre(nombreLeido);
+    if(nk && dir.porNom[nk]) return { ...dir.porNom[nk], via:'nombre' };
+    if(nk && nk.length>=6){
+      for(const k in dir.porNom){
+        if(k.length>=6 && (k.indexOf(nk)>=0 || nk.indexOf(k)>=0)) return { ...dir.porNom[k], via:'nombre parcial' };
+      }
+    }
+    return null;
+  }
+
   // ---------- Reglas para adivinar los campos a partir del texto crudo del OCR ----------
-  // Mismo espíritu que el "pegar chat de WhatsApp" del Asistente: heurísticas simples, nunca inventa
-  // valores que no estén en el texto, y deja todo marcado para que la persona revise.
+  // Nunca inventa valores que no estén en el texto y deja todo marcado para que la persona revise.
+  // Primero reconoce al proveedor (por CUIT/nombre, contra el historial) y de ahí precarga categoría,
+  // condición IVA y tipo. Si el proveedor es nuevo, cae al método viejo (primera línea con letras).
   function parsearTicketTexto(texto){
     const lineas = String(texto||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-    const avisos=[];
+    const avisos=[];   // advertencias (se muestran con ⚠️)
+    const infos=[];    // confirmaciones positivas, ej. proveedor reconocido (se muestran con ✅)
     // CUIT: 11 dígitos, con o sin guiones, empezando por un prefijo típico de CUIT/CUIL.
     let cuit='';
     const mCuit = texto.match(/\b(20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/);
-    if(mCuit) cuit = mCuit[0].replace(/[^\d]/g,'').replace(/(\d{2})(\d{8})(\d)/,'$1-$2-$3');
-    else avisos.push('no se encontró CUIT');
+    if(mCuit) cuit = fmtCuit(mCuit[0]);
+    // Respaldo: "CUIT ..." con posible ruido del OCR (O→0, I/l→1) y validando prefijo + 11 dígitos.
+    if(!cuit){
+      const mLbl = texto.match(/c\.?\s*u\.?\s*i\.?\s*t\.?[^\dOoIl]{0,6}([\dOoIl\-.\s]{11,18})/i);
+      if(mLbl){ const d=mLbl[1].replace(/[Oo]/g,'0').replace(/[Il]/g,'1').replace(/\D/g,'');
+        if(d.length===11 && /^(20|23|24|27|30|33|34)/.test(d)) cuit=fmtCuit(d); }
+    }
+    if(!cuit) avisos.push('no se encontró CUIT');
     // Fecha: dd/mm/aaaa o dd-mm-aaaa (con año de 2 o 4 dígitos) → YYYY-MM-DD.
     let fecha='';
     const mFecha = texto.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
@@ -2450,15 +2510,27 @@ function buildFilterTable(cfg){
     let puntoVenta='', nroFactura='';
     const mComp = texto.match(/\b(\d{4,5})[-\s]+(\d{6,8})\b/);
     if(mComp){ puntoVenta=mComp[1].padStart(4,'0'); nroFactura=mComp[2]; }
-    // Proveedor: mejor esfuerzo — primera línea "de letras" que no sea un rótulo típico de ticket ni un
-    // renglón numérico. Es lo menos confiable del parser: siempre lo marca para revisar.
-    let proveedor='';
-    const rotulos=/^(factura|ticket|comprobante|fecha|cuit|cliente|razon social|domicilio|iva|total|subtotal)\b/i;
-    for(const l of lineas.slice(0,8)){
-      if(l.length>=3 && l.length<=60 && /[a-zA-ZÁÉÍÓÚáéíóúñÑ]{3,}/.test(l) && !rotulos.test(l) && !/^\d+([.,]\d+)?$/.test(l)){ proveedor=l; break; }
+    // Proveedor adivinado (respaldo): primera línea "de letras" que no sea un rótulo típico ni numérica.
+    let provAdivinado='';
+    const rotulos=/^(factura|ticket|comprobante|fecha|cuit|cuil|cliente|razon social|domicilio|iva|total|subtotal|remito|presupuesto|orig|copia|duplicado)\b/i;
+    for(const l of lineas.slice(0,10)){
+      if(l.length>=3 && l.length<=60 && /[a-zA-ZÁÉÍÓÚáéíóúñÑ]{3,}/.test(l) && !rotulos.test(l) && !/^\d+([.,]\d+)?$/.test(l)){ provAdivinado=l; break; }
     }
-    if(!proveedor) avisos.push('no se pudo adivinar el proveedor — completalo a mano');
-    else avisos.push('proveedor adivinado de la primera línea del ticket — confirmalo');
+    // Reconocimiento del proveedor RECURRENTE (por CUIT o nombre) contra el historial de compras.
+    let proveedor='', condIva='A', categoria='', tipoComprobante='Compra';
+    const conocido = matchProveedorConocido(cuit, provAdivinado);
+    if(conocido && conocido.nombre){
+      proveedor = conocido.nombre;
+      if(conocido.cond && COND_IVA.includes(conocido.cond)) condIva = conocido.cond;
+      if(conocido.categoria && CATEGORIAS.includes(conocido.categoria)) categoria = conocido.categoria;
+      if(conocido.tipo && TIPOS_COMPROB.includes(conocido.tipo)) tipoComprobante = conocido.tipo;
+      infos.push('Proveedor reconocido por '+conocido.via+' ('+conocido.veces+' compra(s) previa(s))'+(categoria?' · categoría sugerida: '+categoria:''));
+    } else if(provAdivinado){
+      proveedor = provAdivinado;
+      avisos.push('proveedor NUEVO, adivinado de la primera línea — confirmalo y elegí la categoría');
+    } else {
+      avisos.push('no se pudo adivinar el proveedor — completalo a mano');
+    }
     // Totales: busca un renglón "Neto"/"Subtotal" y uno de "IVA" por separado; si no los encuentra,
     // toma el "TOTAL" como neto (queda marcado como aproximado, puede incluir IVA sin discriminar).
     const buscarMonto = re=>{ const m=texto.match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
@@ -2470,11 +2542,12 @@ function buildFilterTable(cfg){
     else if(total>0){ itemNeto=total; avisos.push('el total puede incluir IVA sin discriminar — revisar el importe'); }
     else avisos.push('no se encontró el total — completalo a mano');
     return {
-      proveedor, cuit, condIva:'A', tipoComprobante:'Compra', categoria:'',
+      proveedor, cuit, condIva, tipoComprobante, categoria,
       fecha, vencimiento:fecha, puntoVenta, nroFactura,
       items: itemNeto>0 ? [{desc:'Según ticket (revisar detalle)', cant:1, precioUnit:round2(itemNeto), descPct:0, iva:itemIva}] : [],
       descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0,
-      avisos: avisos.join(' · ')
+      avisos: avisos.join(' · '),
+      info: infos.join(' · ')
     };
   }
   // Vuelca lo que devolvió la IA en el formulario. Solo pisa campos que vinieron con datos (no borra lo
@@ -2561,6 +2634,127 @@ function buildFilterTable(cfg){
       if(esCheque(medio) && window.__upsertChequePago){ window.__upsertChequePago({ pagoId:pago.id, compraUid:c2._uid, compraNro:c2.nroFactura||c2.numero||'', entidad:c2.proveedor||'', numero:pago.chNumero, banco:pago.chBanco, monto:pago.monto, fechaEmision:pago.fecha, fechaVencimiento:pago.chVenc||pago.fecha }); }
       $('cmp-modal-pago').classList.remove('open'); };
     $('cmp-modal-pago').classList.add('open');
+  }
+
+  // ---------- PAGO A PROVEEDOR (gestor multi-factura) ----------
+  let pagoProv = { proveedor:'', monto:0, fecha:hoyISO, medio:'Efectivo', cuenta:'', distribucion:[] };
+
+  function facturasPendientesDelProveedor(nombre){
+    return DB.compras.filter(c=> c.proveedor===nombre && c.tipoComprobante!=='Nota de Crédito').map(c=>{
+      const kk=calc(c);
+      return { ...c, saldo:kk.saldo, pagado:kk.pagado, total:kk.total };
+    }).filter(c=>c.saldo>0.5).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+  }
+
+  function distribuirPagos(monto, facturas){
+    const dist=[];
+    let pendiente=monto;
+    for(const f of facturas){
+      if(pendiente<=0.5) break;
+      const aplicar=Math.min(pendiente, f.saldo);
+      dist.push({ compraUid:f._uid, nroFactura:f.nroFactura||f.numero||'?', monto:round2(aplicar) });
+      pendiente=round2(pendiente-aplicar);
+    }
+    return dist;
+  }
+
+  function openPagoProv(){
+    pagoProv={ proveedor:'', monto:0, fecha:hoyISO, medio:'Efectivo', cuenta:'', distribucion:[] };
+    const provs=proveedoresConocidos().map(p=>p.nombre).sort();
+    $('cmp-form-pago-prov').innerHTML=
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        field('Proveedor','col2','<input id="pp-prov" list="pp-prov-list" placeholder="Seleccionar proveedor" value="">'+
+          '<datalist id="pp-prov-list">'+provs.map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>')+
+        field('Monto del pago','','<input id="pp-monto" value="0" type="number" step="0.01">') +
+        field('Fecha','','<input type="date" id="pp-fecha" value="'+hoyISO+'">') +
+        field('Medio de pago','','<select id="pp-medio">'+['Efectivo','Cheque','E-Cheque','Transferencia','Cuenta Corriente'].map(m=>'<option>'+m+'</option>').join('')+'</select>') +
+        '<div class="cmp-field" id="pp-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="pp-cuenta">'+cuentasOpt('')+'</select></div>' +
+      '</div>'+
+      '<div id="pp-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">Datos del cheque/e-cheque</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('N° de cheque','','<input id="pp-ch-num">') +
+          field('Banco','','<input id="pp-ch-banco">') +
+          field('Vencimiento','col2','<input type="date" id="pp-ch-venc" value="'+hoyISO+'">') +
+        '</div></div>'+
+      '<div id="pp-facturas" style="margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc)">'+
+        '<p style="margin:0 0 8px 0;font-size:12px;color:var(--muted)"><b>Facturas pendientes:</b> cargá el monto arriba para ver cómo se distribuye</p>'+
+        '<div id="pp-dist-table" style="font-size:12px"></div>'+
+      '</div>'+
+      '<div class="cmp-form-foot">'+
+        '<button class="cmp-btn" id="pp-cancel">Cancelar</button>'+
+        '<button class="cmp-btn cmp-btn-primary" id="pp-save">Guardar pago</button>'+
+      '</div>';
+
+    const ppProv=$('pp-prov'), ppMonto=$('pp-monto'), ppFecha=$('pp-fecha'), ppMedio=$('pp-medio');
+
+    ppProv.addEventListener('change',()=>{ pagoProv.proveedor=ppProv.value; drawDistribucion(); });
+    ppMonto.addEventListener('input',()=>{ pagoProv.monto=num(ppMonto.value); drawDistribucion(); });
+    ppFecha.addEventListener('change',()=>{ pagoProv.fecha=ppFecha.value; });
+    ppMedio.addEventListener('change',()=>{
+      const ch=ppMedio.value==='Cheque'||ppMedio.value==='E-Cheque';
+      $('pp-cheque-extra').style.display=ch?'block':'none';
+      $('pp-cuenta-wrap').style.display=(ch||ppMedio.value==='Cuenta Corriente')?'none':'block';
+      pagoProv.medio=ppMedio.value;
+    });
+
+    const ppCuenta=$('pp-cuenta'); if(ppCuenta) ppCuenta.addEventListener('change',()=>{ pagoProv.cuenta=ppCuenta.value; });
+
+    function drawDistribucion(){
+      const fact=facturasPendientesDelProveedor(pagoProv.proveedor);
+      const tbl=$('pp-dist-table');
+      if(!fact.length){ tbl.innerHTML='<p style="color:var(--muted)">No hay facturas pendientes para este proveedor.</p>'; return; }
+      if(pagoProv.monto<=0){ tbl.innerHTML='<p style="color:var(--muted)">—</p>'; return; }
+
+      pagoProv.distribucion=distribuirPagos(pagoProv.monto, fact);
+      let html='<table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border);font-size:11px"><th style="text-align:left;padding:4px">N° Factura</th><th style="text-align:right;padding:4px">Saldo</th><th style="text-align:right;padding:4px">Pago</th></tr>';
+      let totAplicar=0;
+      fact.forEach(f=>{
+        const dist=pagoProv.distribucion.find(d=>d.compraUid===f._uid);
+        const aplicar=dist?dist.monto:0; totAplicar+=aplicar;
+        html+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px">'+esc(f.nroFactura||f.numero||'?')+'</td><td style="text-align:right;padding:4px">'+money(f.saldo)+'</td><td style="text-align:right;padding:4px;'+(aplicar>0?'color:var(--green);font-weight:700':'')+'">'+money(aplicar)+'</td></tr>';
+      });
+      html+='<tr style="border-top:1px solid var(--border);font-weight:700;font-size:11px"><td style="padding:4px">Total</td><td style="text-align:right;padding:4px">'+money(fact.reduce((a,f)=>a+f.saldo,0))+'</td><td style="text-align:right;padding:4px;color:var(--amber)">'+money(totAplicar)+'</td></tr></table>';
+      if(totAplicar<pagoProv.monto-0.5){ html+='<p style="color:var(--amber);font-size:11px;margin:6px 0 0">⚠️ Sobra '+money(pagoProv.monto-totAplicar)+' sin asignar (todas las facturas se cancelan)</p>'; }
+      tbl.innerHTML=html;
+    }
+
+    $('pp-cancel').onclick=()=>$('cmp-modal-pago-prov').classList.remove('open');
+    $('pp-save').onclick=()=>{
+      if(!pagoProv.proveedor.trim()){ alert('Seleccionar un proveedor'); return; }
+      if(pagoProv.monto<=0){ alert('Ingresar un monto mayor a 0'); return; }
+      if(!pagoProv.distribucion.length){ alert('No hay facturas pendientes para distribuir el pago'); return; }
+
+      const medio=pagoProv.medio;
+      const esChequepay=(medio==='Cheque'||medio==='E-Cheque');
+      const esCC=(medio==='Cuenta Corriente');
+
+      // Guardar pago en cada factura
+      pagoProv.distribucion.forEach(d=>{
+        const comp=DB.compras.find(c=>c._uid===d.compraUid);
+        if(!comp) return;
+        const pago={ id:'pag_'+newUid(), fecha:pagoProv.fecha, monto:d.monto, medio };
+        if(esChequepay){ pago.chNumero=$('pp-ch-num')?$('pp-ch-num').value.trim():''; pago.chBanco=$('pp-ch-banco')?$('pp-ch-banco').value.trim():''; pago.chVenc=$('pp-ch-venc')?$('pp-ch-venc').value:''; }
+        else { pago.cuenta=pagoProv.cuenta; }
+        const pagos=(comp.pagos||[]).slice(); pagos.push(pago); comp.pagos=pagos; persistPagos(comp._uid, pagos);
+
+        // Crear cheque si es aplicable
+        if(esChequepay && window.__upsertChequePago){
+          window.__upsertChequePago({
+            pagoId:pago.id, compraUid:comp._uid, compraNro:comp.nroFactura||comp.numero||'',
+            entidad:comp.proveedor||'', numero:pago.chNumero, banco:pago.chBanco,
+            monto:pago.monto, fechaEmision:pago.fecha, fechaVencimiento:pago.chVenc||pago.fecha
+          });
+        }
+      });
+
+      alert('Pago registrado en '+pagoProv.distribucion.length+' factura(s)');
+      $('cmp-modal-pago-prov').classList.remove('open');
+      render();
+    };
+
+    if(window.__tarjetas){ window.__tarjetas('pp-medio'); }
+    $('cmp-modal-pago-prov').classList.add('open');
   }
 
   // ---------- Proveedores conocidos (para autocompletar) ----------
@@ -2694,6 +2888,8 @@ function buildFilterTable(cfg){
   $('cmp-nueva').onclick=()=>openForm(null);
   $('cmp-cerrar').onclick=closeForm;
   $('cmp-pago-cerrar').onclick=()=>$('cmp-modal-pago').classList.remove('open');
+  $('cmp-pago-prov-btn').onclick=openPagoProv;
+  $('cmp-pago-prov-cerrar').onclick=()=>$('cmp-modal-pago-prov').classList.remove('open');
   $('cmp-export').onclick=exportJSON;
   $('cmp-import').onclick=()=>$('cmp-import-file').click();
   $('cmp-import-file').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
@@ -5012,7 +5208,7 @@ function buildFilterTable(cfg){
   // todavía salen el débito VISA y el margen histórico) y roles (para poder reconstruir los permisos).
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
-    'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles','vph_feriados','vph_wa_pendientes'];
+    'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -5880,8 +6076,8 @@ function buildFilterTable(cfg){
   const TRANSPORTES=['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro'];
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[];
-  let tab='semanal', q='', qPed='', filtroPed='activos';
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[];
+  let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
   function usuario(){ const c=fb(); return (c&&c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||''; }
@@ -5934,16 +6130,7 @@ function buildFilterTable(cfg){
   // Parámetros editables (Base de Datos → ⚙️ Parámetros), leídos en vivo con default de respaldo.
   const OBJ=()=>num(window.__param('objKgDia',6000));   // objetivo kg/día (semáforo de Gustavo)
   const modoProd=()=>String(window.__param('diasProd','lunvie'));   // días de producción
-  const isoDe=d=> d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());
-  // Feriados / días sin producción (vph_feriados, doc id = fecha ISO): cargados por Gustavo o Marcelo
-  // desde la vista semanal. Se restan de los días hábiles acá Y en Reportes (PE, Metas) vía
-  // window.__esFeriado, así el promedio de kg/día no queda inflado por un día que no se trabajó.
-  const esFeriado=iso=> feriados.some(f=>f.fecha===iso);
-  // Día programado de trabajo por calendario (sin mirar feriados) — se usa para OCULTAR columnas de
-  // sábado/domingo en las vistas semanal/mensual. Distinto de esHabil(), que además excluye feriados
-  // (un feriado sigue siendo un día "laborable" por calendario, solo que ese día puntual no se trabajó).
-  const esDiaLaborable=d=>{ const w=d.getDay(); const m=modoProd(); if(m==='todos') return true; if(m==='lunsab') return w!==0; return w>=1&&w<=5; };
-  const esHabil=d=>{ if(esFeriado(isoDe(d))) return false; return esDiaLaborable(d); };
+  const esHabil=d=>{ const w=d.getDay(); const m=modoProd(); if(m==='todos') return true; if(m==='lunsab') return w!==0; return w>=1&&w<=5; };
   const parseISO=s=>{ if(!s) return null; const a=String(s).slice(0,10).split('-').map(Number); if(a.length<3||!a[0]) return null; const d=new Date(a[0],a[1]-1,a[2]); return isNaN(d)?null:d; };
   const addDias=(d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
   function addDiasHabiles(d,n){ const x=new Date(d); let c=0, guard=0; while(c<n && guard++<400){ x.setDate(x.getDate()+1); if(esHabil(x)) c++; } return x; }
@@ -5951,16 +6138,6 @@ function buildFilterTable(cfg){
   const diasCuradoDe=p=>{ const d=num(p&&p.diasCurado); return d>0?d:num(window.__param('diasCurado',10)); };
   const pesoDe=k=>{ const p=prods.find(pp=>keyDe(pp.codigo,pp.nombre)===k); return p?num(p.pesoUnit):0; };
   function lunesDe(d){ const x=new Date(d); const dw=(x.getDay()+6)%7; x.setDate(x.getDate()-dw); x.setHours(0,0,0,0); return x; }
-  function toggleFeriado(iso){
-    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
-    const ex=feriados.find(f=>f.fecha===iso);
-    if(ex){ if(!confirm('¿Sacar el feriado del '+fmtFecha(iso)+(ex.motivo?' ('+ex.motivo+')':'')+'?')) return;
-      c.FS.deleteDoc(c.FS.doc(c.db,'vph_feriados',iso)).catch(e=>alert('Error: '+e.message)); return; }
-    const motivo=prompt('Motivo (feriado, lluvia, paro, rotura...)', ''); if(motivo===null) return;
-    c.FS.setDoc(c.FS.doc(c.db,'vph_feriados',iso), {fecha:iso, motivo:motivo.trim()||'Feriado', usuario:usuario(), ts:iso+'T'+new Date().toTimeString().slice(0,8)}).catch(e=>alert('Error: '+e.message));
-  }
-  window.__esFeriado = iso=>esFeriado(iso);
-  window.__feriados = ()=>feriados.slice();
 
   function producidoDe(k){ return prod.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
   function entregadoDe(k){ return ent.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
@@ -5998,27 +6175,12 @@ function buildFilterTable(cfg){
 
   // Kilos producidos en una fecha ISO
   function kgDeFecha(f){ return prod.filter(x=>String(x.fecha||'').slice(0,10)===f).reduce((a,x)=>a+num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)),0); }
-  // Semana en curso (lunes → hoy): kg totales ÷ cantidad de DÍAS QUE TUVIERON producción cargada
-  // (no días hábiles transcurridos) — un día hábil sin carga (feriado no marcado, olvido, etc.) no
-  // entra en la cuenta ni abajo ni arriba. Se mantiene el nombre "habiles" en el resultado por
-  // compatibilidad con el resto del código, pero ahora representa "días con producción".
-  function semanaKg(){ const lun=lunesDe(HOY); const porDia={};
-    prod.forEach(x=>{ const f=parseISO(x.fecha); if(f&&f>=lun&&f<=HOY){ const iso=isoDe(f); porDia[iso]=(porDia[iso]||0)+num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); } });
-    const diasConDatos=Object.keys(porDia).filter(iso=>porDia[iso]>0);
-    const kg=diasConDatos.reduce((a,iso)=>a+porDia[iso],0);
-    const habiles=Math.max(1,diasConDatos.length);
-    return { kg, habiles, prom: kg/habiles, diasConDatos: diasConDatos.length };
-  }
-  // Promedio de kg/día hábil del mes Y-M: si es el mes en curso, cuenta días hábiles transcurridos
-  // hasta hoy (mismo criterio que semanaKg); si es un mes anterior, cuenta el mes completo.
-  function promedioMes(Y,M){
-    const pref=Y+'-'+p2(M)+'-'; let kg=0;
-    prod.forEach(x=>{ if(String(x.fecha||'').slice(0,10).startsWith(pref)) kg+=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
-    const actual = Y===HOY.getFullYear() && M===(HOY.getMonth()+1);
-    const nDias=new Date(Y,M,0).getDate(), hasta=actual?HOY.getDate():nDias;
-    let habiles=0; for(let d=1; d<=hasta; d++){ if(esHabil(new Date(Y,M-1,d))) habiles++; }
+  // Semana en curso (lunes → hoy): kg totales y promedio por día hábil lun–vie transcurrido
+  function semanaKg(){ const lun=lunesDe(HOY); let kg=0;
+    prod.forEach(x=>{ const f=parseISO(x.fecha); if(f&&f>=lun&&f<=HOY) kg+=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
+    let habiles=0; for(let d=new Date(lun); d<=HOY; d.setDate(d.getDate()+1)){ if(esHabil(d)) habiles++; }
     habiles=Math.max(1,habiles);
-    return { kg, habiles, prom: kg/habiles, actual };
+    return { kg, habiles, prom: kg/habiles };
   }
   // Ritmo REAL de producción: kg/día hábil de la ventana configurada (fallback: objetivo)
   function ritmoKgDia(){ const ventana=Math.max(1,num(window.__param('ritmoDias',14))); const desde=addDias(HOY,-(ventana-1)); let kg=0, hay=false;
@@ -6130,15 +6292,14 @@ function buildFilterTable(cfg){
   // ---------- Render principal ----------
   function render(){
     const aPedir=insumos.filter(x=>num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo)).length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['semanal','📈 Producción de la semana'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
-    $('pe-view-semanal').style.display = tab==='semanal'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
     renderKpis();
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='semanal') renderSemanal(); else if(tab==='mensual') renderMensual(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -6157,7 +6318,7 @@ function buildFilterTable(cfg){
       k('Productos con faltante', faltan?'bad':'good', String(faltan), faltan?'Comprometido supera al disponible':(bajos?bajos+' bajo mínimo':'Todo cubierto')) +
       k('Pedidos a entregar','warn', String(pend), 'Pendientes de coordinar/entregar') +
       k('Producido hoy', kgHoy>=OBJ()?'good':'info', nf(kgHoy)+' kg', nf(prodHoy)+' u · objetivo '+nf(OBJ())+' kg/día') +
-      k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' con producción cargada') +
+      k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' ('+({lunvie:'lun–vie',lunsab:'lun–sáb',todos:'todos los días'}[modoProd()]||'lun–vie')+')') +
       k('Kg en stock','info', nf(kgStock)+' kg', 'Físico en planta · comprometidos '+nf(kgComp)+' kg') +
       k('Entregado hoy','info', nf(entHoy)+' u', fmtFecha(hoyISO));
   }
@@ -6182,33 +6343,14 @@ function buildFilterTable(cfg){
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = curado − comprometido (curado = fabricado hace 10+ días)';
     renderPlan(filas);
-    // movimientos (los de Producción se pueden editar/borrar acá si Gustavo cargó mal algo)
+    // movimientos
     const movs=prod.map(x=>({...x,tipo:'Producción'})).concat(ent.map(x=>({...x,tipo:'Entrega'}))).concat(ajustes.map(x=>({...x,tipo:'Ajuste'}))).sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,40);
-    let mh='<tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th class="num">Cant.</th><th>Cliente / Usuario</th><th></th></tr>';
-    if(!movs.length) mh+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
+    let mh='<tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th class="num">Cant.</th><th>Cliente / Usuario</th></tr>';
+    if(!movs.length) mh+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
     movs.forEach(m=>{ const tb=m.tipo==='Producción'?'<span class="badge blue">Producción</span>':m.tipo==='Entrega'?'<span class="badge green">Entrega</span>':'<span class="badge amber">Ajuste conteo</span>';
       const cant=m.tipo==='Entrega'?('-'+nf(num(m.cantidad))):m.tipo==='Ajuste'?((num(m.cantidad)>=0?'+':'')+nf(num(m.cantidad))):('+'+nf(num(m.cantidad)));
-      const acciones = m.tipo==='Producción' ? ('<div class="acts" style="display:flex;gap:4px;flex-wrap:wrap"><button type="button" class="cmp-rowbtn" data-editprod="'+m._uid+'" title="Editar la cantidad cargada">✎</button><button type="button" class="cmp-rowbtn" data-delprod="'+m._uid+'" title="Borrar esta carga" style="color:var(--red)">🗑</button></div>') : '';
-      mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td><td data-label="">'+acciones+'</td></tr>'; });
+      mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
     $('pe-tabla-mov').innerHTML=mh; window.__ordenable('pe-tabla-mov');
-    $('pe-tabla-mov').querySelectorAll('button[data-editprod]').forEach(b=> b.onclick=()=> editarProduccion(b.dataset.editprod));
-    $('pe-tabla-mov').querySelectorAll('button[data-delprod]').forEach(b=> b.onclick=()=> borrarProduccion(b.dataset.delprod));
-  }
-  // Corrección manual de una carga de producción ya guardada (ej. Gustavo tipeó mal la cantidad).
-  function editarProduccion(uid){
-    const cur=prod.find(x=>x._uid===uid); if(!cur) return;
-    const val=prompt('Nueva cantidad para "'+(cur.producto||cur.codigo||'')+'" del '+fmtFecha(cur.fecha)+' (actual: '+nf(num(cur.cantidad))+'):', num(cur.cantidad));
-    if(val===null) return;
-    const n=num(val);
-    if(n<=0){ alert('La cantidad tiene que ser mayor a 0. Para eliminar el registro usá el botón 🗑 Borrar.'); return; }
-    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
-    c.FS.updateDoc(c.FS.doc(c.db,'vph_produccion',uid), {cantidad:n}).catch(e=>alert('Error: '+e.message));
-  }
-  function borrarProduccion(uid){
-    const cur=prod.find(x=>x._uid===uid); if(!cur) return;
-    if(!confirm('¿Borrar esta carga de producción?\n\n'+(cur.producto||cur.codigo||'')+': '+nf(num(cur.cantidad))+' — '+fmtFecha(cur.fecha))) return;
-    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
-    c.FS.deleteDoc(c.FS.doc(c.db,'vph_produccion',uid)).catch(e=>alert('Error: '+e.message));
   }
 
   // ---------- Plan de producción (qué fabricar y en qué orden) ----------
@@ -6245,54 +6387,6 @@ function buildFilterTable(cfg){
     const asof=$('pe-plan-asof'); if(asof) asof.textContent='Ritmo estimado: '+nf(ritmo)+' kg/día hábil (promedio últimos '+nf(window.__param('ritmoDias',14))+' días'+(ritmo===OBJ()?' — sin datos, usa el objetivo':'')+') · fechas en orden de esta cola + curado';
   }
 
-  // ---------- Vista SEMANAL: semana en curso (lun-dom), hoy resaltado, marcar feriados ----------
-  function renderSemanal(){
-    const cont=$('pe-tabla-semanal'); if(!cont) return;
-    const lun=lunesDe(HOY), isoHoy=isoDe(HOY);
-    const dias=[]; for(let i=0;i<7;i++){ const d=addDias(lun,i); if(esDiaLaborable(d)) dias.push(d); }
-    const dowL=['Do','Lu','Ma','Mi','Ju','Vi','Sa'];
-    const fab={}, entr={};
-    const acum=(store,arr)=>{ arr.forEach(x=>{ const f=String(x.fecha||'').slice(0,10); const kk=keyDe(x.codigo,x.producto); (store[kk]=store[kk]||{}); store[kk][f]=(store[kk][f]||0)+num(x.cantidad); }); };
-    acum(fab,prod); acum(entr,ent);
-    const isos=dias.map(isoDe);
-    const keys=new Set([...Object.keys(fab),...Object.keys(entr)].filter(kk=> isos.some(f=>(fab[kk]&&fab[kk][f])||(entr[kk]&&entr[kk][f]))));
-    const rows=activos().filter(p=>keys.has(keyDe(p.codigo,p.nombre))).map(p=>({p,k:keyDe(p.codigo,p.nombre)}));
-    let h='<thead><tr><th class="pe-sem-prod">Producto</th>';
-    dias.forEach(d=>{ const iso=isoDe(d); const esHoy=iso===isoHoy; const fer=feriados.find(f=>f.fecha===iso); const wknd=(d.getDay()===0||d.getDay()===6);
-      let st='';
-      if(esHoy) st='background:var(--blue-bg,#eaf2ff);border-top:3px solid var(--blue);';
-      else if(fer) st='background:var(--red-bg,#fdeaea);';
-      else if(wknd) st='color:var(--muted);';
-      h+='<th class="pe-sem-day" style="'+st+'">'+dowL[d.getDay()]+'<br>'+p2(d.getDate())+'/'+p2(d.getMonth()+1)+
-        '<br><button type="button" data-fer="'+iso+'" title="'+(fer?('Sacar feriado ('+esc(fer.motivo||'')+')'):'Marcar feriado / sin producción')+'" style="margin-top:3px;font-size:9.5px;padding:1px 5px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:'+(fer?'var(--red)':'#eef2f7')+';color:'+(fer?'#fff':'#3c4c63')+'">'+(fer?'🎌':'—')+'</button>'+
-        '</th>'; });
-    h+='<th class="pe-sem-tot">Total semana</th></tr></thead><tbody>';
-    if(!rows.length) h+='<tr><td colspan="'+(dias.length+2)+'" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas esta semana.</td></tr>';
-    rows.forEach(({p,k})=>{ let totF=0,totE=0;
-      h+='<tr><td class="pe-sem-prod" style="font-weight:600">'+esc(p.nombre)+'</td>';
-      dias.forEach(d=>{ const iso=isoDe(d); const f=(fab[k]&&fab[k][iso])||0, e=(entr[k]&&entr[k][iso])||0; totF+=f; totE+=e;
-        const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':'';
-        h+='<td class="pe-sem-day" style="'+bg+'">'+((f||e)?('<span style="color:var(--green);font-weight:700">'+(f?'+'+nf(f):'')+'</span>'+(f&&e?' ':'')+'<span style="color:var(--red)">'+(e?'−'+nf(e):'')+'</span>'):'<span style="color:#ccc">·</span>')+'</td>'; });
-      h+='<td class="pe-sem-tot"><span style="color:var(--green);font-weight:700">+'+nf(totF)+'</span> / <span style="color:var(--red)">−'+nf(totE)+'</span></td></tr>'; });
-    h+='<tr style="border-top:2px solid var(--border);font-weight:700"><td class="pe-sem-prod">TOTAL kg</td>';
-    let semKgF=0;
-    dias.forEach(d=>{ const iso=isoDe(d); let kgF=0; keys.forEach(kk=> kgF+=((fab[kk]&&fab[kk][iso])||0)*pesoDe(kk)); semKgF+=kgF;
-      const bg=(iso===isoHoy)?'background:var(--blue-bg,#eaf2ff);':''; h+='<td class="pe-sem-day" style="'+bg+'">'+(kgF?nf(kgF):'')+'</td>'; });
-    h+='<td class="pe-sem-tot">'+nf(semKgF)+' kg</td></tr>';
-    h+='</tbody>';
-    cont.innerHTML=h;
-    cont.querySelectorAll('button[data-fer]').forEach(b=> b.onclick=()=> toggleFeriado(b.dataset.fer));
-    const sem=semanaKg();
-    const pm=promedioMes(HOY.getFullYear(),HOY.getMonth()+1);
-    const clsSem=sem.prom>=OBJ()?'good':(sem.prom>=OBJ()*0.8?'warn':'bad');
-    const clsMes=pm.prom>=OBJ()?'good':(pm.prom>=OBJ()*0.8?'warn':'bad');
-    const kpis=$('pe-kpis-semanal'); if(kpis) kpis.innerHTML =
-      k('Promedio semana en curso', clsSem, nf(sem.prom)+' kg/día', sem.habiles+' día'+(sem.habiles!==1?'s':'')+' con producción cargada · objetivo '+nf(OBJ())+' kg/día') +
-      k('Promedio mensual', clsMes, nf(pm.prom)+' kg/día', pm.habiles+' día'+(pm.habiles!==1?'s':'')+' hábil'+(pm.habiles!==1?'es':'')+' del mes hasta hoy · objetivo '+nf(OBJ())+' kg/día');
-    const feriadosSemana=feriados.filter(f=>{ const d=parseISO(f.fecha); return d&&d>=lun&&d<=addDias(lun,6); });
-    const asof=$('pe-semanal-asof'); if(asof) asof.textContent='Semana del '+fmtF(lun)+' al '+fmtF(addDias(lun,6))+(feriadosSemana.length?(' · '+feriadosSemana.length+' feriado'+(feriadosSemana.length!==1?'s':'')+' esta semana (excluido'+(feriadosSemana.length!==1?'s':'')+' del promedio): '+feriadosSemana.map(f=>fmtFecha(f.fecha)+(f.motivo?' ('+f.motivo+')':'')).join(', ')):'');
-  }
-
   // ---------- Conteo semanal (Gustavo): teórico vs real + insumos/MP ----------
   const insBajo=x=> num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo);
   // ---------- Vista MENSUAL: matriz productos × días (fabricado/entregado) + total kg ----------
@@ -6302,9 +6396,6 @@ function buildFilterTable(cfg){
     if(!mesInp._wired){ mesInp._wired=true; mesInp.addEventListener('change', renderMensual); }
     const parts=mesInp.value.split('-'); const Y=+parts[0], M=+parts[1];
     const cont=$('pe-tabla-mensual'); if(!cont) return; if(!Y||!M){ cont.innerHTML=''; return; }
-    const pm=promedioMes(Y,M); const clsMes=pm.prom>=OBJ()?'good':(pm.prom>=OBJ()*0.8?'warn':'bad');
-    const kpisMes=$('pe-kpis-mensual'); if(kpisMes) kpisMes.innerHTML =
-      k('Promedio mensual', clsMes, nf(pm.prom)+' kg/día', pm.habiles+' día'+(pm.habiles!==1?'s':'')+' hábil'+(pm.habiles!==1?'es':'')+(pm.actual?' del mes hasta hoy':' (mes completo)')+' · objetivo '+nf(OBJ())+' kg/día');
     const nDias=new Date(Y,M,0).getDate();
     const dowL=['Do','Lu','Ma','Mi','Ju','Vi','Sa'];
     const pref=Y+'-'+p2(M)+'-';
@@ -6313,19 +6404,17 @@ function buildFilterTable(cfg){
     acum(fab,prod); acum(entr,ent);
     const keys=new Set([...Object.keys(fab),...Object.keys(entr)]);
     const rows=activos().filter(p=>keys.has(keyDe(p.codigo,p.nombre))).map(p=>({p,k:keyDe(p.codigo,p.nombre)}));
-    // días con dow y número de semana del mes (sábado/domingo se ocultan si no se trabaja, sin
-    // romper el conteo de semana: el contador de semana avanza igual aunque ese día no se muestre)
+    // días con dow y número de semana del mes
     const dias=[]; let wk=0;
-    for(let d=1;d<=nDias;d++){ const dt=new Date(Y,M-1,d); const dow=dt.getDay(); if(d===1||dow===1) wk++; if(esDiaLaborable(dt)) dias.push({d,dow,wk}); }
+    for(let d=1;d<=nDias;d++){ const dow=new Date(Y,M-1,d).getDay(); if(d===1||dow===1) wk++; dias.push({d,dow,wk}); }
     const semanas=[]; dias.forEach(x=>{ const s=semanas[semanas.length-1]; if(s&&s.wk===x.wk)s.count++; else semanas.push({wk:x.wk,count:1}); });
     const stick='position:sticky;left:0;background:var(--card,#fff);z-index:2';
     let h='<thead><tr><th rowspan="2" style="'+stick+';text-align:left;min-width:150px">Producto</th>';
     semanas.forEach((s,i)=> h+='<th colspan="'+s.count+'" style="text-align:center;border-left:2px solid var(--border)">Sem '+(i+1)+'</th>');
     h+='<th rowspan="2" style="text-align:center;border-left:2px solid var(--border);min-width:74px">Total mes</th></tr><tr>';
-    dias.forEach(x=>{ const wknd=(x.dow===0||x.dow===6); const iso=Y+'-'+p2(M)+'-'+p2(x.d); const fer=feriados.find(f=>f.fecha===iso);
-      h+='<th data-fer="'+iso+'" title="'+(fer?('Feriado ('+esc(fer.motivo||'')+') — click para sacar'):'Click para marcar feriado / sin producción')+'" style="text-align:center;min-width:50px;cursor:pointer;'+(x.dow===1?'border-left:2px solid var(--border);':'')+(fer?'background:var(--red-bg,#fdeaea);':(wknd?'color:var(--muted)':''))+'">'+dowL[x.dow]+'<br>'+x.d+(fer?' 🎌':'')+'</th>'; });
+    dias.forEach(x=>{ const wknd=(x.dow===0||x.dow===6); h+='<th style="text-align:center;min-width:50px;'+(x.dow===1?'border-left:2px solid var(--border);':'')+(wknd?'color:var(--muted)':'')+'">'+dowL[x.dow]+'<br>'+x.d+'</th>'; });
     h+='</tr></thead><tbody>';
-    if(!rows.length){ h+='<tr><td colspan="'+(dias.length+2)+'" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas en este mes.</td></tr>'; }
+    if(!rows.length){ h+='<tr><td colspan="'+(nDias+2)+'" style="text-align:center;color:var(--muted);padding:20px">Sin producción ni entregas cargadas en este mes.</td></tr>'; }
     rows.forEach(({p,k})=>{ let totF=0,totE=0;
       h+='<tr><td style="'+stick+';text-align:left;font-weight:600">'+esc(p.nombre)+(p.codigo?' <span style="color:var(--muted);font-weight:400">'+esc(p.codigo)+'</span>':'')+'</td>';
       dias.forEach(x=>{ const f=(fab[k]&&fab[k][x.d])||0, e=(entr[k]&&entr[k][x.d])||0; totF+=f; totE+=e; const bl=(x.dow===1?'border-left:2px solid var(--border);':'');
@@ -6338,7 +6427,6 @@ function buildFilterTable(cfg){
       h+='<td style="text-align:center;border-left:2px solid var(--border)"><span style="color:var(--green)">'+nf(mesKgF)+'</span> kg<br><span style="color:var(--red)">'+nf(mesKgE)+'</span> kg</td></tr>'; }
     h+='</tbody>';
     cont.innerHTML=h;
-    cont.querySelectorAll('th[data-fer]').forEach(th=> th.onclick=()=> toggleFeriado(th.dataset.fer));
   }
 
   function renderConteo(){
@@ -6512,10 +6600,7 @@ function buildFilterTable(cfg){
       act.forEach((p,i)=>{ const el=$('pe-form-prod').querySelector('input[data-qi="'+i+'"]'); carga+=num(el&&el.value)*num(p.pesoUnit); });
       const ya=kgDeFecha(fecha), tot=ya+carga;
       const sem=semanaKg(); const f=parseISO(fecha); const enSemana=f&&f>=lunesDe(HOY)&&f<=HOY;
-      // Preview: si la fecha elegida está en la semana y todavía no tenía nada cargado (ya=0), esta
-      // carga la suma como un día nuevo con producción — mismo criterio que semanaKg() ya guardado.
-      const diasPreview=sem.habiles+((enSemana&&carga>0&&ya<=0)?1:0);
-      const prom=(sem.kg+(enSemana?carga:0))/Math.max(1,diasPreview);
+      const prom=(sem.kg+(enSemana?carga:0))/sem.habiles;
       const okDia=tot>=OBJ(), okSem=prom>=OBJ();
       $('pe-prod-kg').innerHTML='📊 Kilos del '+fmtFecha(fecha)+': <b>'+nf(tot)+' kg</b>'+(carga>0?' (esta carga: '+nf(carga)+' kg'+(ya>0?' + '+nf(ya)+' ya cargados':'')+')':'')+' '+(okDia?'✅':'⚠️')+
         '<br>Semana en curso: <b>'+nf(prom)+' kg/día</b> de objetivo '+nf(OBJ())+' kg/día '+(okSem?'✅ objetivo cumplido':'⚠️ por debajo del objetivo');
@@ -6855,10 +6940,10 @@ function buildFilterTable(cfg){
   // ---------- Sync ----------
   function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
     unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('pe '+col+':',err)); }
-  function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a); sub('vph_pedidos',a=>pedidos=a); sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); sub('vph_feriados',a=>feriados=a); }
+  function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a); sub('vph_pedidos',a=>pedidos=a); sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
