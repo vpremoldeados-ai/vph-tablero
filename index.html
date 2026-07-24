@@ -2510,14 +2510,28 @@ function buildFilterTable(cfg){
     // "CARNERO ELIO"). Si TODOS los tokens distintivos (≥4 letras) de un proveedor conocido de nombre
     // COMPUESTO (≥2 tokens, para no dar falsos positivos con nombres de una sola palabra tipo "AFIP")
     // aparecen como palabra en el texto, es un match. Elige el que más tokens y más historial tenga.
+    // Los tokens de ≥5 letras toleran UN caracter errado del OCR ("SANIA BARBARA" → "SANTA BARBARA",
+    // pasó en producción con poca tinta) — distancia de edición ≤1, nunca más, para no inventar.
     const T=normNombre(textoCompleto||'');
     if(T){
-      const Tset=new Set(T.split(' '));
+      const palabras=T.split(' ');
+      const Tset=new Set(palabras);
+      const dist1=(a,b)=>{ if(a===b) return true; const la=a.length, lb=b.length;
+        if(Math.abs(la-lb)>1) return false;
+        let i=0,j=0,ed=0;
+        while(i<la && j<lb){
+          if(a[i]===b[j]){ i++; j++; continue; }
+          if(++ed>1) return false;
+          if(la===lb){ i++; j++; } else if(la>lb){ i++; } else { j++; }
+        }
+        return ed+(la-i)+(lb-j)<=1;
+      };
+      const tokEnTexto=t=> Tset.has(t) || (t.length>=5 && palabras.some(w=>dist1(t,w)));
       let mejor=null, mejorScore=0;
       for(const k in dir.porNom){
         const toks=k.split(' ').filter(t=>t.length>=4);
         if(toks.length<2) continue;
-        if(toks.every(t=>Tset.has(t))){
+        if(toks.every(tokEnTexto)){
           const score=toks.length*1000 + dir.porNom[k].veces;
           if(score>mejorScore){ mejorScore=score; mejor=dir.porNom[k]; }
         }
@@ -2688,7 +2702,9 @@ function buildFilterTable(cfg){
     }
     // Reconocimiento del proveedor RECURRENTE (por CUIT o nombre) contra el historial de compras.
     let proveedor='', condIva='A', categoria='', tipoComprobante='Compra';
-    const conocido = matchProveedorConocido(cuit, provAdivinado, texto);
+    // El barrido por nombre mira SOLO la zona del VENDEDOR (arriba del bloque del comprador): abajo
+    // aparecen textos como "MERCADO PAGO" o el detalle, que podrían matchear a otro proveedor conocido.
+    const conocido = matchProveedorConocido(cuit, provAdivinado, iComprador>=0 ? texto.slice(0,iComprador) : texto);
     if(conocido && conocido.nombre){
       proveedor = conocido.nombre;
       if(conocido.cond && COND_IVA.includes(conocido.cond)) condIva = conocido.cond;
@@ -2704,13 +2720,34 @@ function buildFilterTable(cfg){
     // Totales: busca un renglón "Neto"/"Subtotal" y uno de "IVA" por separado; si no los encuentra,
     // toma el "TOTAL" como neto (queda marcado como aproximado, puede incluir IVA sin discriminar).
     const buscarMonto = re=>{ const m=texto.match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
-    let neto = buscarMonto(/(?:neto|subtotal)[^\d\n]{0,15}([\d.,]+)/i);
-    let ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);
+    // Neto: tolera "VETO GRAVADO" (el OCR confunde N→V con poca tinta, visto en un ticket real).
+    let neto = buscarMonto(/(?:[nv]eto|subtotal)[^\d\n]{0,15}([\d.,]+)/i);
+    // IVA: en los tiques de controlador fiscal el renglón se llama "ALICUOTA 21,00%  9101,15" (y el OCR
+    // escribe "ALTCUOTA"/"AL1CUOTA"), no "IVA". Se suman los renglones que EMPIEZAN con IVA/ALICUOTA
+    // tomando el ÚLTIMO número de cada uno (el primero suele ser la tasa: "IVA 21%: $520,66" → 520,66).
+    // Empezar-con evita duplicar por leyendas tipo "...IVA del 21% contenido $520,66" al pie del ticket.
+    let ivaMonto = 0;
+    for(const l of lineas){
+      if(!/^(?:i\.?v\.?a\b|al[ti1l]?[i1]?cuota)/i.test(l)) continue;
+      const nums = l.match(/\d[\d.,]*/g); if(!nums) continue;
+      ivaMonto += num(nums[nums.length-1].replace(/\./g,'').replace(',','.'));
+    }
+    if(!(ivaMonto>0)) ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);   // respaldo, criterio viejo
     let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
     // Impuestos internos / otros tributos (ej. combustible: "IMPORTE TOTAL OTROS TRIBUTOS 10470,07").
     // NO son IVA: van a su propio campo del form. Sin esto, el Total del ticket no cierra (queda corto).
     let impInternos = buscarMonto(/(?:otros\s+tributos|impuestos?\s+internos?)[^\d\n]{0,20}([\d.,]+)/i);
     if(impInternos>0) avisos.push('lleva impuesto interno / otros tributos ('+money(impInternos)+') — cargado en su campo, revisá');
+    // Control cruzado: neto + IVA + otros tributos tiene que dar el TOTAL del ticket. Si no cierra,
+    // el OCR leyó mal ALGÚN dígito (pasó: neto "17395,84" leído "17395,64"; total "62910" leído
+    // "52910") — no se sabe cuál está mal, así que no se corrige solo: se avisa para comparar con el
+    // papel. Solo cuando el IVA leído es plausible (2%-30% del neto): si el OCR agarró un "IVA 27%:
+    // 0,00" de una Factura B, esa cuenta no aplica y el aviso sería puro ruido.
+    if(neto>0 && total>0 && ivaMonto>0 && ivaMonto/neto>0.02 && ivaMonto/neto<0.30){
+      const esperado = round2(neto+ivaMonto+impInternos);
+      if(Math.abs(esperado-total)>0.05)
+        avisos.push('los importes no cierran entre sí: neto + IVA + otros da '+money(esperado)+' pero el total del ticket dice '+money(total)+' — el OCR pudo leer mal un dígito, compará con el papel');
+    }
     let itemIva='21';
     if(neto>0 && ivaMonto>0){ const pct=Math.round(ivaMonto/neto*100); itemIva = [21,10.5,27].includes(pct)?String(pct):'21'; }
     // Intentar discriminar los renglones reales del ticket. Solo se usan si RECONCILIAN con el neto/total
