@@ -2467,7 +2467,7 @@ function buildFilterTable(cfg){
   }
   // Match del proveedor leído contra el directorio. Prioridad: CUIT exacto > nombre exacto (normalizado)
   // > nombre parcial (uno contiene al otro). Devuelve el registro conocido + cómo se reconoció, o null.
-  function matchProveedorConocido(cuitLeido, nombreLeido){
+  function matchProveedorConocido(cuitLeido, nombreLeido, textoCompleto){
     const dir=directorioProveedores();
     const cu=normCuit(cuitLeido);
     if(cu && dir.porCuit[cu]) return { ...dir.porCuit[cu], via:'CUIT' };
@@ -2478,9 +2478,71 @@ function buildFilterTable(cfg){
         if(k.length>=6 && (k.indexOf(nk)>=0 || nk.indexOf(k)>=0)) return { ...dir.porNom[k], via:'nombre parcial' };
       }
     }
+    // Barrido de TODO el texto: muchos tickets traen el nombre del vendedor impreso en el encabezado,
+    // repartido en varias líneas y en otro orden (ej. "FERRETERIA TOLEDO de ELIO CARNERO" → reconoce a
+    // "CARNERO ELIO"). Si TODOS los tokens distintivos (≥4 letras) de un proveedor conocido de nombre
+    // COMPUESTO (≥2 tokens, para no dar falsos positivos con nombres de una sola palabra tipo "AFIP")
+    // aparecen como palabra en el texto, es un match. Elige el que más tokens y más historial tenga.
+    const T=normNombre(textoCompleto||'');
+    if(T){
+      const Tset=new Set(T.split(' '));
+      let mejor=null, mejorScore=0;
+      for(const k in dir.porNom){
+        const toks=k.split(' ').filter(t=>t.length>=4);
+        if(toks.length<2) continue;
+        if(toks.every(t=>Tset.has(t))){
+          const score=toks.length*1000 + dir.porNom[k].veces;
+          if(score>mejorScore){ mejorScore=score; mejor=dir.porNom[k]; }
+        }
+      }
+      if(mejor) return { ...mejor, via:'nombre en el ticket' };
+    }
     return null;
   }
 
+  // ---------- Discriminar los ítems (renglones) del ticket ----------
+  // OJO: es plata real. Un desglose MAL es peor que un solo renglón con el neto. Por eso esto solo
+  // devuelve ítems si la suma de los renglones RECONCILIA con el neto (o con el total, neteando) del
+  // ticket, con tolerancia del 3%. Si no cuadra, devuelve null y el parser cae al renglón único seguro.
+  // Nunca inventa: descarta líneas de rótulos (Total, IVA, Subtotal, medios de pago, CUIT, etc.).
+  function extraerItemsDiscriminados(texto, tot){
+    const neto = +tot.neto||0, total = +tot.total||0, iva = tot.iva||'21';
+    if(!(neto>0)) return null;   // sin neto de referencia no se puede validar con seguridad
+    const lineas = String(texto||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const rotulo = /^(sub[\s-]?total|total|iva|i\.v\.a|neto|gravado|no[\s-]?gravado|exento|descuento|bonif|percep|impuesto|interno|redondeo|saldo|efectivo|contado|tarjeta|transferencia|cambio|vuelto|forma\s+de\s+pago|medio\s+de\s+pago|cae\b|c\.a\.e|cuit|cuil|fecha|comprobante|factura|remito|presupuesto|cliente|se[ñn]or|domicilio|condici|resp\.?\s|ingresos\s+brutos|inicio\s+de|son:|importe\s+total|cantidad|descrip|detalle|codigo|c[oó]d\.)/i;
+    const parseAR = s => { s=String(s).replace(/[^\d.,]/g,''); if(!s) return 0;
+      if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.');            // 1.234,56 → 1234.56
+      else if((s.match(/\./g)||[]).length>=1 && !/^\d{1,3}\.\d{1,2}$/.test(s)) s=s.replace(/\./g,''); // 12.500 → 12500
+      return parseFloat(s)||0; };
+    const items=[];
+    for(const l of lineas){
+      if(rotulo.test(l)) continue;
+      const letras=(l.match(/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/g)||[]).length;
+      if(letras<3) continue;                                   // tiene que tener una descripción
+      const nums=l.match(/\d[\d.,]*/g);
+      if(!nums || !nums.length) continue;
+      const importe = parseAR(nums[nums.length-1]);
+      if(!(importe>0)) continue;
+      let desc = l.replace(/[\s$.\d,]+$/,'').replace(/\s{2,}/g,' ').trim();   // saca los números del final
+      if(desc.length<2) desc = l.replace(/\d[\d.,]*/g,'').replace(/[$]/g,'').replace(/\s{2,}/g,' ').trim();
+      if(desc.length<2) continue;
+      let cant=1, precio=importe;
+      if(nums.length>=3){                                       // ¿hay "cant × unit = importe"?
+        const a=parseAR(nums[nums.length-3]), b=parseAR(nums[nums.length-2]);
+        if(a>0 && b>0 && importe>0 && Math.abs(a*b-importe)/importe < 0.02){ cant=a; precio=b; }
+      }
+      items.push({desc:desc.slice(0,60), cant, precio, importe});
+    }
+    if(items.length<2) return null;                            // 1 renglón = igual que el modo seguro
+    const suma = items.reduce((s,it)=>s+it.importe,0);
+    if(!(suma>0)) return null;
+    const tol=0.03;
+    let factor;
+    if(Math.abs(suma-neto)/neto <= tol) factor=1;                              // renglones ya netos
+    else if(total>0 && Math.abs(suma-total)/total <= tol) factor=neto/total;   // incluyen IVA → netear
+    else return null;                                                          // no reconcilia → no arriesgar
+    return items.map(it=>({ desc:it.desc, codigo:'', cant:it.cant, precioUnit:round2(it.precio*factor), descPct:0, iva }));
+  }
   // ---------- Reglas para adivinar los campos a partir del texto crudo del OCR ----------
   // Nunca inventa valores que no estén en el texto y deja todo marcado para que la persona revise.
   // Primero reconoce al proveedor (por CUIT/nombre, contra el historial) y de ahí precarga categoría,
@@ -2489,36 +2551,60 @@ function buildFilterTable(cfg){
     const lineas = String(texto||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
     const avisos=[];   // advertencias (se muestran con ⚠️)
     const infos=[];    // confirmaciones positivas, ej. proveedor reconocido (se muestran con ✅)
-    // CUIT: 11 dígitos, con o sin guiones, empezando por un prefijo típico de CUIT/CUIL.
-    let cuit='';
-    const mCuit = texto.match(/\b(20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/);
-    if(mCuit) cuit = fmtCuit(mCuit[0]);
+    // CUIT del PROVEEDOR. Un ticket puede traer VARIOS CUIT: el del vendedor y el de VPH como
+    // COMPRADOR (las facturas de combustible traen "VPH SAS ... 30-71784004-2"; un remito propio de
+    // VPH trae solo ese). Juntamos todos, descartamos el propio de VPH y el de consumidor final
+    // (todo ceros), y tomamos el primero que quede — que en los tickets reales es siempre el del
+    // vendedor (figura arriba de todo).
+    const VPH_CUIT='30717840042';
+    let cuit='', vioCuitVPH=false;
+    const todosCuit=[...String(texto).matchAll(/\b(20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/g)]
+      .map(m=>m[0].replace(/\D/g,'')).filter(d=>d.length===11);
+    for(const d of todosCuit){
+      if(d===VPH_CUIT){ vioCuitVPH=true; continue; }
+      if(/^0+$/.test(d)) continue;
+      cuit=fmtCuit(d); break;
+    }
     // Respaldo: "CUIT ..." con posible ruido del OCR (O→0, I/l→1) y validando prefijo + 11 dígitos.
     if(!cuit){
       const mLbl = texto.match(/c\.?\s*u\.?\s*i\.?\s*t\.?[^\dOoIl]{0,6}([\dOoIl\-.\s]{11,18})/i);
       if(mLbl){ const d=mLbl[1].replace(/[Oo]/g,'0').replace(/[Il]/g,'1').replace(/\D/g,'');
-        if(d.length===11 && /^(20|23|24|27|30|33|34)/.test(d)) cuit=fmtCuit(d); }
+        if(d.length===11 && /^(20|23|24|27|30|33|34)/.test(d) && d!==VPH_CUIT) cuit=fmtCuit(d); }
     }
-    if(!cuit) avisos.push('no se encontró CUIT');
+    if(!cuit && vioCuitVPH) avisos.push('solo aparece el CUIT de VPH — ¿es una compra o un documento propio (remito/factura de VPH)?');
+    else if(!cuit) avisos.push('no se encontró CUIT');
     // Fecha: dd/mm/aaaa o dd-mm-aaaa (con año de 2 o 4 dígitos) → YYYY-MM-DD.
     let fecha='';
     const mFecha = texto.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
     if(mFecha){ let [,d,m,a]=mFecha; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
       if(+m>=1 && +m<=12 && +d>=1 && +d<=31) fecha=a+'-'+m+'-'+d; }
     if(!fecha) avisos.push('no se encontró fecha');
-    // Punto de venta + número de comprobante: patrón 0000-00000000 (con o sin la palabra "Nº"/"Comp.").
+    // Punto de venta + número de comprobante. Formatos vistos en tickets reales:
+    //  · "N° 00063-00395689" / "0001-00012345"  · "P. Venta: 00016  Comp. Nro.: 00101856"
     let puntoVenta='', nroFactura='';
     const mComp = texto.match(/\b(\d{4,5})[-\s]+(\d{6,8})\b/);
     if(mComp){ puntoVenta=mComp[1].padStart(4,'0'); nroFactura=mComp[2]; }
+    if(!puntoVenta){
+      const mPV=texto.match(/p(?:unto|to)?\.?\s*(?:de\s*)?venta[:\s]*(\d{1,5})/i);
+      if(mPV){ puntoVenta=mPV[1].padStart(4,'0');
+        // el N° de comprobante suele venir al lado del punto de venta ("Comp. Nro.: ..."). Se conservan
+        // los ceros a la izquierda (el N° de factura es "00101856", no "101856").
+        if(!nroFactura){ const mNro=texto.match(/comp(?:robante)?\.?\s*(?:nro|n[°º]|numero)[:\.\s]*(\d{4,8})/i); if(mNro) nroFactura=mNro[1]; }
+      }
+    }
     // Proveedor adivinado (respaldo): primera línea "de letras" que no sea un rótulo típico ni numérica.
+    // Se saltea cualquier línea de VPH: VPH es el COMPRADOR, nunca el proveedor (aparece en el membrete
+    // propio de un remito, o como "facturado a: VPH SAS" en una factura de combustible).
     let provAdivinado='';
-    const rotulos=/^(factura|ticket|comprobante|fecha|cuit|cuil|cliente|razon social|domicilio|iva|total|subtotal|remito|presupuesto|orig|copia|duplicado)\b/i;
+    const rotulos=/^(factura|ticket|tique|comprobante|fecha|hora|cuit|cuil|cliente|consumidor|se[ñn]or|razon social|domicilio|ing\.?\s*brutos|ingresos|iva|responsable|inicio|total|subtotal|neto|remito|presupuesto|orig|copia|duplicado|recibimos|gracias|registro|cae\b)\b/i;
+    const esVPH=/vassallo|vpremoldeados|\bvph\b/i;
     for(const l of lineas.slice(0,10)){
+      if(esVPH.test(l)) continue;
       if(l.length>=3 && l.length<=60 && /[a-zA-ZÁÉÍÓÚáéíóúñÑ]{3,}/.test(l) && !rotulos.test(l) && !/^\d+([.,]\d+)?$/.test(l)){ provAdivinado=l; break; }
     }
     // Reconocimiento del proveedor RECURRENTE (por CUIT o nombre) contra el historial de compras.
     let proveedor='', condIva='A', categoria='', tipoComprobante='Compra';
-    const conocido = matchProveedorConocido(cuit, provAdivinado);
+    const conocido = matchProveedorConocido(cuit, provAdivinado, texto);
     if(conocido && conocido.nombre){
       proveedor = conocido.nombre;
       if(conocido.cond && COND_IVA.includes(conocido.cond)) condIva = conocido.cond;
@@ -2537,14 +2623,25 @@ function buildFilterTable(cfg){
     let neto = buscarMonto(/(?:neto|subtotal)[^\d\n]{0,15}([\d.,]+)/i);
     let ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);
     let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
-    let itemNeto=0, itemIva='21';
-    if(neto>0){ itemNeto=neto; if(ivaMonto>0){ const pct=Math.round(ivaMonto/neto*100); itemIva = [21,10.5,27].includes(pct)?String(pct):'21'; } }
-    else if(total>0){ itemNeto=total; avisos.push('el total puede incluir IVA sin discriminar — revisar el importe'); }
-    else avisos.push('no se encontró el total — completalo a mano');
+    let itemIva='21';
+    if(neto>0 && ivaMonto>0){ const pct=Math.round(ivaMonto/neto*100); itemIva = [21,10.5,27].includes(pct)?String(pct):'21'; }
+    // Intentar discriminar los renglones reales del ticket. Solo se usan si RECONCILIAN con el neto/total
+    // (ver extraerItemsDiscriminados); si no cuadran, cae al renglón único con el neto — comportamiento
+    // seguro de siempre. Nunca mete importes que no cierran contra el total del ticket.
+    let items = extraerItemsDiscriminados(texto, {neto, total, iva:itemIva});
+    if(items && items.length){
+      infos.push(items.length+' ítems leídos del detalle (revisá los nombres)');
+    } else {
+      let itemNeto=0;
+      if(neto>0){ itemNeto=neto; }
+      else if(total>0){ itemNeto=total; avisos.push('el total puede incluir IVA sin discriminar — revisar el importe'); }
+      else avisos.push('no se encontró el total — completalo a mano');
+      items = itemNeto>0 ? [{desc:'Según ticket (revisar detalle)', cant:1, precioUnit:round2(itemNeto), descPct:0, iva:itemIva}] : [];
+    }
     return {
       proveedor, cuit, condIva, tipoComprobante, categoria,
       fecha, vencimiento:fecha, puntoVenta, nroFactura,
-      items: itemNeto>0 ? [{desc:'Según ticket (revisar detalle)', cant:1, precioUnit:round2(itemNeto), descPct:0, iva:itemIva}] : [],
+      items,
       descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0,
       avisos: avisos.join(' · '),
       info: infos.join(' · ')
