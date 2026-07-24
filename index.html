@@ -37,6 +37,11 @@
   .topbar .date{color:var(--muted);font-size:13px}
   .health{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
   .health span{font-size:11.5px;font-weight:700;border-radius:20px;padding:6px 13px}
+  /* Los pills "Finanzas: CRÍTICO / Comercial: ATENCIÓN" (#health-pills, en el topbar, arriba de TODOS
+     los módulos) solo tienen que verse en Vista Diaria — en cualquier otra página distraían sin poder
+     hacer nada al respecto desde ahí. */
+  #health-pills{display:none}
+  main:has(#page-inicio.active) #health-pills{display:flex}
   .h-ok{background:var(--green-bg);color:var(--green)} .h-warn{background:var(--amber-bg);color:var(--amber)} .h-bad{background:var(--red-bg);color:var(--red)}
   .updated{font-size:11.5px;color:var(--muted);margin:2px 0 18px}
   /* Indicador de conexión en vivo */
@@ -5993,12 +5998,16 @@ function buildFilterTable(cfg){
 
   // Kilos producidos en una fecha ISO
   function kgDeFecha(f){ return prod.filter(x=>String(x.fecha||'').slice(0,10)===f).reduce((a,x)=>a+num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)),0); }
-  // Semana en curso (lunes → hoy): kg totales y promedio por día hábil lun–vie transcurrido
-  function semanaKg(){ const lun=lunesDe(HOY); let kg=0;
-    prod.forEach(x=>{ const f=parseISO(x.fecha); if(f&&f>=lun&&f<=HOY) kg+=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
-    let habiles=0; for(let d=new Date(lun); d<=HOY; d.setDate(d.getDate()+1)){ if(esHabil(d)) habiles++; }
-    habiles=Math.max(1,habiles);
-    return { kg, habiles, prom: kg/habiles };
+  // Semana en curso (lunes → hoy): kg totales ÷ cantidad de DÍAS QUE TUVIERON producción cargada
+  // (no días hábiles transcurridos) — un día hábil sin carga (feriado no marcado, olvido, etc.) no
+  // entra en la cuenta ni abajo ni arriba. Se mantiene el nombre "habiles" en el resultado por
+  // compatibilidad con el resto del código, pero ahora representa "días con producción".
+  function semanaKg(){ const lun=lunesDe(HOY); const porDia={};
+    prod.forEach(x=>{ const f=parseISO(x.fecha); if(f&&f>=lun&&f<=HOY){ const iso=isoDe(f); porDia[iso]=(porDia[iso]||0)+num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); } });
+    const diasConDatos=Object.keys(porDia).filter(iso=>porDia[iso]>0);
+    const kg=diasConDatos.reduce((a,iso)=>a+porDia[iso],0);
+    const habiles=Math.max(1,diasConDatos.length);
+    return { kg, habiles, prom: kg/habiles, diasConDatos: diasConDatos.length };
   }
   // Promedio de kg/día hábil del mes Y-M: si es el mes en curso, cuenta días hábiles transcurridos
   // hasta hoy (mismo criterio que semanaKg); si es un mes anterior, cuenta el mes completo.
@@ -6148,7 +6157,7 @@ function buildFilterTable(cfg){
       k('Productos con faltante', faltan?'bad':'good', String(faltan), faltan?'Comprometido supera al disponible':(bajos?bajos+' bajo mínimo':'Todo cubierto')) +
       k('Pedidos a entregar','warn', String(pend), 'Pendientes de coordinar/entregar') +
       k('Producido hoy', kgHoy>=OBJ()?'good':'info', nf(kgHoy)+' kg', nf(prodHoy)+' u · objetivo '+nf(OBJ())+' kg/día') +
-      k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' ('+({lunvie:'lun–vie',lunsab:'lun–sáb',todos:'todos los días'}[modoProd()]||'lun–vie')+')') +
+      k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' con producción cargada') +
       k('Kg en stock','info', nf(kgStock)+' kg', 'Físico en planta · comprometidos '+nf(kgComp)+' kg') +
       k('Entregado hoy','info', nf(entHoy)+' u', fmtFecha(hoyISO));
   }
@@ -6278,7 +6287,7 @@ function buildFilterTable(cfg){
     const clsSem=sem.prom>=OBJ()?'good':(sem.prom>=OBJ()*0.8?'warn':'bad');
     const clsMes=pm.prom>=OBJ()?'good':(pm.prom>=OBJ()*0.8?'warn':'bad');
     const kpis=$('pe-kpis-semanal'); if(kpis) kpis.innerHTML =
-      k('Promedio semana en curso', clsSem, nf(sem.prom)+' kg/día', sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' hasta hoy · objetivo '+nf(OBJ())+' kg/día') +
+      k('Promedio semana en curso', clsSem, nf(sem.prom)+' kg/día', sem.habiles+' día'+(sem.habiles!==1?'s':'')+' con producción cargada · objetivo '+nf(OBJ())+' kg/día') +
       k('Promedio mensual', clsMes, nf(pm.prom)+' kg/día', pm.habiles+' día'+(pm.habiles!==1?'s':'')+' hábil'+(pm.habiles!==1?'es':'')+' del mes hasta hoy · objetivo '+nf(OBJ())+' kg/día');
     const feriadosSemana=feriados.filter(f=>{ const d=parseISO(f.fecha); return d&&d>=lun&&d<=addDias(lun,6); });
     const asof=$('pe-semanal-asof'); if(asof) asof.textContent='Semana del '+fmtF(lun)+' al '+fmtF(addDias(lun,6))+(feriadosSemana.length?(' · '+feriadosSemana.length+' feriado'+(feriadosSemana.length!==1?'s':'')+' esta semana (excluido'+(feriadosSemana.length!==1?'s':'')+' del promedio): '+feriadosSemana.map(f=>fmtFecha(f.fecha)+(f.motivo?' ('+f.motivo+')':'')).join(', ')):'');
@@ -6503,7 +6512,10 @@ function buildFilterTable(cfg){
       act.forEach((p,i)=>{ const el=$('pe-form-prod').querySelector('input[data-qi="'+i+'"]'); carga+=num(el&&el.value)*num(p.pesoUnit); });
       const ya=kgDeFecha(fecha), tot=ya+carga;
       const sem=semanaKg(); const f=parseISO(fecha); const enSemana=f&&f>=lunesDe(HOY)&&f<=HOY;
-      const prom=(sem.kg+(enSemana?carga:0))/sem.habiles;
+      // Preview: si la fecha elegida está en la semana y todavía no tenía nada cargado (ya=0), esta
+      // carga la suma como un día nuevo con producción — mismo criterio que semanaKg() ya guardado.
+      const diasPreview=sem.habiles+((enSemana&&carga>0&&ya<=0)?1:0);
+      const prom=(sem.kg+(enSemana?carga:0))/Math.max(1,diasPreview);
       const okDia=tot>=OBJ(), okSem=prom>=OBJ();
       $('pe-prod-kg').innerHTML='📊 Kilos del '+fmtFecha(fecha)+': <b>'+nf(tot)+' kg</b>'+(carga>0?' (esta carga: '+nf(carga)+' kg'+(ya>0?' + '+nf(ya)+' ya cargados':'')+')':'')+' '+(okDia?'✅':'⚠️')+
         '<br>Semana en curso: <b>'+nf(prom)+' kg/día</b> de objetivo '+nf(OBJ())+' kg/día '+(okSem?'✅ objetivo cumplido':'⚠️ por debajo del objetivo');
