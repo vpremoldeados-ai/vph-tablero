@@ -2960,9 +2960,15 @@ function buildFilterTable(cfg){
     // escribe "ALTCUOTA"/"AL1CUOTA"), no "IVA". Se suman los renglones que EMPIEZAN con IVA/ALICUOTA
     // tomando el ÚLTIMO número de cada uno (sacando antes la tasa: "IVA 21%: $520,66" → 520,66).
     // Empezar-con evita duplicar por leyendas tipo "...IVA del 21% contenido $520,66" al pie del ticket.
+    // Trampas vistas en producción: (a) el OCR FUSIONA columnas — "IVA RESPONSABLE INSCRIPTO" (izq.)
+    // + "Incio de Actividades: 01/12/1998" (der.) quedan en UN renglón que empieza con IVA, y el 1998
+    // se sumaba como si fuera el monto del IVA; (b) la I de "IVA" se pierde ("VA 21%: 10.462,30").
+    // Por eso: se excluyen renglones de condición fiscal (responsable/inscripto/actividades/etc.) y
+    // el anclado tolera hasta 3 símbolos de ruido adelante y la I perdida.
     let ivaMonto = 0;
     for(const l of lineas){
-      if(!/^(?:i\.?v\.?a\b|al[ti1l]?[i1]?cuota)/i.test(l)) continue;
+      if(!/^[^A-Za-z0-9]{0,3}(?:[i1l]?\.?v\.?a\b|al[ti1l]?[i1]?cuota)/i.test(l)) continue;
+      if(/responsable|inscripto|exento|monotrib|activid|condici/i.test(l)) continue;
       ivaMonto += ultimoNum(l);
     }
     if(!(ivaMonto>0)) ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);   // respaldo, criterio viejo
