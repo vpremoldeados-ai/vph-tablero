@@ -2964,8 +2964,10 @@ function buildFilterTable(cfg){
     // Se saltea cualquier línea de VPH: VPH es el COMPRADOR, nunca el proveedor (aparece en el membrete
     // propio de un remito, o como "facturado a: VPH SAS" en una factura de combustible).
     let provAdivinado='';
-    const rotulos=/^(factura|ticket|tique|comprobante|fecha|hora|cuit|cuil|cliente|consumidor|se[ñn]or|razon social|domicilio|ing\.?\s*brutos|ingresos|iva|responsable|inicio|total|subtotal|neto|remito|presupuesto|orig|copia|duplicado|recibimos|gracias|registro|cae\b)\b/i;
-    const esVPH=/vassallo|vpremoldeados|\bvph\b/i;
+    const rotulos=/^(factura|ticket|tique|comprobante|fecha|hora|cuit|cuil|cliente|consumidor|se[ñn]or|sr\.?\b|razon social|domicilio|localidad|direccion|tel\.?\b|telefono|e-?mail|correo|ing\.?\s*brutos|ingresos|iva|responsable|inicio|incio|cond\b|total|subtotal|neto|remito|presupuesto|orig|copia|duplicado|recibimos|gracias|registro|cae\b)\b/i;
+    // VPH es el COMPRADOR, nunca el proveedor: se saltean sus líneas (membrete propio de un remito,
+    // "Sr.: VPH SAS" de una factura) y también su CUIT, que puede aparecer solo, sin el nombre al lado.
+    const esVPH=/vassallo|vpremoldeados|\bvph\b|30[-\s.]?71784004[-\s.]?2/i;
     // Descarta renglones de BASURA del OCR (bordes del papel, logos mal leídos): "Mza | EMBALAJES
     // PATATA. el DST |" salió como nombre de proveedor en una factura A4 real. Señales de basura:
     // barras verticales, o demasiadas "palabras" de 1-2 letras sueltas (más de la mitad).
@@ -2975,21 +2977,45 @@ function buildFilterTable(cfg){
       if(ws.length>=4 && ws.filter(w=>w.replace(/[^A-Za-zÁÉÍÓÚáéíóúñÑ]/g,'').length<=2).length > ws.length/2) return true;
       return false;
     };
-    for(const l of lineas.slice(0,10)){
+    // ⚠️ Solo se mira la zona del VENDEDOR (arriba del bloque del comprador). Sin este corte, en una
+    // factura A4 se tomó "Localidad: Toledo - C.P.:5123 CUIT: 30-71784004-2" como nombre del
+    // proveedor: es el DOMICILIO DE VPH, o sea el comprador (pasó en producción).
+    const zonaVend = iComprador>=0 ? texto.slice(0,iComprador) : texto;
+    const lineasVend = zonaVend.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).slice(0,12);
+    for(const l of lineasVend){
       if(esVPH.test(l) || basura(l)) continue;
       if(l.length>=3 && l.length<=60 && /[a-zA-ZÁÉÍÓÚáéíóúñÑ]{3,}/.test(l) && !rotulos.test(l) && !/^\d+([.,]\d+)?$/.test(l)){ provAdivinado=l; break; }
+    }
+    // Respaldo fuerte para facturas A4: cuando el logo sale destrozado, el nombre suele sobrevivir en
+    // el DOMINIO del e-mail o de la web del proveedor ("infogQembalajesmercosur.com.ar" → el OCR se
+    // comió la arroba, pero el dominio está entero). Se descartan los dominios genéricos de correo.
+    let provDominio='';
+    const mDom = zonaVend.match(/([a-z0-9][a-z0-9._-]{4,40})\.(?:com\.ar|com|net|org|ar)\b/i);
+    if(mDom){
+      let d=mDom[1].toLowerCase().replace(/\.(?:com|net|org|ar)$/,'').replace(/[^a-z0-9]/g,'');
+      // La arroba del e-mail suele salir mal leída y queda pegada al dominio ("info" + "gQ" +
+      // "embalajesmercosur"), así que al sacar el prefijo de la casilla se toleran hasta 2 caracteres
+      // de ruido. Solo se aplica si lo que queda sigue siendo un nombre largo (>=8), para no recortar
+      // un dominio que legítimamente empiece con esas letras.
+      const sinPre=d.replace(/^(?:info|ventas?|administracion|admin|contacto|mail|correo|compras)[a-z0-9]{0,2}/,'');
+      if(sinPre.length>=8) d=sinPre;
+      if(d.length>=5 && !/^(gmail|hotmail|yahoo|outlook|live|icloud|fibertel|speedy|arnet)/.test(d)) provDominio=d.toUpperCase();
     }
     // Reconocimiento del proveedor RECURRENTE (por CUIT o nombre) contra el historial de compras.
     let proveedor='', condIva='A', categoria='', tipoComprobante='Compra';
     // El barrido por nombre mira SOLO la zona del VENDEDOR (arriba del bloque del comprador): abajo
     // aparecen textos como "MERCADO PAGO" o el detalle, que podrían matchear a otro proveedor conocido.
-    const conocido = matchProveedorConocido(cuit, provAdivinado, iComprador>=0 ? texto.slice(0,iComprador) : texto);
+    const conocido = matchProveedorConocido(cuit, provAdivinado || provDominio, zonaVend);
     if(conocido && conocido.nombre){
       proveedor = conocido.nombre;
       if(conocido.cond && COND_IVA.includes(conocido.cond)) condIva = conocido.cond;
       if(conocido.categoria && CATEGORIAS.includes(conocido.categoria)) categoria = conocido.categoria;
       if(conocido.tipo && TIPOS_COMPROB.includes(conocido.tipo)) tipoComprobante = conocido.tipo;
       infos.push('Proveedor reconocido por '+conocido.via+' ('+conocido.veces+' compra(s) previa(s))'+(categoria?' · categoría sugerida: '+categoria:''));
+    } else if(provDominio){
+      // Mejor el dominio que la primera línea: el logo suele salir destrozado, el dominio no.
+      proveedor = provDominio;
+      avisos.push('proveedor NUEVO, tomado del e-mail del comprobante ('+provDominio+') — corregí el nombre y elegí la categoría; la próxima compra de este proveedor se va a reconocer sola');
     } else if(provAdivinado){
       proveedor = provAdivinado;
       avisos.push('proveedor NUEVO, adivinado de la primera línea — confirmalo y elegí la categoría');
@@ -6516,6 +6542,14 @@ function buildFilterTable(cfg){
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
+    // CRM: cuántos días hábiles se espera en CADA estado del lead antes de recordarle a Sofía la próxima
+    // acción. Al mover el lead de estado se le agenda solo el "Próximo seguimiento" con estos días; cuando
+    // llega la fecha aparece la alerta en la Vista Diaria y la tarea en el Asistente. En 0 no se agenda nada.
+    {g:'CRM', k:'crmDiasNuevo',       l:'Lead Nuevo → recordar a los (días hábiles)',   def:3, t:'num', hint:'Se cuenta desde que ENTRÓ el lead (no desde hoy): es el plazo para hacer el primer contacto. En 0 no se agenda recordatorio.'},
+    {g:'CRM', k:'crmDiasCotizado',    l:'Cotizado → recordar a los (días hábiles)',     def:3, t:'num', hint:'Ya se le mandó el presupuesto: a los cuántos días recordar el re-contacto. En 0 no se agenda.'},
+    {g:'CRM', k:'crmDiasReconsulta1', l:'Reconsulta 1 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 1ª reconsulta. En 0 no se agenda.'},
+    {g:'CRM', k:'crmDiasReconsulta2', l:'Reconsulta 2 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 2ª reconsulta. En 0 no se agenda.'},
+    {g:'CRM', k:'crmDiasReconsulta3', l:'Reconsulta 3 → recordar a los (días hábiles)', def:7, t:'num', hint:'Último intento antes de darlo por perdido. En 0 no se agenda.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'},
     {g:'Finanzas',   k:'cuentaChequera', l:'Cuenta de la que salen los cheques propios', def:'Banco Macro VPH', t:'txt', hint:'Un cheque propio se debita SIEMPRE de esta cuenta, así que el Tablero puede avisarte si ese día no va a haber fondos ahí. Se propone sola al cargar un cheque propio; si usás más de una chequera, cambiala a mano en cada cheque.'}
@@ -6587,11 +6621,20 @@ function buildFilterTable(cfg){
   const ESTADOS=[ {k:'nuevo',l:'Nuevo',c:'#4aa3ff'},{k:'cotizado',l:'Cotizado',c:'#8a5cc0'},{k:'reconsulta1',l:'Reconsulta 1',c:'#d98324'},{k:'reconsulta2',l:'Reconsulta 2',c:'#c96a1a'},{k:'reconsulta3',l:'Reconsulta 3',c:'#a8480f'},{k:'confirmado',l:'Confirmado',c:'#1e9e5a'},{k:'perdido',l:'Perdido',c:'#d64541'} ];
   const ACTIVOS=['nuevo','cotizado','reconsulta1','reconsulta2','reconsulta3'];
   // ---------- Seguimiento automático en días hábiles (pedido de Sofía) ----------
-  // Recién CREADO ("nuevo") → recordatorio a los 3 días hábiles para la 1ª reconsulta.
-  // Al pasar a "reconsulta1" o "reconsulta2" → se reprograma el siguiente recordatorio a 5 días hábiles.
-  // "reconsulta3" es la última etapa automática: no reprograma más (Sofía decide a mano si sigue insistiendo).
-  // Al confirmarse la venta o marcarse "perdido" se apaga el recordatorio (no tiene sentido seguir avisando).
-  const HORARIO_SEGUIMIENTO = { nuevo:3, reconsulta1:5, reconsulta2:5 };
+  // Cuántos días hábiles se espera en CADA estado antes de recordarle a Sofía la próxima acción.
+  // Los plazos son EDITABLES en Base de Datos → ⚙️ Parámetros → grupo CRM (antes estaban fijos acá, y
+  // "cotizado"/"reconsulta3" ni siquiera agendaban: un presupuesto enviado se caía del radar).
+  // Se leen en tiempo de uso (no al cargar la página) para tomar el valor actual sin recargar.
+  // En 0 ese estado no agenda recordatorio. Al confirmar o dar por perdido se apaga (SIN_SEGUIMIENTO).
+  // Se acota 0..365: un typo (9999) daría una fecha de seguimiento delirante, y un negativo, una en el pasado.
+  const diasParam = (k,def)=>{ const n=Math.round(num(window.__param(k,def))); return n>0 ? Math.min(n,365) : 0; };
+  const HORARIO_SEGUIMIENTO = ()=>({
+    nuevo:       diasParam('crmDiasNuevo',       3),
+    cotizado:    diasParam('crmDiasCotizado',    3),
+    reconsulta1: diasParam('crmDiasReconsulta1', 5),
+    reconsulta2: diasParam('crmDiasReconsulta2', 5),
+    reconsulta3: diasParam('crmDiasReconsulta3', 7)
+  });
   const SIN_SEGUIMIENTO = ['confirmado','perdido'];
   function addDiasHabiles(fechaISO, n){
     const d = new Date((fechaISO||hoyISO)+'T00:00:00'); let agregados=0;
@@ -6604,8 +6647,9 @@ function buildFilterTable(cfg){
     const est = l.estado||'nuevo';
     if(est===estadoPrevio) return;
     if(SIN_SEGUIMIENTO.includes(est)){ l.proximoSeguimiento=''; return; }
-    const dias = HORARIO_SEGUIMIENTO[est];
-    if(dias) l.proximoSeguimiento = addDiasHabiles(est==='nuevo' ? (l.fecha||hoyISO) : hoyISO, dias);
+    const dias = HORARIO_SEGUIMIENTO()[est];
+    // "nuevo" cuenta desde que ENTRÓ el lead (plazo para el 1er contacto); el resto, desde hoy.
+    if(dias>0) l.proximoSeguimiento = addDiasHabiles(est==='nuevo' ? (l.fecha||hoyISO) : hoyISO, dias);
   }
   // "Contactado" se quitó como columna del pipeline; ahora es un flag booleano en el lead (l.contactado).
   // Migración perezosa: cualquier lead viejo con estado 'contactado' vuelve a 'nuevo' marcado como contactado.
