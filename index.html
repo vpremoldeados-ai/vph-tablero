@@ -3389,6 +3389,9 @@ function buildFilterTable(cfg){
       v.puntoVenta=String(data.ptoVta).padStart(4,'0');
       v.nroFactura=String(data.nroCbte).padStart(8,'0');
       v.arca='Aprobado';
+      // Se sella qué comprobante corrige, para que el PDF de la nota lo muestre sin depender
+      // de que la factura original siga existiendo en el sistema.
+      if(orig) v.compAsocDesc=(orig.tipoComprobante||'')+' '+(orig.puntoVenta||'')+'-'+(orig.nroFactura||'');
       persistVenta(v);
       alert((v.arcaAmbiente!=='produccion'?'⚠️ COMPROBANTE DE PRUEBA (sin validez fiscal)\n\n':'✅ Comprobante autorizado por ARCA\n\n')+
         tipoV+' '+v.puntoVenta+'-'+v.nroFactura+'\nCAE '+data.cae+' (vence '+fmtCae(data.caeVto)+')'+detalleAsoc);
@@ -7959,8 +7962,12 @@ function buildFilterTable(cfg){
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
     // Comprobante ya facturado: "puntoVenta-nroFactura" (ej 0001-00000002); si no, lo de siempre.
     const numero = esc(v.cae ? ((v.puntoVenta||'')+'-'+(v.nroFactura||'')) : (v.nroFactura||v._uid||''));
-    const titulo = esPresupuesto ? 'PRESUPUESTO' : 'DETALLE DE VENTA';
+    // Una nota de crédito/débito NO puede salir impresa como "detalle de venta": el papel tiene
+    // que decir qué comprobante es y a cuál corrige (v.compAsocDesc lo sella al emitirse).
+    const esNota = v.tipoComprobante==='Nota de Crédito' || v.tipoComprobante==='Nota de Débito';
+    const titulo = esPresupuesto ? 'PRESUPUESTO' : (esNota ? String(v.tipoComprobante).toUpperCase() : 'DETALLE DE VENTA');
     let extrasDer='';
+    if(esNota && v.compAsocDesc) extrasDer='<div style="margin-top:4px"><b>Corrige:</b> '+esc(v.compAsocDesc)+'</div>';
     if(esPresupuesto){ extrasDer='<div style="margin-top:4px"><b>Vto. del Presupuesto:</b> '+dmy(v.vencimiento)+'</div>'; }
     else if(v.vencimiento){ extrasDer='<div style="margin-top:4px"><b>Vto. para el pago:</b> '+dmy(v.vencimiento)+'</div>'; }
     const izq='<b>'+esc(v.cliente||'—')+'</b>'+
