@@ -2395,6 +2395,76 @@ function buildFilterTable(cfg){
     await page.render({canvasContext:canvas.getContext('2d'), viewport}).promise;
     return canvas;
   }
+  // ---------- QR de ARCA: los datos EXACTOS del comprobante, sin depender del OCR ----------
+  // Es lo que hacen los software comerciales de lectura de comprobantes (Veryfi/Klippa/etc.): primero
+  // el dato ESTRUCTURADO, el OCR de respaldo. Toda factura electrónica argentina (RG 4892) lleva un QR
+  // con una URL afip.gob.ar/fe/qr/?p=<base64> cuyo JSON trae: fecha, CUIT del EMISOR, punto de venta,
+  // número, tipo de comprobante e importe TOTAL — exactos aunque la tinta esté apagada. Se decodifica
+  // con jsQR (gratuita, corre en el navegador, se carga del CDN solo la primera vez).
+  let jsqrCache=null;
+  async function cargarJsQR(){ if(!jsqrCache){ const m=await import('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/+esm'); jsqrCache=m.default||m; } return jsqrCache; }
+  async function archivoACanvas(file){
+    if(file && file.getContext) return file;            // ya es un canvas (viene del pipeline de PDF)
+    let bmp;
+    try{ bmp = await createImageBitmap(file, {imageOrientation:'from-image'}); }   // respeta la rotación EXIF del celular
+    catch(e){ bmp = await createImageBitmap(file); }
+    const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height;
+    c.getContext('2d').drawImage(bmp,0,0);
+    if(bmp.close) bmp.close();
+    return c;
+  }
+  function qrParsearPayload(data){
+    // Esperado: "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOjEs..." (o, por las dudas, el JSON directo).
+    try{
+      let j=null;
+      const m=String(data||'').match(/[?&]p=([A-Za-z0-9+/_=-]+)/);
+      if(m){ const b64=m[1].replace(/-/g,'+').replace(/_/g,'/'); j=JSON.parse(atob(b64)); }
+      else if(/^\s*\{/.test(String(data||''))) j=JSON.parse(data);
+      if(!j || !j.cuit || !j.fecha) return null;
+      return j;
+    }catch(e){ return null; }
+  }
+  async function leerQRArca(canvas){
+    const jsQR = await cargarJsQR();
+    // Probar a resolución reducida primero (más rápido y el detector encuadra mejor el QR completo);
+    // si no aparece, reintentar a resolución nativa.
+    for(const maxW of [1200, 1800, 0]){
+      const esc = (maxW && canvas.width>maxW) ? maxW/canvas.width : 1;
+      const w=Math.round(canvas.width*esc), h=Math.round(canvas.height*esc);
+      let src=canvas;
+      if(esc!==1){ const c2=document.createElement('canvas'); c2.width=w; c2.height=h;
+        c2.getContext('2d').drawImage(canvas,0,0,w,h); src=c2; }
+      const img=src.getContext('2d').getImageData(0,0,w,h);
+      const res=jsQR(img.data, w, h);
+      if(res && res.data){ const j=qrParsearPayload(res.data); if(j) return j; }
+      if(esc===1) break;   // ya se probó al tamaño real, no hay más variantes
+    }
+    return null;
+  }
+  // ---------- Preprocesamiento de la imagen para el OCR ----------
+  // Lo que recomiendan los OCR comerciales para papel térmico: agrandar (Tesseract rinde mejor cerca
+  // de 300dpi), pasar a grises y ESTIRAR el contraste entre los percentiles 5-95 del histograma — la
+  // tinta apagada gana contraste sin reventar las zonas quemadas por el flash. Mejora típica: 20-30%
+  // menos errores en tickets de tinta floja. No binariza a mano: de eso se encarga Tesseract adentro.
+  function preprocesarCanvas(canvas){
+    const objetivo=1800, factor=Math.min(3, Math.max(1, objetivo/canvas.width));
+    const w=Math.round(canvas.width*factor), h=Math.round(canvas.height*factor);
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    const ctx=c.getContext('2d');
+    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+    ctx.drawImage(canvas,0,0,w,h);
+    const im=ctx.getImageData(0,0,w,h), px=im.data;
+    const hist=new Array(256).fill(0);
+    for(let i=0;i<px.length;i+=4){ const g=(px[i]*299+px[i+1]*587+px[i+2]*114)/1000|0; px[i]=g; hist[g]++; }
+    const tot=w*h; let acc=0, p5=0, p95=255;
+    for(let v=0;v<256;v++){ acc+=hist[v]; if(acc>=tot*0.05){ p5=v; break; } }
+    acc=0;
+    for(let v=255;v>=0;v--){ acc+=hist[v]; if(acc>=tot*0.05){ p95=v; break; } }
+    const rango=Math.max(1,p95-p5);
+    for(let i=0;i<px.length;i+=4){ let g=(px[i]-p5)*255/rango; g=g<0?0:g>255?255:g; px[i]=px[i+1]=px[i+2]=g; }
+    ctx.putImageData(im,0,0);
+    return c;
+  }
   async function procesarTicket(file){
     if(ticketBusy) return; ticketBusy=true;
     const tiposOk=['image/jpeg','image/png','image/webp','application/pdf'];
@@ -2427,9 +2497,19 @@ function buildFilterTable(cfg){
         }
       }catch(e){ console.warn('no se pudo archivar el ticket (no es grave, sigue la lectura):', e); url=''; }
 
+      ticketEstado('⏳ Preparando la imagen…');
+      const canvas0 = (file.type==='application/pdf') ? await pdfAPrimeraPaginaCanvas(file) : await archivoACanvas(file);
+
+      // 1) QR de ARCA: si el ticket lo trae y la foto lo agarró, estos datos son EXACTOS (sin OCR).
+      let qr=null;
+      try{ ticketEstado('⏳ Buscando el código QR de ARCA…'); qr = await leerQRArca(canvas0); }
+      catch(e){ console.warn('sin lectura de QR (no es grave, sigue el OCR):', e); }
+      if(qr) console.log('[ticket QR] datos exactos del comprobante:', JSON.stringify(qr));
+
+      // 2) OCR sobre la imagen preprocesada (agrandada + contraste estirado: menos errores de lectura).
       ticketEstado('⏳ Cargando el lector (solo la primera vez)…');
       const { createWorker } = await cargarTesseract();
-      const origen = (file.type==='application/pdf') ? await pdfAPrimeraPaginaCanvas(file) : file;
+      const origen = preprocesarCanvas(canvas0);
 
       ticketEstado('⏳ Leyendo el ticket (puede tardar 10-30 segundos)…');
       const worker = await createWorker('spa');
@@ -2439,7 +2519,7 @@ function buildFilterTable(cfg){
       // QUÉ leyó el OCR de verdad (con poca tinta suele diferir de lo que dice el papel).
       console.log('[ticket OCR] texto crudo leído:\n'+text);
 
-      const d = parsearTicketTexto(text);
+      const d = parsearTicketTexto(text, qr);
       aplicarDatosTicket(d);
       ticketEstado('✅ Datos precargados desde el ticket'+(url?' — <a href="'+url+'" target="_blank" rel="noopener">ver archivo</a>':'')+'. <b>Revisá todo antes de guardar</b>: la lectura automática es aproximada.'+(d.info?(' ✅ '+esc(d.info)):'')+(d.avisos?(' ⚠️ '+esc(d.avisos)):''), 'good');
     }catch(e){
@@ -2592,10 +2672,13 @@ function buildFilterTable(cfg){
   // Nunca inventa valores que no estén en el texto y deja todo marcado para que la persona revise.
   // Primero reconoce al proveedor (por CUIT/nombre, contra el historial) y de ahí precarga categoría,
   // condición IVA y tipo. Si el proveedor es nuevo, cae al método viejo (primera línea con letras).
-  function parsearTicketTexto(texto){
+  // `qr` (opcional) = JSON del QR de ARCA ya decodificado: cuando está, sus campos (CUIT del emisor,
+  // fecha, punto de venta, número, tipo, importe total) PISAN a los del OCR — son datos exactos.
+  function parsearTicketTexto(texto, qr){
     const lineas = String(texto||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
     const avisos=[];   // advertencias (se muestran con ⚠️)
     const infos=[];    // confirmaciones positivas, ej. proveedor reconocido (se muestran con ✅)
+    let qrOk = (qr && normCuit(qr.cuit) && qr.fecha) ? qr : null;
     // CUIT del PROVEEDOR. Un ticket puede traer VARIOS CUIT: el del vendedor y el de VPH como
     // COMPRADOR (las facturas de combustible traen "VPH SAS ... 30-71784004-2"; un remito propio de
     // VPH trae solo ese). Juntamos todos, descartamos el propio de VPH y el de consumidor final
@@ -2603,6 +2686,11 @@ function buildFilterTable(cfg){
     // vendedor (figura arriba de todo).
     const VPH_CUIT='30717840042';
     let cuit='', vioCuitVPH=false;
+    if(qrOk){
+      const qd=normCuit(qrOk.cuit);
+      if(qd===VPH_CUIT){ vioCuitVPH=true; qrOk=null; }   // el emisor del QR es VPH → documento propio, no una compra
+      else cuit=fmtCuit(qd);
+    }
     const todosCuit=[...String(texto).matchAll(/\b(20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/g)]
       .map(m=>m[0].replace(/\D/g,'')).filter(d=>d.length===11);
     const candCuit=[];
@@ -2613,9 +2701,11 @@ function buildFilterTable(cfg){
     }
     // Preferir un candidato con dígito verificador VÁLIDO (chequeo matemático oficial de AFIP): con
     // poca tinta el OCR puede errar un dígito, y el checksum lo detecta al toque.
-    const valido = candCuit.find(cuitValido);
-    if(valido) cuit=fmtCuit(valido);
-    else if(candCuit.length) cuit=fmtCuit(candCuit[0]);
+    if(!cuit){
+      const valido = candCuit.find(cuitValido);
+      if(valido) cuit=fmtCuit(valido);
+      else if(candCuit.length) cuit=fmtCuit(candCuit[0]);
+    }
     // Respaldo: "CUIT ..." con posible ruido del OCR (O→0, I/l→1) y validando prefijo + 11 dígitos.
     if(!cuit){
       const mLbl = texto.match(/c\.?\s*u\.?\s*i\.?\s*t\.?[^\dOoIl]{0,6}([\dOoIl\-.\s]{11,18})/i);
@@ -2625,6 +2715,7 @@ function buildFilterTable(cfg){
     if(!cuit && vioCuitVPH) avisos.push('solo aparece el CUIT de VPH — ¿es una compra o un documento propio (remito/factura de VPH)?');
     else if(!cuit) avisos.push('no se encontró CUIT');
     else if(!cuitValido(cuit)) avisos.push('el CUIT leído ('+cuit+') NO pasa el dígito verificador — el OCR pudo leer mal un número por poca tinta, corregilo mirando el ticket');
+    else if(qrOk) infos.push('QR de ARCA leído: CUIT, fecha, N° de comprobante y total tomados EXACTOS del QR');
     else infos.push('CUIT verificado (dígito verificador correcto)');
     // Fecha del comprobante → YYYY-MM-DD. Preferir la rotulada "Fecha"/"Fecha de Emisión": un ticket trae
     // OTRAS fechas antes ("Inicio de Actividades: 01/03/1983", "Fecha Vto. CAE", el período desde/hasta).
@@ -2637,7 +2728,8 @@ function buildFilterTable(cfg){
     const armarFecha = mm => { if(!mm) return ''; let [,d,m,a]=mm; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
       if(+a<2020 || +a>anioMax) return '';
       return (+m>=1 && +m<=12 && +d>=1 && +d<=31) ? a+'-'+m+'-'+d : ''; };
-    fecha = armarFecha(texto.match(/\bf?echa(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
+    if(qrOk && /^\d{4}-\d{2}-\d{2}/.test(String(qrOk.fecha))) fecha=String(qrOk.fecha).slice(0,10);   // del QR: exacta
+    if(!fecha) fecha = armarFecha(texto.match(/\bf?echa(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
     if(!fecha){
       const reF=/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g; let mm;
       while(mm=reF.exec(texto)){
@@ -2657,6 +2749,11 @@ function buildFilterTable(cfg){
     // ANTES del rótulo de asociados, los campos quedan VACÍOS a propósito: en blanco se nota y se
     // completa mirando el ticket; un número equivocado pasa de largo (ya pasó: tomó 00001-00000001).
     let puntoVenta='', nroFactura='';
+    // Del QR de ARCA vienen EXACTOS (ptoVta y nroCmp numéricos) — se saltea todo el rastreo por OCR.
+    if(qrOk && qrOk.ptoVta!=null && qrOk.nroCmp!=null && +qrOk.nroCmp>0){
+      puntoVenta=String(+qrOk.ptoVta||0).padStart(4,'0');
+      nroFactura=String(+qrOk.nroCmp).padStart(8,'0');
+    }
     // Regla ESTRUCTURAL (la más fuerte): en un tique fiscal el N° del comprobante está en el ENCABEZADO,
     // siempre ANTES del bloque del comprador ("VPH S.A.S. / CUIT 30-71784004-2" o "Consumidor Final").
     // Los "comprobantes asociados" vienen DESPUÉS de ese bloque. Con poca tinta el encabezado puede
@@ -2721,6 +2818,13 @@ function buildFilterTable(cfg){
     } else {
       avisos.push('no se pudo adivinar el proveedor — completalo a mano');
     }
+    // Tipo de comprobante según el QR de ARCA (campo tipoCmp): detectar notas de crédito/débito de ahí
+    // es más confiable que del texto — cambian el signo de la compra, mejor no depender del OCR.
+    if(qrOk && qrOk.tipoCmp!=null){
+      const tc=+qrOk.tipoCmp;
+      if([3,8,13,53,203,208,213].indexOf(tc)>=0) tipoComprobante='Nota de Crédito';
+      else if([2,7,12,52,202,207,212].indexOf(tc)>=0) tipoComprobante='Nota de Débito';
+    }
     // Totales: busca un renglón "Neto"/"Subtotal" y uno de "IVA" por separado; si no los encuentra,
     // toma el "TOTAL" como neto (queda marcado como aproximado, puede incluir IVA sin discriminar).
     const buscarMonto = re=>{ const m=texto.match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
@@ -2738,6 +2842,7 @@ function buildFilterTable(cfg){
     }
     if(!(ivaMonto>0)) ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);   // respaldo, criterio viejo
     let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
+    if(qrOk && +qrOk.importe>0) total = +qrOk.importe;   // total EXACTO del QR de ARCA — pisa al del OCR
     // Impuestos internos / otros tributos (ej. combustible: "IMPORTE TOTAL OTROS TRIBUTOS 10470,07").
     // NO son IVA: van a su propio campo del form. Sin esto, el Total del ticket no cierra (queda corto).
     let impInternos = buscarMonto(/(?:otros\s+tributos|impuestos?\s+internos?)[^\d\n]{0,20}([\d.,]+)/i);
