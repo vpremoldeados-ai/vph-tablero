@@ -1346,7 +1346,9 @@ function pintarKpisInicio(){
         kpi('Deuda vencida a proveedores', fmt$(finanzas.aPagarVencido), (finanzas.aPagarVencido/finanzas.aPagar*100).toFixed(0)+'% del total a pagar', 'bad');
     })() +
     kpi('Producción promedio', _promDia.toLocaleString('es-AR')+' kg/día', (rp?'Ritmo real últimos 14 días · objetivo ':'Objetivo: ')+_objKg.toLocaleString('es-AR')+' kg/día'+(rp?' · en vivo':''), _promDia>=_objKg?'good':'warn') +
-    kpi('Balance stock (kg)', (_balKg>0?'+':'')+_balKg.toLocaleString('es-AR')+' kg', (rp?'Físico − comprometido · en vivo':'Stock vs pedidos comprometidos'), _balKg<0?'bad':'good');
+    kpi('Balance stock (kg)', (_balKg>0?'+':'')+_balKg.toLocaleString('es-AR')+' kg', (rp?'Físico − comprometido · en vivo':'Stock vs pedidos comprometidos'), _balKg<0?'bad':'good') +
+    kpi('Kg fabricados '+META.mesEnCurso, _kgFab==null?'—':Math.round(_kgFab).toLocaleString('es-AR')+' kg', 'Producido en el mes'+(rp?' · en vivo':''), 'info') +
+    kpi('Kg vendidos '+META.mesEnCurso, _kgVen==null?'—':Math.round(_kgVen).toLocaleString('es-AR')+' kg', 'Vendido/facturado en el mes'+(rm?' · en vivo':''), (_kgFab!=null&&_kgVen!=null&&_kgVen>_kgFab)?'warn':'info');
 }
 pintarKpisInicio();
 
@@ -4760,11 +4762,17 @@ function buildFilterTable(cfg){
     const per=hoyISO.slice(0,7);
     // pesos por código (para kg vendidos del mes — se compara con lo producido)
     const cat = window.__catalogoProductos?window.__catalogoProductos():[];
-    const pW={}; cat.forEach(p=>{ if(p.codigo) pW[String(p.codigo).toUpperCase()]=num(p.pesoUnit); });
+    // Peso por código Y por nombre normalizado: si el ítem de la venta se cargó a mano sin código,
+    // igual suma sus kilos (mismo criterio que keyDe() de Producción). Antes solo miraba el código,
+    // así que los "kg vendidos" quedaban CORTOS frente a los "kg fabricados" y comparar los dos engañaba.
+    const normP = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
+    const pW={}, pWn={}; cat.forEach(p=>{ const w=num(p.pesoUnit); if(!(w>0)) return;
+      if(p.codigo) pW[String(p.codigo).trim().toUpperCase()]=w; if(p.nombre) pWn[normP(p.nombre)]=w; });
+    const pesoItem = it => pW[String(it.codigo||'').trim().toUpperCase()] || pWn[normP(it.desc)] || 0;
     let vTot=0, vCant=0, cTot=0, kgV=0; const porCli={};
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
       const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
-      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pW[String(it.codigo||'').toUpperCase()]||0; if(w>0) kgV+=w*num(it.cant); }); });
+      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it); if(w>0) kgV+=w*num(it.cant); }); });
     compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; cTot+=num(calcC(c).total); });
     let topCli='—', topPct=0; const arr=Object.entries(porCli).sort((a,b)=>b[1]-a[1]);
     if(arr.length && vTot>0){ topCli=arr[0][0]; topPct=Math.round(arr[0][1]/vTot*100); }
