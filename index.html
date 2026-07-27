@@ -1069,8 +1069,9 @@
       </div>
       <div class="tbl-wrap"><table id="chq-tabla"></table></div>
       <p class="note"><b>📥 De terceros</b>: te los dio un cliente para pagarte una venta. Tienen dos destinos: <b>endosarlos</b> a un proveedor para pagarle una compra (lo habitual acá) o <b>depositarlos</b> en una cuenta tuya. Un cheque endosado sale de tu cartera y <b>no toca ninguna cuenta tuya</b>: el papel va del cliente al proveedor y lo único que hace es cancelar esa compra.<br>
-      <b>📤 Propios</b>: los firmás vos, salen de la chequera de VPH. Ahí sí sale plata de una cuenta, el día que se debitan.<br>
-      Estados: En cartera → Endosado / Depositado → Cobrado / Rechazado. La Vista Diaria avisa cuando se acerca el vencimiento de uno sin resolver. Datos en la nube (Firestore <code>vph_cheques</code>).</p>
+      Sus estados: <b>En cartera</b> (lo tenés vos) → <b>Endosado</b> o <b>Depositado</b> → <b>Cobrado</b> / <b>Rechazado</b>.<br><br>
+      <b>📤 Propios</b>: los firmás vos, de la chequera de VPH, y ya están en poder del proveedor. Sus estados son otros porque la plata va al revés: <b>En poder del proveedor</b> → <b>Pagado</b> el día que el proveedor lo cobra y el dinero <b>sale de tu cuenta</b> (o <b>Rechazado</b> si no había fondos). Marcalo como Pagado recién cuando la plata salió de verdad: ahí se descuenta de la cuenta.<br>
+      Mirá <b>Caja → «¿Alcanza en cada cuenta?»</b> para saber si vas a tener el dinero en esa cuenta el día del vencimiento. La Vista Diaria avisa cuando se acerca el vencimiento de uno sin resolver. Datos en la nube (Firestore <code>vph_cheques</code>).</p>
     </section>
   </div>
 
@@ -4105,7 +4106,16 @@ function buildFilterTable(cfg){
                  {k:'cobrado',   l:'Cobrado',              c:'#1e9e5a'},
                  {k:'rechazado', l:'Rechazado',            c:'#d64541'}];
   const tipoLbl=k=>(TIPOS.find(x=>x.k===k)||{}).l||k;
-  const estLbl=k=>(ESTADOS.find(x=>x.k===k)||{}).l||k;
+  // El MISMO estado se llama distinto según de quién es el cheque, porque la plata va al revés:
+  // un cheque de un cliente lo tenemos nosotros y lo COBRAMOS; uno propio lo tiene el proveedor y
+  // nosotros lo PAGAMOS (sale plata de nuestra cuenta el día que se debita).
+  // ⚠️ Los valores GUARDADOS no cambian ('cartera', 'cobrado'…): de ellos dependen la Caja, la
+  // proyección y Finanzas. Acá solo cambia el texto que se muestra.
+  const LBL_PROPIO={ cartera:'En poder del proveedor', cobrado:'Pagado', depositado:'Depositado', rechazado:'Rechazado' };
+  const estLbl=(k,tipo)=> (tipo==='emitido' && LBL_PROPIO[k]) || (ESTADOS.find(x=>x.k===k)||{}).l || k;
+  // Estados que tienen sentido para cada familia: un cheque propio no se "endosa" ni se "deposita"
+  // (eso lo hace el proveedor, no nosotros).
+  const estadosDe = tipo => ESTADOS.filter(e=> tipo==='emitido' ? e.k!=='endosado' && e.k!=='depositado' : true);
   // "Resuelto" = ya no esperamos NINGÚN movimiento de plata nuestro por este cheque. El endosado entra
   // acá a propósito: no lo vamos a cobrar (lo cobra el proveedor) ni lo vamos a pagar. Por eso queda
   // afuera de la cartera, de "por vencer", de la proyección de caja y de las columnas de Finanzas.
@@ -4136,8 +4146,11 @@ function buildFilterTable(cfg){
   function cuentaSugerida(c){
     if(c.cuenta) return c.cuenta;
     if(c.tipo!=='emitido') return '';
-    const q=chequeraParam().toLowerCase();
-    return (window.__cajaCuentas?window.__cajaCuentas():[]).find(x=>String(x).trim().toLowerCase()===q) || ''; }
+    return chequeraCuenta(); }
+  // Devuelve '' si el parámetro no matchea ninguna cuenta declarada en Caja: mejor vacío que inventar
+  // una cuenta que no existe (el movimiento caería en una cuenta fantasma).
+  const chequeraCuenta = ()=>{ const q=chequeraParam().toLowerCase(); if(!q) return '';
+    return (window.__cajaCuentas?window.__cajaCuentas():[]).find(x=>String(x).trim().toLowerCase()===q) || ''; };
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
   function catProveedores(){ return (window.__catalogoProveedores?window.__catalogoProveedores():[]); }
   function datalistEntidad(tipo){ const arr=(tipo==='emitido'?catProveedores():catClientes()); return '<datalist id="chq-ent-list">'+arr.map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
@@ -4196,7 +4209,8 @@ function buildFilterTable(cfg){
     $('chq-filtros').innerHTML = defs.map(([v,l,n])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+n+')</button>').join('');
     $('chq-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
   }
-  const badgeEstado=e=>{ const est=ESTADOS.find(x=>x.k===e)||{c:'#95a5b8',l:e}; return '<span class="badge" style="background:'+est.c+'22;color:'+est.c+';border:1px solid '+est.c+'55">'+est.l+'</span>'; };
+  const badgeEstado=(e,tipo)=>{ const est=ESTADOS.find(x=>x.k===e)||{c:'#95a5b8'}; const c=est.c||'#95a5b8';
+    return '<span class="badge" style="background:'+c+'22;color:'+c+';border:1px solid '+c+'55">'+esc(estLbl(e,tipo))+'</span>'; };
   function renderTabla(rows){
     const th=(col,label,cls)=>'<th class="'+(cls||'')+'" data-sort="'+col+'">'+label+(filtro.sortCol===col?' <span class="arrow">'+(filtro.sortDir<0?'▼':'▲')+'</span>':'')+'</th>';
     let html='<tr><th>Tipo</th><th>N°</th><th>Banco</th><th>Cliente/Proveedor</th>'+th('fechaEmision','Emisión')+th('fechaVencimiento','Vencimiento')+th('monto','Monto','num')+'<th>Estado</th><th></th></tr>';
@@ -4207,13 +4221,14 @@ function buildFilterTable(cfg){
                 : c.origen==='pago'  ? '<div style="font-size:9.5px;color:var(--muted)">↩ de Compras</div>' : '';
       html+='<tr><td>'+(ter?'📥 De terceros':'📤 Propio')+sub+'</td><td>'+esc(c.numero||'—')+'</td><td>'+esc(c.banco||'—')+'</td><td><b>'+esc(c.entidad||'—')+'</b></td>'+
         '<td>'+fmtFecha(c.fechaEmision)+'</td><td'+(venc?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.fechaVencimiento)+(venc?' ⏰':'')+'</td>'+
-        '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado)+'</td>'+
+        '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado,c.tipo)+'</td>'+
         '<td style="white-space:nowrap">'+
           // Un cheque de terceros en la mano: lo habitual en VPH es endosarlo a un proveedor; depositarlo casi nunca.
           (ter&&c.estado==='cartera'?'<button class="cmp-rowbtn" data-act="endosar" data-id="'+c._uid+'">↪ Endosar</button><button class="cmp-rowbtn" data-act="depositar" data-id="'+c._uid+'">Depositar</button>':'')+
           // Un endosado ya no lo cobramos nosotros (lo cobra el proveedor). Lo único que puede pasar es que REBOTE.
           (esEndosado(c)?'<button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rebotó</button><button class="cmp-rowbtn" data-act="desendosar" data-id="'+c._uid+'">↩ Deshacer endoso</button>':'')+
-          (!RESUELTO.includes(c.estado)?'<button class="cmp-rowbtn" data-act="cobrado" data-id="'+c._uid+'">✓ Cobrado</button><button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rechazado</button>':'')+
+          // Un cheque propio no se "cobra": lo cobra el proveedor y a nosotros nos SALE la plata.
+          (!RESUELTO.includes(c.estado)?'<button class="cmp-rowbtn" data-act="cobrado" data-id="'+c._uid+'">'+(ter?'✓ Cobrado':'✓ Pagado')+'</button><button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rechazado</button>':'')+
           // Corrección de datos viejos: cheques cargados como PROPIOS que en realidad eran endosos de terceros.
           (!ter?'<button class="cmp-rowbtn" data-act="esendoso" data-id="'+c._uid+'" title="Este cheque en realidad era de un cliente y lo endosaste a este proveedor">↔ Era un endoso</button>':'')+
           '<button class="cmp-rowbtn" data-act="edit" data-id="'+c._uid+'">Editar</button>'+
@@ -4223,7 +4238,15 @@ function buildFilterTable(cfg){
     $('chq-tabla').querySelectorAll('th[data-sort]').forEach(th=> th.onclick=()=>{ const col=th.dataset.sort; if(filtro.sortCol===col) filtro.sortDir*=-1; else {filtro.sortCol=col; filtro.sortDir=1;} render(); });
     $('chq-tabla').querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const c=DB.cheques.find(x=>x._uid===b.dataset.id); if(!c) return; const a=b.dataset.act;
       if(a==='depositar') setEstado(c,'depositado');
-      else if(a==='cobrado') setEstado(c,'cobrado');
+      else if(a==='cobrado'){
+        // Marcar PAGADO un cheque propio saca plata de verdad de una cuenta, hoy. Vale confirmarlo
+        // y decir de cuál sale, que es justo lo que hay que tener previsto.
+        if(c.tipo==='emitido'){
+          const cta=c.cuenta||chequeraCuenta();
+          if(!confirm('¿Ya salió la plata de este cheque?\n\nN° '+(c.numero||'—')+' · '+money(num(c.monto))+' a '+(c.entidad||'—')+'\n'+
+            (cta?'Se va a descontar de: '+cta:'⚠️ Este cheque no tiene cuenta cargada: el movimiento va a quedar en «Sin asignar». Editalo e indicá de qué cuenta sale.')+
+            '\n\nSe registra la salida con fecha de hoy.')) return; }
+        setEstado(c,'cobrado'); }
       else if(a==='rechazado'){
         if(esEndosado(c)) rebotarEndosado(c);
         else if(confirm('¿Marcar este cheque de '+money(num(c.monto))+' como RECHAZADO?')) setEstado(c,'rechazado'); }
@@ -4508,7 +4531,7 @@ function buildFilterTable(cfg){
       }
       html+='<tr>'+
         '<td><input type="checkbox" data-mark="'+i+'"'+(f.marcado?' checked':'')+(f.elegido?'':' disabled')+'></td>'+
-        '<td><b>N° '+esc(p.numero||'—')+'</b> · '+esc(p.banco||'—')+'<div style="font-size:11px;color:var(--muted)">a '+esc(p.entidad||'—')+' · '+fmtFecha(p.fechaEmision)+' · '+estLbl(p.estado)+'</div></td>'+
+        '<td><b>N° '+esc(p.numero||'—')+'</b> · '+esc(p.banco||'—')+'<div style="font-size:11px;color:var(--muted)">a '+esc(p.entidad||'—')+' · '+fmtFecha(p.fechaEmision)+' · '+esc(estLbl(p.estado,'emitido'))+'</div></td>'+
         '<td>'+colC+'</td>'+
         '<td style="font-size:11px">'+aviso+'</td></tr>';
     });
@@ -4568,7 +4591,7 @@ function buildFilterTable(cfg){
         field('Monto $','','<input id="chf-monto" value="'+c.monto+'">') +
         // "Endosado" NO se elige a mano: se llega por el botón ↪ Endosar, que además registra el pago
         // en la compra. Ponerlo acá dejaría cheques endosados sin proveedor ni factura asociada.
-        field('Estado','','<select id="chf-estado">'+ESTADOS.filter(e=>e.k!=='endosado'||c.estado==='endosado').map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
+        field('Estado','','<select id="chf-estado">'+estadosDe(c.tipo).filter(e=>e.k!=='endosado'||c.estado==='endosado').concat(estadosDe(c.tipo).some(e=>e.k===c.estado)?[]:[{k:c.estado}]).map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+esc(estLbl(e.k,c.tipo))+'</option>').join('')+'</select>') +
         field((c.tipo==='emitido'?'Cuenta de la que sale':'Cuenta donde se deposita'),'','<select id="chf-cuenta">'+cuentasOpt(c.cuenta)+'</select>') +
         field('Nota','col2','<textarea id="chf-nota" rows="2">'+esc(c.nota)+'</textarea>') +
       '</div>'+
@@ -4965,7 +4988,11 @@ function buildFilterTable(cfg){
     compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||''}); } });
+      // Un cheque propio sale SIEMPRE de la chequera: los viejos se cargaron antes de que existiera
+      // el campo, así que se asume igual que en la proyección (si no, caerían en "Sin asignar" y el
+      // saldo por cuenta no cerraría justo donde importa).
+      if(f && f>desde && f<=hoyISO){ const propio=c.tipo==='emitido'; const sg=propio?-1:1;
+        M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(propio?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||(propio?chequera():'')}); } });
     // Los COSTOS FIJOS ya se cargan en Compras (categorías "COSTO FIJO" / "Mano de Obra"), así que sus
     // pagos YA entraron en el bloque de compras de arriba. Sumarlos otra vez acá los contaría DOS VECES.
     // (La página "Costos Fijos" es solo una vista de esas mismas compras.)
