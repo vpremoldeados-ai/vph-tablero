@@ -2521,18 +2521,28 @@ function buildFilterTable(cfg){
   }
   async function leerQRArca(canvas){
     const jsQR = await cargarJsQR();
-    // Probar a resolución reducida primero (más rápido y el detector encuadra mejor el QR completo);
-    // si no aparece, reintentar a resolución nativa.
-    for(const maxW of [1200, 1800, 0]){
-      const esc = (maxW && canvas.width>maxW) ? maxW/canvas.width : 1;
-      const w=Math.round(canvas.width*esc), h=Math.round(canvas.height*esc);
-      let src=canvas;
-      if(esc!==1){ const c2=document.createElement('canvas'); c2.width=w; c2.height=h;
-        c2.getContext('2d').drawImage(canvas,0,0,w,h); src=c2; }
-      const img=src.getContext('2d').getImageData(0,0,w,h);
-      const res=jsQR(img.data, w, h);
-      if(res && res.data){ const j=qrParsearPayload(res.data); if(j) return j; }
-      if(esc===1) break;   // ya se probó al tamaño real, no hay más variantes
+    const ctx2d = c => c.getContext('2d', {willReadFrequently:true});
+    // Prueba jsQR sobre un RECORTE del canvas (sx,sy,sw,sh) escalado a ancho `destW`.
+    const probar = (sx,sy,sw,sh,destW)=>{
+      const esc = (destW && sw>destW) ? destW/sw : 1;
+      const w=Math.max(1,Math.round(sw*esc)), h=Math.max(1,Math.round(sh*esc));
+      const c2=document.createElement('canvas'); c2.width=w; c2.height=h;
+      ctx2d(c2).drawImage(canvas, sx,sy,sw,sh, 0,0,w,h);
+      const img=ctx2d(c2).getImageData(0,0,w,h);
+      let res=null; try{ res=jsQR(img.data, w, h, {inversionAttempts:'attemptBoth'}); }catch(e){}
+      return (res && res.data) ? qrParsearPayload(res.data) : null;
+    };
+    const W=canvas.width, H=canvas.height;
+    // 1) Página entera, a dos resoluciones.
+    for(const destW of [1400, 0]){ const j=probar(0,0,W,H,destW); if(j) return j; }
+    // 2) Por CUADRANTES a resolución nativa. En una factura A4 el QR es chico respecto de la hoja y
+    //    al reducir la página entera pierde definición; recortando, cada trozo conserva el detalle.
+    //    El QR de ARCA suele ir abajo a la izquierda, así que se prueba esa zona primero.
+    const zonas=[ [0, H/2, W/2, H/2], [0, H*0.6, W*0.55, H*0.4], [W/2, H/2, W/2, H/2],
+                  [0, 0, W/2, H/2], [W/2, 0, W/2, H/2], [W*0.25, H*0.25, W*0.5, H*0.5] ];
+    for(const z of zonas){
+      const j=probar(Math.round(z[0]),Math.round(z[1]),Math.round(z[2]),Math.round(z[3]),0);
+      if(j) return j;
     }
     return null;
   }
@@ -2545,7 +2555,7 @@ function buildFilterTable(cfg){
     const objetivo=1800, factor=Math.min(3, Math.max(1, objetivo/canvas.width));
     const w=Math.round(canvas.width*factor), h=Math.round(canvas.height*factor);
     const c=document.createElement('canvas'); c.width=w; c.height=h;
-    const ctx=c.getContext('2d');
+    const ctx=c.getContext('2d', {willReadFrequently:true});   // se le hace getImageData: evita el aviso de perf del navegador
     ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
     ctx.drawImage(canvas,0,0,w,h);
     const im=ctx.getImageData(0,0,w,h), px=im.data;
@@ -2720,6 +2730,18 @@ function buildFilterTable(cfg){
         }
       }
       if(mejor) return { ...mejor, via:'nombre en el ticket' };
+      // Último intento: nombre CONCATENADO. En las facturas A4 el logo suele salir destrozado, pero el
+      // nombre sobrevive en el dominio del e-mail o del sitio web, pegado y sin espacios
+      // ("infogQembalajesmercosur.com.ar" → contiene EMBALAJESMERCOSUR). Se exige ≥10 caracteres y
+      // nombre de ≥2 palabras para que no haya falsos positivos por una coincidencia corta.
+      const Tjunto=T.replace(/ /g,'');
+      let mejorC=null, mejorCLen=0;
+      for(const k in dir.porNom){
+        if(k.split(' ').length<2) continue;
+        const kj=k.replace(/ /g,'');
+        if(kj.length>=10 && Tjunto.indexOf(kj)>=0 && kj.length>mejorCLen){ mejorCLen=kj.length; mejorC=dir.porNom[k]; }
+      }
+      if(mejorC) return { ...mejorC, via:'nombre en el ticket' };
     }
     return null;
   }
@@ -2746,14 +2768,28 @@ function buildFilterTable(cfg){
     if(iHdr>=0) desde=iHdr+1;
     const items=[];
     for(const l of lineas.slice(desde)){
-      if(rotulo.test(l)) continue;
+      // El rótulo se testea SIN los símbolos de basura del principio ("- : IVA 21%: ..." tiene que
+      // reconocerse como renglón de IVA), y además se descarta la línea si menciona total/CAE/neto
+      // en CUALQUIER posición: en la A4 escaneada esos rótulos vienen mezclados con ruido del borde
+      // ("BORA - tE CAE: 863... - Fecha Vto.: 02/08/2026 TOTAL: 60.282,77").
+      const limpio=l.replace(/^[^A-Za-zÁÉÍÓÚáéíóúñÑ]+/,'');
+      if(rotulo.test(limpio)) continue;
+      if(/\b(total|cae|neto|subtotal|iva|alicuota)\b/i.test(l)) continue;
       const letras=(l.match(/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/g)||[]).length;
       if(letras<3) continue;                                   // tiene que tener una descripción
-      const nums=l.match(/\d[\d.,]*/g);
-      if(!nums || !nums.length) continue;
+      const nums0=l.match(/\d[\d.,]*/g);
+      if(!nums0 || !nums0.length) continue;
+      // Un renglón de DETALLE siempre trae importes con decimales ("2.804,88", "27.768,31"). Si la
+      // línea no tiene ninguno, no es un ítem: es el domicilio, el e-mail con el CUIT, el teléfono o
+      // el N° de comprobante — que antes se colaban con importes enormes (33.008, 270.105.670…) y
+      // hacían fallar la reconciliación, así que se perdía TODO el desglose. Además, quedarse con los
+      // números con coma limpia la basura del borde de la hoja ("... 27.768,31 1", "... 22.052,18 |").
+      const conComa=nums0.filter(s=>/,\d{1,2}$/.test(s));
+      if(!conComa.length) continue;
+      const nums = conComa;
       const importe = parseAR(nums[nums.length-1]);
       if(!(importe>0)) continue;
-      let desc = l.replace(/[\s$.\d,]+$/,'').replace(/\s{2,}/g,' ').trim();   // saca los números del final
+      let desc = l.replace(/[\s$.,\d|¦*'"]+$/,'').replace(/\s{2,}/g,' ').trim();   // saca números y basura del final
       desc = desc.replace(/^[\d.,]+\s*/,'');                                  // y la cantidad del principio
       if(desc.length<2) desc = l.replace(/\d[\d.,]*/g,'').replace(/[$]/g,'').replace(/\s{2,}/g,' ').trim();
       if(desc.length<2) continue;
@@ -2893,6 +2929,25 @@ function buildFilterTable(cfg){
       if(!got){ const reC=/\b(\d{4,5})[-\s]+(\d{6,8})\b/g;             // sin rótulo
         while(m2=reC.exec(t2)){ if(m2.index<lim){ got=m2; break; } } }
       if(got){ puntoVenta=got[1].padStart(4,'0'); nroFactura=got[2]; }
+    }
+    // FACTURA A4: el OCR intercala las dos columnas, y el "Nro.: 00003 - 00033008" de la derecha queda
+    // PARTIDO en dos renglones distintos (pasó en producción):
+    //     "= AE | Nro: 00003"
+    //     "Bv. Los Alemanes 4426- B* Los Boulevares | E - 00033008"
+    // Se busca el rótulo Nro/N° con 4-5 dígitos y, si el número largo no está en ese renglón, se toma
+    // el de las 2 líneas siguientes preferentemente PRECEDIDO POR GUION (así "4426-" del domicilio o
+    // el teléfono "445657-5763" no se cuelan: ahí el guion va después del número, no antes).
+    if(!puntoVenta){
+      for(let i=0;i<lineas.length;i++){
+        const mN=lineas[i].match(/\bn(?:ro)?\s*[°ºo*.:;]{0,2}\s*(\d{4,5})\b(?!\s*[-\s]\s*\d)/i);
+        if(!mN) continue;
+        if(iComprador>=0 && texto.indexOf(lineas[i])>=iComprador) break;   // ya es el bloque del comprador
+        for(let j=i+1;j<Math.min(i+3,lineas.length);j++){
+          const mL=lineas[j].match(/[-–—]\s*(\d{6,8})\b/) || (j===i+1 ? lineas[j].match(/\b(\d{6,8})\b/) : null);
+          if(mL){ puntoVenta=mN[1].padStart(4,'0'); nroFactura=mL[1]; break; }
+        }
+        if(puntoVenta) break;
+      }
     }
     if(!puntoVenta){
       const mPV=texto.match(/p(?:unto|to)?\.?\s*(?:de\s*)?venta[:\s]*(\d{1,5})/i);
