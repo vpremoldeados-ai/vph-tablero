@@ -2016,6 +2016,7 @@ function buildFilterTable(cfg){
   // El cheque de terceros pasa a estado "endosado" en vph_cheques y deja de proyectar plata.
   // (MEDIO_ENDOSO y esEndoso están declarados arriba, junto a MEDIOS_PAGO.)
   window.__medioEndoso = ()=>MEDIO_ENDOSO;
+  window.__esAdministrativo = esAdministrativo;  // Exportar para que Caja pueda usarlo en movimientosReales()
 
   // Facturas de ese proveedor que todavía tienen saldo (para elegir cuál cancela el endoso).
   window.__comprasPendientesDe = nombre=>{
@@ -5211,9 +5212,9 @@ function buildFilterTable(cfg){
   // esos entran/salen por el módulo Cheques cuando se cobran, no en la fecha del cobro.
   function movimientosReales(desde){
     const M=[];
-    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || esAdministrativo(c.medio)) return; const f=String(c.fecha||'').slice(0,10);
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio))) return; const f=String(c.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
-    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || esAdministrativo(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
+    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio))) return; const f=String(p.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
       // Un cheque propio sale SIEMPRE de la chequera: los viejos se cargaron antes de que existiera
