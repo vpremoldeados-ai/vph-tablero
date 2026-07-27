@@ -2583,13 +2583,17 @@ function buildFilterTable(cfg){
       // 1) QR de ARCA: si el ticket lo trae y la foto lo agarró, estos datos son EXACTOS (sin OCR).
       let qr=null;
       try{ ticketEstado('⏳ Buscando el código QR de ARCA…'); qr = await leerQRArca(canvas0); }
-      catch(e){ console.warn('sin lectura de QR (no es grave, sigue el OCR):', e); }
-      if(qr) console.log('[ticket QR] datos exactos del comprobante:', JSON.stringify(qr));
+      catch(e){ console.warn('lectura de QR falló (no es grave, sigue el OCR):', e); }
 
       // 2) OCR sobre la imagen preprocesada (agrandada + contraste estirado: menos errores de lectura).
       ticketEstado('⏳ Cargando el lector (solo la primera vez)…');
       const { createWorker } = await cargarTesseract();
       const origen = preprocesarCanvas(canvas0);
+      // 2º intento de QR sobre la imagen preprocesada: el contraste estirado a veces recupera un QR
+      // que en la foto original quedó demasiado tenue para el detector.
+      if(!qr){ try{ qr = await leerQRArca(origen); }catch(e){} }
+      if(qr) console.log('[ticket QR] datos exactos del comprobante:', JSON.stringify(qr));
+      else console.log('[ticket QR] no se encontró (o no se pudo decodificar) ningún QR en la imagen');
 
       ticketEstado('⏳ Leyendo el ticket (puede tardar 10-30 segundos)…');
       const worker = await createWorker('spa');
@@ -2719,8 +2723,14 @@ function buildFilterTable(cfg){
       if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.');            // 1.234,56 → 1234.56
       else if((s.match(/\./g)||[]).length>=1 && !/^\d{1,3}\.\d{1,2}$/.test(s)) s=s.replace(/\./g,''); // 12.500 → 12500
       return parseFloat(s)||0; };
+    // Si la factura tiene el encabezado de la tabla ("Cant / Detalle / Val. Unit / Importe"), arrancar
+    // DESPUÉS de él: así el membrete (teléfonos, códigos postales, direcciones con números) no mete
+    // renglones basura que rompen la reconciliación.
+    let desde=0;
+    const iHdr=lineas.findIndex(l=> (/\bcant/i.test(l) && /(detalle|descrip)/i.test(l)) || ((/(detalle|descrip)/i.test(l)) && /importe/i.test(l)) );
+    if(iHdr>=0) desde=iHdr+1;
     const items=[];
-    for(const l of lineas){
+    for(const l of lineas.slice(desde)){
       if(rotulo.test(l)) continue;
       const letras=(l.match(/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/g)||[]).length;
       if(letras<3) continue;                                   // tiene que tener una descripción
@@ -2729,12 +2739,19 @@ function buildFilterTable(cfg){
       const importe = parseAR(nums[nums.length-1]);
       if(!(importe>0)) continue;
       let desc = l.replace(/[\s$.\d,]+$/,'').replace(/\s{2,}/g,' ').trim();   // saca los números del final
+      desc = desc.replace(/^[\d.,]+\s*/,'');                                  // y la cantidad del principio
       if(desc.length<2) desc = l.replace(/\d[\d.,]*/g,'').replace(/[$]/g,'').replace(/\s{2,}/g,' ').trim();
       if(desc.length<2) continue;
       let cant=1, precio=importe;
       if(nums.length>=3){                                       // ¿hay "cant × unit = importe"?
         const a=parseAR(nums[nums.length-3]), b=parseAR(nums[nums.length-2]);
-        if(a>0 && b>0 && importe>0 && Math.abs(a*b-importe)/importe < 0.02){ cant=a; precio=b; }
+        if(a>0 && b>0 && Math.abs(a*b-importe)/importe < 0.02){ cant=a; precio=b; }
+        else{
+          // formato con columna Dto. en el medio: "9,90 FLEJE ... 2.804,88 0,00 27.768,31"
+          // (cantidad al PRINCIPIO del renglón, precio unitario en la antepenúltima columna)
+          const c0=parseAR(nums[0]), u=parseAR(nums[nums.length-3]);
+          if(c0>0 && u>0 && Math.abs(c0*u-importe)/importe < 0.02){ cant=c0; precio=u; }
+        }
       }
       items.push({desc:desc.slice(0,60), cant, precio, importe});
     }
@@ -2809,7 +2826,7 @@ function buildFilterTable(cfg){
       if(+a<2020 || +a>anioMax) return '';
       return (+m>=1 && +m<=12 && +d>=1 && +d<=31) ? a+'-'+m+'-'+d : ''; };
     if(qrOk && /^\d{4}-\d{2}-\d{2}/.test(String(qrOk.fecha))) fecha=String(qrOk.fecha).slice(0,10);   // del QR: exacta
-    if(!fecha) fecha = armarFecha(texto.match(/\bf?echa(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
+    if(!fecha) fecha = armarFecha(texto.match(/\bf?echa(?:\s+de\s+emisi[oó]n)?\s*[:;.,]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
     if(!fecha){
       const reF=/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g; let mm;
       while(mm=reF.exec(texto)){
@@ -2854,7 +2871,7 @@ function buildFilterTable(cfg){
       let lim = iAsoc<0 ? t2.length : iAsoc;
       if(iComprador>=0 && iComprador<lim) lim=iComprador;
       let got=null, m2;
-      const reL=/\bn\s*[°ºo*.:]?\s*(\d{4,5})[-\s]+(\d{6,8})\b/gi;      // con rótulo N°/Nro
+      const reL=/\bn(?:ro)?\s*[°ºo*.:;]{0,2}\s*(\d{4,5})[-\s]+(\d{6,8})\b/gi;   // "N° 00058-...", "Nro.: 00003 - 00033008"
       while(m2=reL.exec(t2)){ if(m2.index<lim){ got=m2; break; } }
       if(!got){ const reC=/\b(\d{4,5})[-\s]+(\d{6,8})\b/g;             // sin rótulo
         while(m2=reC.exec(t2)){ if(m2.index<lim){ got=m2; break; } } }
@@ -2908,17 +2925,30 @@ function buildFilterTable(cfg){
     // Totales: busca un renglón "Neto"/"Subtotal" y uno de "IVA" por separado; si no los encuentra,
     // toma el "TOTAL" como neto (queda marcado como aproximado, puede incluir IVA sin discriminar).
     const buscarMonto = re=>{ const m=texto.match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
-    // Neto: tolera "VETO GRAVADO" (el OCR confunde N→V con poca tinta, visto en un ticket real).
-    let neto = buscarMonto(/(?:[nv]eto|subtotal)[^\d\n]{0,15}([\d.,]+)/i);
+    // Antes de leer un importe de un renglón, se le sacan los PORCENTAJES ("Neto 21%: 49.820,47"):
+    // sin esto, la regex agarraba el "21" de la tasa como si fuera el importe (pasó en producción:
+    // una compra de $49.820 quedó precargada con neto $21). Después se toma el ÚLTIMO número.
+    const sinPct = l => String(l).replace(/\d{1,2}(?:[.,]\d{1,2})?\s*%/g, ' ');
+    const ultimoNum = l => { const nums = sinPct(l).match(/\d[\d.,]*/g); if(!nums) return 0;
+      return num(nums[nums.length-1].replace(/\./g,'').replace(',','.')); };
+    // Neto: renglón que menciona Neto/Subtotal (tolera "VETO GRAVADO", N→V del OCR), sin ser el de
+    // impuestos internos/tributos. Se toma el primero que tenga un importe.
+    let neto = 0;
+    for(const l of lineas){
+      if(!/(?:[nv]eto|sub\s*total|subtot\b)/i.test(l)) continue;
+      if(/interno|tributo/i.test(l)) continue;
+      const v = ultimoNum(l);
+      if(v>0){ neto=v; break; }
+    }
+    if(!(neto>0)) neto = buscarMonto(/(?:[nv]eto|subtotal)[^\d\n%]{0,15}([\d.,]+)/i);   // respaldo, criterio viejo
     // IVA: en los tiques de controlador fiscal el renglón se llama "ALICUOTA 21,00%  9101,15" (y el OCR
     // escribe "ALTCUOTA"/"AL1CUOTA"), no "IVA". Se suman los renglones que EMPIEZAN con IVA/ALICUOTA
-    // tomando el ÚLTIMO número de cada uno (el primero suele ser la tasa: "IVA 21%: $520,66" → 520,66).
+    // tomando el ÚLTIMO número de cada uno (sacando antes la tasa: "IVA 21%: $520,66" → 520,66).
     // Empezar-con evita duplicar por leyendas tipo "...IVA del 21% contenido $520,66" al pie del ticket.
     let ivaMonto = 0;
     for(const l of lineas){
       if(!/^(?:i\.?v\.?a\b|al[ti1l]?[i1]?cuota)/i.test(l)) continue;
-      const nums = l.match(/\d[\d.,]*/g); if(!nums) continue;
-      ivaMonto += num(nums[nums.length-1].replace(/\./g,'').replace(',','.'));
+      ivaMonto += ultimoNum(l);
     }
     if(!(ivaMonto>0)) ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);   // respaldo, criterio viejo
     let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
