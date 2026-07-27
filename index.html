@@ -7936,14 +7936,23 @@ function buildFilterTable(cfg){
   function firma(){ return '<div class="doc-firma"><div class="lbl">RECIBIDO</div>'+
       'Firma: ..................................&nbsp;&nbsp; Aclaración: ..................................&nbsp;&nbsp; DNI: ....................&nbsp;&nbsp; Fecha: ................</div>'; }
   // Condiciones fijas que van al pie de TODOS los presupuestos (pedido de Marcelo, no se editan por presupuesto).
-  const CONDICIONES_PRESUP =
-    '<div class="doc-obs" style="font-size:10px;margin-top:6px">'+
+  // El párrafo de entrega depende de la forma de envío que se cargó en el lead/presupuesto (`v.zona`,
+  // las claves las define ZONAS en el módulo Presupuestos): si el cliente RETIRA EN FÁBRICA no tiene
+  // sentido hablarle de la entrega en obra con hidrogrúa — se le pone la dirección y el horario.
+  function condicionesPresup(v){
+    const retira = String((v&&v.zona)||'')==='retiro';
+    const entrega = retira
+      ? '<b>Retiro en fábrica:</b> Bolívar 381, Toledo. De lunes a viernes de 6:00 a 13:30 hs. '+
+        'Avisar con 24 hs de anticipación al 3517 60-5362.'
+      : '<b>Métodos de Envíos:</b> Servicio de Entrega en obra incluido con descarga a pie del camión con hidrogrúa '+
+        '(únicamente en la Provincia de Córdoba, para el resto de las Provincias, el cliente deberá contratar un autoelevador para realizar la descarga). '+
+        'Las fechas de entrega pueden variar en función de la logística y las condiciones climáticas.';
+    return '<div class="doc-obs" style="font-size:10px;margin-top:6px">'+
       '<div><b>Formas de Pago:</b> Precios con IVA - Pago Contado, Débito o Valor a 30 días de fecha de factura. '+
         '3 y 6 cuotas sin interés con tarjetas bancarizadas y 12 cuotas sin interés para clientes del Bco. Macro.</div>'+
-      '<div style="margin-top:3px"><b>Métodos de Envíos:</b> Servicio de Entrega en obra incluido con descarga a pie del camión con hidrogrúa '+
-        '(únicamente en la Provincia de Córdoba, para el resto de las Provincias, el cliente deberá contratar un autoelevador para realizar la descarga). '+
-        'Las fechas de entrega pueden variar en función de la logística y las condiciones climáticas.</div>'+
+      '<div style="margin-top:3px">'+entrega+'</div>'+
     '</div>';
+  }
 
   // Fotos de producto para el PDF: archivos en vph-tablero/Productos/, nombrados por código de catálogo.
   // Si un código no tiene foto (Flete, o uno nuevo sin cargar), simplemente no se agrega — no rompe el documento.
@@ -8011,7 +8020,7 @@ function buildFilterTable(cfg){
     if(!esPresupuesto){ tot+='<div class="row"><span>Total Cobrado</span><b>'+money(k.cobrado)+'</b></div>'+
       '<div class="row"><span>Total a Cobrar</span><b>'+money(k.saldo)+'</b></div>'; }
     let obs='';
-    if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; obs+=CONDICIONES_PRESUP; }
+    if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; obs+=condicionesPresup(v); }
     else if(v.notaCliente){ obs+='<div class="doc-obs">'+esc(v.notaCliente)+'</div>'; }
     // Venta con factura electrónica autorizada: CAE, vencimiento y el QR fiscal escaneable de ARCA.
     let caeBlock='';
