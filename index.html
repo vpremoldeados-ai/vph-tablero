@@ -2702,24 +2702,32 @@ function buildFilterTable(cfg){
     // repartido en varias líneas y en otro orden (ej. "FERRETERIA TOLEDO de ELIO CARNERO" → reconoce a
     // "CARNERO ELIO"). Si TODOS los tokens distintivos (≥4 letras) de un proveedor conocido de nombre
     // COMPUESTO (≥2 tokens, para no dar falsos positivos con nombres de una sola palabra tipo "AFIP")
-    // aparecen como palabra en el texto, es un match. Elige el que más tokens y más historial tenga.
-    // Los tokens de ≥5 letras toleran UN caracter errado del OCR ("SANIA BARBARA" → "SANTA BARBARA",
-    // pasó en producción con poca tinta) — distancia de edición ≤1, nunca más, para no inventar.
+    // aparecen en el texto, es un match. Elige el que más tokens y más historial tenga.
+    // Los tokens largos toleran caracteres errados del OCR: hasta 1 error de 5 a 6 letras, y hasta 2
+    // de 7 letras en adelante ("BANBARZ" → "BARBARA", "SANIA" → "SANTA"; los dos casos pasaron en
+    // producción con tinta floja). Nunca más que eso, y siempre exigiendo que TODOS los tokens del
+    // nombre coincidan, para no inventar un proveedor que no es.
     const T=normNombre(textoCompleto||'');
     if(T){
       const palabras=T.split(' ');
       const Tset=new Set(palabras);
-      const dist1=(a,b)=>{ if(a===b) return true; const la=a.length, lb=b.length;
-        if(Math.abs(la-lb)>1) return false;
-        let i=0,j=0,ed=0;
-        while(i<la && j<lb){
-          if(a[i]===b[j]){ i++; j++; continue; }
-          if(++ed>1) return false;
-          if(la===lb){ i++; j++; } else if(la>lb){ i++; } else { j++; }
+      const distMax=(a,b,max)=>{ if(a===b) return true; const la=a.length, lb=b.length;
+        if(Math.abs(la-lb)>max) return false;
+        const prev=new Array(lb+1); for(let j=0;j<=lb;j++) prev[j]=j;
+        for(let i=1;i<=la;i++){
+          let ant=prev[0]; prev[0]=i; let mejorFila=prev[0];
+          for(let j=1;j<=lb;j++){
+            const tmp=prev[j];
+            prev[j]=Math.min(prev[j]+1, prev[j-1]+1, ant+(a[i-1]===b[j-1]?0:1));
+            ant=tmp; if(prev[j]<mejorFila) mejorFila=prev[j];
+          }
+          if(mejorFila>max) return false;
         }
-        return ed+(la-i)+(lb-j)<=1;
+        return prev[lb]<=max;
       };
-      const tokEnTexto=t=> Tset.has(t) || (t.length>=5 && palabras.some(w=>dist1(t,w)));
+      const tokEnTexto=t=> Tset.has(t) ||
+        (t.length>=7 && palabras.some(w=>distMax(t,w,2))) ||
+        (t.length>=5 && palabras.some(w=>distMax(t,w,1)));
       let mejor=null, mejorScore=0;
       for(const k in dir.porNom){
         const toks=k.split(' ').filter(t=>t.length>=4);
@@ -2777,7 +2785,10 @@ function buildFilterTable(cfg){
       if(/\b(total|cae|neto|subtotal|iva|alicuota)\b/i.test(l)) continue;
       const letras=(l.match(/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/g)||[]).length;
       if(letras<3) continue;                                   // tiene que tener una descripción
-      const nums0=l.match(/\d[\d.,]*/g);
+      // Mismo problema que en los totales: el OCR parte los importes con un espacio ("17 395,84"),
+      // así que primero se vuelven a pegar los grupos de 3 dígitos.
+      const lNum=(function(s){ let x=String(s),p; do{ p=x; x=x.replace(/(\d)\s+(\d{3})(?![\d])/g,'$1$2'); }while(x!==p); return x; })(l);
+      const nums0=lNum.match(/\d[\d.,]*/g);
       if(!nums0 || !nums0.length) continue;
       // Un renglón de DETALLE siempre trae importes con decimales ("2.804,88", "27.768,31"). Si la
       // línea no tiene ninguno, no es un ítem: es el domicilio, el e-mail con el CUIT, el teléfono o
@@ -2917,7 +2928,13 @@ function buildFilterTable(cfg){
         .filter(i=>i>=0);
       return cands.length ? Math.min.apply(null,cands) : -1;
     })();
-    const variantesTxt=[texto, String(texto).replace(/[Oo]/g,'0')];
+    // Variantes del texto para rastrear el N°: el crudo, una con O→0, y una más agresiva que además
+    // convierte las letras que el OCR confunde con dígitos en tinta floja (C/Q/D→0, I/l→1, S→5, B→8).
+    // Se leyó "N 00058-C0050837" donde el papel dice "00058-00050837". Solo afecta a esta búsqueda,
+    // que exige el formato NNNNN-NNNNNNNN, así que no puede ensuciar ningún otro campo.
+    const variantesTxt=[texto,
+      String(texto).replace(/[Oo]/g,'0'),
+      String(texto).replace(/[OoCcQqDd]/g,'0').replace(/[Il|]/g,'1').replace(/[Ss]/g,'5').replace(/[Bb]/g,'8')];
     for(const t2 of variantesTxt){
       if(puntoVenta) break;
       const iAsoc=t2.search(/as[o0]c[i1l]ad/i);
@@ -3031,11 +3048,18 @@ function buildFilterTable(cfg){
     }
     // Totales: busca un renglón "Neto"/"Subtotal" y uno de "IVA" por separado; si no los encuentra,
     // toma el "TOTAL" como neto (queda marcado como aproximado, puede incluir IVA sin discriminar).
-    const buscarMonto = re=>{ const m=texto.match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
+    // ⚠️ El OCR PARTE los importes con un espacio de más: el ticket dice "17395,84" y sale "17 395,84".
+    // Si se toma "el último número" del renglón, se pierden los miles y quedan $395,84 en vez de
+    // $17.395,84 (pasó en producción: una compra de $17 mil se precargó como $395). Por eso, antes de
+    // leer cualquier importe se vuelven a pegar los grupos de 3 dígitos separados por espacios.
+    const unirMiles = s => { let t=String(s), p;
+      do{ p=t; t=t.replace(/(\d)\s+(\d{3})(?![\d])/g,'$1$2'); }while(t!==p);
+      return t; };
+    const buscarMonto = re=>{ const m=unirMiles(texto).match(re); if(!m) return 0; return num(m[1].replace(/\./g,'').replace(',','.')); };
     // Antes de leer un importe de un renglón, se le sacan los PORCENTAJES ("Neto 21%: 49.820,47"):
     // sin esto, la regex agarraba el "21" de la tasa como si fuera el importe (pasó en producción:
     // una compra de $49.820 quedó precargada con neto $21). Después se toma el ÚLTIMO número.
-    const sinPct = l => String(l).replace(/\d{1,2}(?:[.,]\d{1,2})?\s*%/g, ' ');
+    const sinPct = l => unirMiles(String(l).replace(/\d{1,2}(?:[.,]\d{1,2})?\s*%/g, ' '));
     const ultimoNum = l => { const nums = sinPct(l).match(/\d[\d.,]*/g); if(!nums) return 0;
       return num(nums[nums.length-1].replace(/\./g,'').replace(',','.')); };
     // Neto: renglón que menciona Neto/Subtotal (tolera "VETO GRAVADO", N→V del OCR), sin ser el de
