@@ -992,7 +992,8 @@
       <div class="cmp-summary" id="cmp-summary"></div>
       <div class="filter-bar" id="cmp-filtros"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-        <input type="text" class="search-box" id="cmp-buscar" placeholder="Buscar proveedor, factura, ítem..." style="margin-left:0">
+        <input type="text" class="search-box" id="cmp-buscar" list="cmp-buscar-provs" placeholder="Buscar proveedor, factura, ítem..." style="margin-left:0">
+        <datalist id="cmp-buscar-provs"></datalist>
         <select id="cmp-filtro-cat" class="cmp-select"></select>
         <select id="cmp-filtro-periodo" class="cmp-select"></select>
         <span class="result-count" id="cmp-count" style="margin:0 0 0 auto"></span>
@@ -2080,6 +2081,11 @@ function buildFilterTable(cfg){
     const periodos = [...new Set(DB.compras.map(c=>c.periodo))].sort().reverse();
     fillSelect($('cmp-filtro-periodo'), [{v:'', l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
     fillSelect($('cmp-filtro-cat'), [{v:'',l:'Todas las categorías'}].concat(CATEGORIAS.map(x=>({v:x,l:x}))), filtro.cat);
+    // Autocompletar proveedores en el buscador: al tipear una parte, el navegador ofrece los nombres
+    // que matchean; al elegir uno, el listado queda filtrado a ese proveedor (ver listener de cmp-buscar).
+    const dlProv=$('cmp-buscar-provs');
+    if(dlProv) dlProv.innerHTML = proveedoresConocidos().map(p=>p.nombre).sort((a,b)=>a.localeCompare(b))
+      .map(n=>'<option value="'+esc(n)+'">').join('');
     // Filtrar por categoría a un clic. El <select> se conserva (oculto): su listener está en el top level
     // de esta IIFE sin guarda, así que sacarlo del DOM mataría el módulo entero. Se repinta en cada
     // render porque fillSelect vuelve a armar las opciones.
@@ -3391,7 +3397,17 @@ function buildFilterTable(cfg){
   $('cmp-export').onclick=exportJSON;
   $('cmp-import').onclick=()=>$('cmp-import-file').click();
   $('cmp-import-file').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
-  $('cmp-buscar').addEventListener('input',e=>{ filtro.q=e.target.value.trim(); render(); });
+  // Buscador con autocompletado de proveedores (datalist cmp-buscar-provs). Si lo tipeado/elegido
+  // coincide EXACTO con un proveedor conocido, el período salta solo a "Todos los períodos": la idea
+  // de buscar un proveedor es ver TODAS sus compras, y el filtro de mes (que arranca en el mes en
+  // curso) escondería las viejas sin que se note. El cambio queda visible en el desplegable de período.
+  $('cmp-buscar').addEventListener('input',e=>{
+    filtro.q=e.target.value.trim();
+    if(filtro.q){ const q=filtro.q.toLowerCase();
+      if(proveedoresConocidos().some(p=>String(p.nombre||'').trim().toLowerCase()===q)) filtro.periodo='';
+    }
+    render();
+  });
   $('cmp-filtro-cat').addEventListener('change',e=>{ filtro.cat=e.target.value; render(); });
   $('cmp-filtro-periodo').addEventListener('change',e=>{ filtro.periodo=e.target.value; render(); });
   [$('cmp-modal'),$('cmp-modal-pago')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
