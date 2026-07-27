@@ -1069,8 +1069,9 @@
       </div>
       <div class="tbl-wrap"><table id="chq-tabla"></table></div>
       <p class="note"><b>📥 De terceros</b>: te los dio un cliente para pagarte una venta. Tienen dos destinos: <b>endosarlos</b> a un proveedor para pagarle una compra (lo habitual acá) o <b>depositarlos</b> en una cuenta tuya. Un cheque endosado sale de tu cartera y <b>no toca ninguna cuenta tuya</b>: el papel va del cliente al proveedor y lo único que hace es cancelar esa compra.<br>
-      <b>📤 Propios</b>: los firmás vos, salen de la chequera de VPH. Ahí sí sale plata de una cuenta, el día que se debitan.<br>
-      Estados: En cartera → Endosado / Depositado → Cobrado / Rechazado. La Vista Diaria avisa cuando se acerca el vencimiento de uno sin resolver. Datos en la nube (Firestore <code>vph_cheques</code>).</p>
+      Sus estados: <b>En cartera</b> (lo tenés vos) → <b>Endosado</b> o <b>Depositado</b> → <b>Cobrado</b> / <b>Rechazado</b>.<br><br>
+      <b>📤 Propios</b>: los firmás vos, de la chequera de VPH, y ya están en poder del proveedor. Sus estados son otros porque la plata va al revés: <b>En poder del proveedor</b> → <b>Pagado</b> el día que el proveedor lo cobra y el dinero <b>sale de tu cuenta</b> (o <b>Rechazado</b> si no había fondos). Marcalo como Pagado recién cuando la plata salió de verdad: ahí se descuenta de la cuenta.<br>
+      Mirá <b>Caja → «¿Alcanza en cada cuenta?»</b> para saber si vas a tener el dinero en esa cuenta el día del vencimiento. La Vista Diaria avisa cuando se acerca el vencimiento de uno sin resolver. Datos en la nube (Firestore <code>vph_cheques</code>).</p>
     </section>
   </div>
 
@@ -1112,6 +1113,14 @@
       <div id="caj-ancla" class="asof"></div>
       <div class="cmp-summary" id="caj-summary"></div>
       <p class="note" id="caj-explica" style="margin-top:0"></p>
+    </section>
+
+    <!-- ¿Alcanza en CADA cuenta? Un cheque propio se debita de una cuenta concreta: el total puede
+         alcanzar y la cuenta de la chequera quedar en rojo igual. -->
+    <section id="caj-sec-cuentas">
+      <h2 style="margin:0 0 6px"><span class="dot" style="background:var(--blue)"></span>¿Alcanza en cada cuenta?</h2>
+      <div class="tbl-wrap"><table id="caj-tabla-cuentas"></table></div>
+      <p class="note" id="caj-cuentas-nota"></p>
     </section>
 
     <section>
@@ -4127,7 +4136,16 @@ function buildFilterTable(cfg){
                  {k:'cobrado',   l:'Cobrado',              c:'#1e9e5a'},
                  {k:'rechazado', l:'Rechazado',            c:'#d64541'}];
   const tipoLbl=k=>(TIPOS.find(x=>x.k===k)||{}).l||k;
-  const estLbl=k=>(ESTADOS.find(x=>x.k===k)||{}).l||k;
+  // El MISMO estado se llama distinto según de quién es el cheque, porque la plata va al revés:
+  // un cheque de un cliente lo tenemos nosotros y lo COBRAMOS; uno propio lo tiene el proveedor y
+  // nosotros lo PAGAMOS (sale plata de nuestra cuenta el día que se debita).
+  // ⚠️ Los valores GUARDADOS no cambian ('cartera', 'cobrado'…): de ellos dependen la Caja, la
+  // proyección y Finanzas. Acá solo cambia el texto que se muestra.
+  const LBL_PROPIO={ cartera:'En poder del proveedor', cobrado:'Pagado', depositado:'Depositado', rechazado:'Rechazado' };
+  const estLbl=(k,tipo)=> (tipo==='emitido' && LBL_PROPIO[k]) || (ESTADOS.find(x=>x.k===k)||{}).l || k;
+  // Estados que tienen sentido para cada familia: un cheque propio no se "endosa" ni se "deposita"
+  // (eso lo hace el proveedor, no nosotros).
+  const estadosDe = tipo => ESTADOS.filter(e=> tipo==='emitido' ? e.k!=='endosado' && e.k!=='depositado' : true);
   // "Resuelto" = ya no esperamos NINGÚN movimiento de plata nuestro por este cheque. El endosado entra
   // acá a propósito: no lo vamos a cobrar (lo cobra el proveedor) ni lo vamos a pagar. Por eso queda
   // afuera de la cartera, de "por vencer", de la proyección de caja y de las columnas de Finanzas.
@@ -4152,6 +4170,17 @@ function buildFilterTable(cfg){
   // Sirve para saber a qué cuenta impacta el cheque cuando se hace efectivo.
   const cuentasOpt = sel => { const cs=(window.__cajaCuentas?window.__cajaCuentas():[]); if(!cs.length) return '<option value="">—</option>';
     return cs.map(c=>'<option value="'+esc(c)+'"'+(String(sel||'')===c?' selected':'')+'>'+esc(c)+'</option>').join(''); };
+  // Un cheque PROPIO sale siempre de la misma chequera (parámetro «cuentaChequera»). Proponerla sola
+  // evita que quede "Sin asignar": sin cuenta, la Caja no puede avisar si ese día faltan fondos AHÍ.
+  const chequeraParam = ()=> String(window.__param?window.__param('cuentaChequera','Banco Macro VPH'):'Banco Macro VPH').trim();
+  function cuentaSugerida(c){
+    if(c.cuenta) return c.cuenta;
+    if(c.tipo!=='emitido') return '';
+    return chequeraCuenta(); }
+  // Devuelve '' si el parámetro no matchea ninguna cuenta declarada en Caja: mejor vacío que inventar
+  // una cuenta que no existe (el movimiento caería en una cuenta fantasma).
+  const chequeraCuenta = ()=>{ const q=chequeraParam().toLowerCase(); if(!q) return '';
+    return (window.__cajaCuentas?window.__cajaCuentas():[]).find(x=>String(x).trim().toLowerCase()===q) || ''; };
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
   function catProveedores(){ return (window.__catalogoProveedores?window.__catalogoProveedores():[]); }
   function datalistEntidad(tipo){ const arr=(tipo==='emitido'?catProveedores():catClientes()); return '<datalist id="chq-ent-list">'+arr.map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
@@ -4210,7 +4239,8 @@ function buildFilterTable(cfg){
     $('chq-filtros').innerHTML = defs.map(([v,l,n])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+n+')</button>').join('');
     $('chq-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
   }
-  const badgeEstado=e=>{ const est=ESTADOS.find(x=>x.k===e)||{c:'#95a5b8',l:e}; return '<span class="badge" style="background:'+est.c+'22;color:'+est.c+';border:1px solid '+est.c+'55">'+est.l+'</span>'; };
+  const badgeEstado=(e,tipo)=>{ const est=ESTADOS.find(x=>x.k===e)||{c:'#95a5b8'}; const c=est.c||'#95a5b8';
+    return '<span class="badge" style="background:'+c+'22;color:'+c+';border:1px solid '+c+'55">'+esc(estLbl(e,tipo))+'</span>'; };
   function renderTabla(rows){
     const th=(col,label,cls)=>'<th class="'+(cls||'')+'" data-sort="'+col+'">'+label+(filtro.sortCol===col?' <span class="arrow">'+(filtro.sortDir<0?'▼':'▲')+'</span>':'')+'</th>';
     let html='<tr><th>Tipo</th><th>N°</th><th>Banco</th><th>Cliente/Proveedor</th>'+th('fechaEmision','Emisión')+th('fechaVencimiento','Vencimiento')+th('monto','Monto','num')+'<th>Estado</th><th></th></tr>';
@@ -4221,13 +4251,14 @@ function buildFilterTable(cfg){
                 : c.origen==='pago'  ? '<div style="font-size:9.5px;color:var(--muted)">↩ de Compras</div>' : '';
       html+='<tr><td>'+(ter?'📥 De terceros':'📤 Propio')+sub+'</td><td>'+esc(c.numero||'—')+'</td><td>'+esc(c.banco||'—')+'</td><td><b>'+esc(c.entidad||'—')+'</b></td>'+
         '<td>'+fmtFecha(c.fechaEmision)+'</td><td'+(venc?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.fechaVencimiento)+(venc?' ⏰':'')+'</td>'+
-        '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado)+'</td>'+
+        '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado,c.tipo)+'</td>'+
         '<td style="white-space:nowrap">'+
           // Un cheque de terceros en la mano: lo habitual en VPH es endosarlo a un proveedor; depositarlo casi nunca.
           (ter&&c.estado==='cartera'?'<button class="cmp-rowbtn" data-act="endosar" data-id="'+c._uid+'">↪ Endosar</button><button class="cmp-rowbtn" data-act="depositar" data-id="'+c._uid+'">Depositar</button>':'')+
           // Un endosado ya no lo cobramos nosotros (lo cobra el proveedor). Lo único que puede pasar es que REBOTE.
           (esEndosado(c)?'<button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rebotó</button><button class="cmp-rowbtn" data-act="desendosar" data-id="'+c._uid+'">↩ Deshacer endoso</button>':'')+
-          (!RESUELTO.includes(c.estado)?'<button class="cmp-rowbtn" data-act="cobrado" data-id="'+c._uid+'">✓ Cobrado</button><button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rechazado</button>':'')+
+          // Un cheque propio no se "cobra": lo cobra el proveedor y a nosotros nos SALE la plata.
+          (!RESUELTO.includes(c.estado)?'<button class="cmp-rowbtn" data-act="cobrado" data-id="'+c._uid+'">'+(ter?'✓ Cobrado':'✓ Pagado')+'</button><button class="cmp-rowbtn" data-act="rechazado" data-id="'+c._uid+'">✕ Rechazado</button>':'')+
           // Corrección de datos viejos: cheques cargados como PROPIOS que en realidad eran endosos de terceros.
           (!ter?'<button class="cmp-rowbtn" data-act="esendoso" data-id="'+c._uid+'" title="Este cheque en realidad era de un cliente y lo endosaste a este proveedor">↔ Era un endoso</button>':'')+
           '<button class="cmp-rowbtn" data-act="edit" data-id="'+c._uid+'">Editar</button>'+
@@ -4237,7 +4268,15 @@ function buildFilterTable(cfg){
     $('chq-tabla').querySelectorAll('th[data-sort]').forEach(th=> th.onclick=()=>{ const col=th.dataset.sort; if(filtro.sortCol===col) filtro.sortDir*=-1; else {filtro.sortCol=col; filtro.sortDir=1;} render(); });
     $('chq-tabla').querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const c=DB.cheques.find(x=>x._uid===b.dataset.id); if(!c) return; const a=b.dataset.act;
       if(a==='depositar') setEstado(c,'depositado');
-      else if(a==='cobrado') setEstado(c,'cobrado');
+      else if(a==='cobrado'){
+        // Marcar PAGADO un cheque propio saca plata de verdad de una cuenta, hoy. Vale confirmarlo
+        // y decir de cuál sale, que es justo lo que hay que tener previsto.
+        if(c.tipo==='emitido'){
+          const cta=c.cuenta||chequeraCuenta();
+          if(!confirm('¿Ya salió la plata de este cheque?\n\nN° '+(c.numero||'—')+' · '+money(num(c.monto))+' a '+(c.entidad||'—')+'\n'+
+            (cta?'Se va a descontar de: '+cta:'⚠️ Este cheque no tiene cuenta cargada: el movimiento va a quedar en «Sin asignar». Editalo e indicá de qué cuenta sale.')+
+            '\n\nSe registra la salida con fecha de hoy.')) return; }
+        setEstado(c,'cobrado'); }
       else if(a==='rechazado'){
         if(esEndosado(c)) rebotarEndosado(c);
         else if(confirm('¿Marcar este cheque de '+money(num(c.monto))+' como RECHAZADO?')) setEstado(c,'rechazado'); }
@@ -4522,7 +4561,7 @@ function buildFilterTable(cfg){
       }
       html+='<tr>'+
         '<td><input type="checkbox" data-mark="'+i+'"'+(f.marcado?' checked':'')+(f.elegido?'':' disabled')+'></td>'+
-        '<td><b>N° '+esc(p.numero||'—')+'</b> · '+esc(p.banco||'—')+'<div style="font-size:11px;color:var(--muted)">a '+esc(p.entidad||'—')+' · '+fmtFecha(p.fechaEmision)+' · '+estLbl(p.estado)+'</div></td>'+
+        '<td><b>N° '+esc(p.numero||'—')+'</b> · '+esc(p.banco||'—')+'<div style="font-size:11px;color:var(--muted)">a '+esc(p.entidad||'—')+' · '+fmtFecha(p.fechaEmision)+' · '+esc(estLbl(p.estado,'emitido'))+'</div></td>'+
         '<td>'+colC+'</td>'+
         '<td style="font-size:11px">'+aviso+'</td></tr>';
     });
@@ -4568,6 +4607,9 @@ function buildFilterTable(cfg){
   function closeForm(){ $('chq-modal').classList.remove('open'); editing=null; }
   function drawForm(){
     const c=editing;
+    // Se escribe en `editing` (no solo en el <select>): si solo se preseleccionara en pantalla y el
+    // usuario no tocara el campo, se guardaría vacío igual.
+    const sug=cuentaSugerida(c); if(sug) c.cuenta=sug;
     $('chq-form').innerHTML =
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Tipo','','<select id="chf-tipo">'+TIPOS.map(t=>'<option value="'+t.k+'"'+(c.tipo===t.k?' selected':'')+'>'+t.l+'</option>').join('')+'</select>') +
@@ -4579,7 +4621,7 @@ function buildFilterTable(cfg){
         field('Monto $','','<input id="chf-monto" value="'+c.monto+'">') +
         // "Endosado" NO se elige a mano: se llega por el botón ↪ Endosar, que además registra el pago
         // en la compra. Ponerlo acá dejaría cheques endosados sin proveedor ni factura asociada.
-        field('Estado','','<select id="chf-estado">'+ESTADOS.filter(e=>e.k!=='endosado'||c.estado==='endosado').map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
+        field('Estado','','<select id="chf-estado">'+estadosDe(c.tipo).filter(e=>e.k!=='endosado'||c.estado==='endosado').concat(estadosDe(c.tipo).some(e=>e.k===c.estado)?[]:[{k:c.estado}]).map(e=>'<option value="'+e.k+'"'+(c.estado===e.k?' selected':'')+'>'+esc(estLbl(e.k,c.tipo))+'</option>').join('')+'</select>') +
         field((c.tipo==='emitido'?'Cuenta de la que sale':'Cuenta donde se deposita'),'','<select id="chf-cuenta">'+cuentasOpt(c.cuenta)+'</select>') +
         field('Nota','col2','<textarea id="chf-nota" rows="2">'+esc(c.nota)+'</textarea>') +
       '</div>'+
@@ -4976,7 +5018,11 @@ function buildFilterTable(cfg){
     compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO){ const sg=c.tipo==='emitido'?-1:1; M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||''}); } });
+      // Un cheque propio sale SIEMPRE de la chequera: los viejos se cargaron antes de que existiera
+      // el campo, así que se asume igual que en la proyección (si no, caerían en "Sin asignar" y el
+      // saldo por cuenta no cerraría justo donde importa).
+      if(f && f>desde && f<=hoyISO){ const propio=c.tipo==='emitido'; const sg=propio?-1:1;
+        M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(propio?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||(propio?chequera():'')}); } });
     // Los COSTOS FIJOS ya se cargan en Compras (categorías "COSTO FIJO" / "Mano de Obra"), así que sus
     // pagos YA entraron en el bloque de compras de arriba. Sumarlos otra vez acá los contaría DOS VECES.
     // (La página "Costos Fijos" es solo una vista de esas mismas compras.)
@@ -5000,10 +5046,41 @@ function buildFilterTable(cfg){
     if(Math.abs(sinAsignar)>0.5) filas.push({nombre:'Sin asignar', monto:sinAsignar, sinAsignar:true});
     return filas; }
 
+  // Saldo proyectado POR CUENTA. Solo se imputan los eventos de los que sabemos la cuenta —hoy, los
+  // cheques—. Una venta a cobrar o una compra a pagar NO se reparten: no se sabe por qué cuenta van a
+  // entrar o salir hasta que pasan, y repartirlas a ojo daría un número inventado. Por eso este cálculo
+  // es a propósito conservador: responde "¿me alcanza en ESTA cuenta para lo que ya está comprometido?",
+  // no "cuánto voy a tener". El total sigue siendo el de la proyección general de más abajo.
+  function proyeccionPorCuenta(d, hastaISO){
+    const g={}, orden=[];
+    porCuenta(d).forEach(c=>{ if(c.sinAsignar) return;   // "Sin asignar" no es una cuenta real
+      g[c.nombre]={nombre:c.nombre, hoy:num(c.monto), ev:[]}; orden.push(c.nombre); });
+    eventosProyeccion().forEach(e=>{ if(!e.cuenta || e.fecha>hastaISO) return;
+      if(!g[e.cuenta]){ g[e.cuenta]={nombre:e.cuenta, hoy:0, ev:[]}; orden.push(e.cuenta); }
+      g[e.cuenta].ev.push(e); });
+    return orden.map(n=>{ const x=g[n];
+      // Lo vencido y todavía pendiente pesa HOY, igual que en la proyección general.
+      const porFecha={}; x.ev.forEach(e=>{ const f=e.fecha<hoyISO?hoyISO:e.fecha; porFecha[f]=(porFecha[f]||0)+(e.signo>0?e.monto:-e.monto); });
+      let s=x.hoy, min=x.hoy, minF='';
+      Object.keys(porFecha).sort().forEach(f=>{ s+=porFecha[f]; if(s<min){ min=s; minF=f; } });
+      const sale=x.ev.filter(e=>e.signo<0);
+      return { nombre:x.nombre, hoy:x.hoy, fin:s, min, minF, n:x.ev.length,
+        sale: sale.reduce((a,e)=>a+e.monto,0),
+        entra: x.ev.filter(e=>e.signo>0).reduce((a,e)=>a+e.monto,0),
+        asumidos: x.ev.filter(e=>e.cuentaAsumida).length,
+        prox: sale.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)))[0]||null }; }); }
+
   function disponibleHoy(){ const a=ancla(); if(!a) return null;
     const base=totalCuentas(a); const M=movimientosReales(a.fecha);
     const ent=M.filter(m=>m.signo>0).reduce((s,m)=>s+m.monto,0), sal=M.filter(m=>m.signo<0).reduce((s,m)=>s+m.monto,0);
     return {base, ent, sal, total: base+ent-sal, desde:a.fecha, ancla:a, movs:M}; }
+
+  // Cuenta de la que salen los cheques propios (Parámetros → Finanzas). Solo cuenta si está declarada
+  // en Caja: si el nombre no matchea ninguna, se devuelve '' para no inventar una cuenta que no existe.
+  function chequera(){
+    const q=String(window.__param?window.__param('cuentaChequera','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
+    if(!q) return '';
+    const a=ancla(); return (a?cuentasDe(a):[]).map(c=>c.nombre).find(n=>String(n||'').trim().toLowerCase()===q) || ''; }
 
   // ---------- Proyección: eventos futuros (o vencidos pendientes) por fecha ----------
   // Sin doble conteo: a la venta/compra por cobrar/pagar le resto los cheques pendientes ligados a ella.
@@ -5013,7 +5090,13 @@ function buildFilterTable(cfg){
   function eventosProyeccion(){
     const E=[];
     cheques.forEach(c=>{ if(c.estado!=='cartera'&&c.estado!=='depositado') return; const f=String(c.fechaVencimiento||'').slice(0,10)||hoyISO;
-      const sg=c.tipo==='emitido'?-1:1; E.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(c.tipo==='emitido'?'Cheque a pagar · ':'Cheque a cobrar · ')+(c.entidad||'—')}); });
+      const propio=c.tipo==='emitido', sg=propio?-1:1;
+      // Un cheque propio se debita de UNA cuenta concreta: es el único evento futuro del que sabemos
+      // con certeza de dónde sale la plata (una compra o una venta se pueden pagar/cobrar por donde sea).
+      // Los propios viejos se cargaron antes de que existiera el campo, así que se asume la chequera.
+      E.push({fecha:f, signo:sg, monto:num(c.monto), tipo:'cheque', propio,
+        cuenta: c.cuenta || (propio?chequera():''), cuentaAsumida: propio && !c.cuenta,
+        concepto:(propio?'Cheque a pagar · ':'Cheque a cobrar · ')+(c.entidad||'—')}); });
     ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const saldo=num(calcV(v).saldo);
       if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); } });
     compras.forEach(c=>{ const total=calcCompra(c); const pagado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-pagado;
@@ -5038,6 +5121,7 @@ function buildFilterTable(cfg){
       $('caj-summary').innerHTML='';
       $('caj-explica').innerHTML='Para empezar, tocá <b>💰 Declarar saldo real</b> y cargá cuánta plata tenés hoy en cada cuenta (efectivo, Banco Macro MAV, Banco Macro VPH, o las que uses). A partir de ahí, el tablero suma los cobros y resta los pagos que vayas registrando, y te muestra el disponible al día.';
       $('caj-proy-asof').textContent=''; $('caj-tabla-proy').innerHTML=''; $('caj-mov-asof').textContent=''; $('caj-tabla-mov').innerHTML='';
+      $('caj-sec-cuentas').style.display='none';
       return;
     }
     // Proyección
@@ -5074,6 +5158,8 @@ function buildFilterTable(cfg){
     $('caj-explica').innerHTML = 'El <b>disponible hoy</b> es plata real, abierto por cuenta. Lo demás es proyección con fechas de vencimiento. '+alerta+
       (hayS?' <b style="color:var(--amber)">⚠️ Hay movimientos «Sin asignar»</b>: son cobros/pagos cargados antes de que existiera el campo de cuenta, o cheques sin cuenta de depósito. El total es correcto igual; para que el detalle por cuenta cierre, editalos e indicá la cuenta.':'');
 
+    renderCuentas(d, limite);
+
     // Filtros de horizonte
     const defs=[['15','15 días'],['30','30 días'],['60','60 días'],['todos','Todo']];
     $('caj-proy-filtros').innerHTML=defs.map(([v,l])=>'<button class="filter-btn'+(filtro===v?' active':'')+'" data-f="'+v+'">'+l+'</button>').join('');
@@ -5103,6 +5189,33 @@ function buildFilterTable(cfg){
   function k(l,cls,v,sub){ return '<div class="kpi '+cls+'"><div class="label">'+l+'</div><div class="value" style="font-size:20px">'+v+'</div><div class="sub">'+sub+'</div></div>'; }
   function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
   function isoMas(d){ const x=new Date(HOY); x.setDate(x.getDate()+d); return x.getFullYear()+'-'+p2(x.getMonth()+1)+'-'+p2(x.getDate()); }
+
+  // ¿Alcanza en CADA cuenta? El total puede dar bien y la cuenta de la chequera quedar en rojo igual:
+  // un cheque propio se debita de esa cuenta el día de su vencimiento, sí o sí.
+  function renderCuentas(d, limite){
+    $('caj-sec-cuentas').style.display='';
+    const filas=proyeccionPorCuenta(d, limite);
+    let h='<tr><th>Cuenta</th><th class="num">Saldo hoy</th><th class="num">Cheques a debitarse</th><th class="num">Saldo proyectado</th><th>¿Alcanza?</th></tr>';
+    if(!filas.length) h+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Declará el saldo real para ver el detalle por cuenta.</td></tr>';
+    filas.forEach(f=>{
+      const estado = f.min<0
+        ? '<b style="color:var(--red)">⚠️ Faltan '+money(Math.abs(f.min))+(f.minF?' el '+fmtFecha(f.minF):'')+'</b>'
+        : f.n ? '<span style="color:var(--green)">✓ Alcanza</span>'
+              : '<span style="color:var(--muted)">Nada comprometido</span>';
+      h+='<tr><td data-label="Cuenta"><b>'+esc(f.nombre)+'</b>'+
+          (f.asumidos?'<div style="font-size:10px;color:var(--muted)">'+f.asumidos+' cheque'+(f.asumidos>1?'s':'')+' sin cuenta cargada, se asume'+(f.asumidos>1?'n':'')+' de acá</div>':'')+'</td>'+
+        '<td class="num" data-label="Saldo hoy">'+money(f.hoy)+'</td>'+
+        '<td class="num" data-label="A debitarse" style="color:'+(f.sale?'var(--red)':'var(--muted)')+'">'+(f.sale?'− '+money(f.sale):'—')+
+          (f.prox?'<div style="font-size:10px;color:var(--muted)">el próximo vence '+fmtFecha(f.prox.fecha)+'</div>':'')+'</td>'+
+        '<td class="num" data-label="Proyectado" style="font-weight:800;color:'+(f.min<0?'var(--red)':'var(--text)')+'">'+money(f.min)+'</td>'+
+        '<td data-label="¿Alcanza?" style="font-size:11.5px">'+estado+'</td></tr>'; });
+    $('caj-tabla-cuentas').innerHTML=h;
+    const chq=chequera();
+    $('caj-cuentas-nota').innerHTML =
+      'Acá se imputan <b>solo los cheques</b>: son lo único que ya tiene cuenta y fecha ciertas. Una venta a cobrar o una compra a pagar no se reparten, porque hasta que se concretan no se sabe por qué cuenta van a pasar. Por eso es a propósito conservador — responde <i>¿me alcanza en esta cuenta para lo que ya está comprometido?</i>, no <i>cuánto voy a tener</i>. El total general está en la proyección de abajo.'+
+      (chq ? ' Los cheques propios sin cuenta cargada se asumen de <b>'+esc(chq)+'</b> (se cambia en Parámetros → Finanzas).'
+           : ' <b style="color:var(--amber)">⚠️ El parámetro «Cuenta de la que salen los cheques propios» no coincide con ninguna cuenta declarada</b>, así que los cheques propios sin cuenta no se están imputando a ninguna. Revisalo en Parámetros → Finanzas.');
+  }
 
   function persist(doc){ if(!doc._uid)doc._uid=newUid();
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL,doc._uid),{...doc}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
@@ -5208,6 +5321,14 @@ function buildFilterTable(cfg){
     let saldo=d.total, min=d.total, minF=hoyISO; Object.keys(buckets).sort().forEach(f=>{ saldo+=buckets[f]; if(saldo<min){ min=saldo; minF=f; } });
     if(min<0) A.push({sev:'bad', area:'Finanzas', t:'La caja quedaría en NEGATIVO el '+fmtFecha(minF)+' ('+money(min)+')', act:'Con los pagos comprometidos no alcanza. Adelantá cobranzas o reprogramá pagos.', go:{page:'Caja / Liquidez'}});
     else if(d.total<0) A.push({sev:'bad', area:'Finanzas', t:'Caja en negativo hoy ('+money(d.total)+')', act:'Revisar el disponible y los pagos.', go:{page:'Caja / Liquidez'}});
+    // Un cheque propio se debita de UNA cuenta: el total puede alcanzar y esa cuenta quedar en rojo.
+    // Este aviso es aparte del de arriba a propósito — si el total alcanza, el otro no salta y el
+    // cheque rebota igual.
+    proyeccionPorCuenta(d, isoMas(30)).forEach(c=>{ if(c.min>=0 || !c.n) return;
+      A.push({sev:'bad', area:'Finanzas',
+        t:'Faltan '+money(Math.abs(c.min))+' en '+c.nombre+(c.minF?' para el '+fmtFecha(c.minF):''),
+        act:'Hay '+money(c.sale)+' en cheques a debitarse de esa cuenta'+(c.prox?' (el próximo vence '+fmtFecha(c.prox.fecha)+')':'')+'. Pasá plata a esa cuenta antes de la fecha o el cheque rebota.',
+        go:{page:'Caja / Liquidez'}}); });
     return A; });
 
   $('caj-saldo').onclick=abrirSaldo;
@@ -6295,7 +6416,8 @@ function buildFilterTable(cfg){
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
-    {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'}
+    {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'},
+    {g:'Finanzas',   k:'cuentaChequera', l:'Cuenta de la que salen los cheques propios', def:'Banco Macro VPH', t:'txt', hint:'Un cheque propio se debita SIEMPRE de esta cuenta, así que el Tablero puede avisarte si ese día no va a haber fondos ahí. Se propone sola al cargar un cheque propio; si usás más de una chequera, cambiala a mano en cada cheque.'}
   ];
   window.__cfg = window.__cfg || {};
   DEFS.forEach(d=>{ if(window.__cfg[d.k]===undefined) window.__cfg[d.k]=d.def; });   // defaults desde el arranque
