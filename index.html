@@ -3256,7 +3256,11 @@ function buildFilterTable(cfg){
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
   const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
   const VENDEDORES = [];   // se autocompletan desde las ventas cargadas (no hardcodear nombres)
-  const TIPOS_COMPROB = ['Factura A','Factura B','Factura C','Sin factura','Nota de Crédito','Presupuesto','Remito'];
+  const TIPOS_COMPROB = ['Factura A','Factura B','Factura C','Sin factura','Nota de Crédito','Nota de Débito','Presupuesto','Remito'];
+  // Una nota de crédito o débito SIEMPRE corrige un comprobante anterior y ARCA exige indicar
+  // cuál. Se guarda en v.compAsoc el _uid de esa venta, y de ahí se derivan tipo, punto de
+  // venta y número al momento de emitir (así no se duplican datos que puedan quedar viejos).
+  const esNotaCD = (t)=> t==='Nota de Crédito' || t==='Nota de Débito';
   const COND_IVA = ['A','B','C','M','X'];
   const ARCA_ESTADOS = ['','Aprobado','Pendiente'];
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
@@ -3301,20 +3305,46 @@ function buildFilterTable(cfg){
   // Factura B por defecto Consumidor Final (5), salvo Monotributo (6). Los casos fiscales finos
   // (exento, etc.) se afinan antes de pasar a producción.
   function condIvaReceptorDe(v, cbteTipo){
-    if(cbteTipo===1) return 1;
+    if([1,2,3].includes(cbteTipo)) return 1;   // letra A (factura y sus notas) → Responsable Inscripto
     return String(v.condIva||'').toUpperCase()==='M' ? 6 : 5;
   }
   async function facturarVenta(v){
     if(v.cae){ alert('Esta venta ya está facturada.\nCAE '+v.cae+' · comprobante '+(v.puntoVenta||'')+'-'+(v.nroFactura||'')); return; }
-    const cbteTipo = v.tipoComprobante==='Factura A'?1 : v.tipoComprobante==='Factura B'?6 : 0;
-    if(!cbteTipo){ alert('Solo se factura electrónicamente Factura A o Factura B.\nEsta venta es "'+(v.tipoComprobante||'—')+'".'); return; }
+    const tipoV=v.tipoComprobante||'';
+    const tipoDeFactura=t=> t==='Factura A'?1 : t==='Factura B'?6 : 0;
+    let cbteTipo=0, cbtesAsoc=null, orig=null;
+    if(esNotaCD(tipoV)){
+      // La letra de la nota la MANDA la factura que corrige: nota de una Factura A → nota A.
+      // Así no se puede emitir una nota B contra una factura A (ARCA lo rechaza, y está mal).
+      orig=(DB.ventas||[]).find(x=>x._uid===v.compAsoc);
+      if(!orig){ alert('Falta indicar qué factura corrige esta '+tipoV.toLowerCase()+'.\n\nEditá la venta y elegila en "Factura que corrige (la pide ARCA)".'); return; }
+      const tipoOrig=tipoDeFactura(orig.tipoComprobante);
+      if(!tipoOrig){ alert('Solo se puede emitir una nota sobre una Factura A o B.\nLa elegida es "'+(orig.tipoComprobante||'—')+'".'); return; }
+      const pvOrig=parseInt(String(orig.puntoVenta||'').replace(/\D/g,''),10);
+      const nroOrig=parseInt(String(orig.nroFactura||'').replace(/\D/g,''),10);
+      if(!(pvOrig>=1)||!(nroOrig>=1)){ alert('La factura que se quiere corregir no tiene punto de venta y número cargados.\nCompletalos en esa venta y volvé a intentar.'); return; }
+      const cuitOrig=String(orig.cuit||'').replace(/\D/g,''), cuitNota=String(v.cuit||'').replace(/\D/g,'');
+      if(cuitOrig && cuitNota && cuitOrig!==cuitNota){
+        alert('El CUIT de esta nota no coincide con el de la factura que corrige.\n\nNota: '+cuitNota+'\nFactura: '+cuitOrig+'\n\nUna nota tiene que ir al mismo cliente que la factura. Corregilo antes de emitir.'); return; }
+      cbteTipo = (tipoV==='Nota de Crédito') ? (tipoOrig===1?3:8) : (tipoOrig===1?2:7);
+      // La fecha del comprobante asociado es opcional en ARCA y NO se manda: si una factura vieja
+      // tiene en el Tablero una fecha distinta de la registrada en ARCA, mandarla haría rechazar
+      // la nota sin motivo. Con tipo + punto de venta + número, ARCA la identifica igual.
+      cbtesAsoc=[{tipo:tipoOrig, ptoVta:pvOrig, nro:nroOrig}];
+    } else {
+      cbteTipo=tipoDeFactura(tipoV);
+      if(!cbteTipo){ alert('Se emiten electrónicamente Factura A, Factura B y sus notas de crédito o débito.\nEsta venta es "'+(tipoV||'—')+'".'); return; }
+    }
     const k=calc(v);
-    if(!(k.total>0)){ alert('El total de la venta tiene que ser mayor a $0 para facturar.'); return; }
+    // Las notas de crédito se guardan en negativo en el Tablero (restan), pero ante ARCA los
+    // importes van SIEMPRE en positivo: el signo lo da el tipo de comprobante.
+    const totalAbs=Math.abs(k.total);
+    if(!(totalAbs>0)){ alert('El total tiene que ser distinto de $0 para emitir el comprobante.'); return; }
     // Documento del receptor
     const cuit=String(v.cuit||'').replace(/\D/g,'');
     let docTipo, docNro;
-    if(cbteTipo===1){
-      if(cuit.length!==11){ alert('La Factura A necesita el CUIT del cliente (11 dígitos).\nCargalo en la venta y volvé a intentar.'); return; }
+    if([1,2,3].includes(cbteTipo)){   // letra A: factura A y sus notas de crédito/débito
+      if(cuit.length!==11){ alert('Los comprobantes letra A necesitan el CUIT del cliente (11 dígitos).\nCargalo en la venta y volvé a intentar.'); return; }
       docTipo=80; docNro=cuit;
     } else {
       if(cuit.length===11){ docTipo=80; docNro=cuit; }
@@ -3337,19 +3367,22 @@ function buildFilterTable(cfg){
     const impTrib=round2(num(v.percepIva)+num(v.percepIibb)+num(v.impInternos)+num(v.intereses));
     const payload={ ventaId:v._uid, cbteTipo, docTipo, docNro, condIvaReceptor:condIvaReceptorDe(v,cbteTipo),
       alicuotas, impOpEx:round2(opEx), impTrib };   // ventaId: el Worker lo usa para NO facturar dos veces la misma venta (idempotencia). ptoVta NO se envía: el Worker usa el configurado
+    if(cbtesAsoc) payload.cbtesAsoc=cbtesAsoc;      // solo en notas de crédito/débito
     const c=fb(); if(!c||!c.auth||!c.auth.currentUser){ alert('Iniciá sesión en el Tablero para poder facturar.'); return; }
     // ¿En qué ambiente está el Worker? En homologación las facturas son de PRUEBA (sin validez fiscal).
     let ambiente='homologacion';
     try{ const s=await (await fetch(FACT_URL+'/salud')).json(); ambiente=s.ambiente||'homologacion'; }catch(e){}
     const avisoPrueba = ambiente!=='produccion'
-      ? '⚠️ MODO PRUEBA (homologación)\nEsta factura NO tiene validez fiscal, es solo para probar el sistema.\n\n' : '';
-    // Emitir una factura es un acto fiscal irreversible → confirmar antes.
-    if(!confirm(avisoPrueba+'Vas a emitir la '+v.tipoComprobante+' en ARCA para '+(v.cliente||'—')+'\nTotal '+money(k.total)+'.\n\n¿Confirmás?')) return;
+      ? '⚠️ MODO PRUEBA (homologación)\nEste comprobante NO tiene validez fiscal, es solo para probar el sistema.\n\n' : '';
+    const detalleAsoc = orig ? '\nCorrige la '+(orig.tipoComprobante||'factura')+' '+(orig.puntoVenta||'')+'-'+(orig.nroFactura||'') : '';
+    // Emitir un comprobante es un acto fiscal irreversible → confirmar antes.
+    if(!confirm(avisoPrueba+'Vas a emitir la '+tipoV+' en ARCA para '+(v.cliente||'—')+
+      '\nTotal '+money(totalAbs)+detalleAsoc+'.\n\n¿Confirmás?')) return;
     try{
       const tok=await c.auth.currentUser.getIdToken();
       const r=await fetch(FACT_URL+'/facturar',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify(payload)});
       let data={}; try{ data=await r.json(); }catch(e){}
-      if(!r.ok || !data.cae){ alert('ARCA no autorizó la factura:\n\n'+(data.error||('error HTTP '+r.status))); return; }
+      if(!r.ok || !data.cae){ alert('ARCA no autorizó el comprobante:\n\n'+(data.error||('error HTTP '+r.status))); return; }
       // Guardar el CAE y los datos del comprobante en la venta
       v.cae=data.cae; v.caeVto=data.caeVto; v.qr=data.qr;
       v.arcaAmbiente=data.ambiente||ambiente;   // "homologacion" o "produccion" → el PDF marca las de prueba
@@ -3357,8 +3390,8 @@ function buildFilterTable(cfg){
       v.nroFactura=String(data.nroCbte).padStart(8,'0');
       v.arca='Aprobado';
       persistVenta(v);
-      alert((v.arcaAmbiente!=='produccion'?'⚠️ FACTURA DE PRUEBA (sin validez fiscal)\n\n':'✅ Factura autorizada por ARCA\n\n')+
-        'Comprobante '+v.puntoVenta+'-'+v.nroFactura+'\nCAE '+data.cae+' (vence '+fmtCae(data.caeVto)+')');
+      alert((v.arcaAmbiente!=='produccion'?'⚠️ COMPROBANTE DE PRUEBA (sin validez fiscal)\n\n':'✅ Comprobante autorizado por ARCA\n\n')+
+        tipoV+' '+v.puntoVenta+'-'+v.nroFactura+'\nCAE '+data.cae+' (vence '+fmtCae(data.caeVto)+')'+detalleAsoc);
     }catch(e){ alert('No se pudo conectar con el sistema de facturación.\n'+e.message); }
   }
 
@@ -3462,7 +3495,9 @@ function buildFilterTable(cfg){
   const arcaBadge=e=> e==='Aprobado'?'<span class="badge green">Aprobado</span>':e==='Pendiente'?'<span class="badge amber">Pendiente</span>':'<span style="color:var(--muted)">—</span>';
   function facLabel(v){ if(v.tipoComprobante==='Sin factura') return '<span class="badge" style="background:#eceffb;color:#5b6b9a">Sin factura</span>'; return (v.puntoVenta||v.nroFactura)?((v.condIva||'')+' '+(v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).trim():'—'; }
   function accionesCell(v,k){ const tieneCobros=(v.cobros||[]).length>0; const esNC=v.tipoComprobante==='Nota de Crédito';
-    const esFactAB=/^Factura [AB]$/.test(v.tipoComprobante||'');
+    // Se puede emitir electrónicamente una Factura A/B, y una nota de crédito o débito
+    // SIEMPRE Y CUANDO ya tenga indicada la factura que corrige (si no, ARCA la rechaza).
+    const esFactAB=/^Factura [AB]$/.test(v.tipoComprobante||'') || (esNotaCD(v.tipoComprobante) && !!v.compAsoc);
     return (((!esNC&&k.saldo>0.5)||tieneCobros)?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">'+((!esNC&&k.saldo>0.5)?'Cobrar':'Cobros')+'</button>':'')+
       (v.cae?'<span class="badge green" title="Factura electrónica autorizada · CAE '+esc(v.cae)+'" style="margin-right:4px">✓ CAE</span>':(esFactAB?'<button class="cmp-rowbtn" data-act="facturar" data-id="'+v._uid+'" style="border-color:var(--green);color:var(--green);font-weight:800" title="Emitir la factura electrónica en ARCA y obtener el CAE">🧾 Facturar</button>':''))+
       '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'+
@@ -3593,9 +3628,33 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
   function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); editing.listaPrecios=normLista(editing.listaPrecios); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
   function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; _onSaved=null; }
+
+  // Comprobantes que una nota puede corregir: ventas Factura A/B que ya tengan punto de venta
+  // y número. Incluye a propósito las del sistema anterior (Contagram): están registradas en
+  // ARCA bajo el mismo CUIT, así que se les puede emitir una nota igual. Se ordenan poniendo
+  // primero las del mismo cliente, que es el caso normal.
+  function candidatosAsoc(v){
+    const cli=String(v.cliente||'').trim().toLowerCase();
+    return (DB.ventas||[])
+      .filter(x=> x._uid!==v._uid && /^Factura [AB]$/.test(x.tipoComprobante||'') &&
+                  String(x.puntoVenta||'').trim() && String(x.nroFactura||'').trim())
+      .sort((a,b)=>{
+        const ca=(String(a.cliente||'').trim().toLowerCase()===cli)?0:1;
+        const cb=(String(b.cliente||'').trim().toLowerCase()===cli)?0:1;
+        if(ca!==cb) return ca-cb;
+        return String(b.fecha||'').localeCompare(String(a.fecha||''));
+      });
+  }
+  function optAsoc(v){
+    const et=x=> (x.puntoVenta||'')+'-'+(x.nroFactura||'')+' · '+(x.tipoComprobante||'')+' · '+
+      fmtFecha(x.fecha)+' · '+money(Math.abs(calc(x).total))+' · '+(x.cliente||'—');
+    return '<option value="">— Elegir la factura que corrige —</option>'+
+      candidatosAsoc(v).map(x=>'<option value="'+esc(x._uid)+'"'+(v.compAsoc===x._uid?' selected':'')+'>'+
+        esc(et(x))+'</option>').join('');
+  }
 
   function drawForm(){
     const v=editing;
@@ -3609,6 +3668,8 @@ function buildFilterTable(cfg){
         field('Vendedor','','<input id="vf-vend" list="vf-vend-list" value="'+esc(v.vendedor)+'" placeholder="Vendedor">'+datalistVend()) +
         field('Lista de precios','','<select id="vf-lista">'+opt(LISTAS,v.listaPrecios)+'</select>') +
         field('Tipo comprobante','','<select id="vf-tipo">'+opt(TIPOS_COMPROB,v.tipoComprobante)+'</select>') +
+        '<div class="cmp-field col2" id="vf-asoc-wrap"'+(esNotaCD(v.tipoComprobante)?'':' style="display:none"')+
+          '><label>Factura que corrige (la pide ARCA)</label><select id="vf-asoc">'+optAsoc(v)+'</select></div>' +
         field('ARCA','','<select id="vf-arca"><option value="">—</option><option value="Aprobado"'+(v.arca==='Aprobado'?' selected':'')+'>Aprobado</option><option value="Pendiente"'+(v.arca==='Pendiente'?' selected':'')+'>Pendiente</option></select>') +
         field('Emisión','','<input type="date" id="vf-fecha" value="'+v.fecha+'">') +
         field('Vto. de cobro','','<input type="date" id="vf-venc" value="'+v.vencimiento+'">') +
@@ -3634,9 +3695,16 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="vf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="vf-save">Guardar venta</button></div>';
     drawItems();
-    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
+    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
       const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
       el.addEventListener('input',()=>{ editing[key]=el.value; if(['vf-descg','vf-piva','vf-piibb','vf-impint','vf-int'].includes(id)) drawTotals(); });
+    });
+    // El selector de factura a corregir solo aparece en notas de crédito/débito.
+    $('vf-tipo').addEventListener('change',()=>{
+      const w=$('vf-asoc-wrap'); if(!w) return;
+      const esNota=esNotaCD($('vf-tipo').value);
+      w.style.display = esNota?'':'none';
+      if(!esNota && editing){ editing.compAsoc=''; const s=$('vf-asoc'); if(s) s.value=''; }
     });
     $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond;} } });
     $('vf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('vf-lista').value; let ch=false; editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p){ aplicarProducto(it,p,editing.listaPrecios); ch=true; } }); if(ch){ drawItems(); drawTotals(); } });
