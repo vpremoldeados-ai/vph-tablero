@@ -4438,11 +4438,17 @@ function buildFilterTable(cfg){
     // otro con varias opciones se lo lleve. Un cheque de un cliente solo puede endosarse UNA vez.
     const usados={};
     filas.slice().sort((a,b)=>a.opciones.length-b.opciones.length).forEach(f=>{
-      const libres=f.opciones.filter(r=>!usados[r._uid]);
+      const libres=f.opciones.filter(r=>!usados[r._uid] && plausible(f.propio,r));
       if(libres.length===1){ f.elegido=libres[0]._uid; f.marcado=true; usados[f.elegido]=1; }
     });
     return filas;
   }
+  // ⚠️ No se puede endosar un cheque que todavía no recibiste. Si el registro "propio" es ANTERIOR al
+  // cheque del cliente, no puede ser ese endoso. VPH emitió cheques propios de verdad mucho antes de
+  // que existiera el Tablero: sin esta regla, uno de esos podía emparejarse por pura casualidad de
+  // monto con un cheque de cliente reciente y quedar mal corregido. Igual se puede elegir a mano
+  // (queda en la lista, marcado), pero NUNCA se auto-marca.
+  const plausible = (p,r) => !p.fechaEmision || !r.fechaEmision || String(p.fechaEmision)>=String(r.fechaEmision);
 
   let rev=null;
   function openRevision(){
@@ -4456,7 +4462,7 @@ function buildFilterTable(cfg){
     // Un cheque de un cliente no puede quedar asignado a dos propios a la vez.
     const tomado={}; rev.filas.forEach(f=>{ if(f.marcado&&f.elegido) tomado[f.elegido]=f.propio._uid; });
     const listos=rev.filas.filter(f=>f.marcado&&f.elegido);
-    const desc=r=>'N° '+(r.numero||'—')+' · '+(r.banco||'—')+' · de '+(r.entidad||'—')+' · '+money(num(r.monto))+' · '+estLbl(r.estado);
+    const desc=r=>'N° '+(r.numero||'—')+' · '+(r.banco||'—')+' · de '+(r.entidad||'—')+' · '+money(num(r.monto))+' · recibido '+fmtFecha(r.fechaEmision)+' · '+estLbl(r.estado);
     let html='<p style="font-size:12.5px;margin:0 0 4px">Cheques cargados como <b>propios</b>, emparejados por <b>monto</b> con los cheques que te dieron tus clientes. Marcá los que en realidad fueron <b>endosos</b> y se corrigen todos juntos.</p>'+
       '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Si en un período no emitiste ningún cheque de tu chequera, <b>todos los de ese período son endosos</b>. Mirá la fecha de cada uno.</p>'+
       '<div class="tbl-wrap"><table><tr><th style="width:34px"></th><th>Cargado como propio</th><th>Cheque del cliente que coincide</th><th>Ojo</th></tr>';
@@ -4465,13 +4471,23 @@ function buildFilterTable(cfg){
       const libres=f.opciones.filter(r=>!tomado[r._uid]||tomado[r._uid]===p._uid);
       const sel=libres.find(r=>r._uid===f.elegido)||null;
       let colC, aviso='';
-      if(!f.opciones.length){ colC='<span style="color:var(--muted)">Ningún cheque de cliente con ese monto</span>'; aviso='Corregilo a mano con «↔ Era un endoso», o dejalo si de verdad fue propio.'; }
+      // Si el registro salió de un pago de Compras, casi seguro es el fantasma de un endoso. Si se
+      // cargó a mano, es más probable que sea un cheque propio de verdad (los viejos, de antes del
+      // Tablero, cuyas facturas nunca se cargaron).
+      const deUnPago = f.propio.origen==='pago';
+      if(!f.opciones.length){
+        colC='<span style="color:var(--muted)">Ningún cheque de cliente con ese monto</span>';
+        aviso = deUnPago ? 'Salió de un pago de Compras. Si el cheque del cliente no está cargado, usá «↔ Era un endoso» en la fila.'
+                         : '<span style="color:var(--green)">✓ Parece un cheque propio de verdad</span> — dejalo así.'; }
       else if(!libres.length){ colC='<span style="color:var(--muted)">El único que coincidía ya lo usa otra fila</span>'; }
       else {
         colC='<select data-pick="'+i+'" style="max-width:100%"><option value="">— no corregir —</option>'+
-          libres.map(r=>'<option value="'+esc(r._uid)+'"'+(f.elegido===r._uid?' selected':'')+'>'+esc(desc(r))+'</option>').join('')+'</select>';
-        if(libres.length>1 && !f.porNumero) aviso='⚠️ Hay '+libres.length+' cheques con ese mismo monto: confirmá cuál es mirando el papel.';
+          libres.map(r=>'<option value="'+esc(r._uid)+'"'+(f.elegido===r._uid?' selected':'')+'>'+(plausible(p,r)?'':'⚠️ ')+esc(desc(r))+(plausible(p,r)?'':' — es POSTERIOR a este cheque propio')+'</option>').join('')+'</select>';
+        const auto=libres.filter(r=>plausible(p,r));
+        if(!auto.length) aviso='⚠️ Todos los que coinciden en monto los recibiste DESPUÉS de emitir este cheque, así que no pueden ser este endoso. Probablemente sea un cheque propio de verdad.';
+        else if(auto.length>1 && !f.porNumero) aviso='⚠️ Hay '+auto.length+' cheques con ese mismo monto: confirmá cuál es mirando el papel.';
         else if(f.porNumero) aviso='<span style="color:var(--green)">✓ Coincide monto y N° de cheque</span>';
+        if(sel && !plausible(p,sel)) aviso=(aviso?aviso+'<br>':'')+'⚠️ Ese cheque lo recibiste después de emitir este: revisalo bien antes de corregir.';
         if(sel && sel.estado==='cobrado') aviso+=(aviso?'<br>':'')+'⚠️ Ese cheque figura como cobrado: al corregirlo, esa entrada desaparece de la caja (correcto — nunca entró a tu cuenta).';
       }
       html+='<tr>'+
