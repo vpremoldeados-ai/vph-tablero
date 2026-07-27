@@ -2840,13 +2840,15 @@ function buildFilterTable(cfg){
     const armarFecha = mm => { if(!mm) return ''; let [,d,m,a]=mm; if(a.length===2) a='20'+a; d=d.padStart(2,'0'); m=m.padStart(2,'0');
       if(+a<2020 || +a>anioMax) return '';
       return (+m>=1 && +m<=12 && +d>=1 && +d<=31) ? a+'-'+m+'-'+d : ''; };
+    // Separadores tolerantes: el OCR mete espacios ("23/ 07/2026") y confunde la barra con . o \.
+    const DFECHA = '(\\d{1,2})\\s*[\\/\\-.\\\\]\\s*(\\d{1,2})\\s*[\\/\\-.\\\\]\\s*(\\d{2,4})';
     if(qrOk && /^\d{4}-\d{2}-\d{2}/.test(String(qrOk.fecha))) fecha=String(qrOk.fecha).slice(0,10);   // del QR: exacta
-    if(!fecha) fecha = armarFecha(texto.match(/\bf?echa(?:\s+de\s+emisi[oó]n)?\s*[:;.,]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i));
+    if(!fecha) fecha = armarFecha(texto.match(new RegExp('\\bf?echa(?:\\s+de\\s+emisi[oó]n)?\\s*[:;.,]?\\s*'+DFECHA, 'i')));
     if(!fecha){
-      const reF=/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g; let mm;
+      const reF=new RegExp(DFECHA,'g'); let mm;
       while(mm=reF.exec(texto)){
         const antes = texto.slice(Math.max(0,mm.index-32), mm.index).toLowerCase();
-        if(/inicio|activid|vto|vencim|\bcae\b|desde|hasta/.test(antes)) continue;   // no es la fecha de emisión
+        if(/inicio|incio|activid|vto|vencim|\bcae\b|desde|hasta/.test(antes)) continue;   // no es la fecha de emisión
         fecha = armarFecha(mm); if(fecha) break;
       }
     }
@@ -2909,8 +2911,17 @@ function buildFilterTable(cfg){
     let provAdivinado='';
     const rotulos=/^(factura|ticket|tique|comprobante|fecha|hora|cuit|cuil|cliente|consumidor|se[ñn]or|razon social|domicilio|ing\.?\s*brutos|ingresos|iva|responsable|inicio|total|subtotal|neto|remito|presupuesto|orig|copia|duplicado|recibimos|gracias|registro|cae\b)\b/i;
     const esVPH=/vassallo|vpremoldeados|\bvph\b/i;
+    // Descarta renglones de BASURA del OCR (bordes del papel, logos mal leídos): "Mza | EMBALAJES
+    // PATATA. el DST |" salió como nombre de proveedor en una factura A4 real. Señales de basura:
+    // barras verticales, o demasiadas "palabras" de 1-2 letras sueltas (más de la mitad).
+    const basura = l => {
+      if(/[|¦]/.test(l)) return true;
+      const ws=l.split(/\s+/).filter(Boolean);
+      if(ws.length>=4 && ws.filter(w=>w.replace(/[^A-Za-zÁÉÍÓÚáéíóúñÑ]/g,'').length<=2).length > ws.length/2) return true;
+      return false;
+    };
     for(const l of lineas.slice(0,10)){
-      if(esVPH.test(l)) continue;
+      if(esVPH.test(l) || basura(l)) continue;
       if(l.length>=3 && l.length<=60 && /[a-zA-ZÁÉÍÓÚáéíóúñÑ]{3,}/.test(l) && !rotulos.test(l) && !/^\d+([.,]\d+)?$/.test(l)){ provAdivinado=l; break; }
     }
     // Reconocimiento del proveedor RECURRENTE (por CUIT o nombre) contra el historial de compras.
@@ -2960,16 +2971,29 @@ function buildFilterTable(cfg){
     // escribe "ALTCUOTA"/"AL1CUOTA"), no "IVA". Se suman los renglones que EMPIEZAN con IVA/ALICUOTA
     // tomando el ÚLTIMO número de cada uno (sacando antes la tasa: "IVA 21%: $520,66" → 520,66).
     // Empezar-con evita duplicar por leyendas tipo "...IVA del 21% contenido $520,66" al pie del ticket.
-    // Trampas vistas en producción: (a) el OCR FUSIONA columnas — "IVA RESPONSABLE INSCRIPTO" (izq.)
-    // + "Incio de Actividades: 01/12/1998" (der.) quedan en UN renglón que empieza con IVA, y el 1998
-    // se sumaba como si fuera el monto del IVA; (b) la I de "IVA" se pierde ("VA 21%: 10.462,30").
-    // Por eso: se excluyen renglones de condición fiscal (responsable/inscripto/actividades/etc.) y
-    // el anclado tolera hasta 3 símbolos de ruido adelante y la I perdida.
+    // ⚠️ Los dos formatos de comprobante que usan los proveedores de VPH se leen distinto:
+    //  · TICKET (papel angosto, controlador fiscal): una sola columna, el renglón dice
+    //    "ALICUOTA 21,00%   9101,15" (el OCR suele escribir "ALTCUOTA").
+    //  · FACTURA A4: encabezado en DOS columnas, y el OCR las FUSIONA en un solo renglón —
+    //    "IVA RESPONSABLE INSCRIPTO" (izq.) + "Incio de Actividades: 01/12/1998" (der.) quedaron
+    //    juntas y el 1998 se sumó como si fuera el IVA (pasó en producción). Además la I de "IVA"
+    //    se pierde con poca tinta ("VA 21%: 10.462,30").
+    // Estrategia: primero el patrón FUERTE "IVA/ALICUOTA <n>%" (una tasa explícita al lado; los
+    // renglones de condición fiscal no la tienen, así que no pueden colarse), y solo si no aparece
+    // ninguno se cae al criterio por comienzo de renglón, excluyendo la condición fiscal.
     let ivaMonto = 0;
+    const reIvaPct = /(?:[i1l]\.?v\.?a\.?|al[ti1l]?[i1]?cuota)\s*:?\s*\d{1,2}(?:[.,]\d{1,2})?\s*%/i;
     for(const l of lineas){
-      if(!/^[^A-Za-z0-9]{0,3}(?:[i1l]?\.?v\.?a\b|al[ti1l]?[i1]?cuota)/i.test(l)) continue;
-      if(/responsable|inscripto|exento|monotrib|activid|condici/i.test(l)) continue;
+      if(!reIvaPct.test(l)) continue;
+      if(/responsable|inscripto|monotrib|activid|condici/i.test(l)) continue;
       ivaMonto += ultimoNum(l);
+    }
+    if(!(ivaMonto>0)){
+      for(const l of lineas){
+        if(!/^[^A-Za-z0-9]{0,3}(?:[i1l]?\.?v\.?a\b|al[ti1l]?[i1]?cuota)/i.test(l)) continue;
+        if(/responsable|inscripto|exento|monotrib|activid|condici/i.test(l)) continue;
+        ivaMonto += ultimoNum(l);
+      }
     }
     if(!(ivaMonto>0)) ivaMonto = buscarMonto(/\biva\b[^\d\n]{0,15}([\d.,]+)/i);   // respaldo, criterio viejo
     let total = buscarMonto(/\btotal\b[^\d\n]{0,15}([\d.,]+)/i);
