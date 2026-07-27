@@ -1917,11 +1917,13 @@ function buildFilterTable(cfg){
   // un cheque propio en el módulo Cheques — ver esEndoso() y §"ENDOSO" más abajo.
   const MEDIO_ENDOSO = 'Cheque de terceros (endoso)';
   const esEndoso = m => /endoso/i.test(String(m||''));
+  const MEDIO_ADMIN = 'Cancelado administrativamente';
+  const esAdministrativo = m => /administrativamente/i.test(String(m||''));
   // En VPH el cheque de papel casi no se usa y, cuando aparece, se opera igual que el electrónico:
   // por eso hay UNA sola opción en vez de dos, para que nadie elija la equivocada. Lo ya cargado
   // conserva su texto original ("Cheque", "E-Cheq", "E-Cheque") — esCheque() los reconoce a todos.
   const MEDIO_CHEQUE = 'Cheque / E-Cheq';
-  const MEDIOS_PAGO = ['Transferencia','Efectivo',MEDIO_CHEQUE,MEDIO_ENDOSO,'VISA / Tarjeta','Débito automático','Retención'];
+  const MEDIOS_PAGO = ['Transferencia','Efectivo',MEDIO_CHEQUE,MEDIO_ENDOSO,'VISA / Tarjeta','Débito automático','Retención',MEDIO_ADMIN];
   const esCheque = m => /cheq/i.test(String(m||''));   // cualquier variante → se sincroniza con el módulo Cheques
   // ⚠️ El <select> tiene que INCLUIR el medio que el pago ya tiene, aunque no esté en la lista (pagos
   // viejos con "E-Cheque", o el medio del endoso). Si no, al abrir el editor no queda ninguna opción
@@ -2408,7 +2410,7 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="p-monto" value="'+p.monto+'">') +
         field('Fecha','','<input type="date" id="p-fecha" value="'+p.fecha+'">') +
-        field('Medio','','<select id="p-medio">'+medioOpts(['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente'], p.medio)+'</select>') +
+        field('Medio','','<select id="p-medio">'+medioOpts(['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente',MEDIO_ADMIN], p.medio)+'</select>') +
         '<div class="cmp-field" id="p-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="p-cuenta">'+cuentasOpt(p.cuenta||'')+'</select></div>' +
       '</div>'+
       '<div id="p-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
@@ -3320,7 +3322,7 @@ function buildFilterTable(cfg){
           '<datalist id="pp-prov-list">'+provs.map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>')+
         field('Monto del pago','','<input id="pp-monto" value="0" type="number" step="0.01">') +
         field('Fecha','','<input type="date" id="pp-fecha" value="'+hoyISO+'">') +
-        field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente'].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
+        field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
         '<div class="cmp-field" id="pp-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="pp-cuenta">'+cuentasOpt('')+'</select></div>' +
       '</div>'+
       '<div id="pp-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
@@ -5208,9 +5210,9 @@ function buildFilterTable(cfg){
   // esos entran/salen por el módulo Cheques cuando se cobran, no en la fecha del cobro.
   function movimientosReales(desde){
     const M=[];
-    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio)) return; const f=String(c.fecha||'').slice(0,10);
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || esAdministrativo(c.medio)) return; const f=String(c.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
-    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
+    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || esAdministrativo(p.medio)) return; const f=String(p.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
       // Un cheque propio sale SIEMPRE de la chequera: los viejos se cargaron antes de que existiera
