@@ -823,8 +823,19 @@
       </div>
       <div class="filter-bar" id="wab-filtros"></div>
       <div id="wab-lista"></div>
-      <p class="note">Los mensajes entrantes de WhatsApp aparecen acá <b>agrupados por contacto</b> (una tarjeta por conversación), clasificados solos (Fábrica / Proveedor / Cliente / Lead) por el bot. El bot solo observa: no crea leads ni responde nada sin aprobación. Fuera del horario de atención (L a V 9 a 17hs) ya le avisó al remitente que lo van a atender al abrir. <b>✓ Resuelto</b> saca ese mensaje de la lista; <b>Abrir WhatsApp</b> va directo al chat. Datos en la nube (Firestore <code>vph_wa_pendientes</code>), los escribe el bot que corre aparte.</p>
+      <p class="note">Los mensajes entrantes de WhatsApp aparecen acá <b>agrupados por contacto</b> (una tarjeta por conversación), clasificados solos (Fábrica / Proveedor / Cliente / Lead) por el bot. El bot solo observa: no crea leads ni responde nada sin aprobación. <b>🆕 Convertir en Lead</b> arma el lead para el CRM con lo que se detecta en la conversación (producto, m², lugar) para revisar antes de crear. Fuera del horario de atención (L a V 9 a 17hs) ya le avisó al remitente que lo van a atender al abrir. <b>✓ Resuelto</b> saca ese mensaje de la lista; <b>Abrir WhatsApp</b> va directo al chat. Datos en la nube (Firestore <code>vph_wa_pendientes</code>), los escribe el bot que corre aparte.</p>
     </section>
+  </div>
+
+  <!-- ================= CONVERTIR CONVERSACIÓN EN LEAD (Bandeja WhatsApp) ================= -->
+  <div class="cmp-overlay" id="wab-conv-modal">
+    <div class="cmp-dialog" style="max-width:640px">
+      <div class="cmp-dialog-head">
+        <h3>🆕 Convertir la conversación en Lead</h3>
+        <button class="cmp-x" id="wab-conv-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="wab-conv-body"></div>
+    </div>
   </div>
 
   <!-- ================= BASE DE DATOS (ABM clientes/proveedores/productos) ================= -->
@@ -7574,7 +7585,70 @@ function buildFilterTable(cfg){
     // El cotizador web comparte las claves retiro/capital/cercanas. Su "argentina" (interior genérico) NO se mapea a propósito:
     // acá el interior se reparte entre Mati y Brio, así que el lead llega sin forma de entrega y la elige Sofía.
     if(!map.zona && (datos.destination||datos.destino)){ const z=String(datos.destination||datos.destino); if(['retiro','capital','cercanas','mati','particular','brio'].includes(z)) map.zona=z; }
-    const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; aplicarAutoSeguimiento(l,null); persist(l); };
+    const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; aplicarAutoSeguimiento(l,null); persist(l); return l; };
+
+  // ---------- Herramientas para la Bandeja WhatsApp (convertir una conversación en lead) ----------
+  // Viven ACÁ y no en la bandeja para reusar catProd/ALIAS_PROD/m2PorUnidadInfo/MERMA_RECORTES —
+  // una sola fuente (ver §3 CLAUDE.md sobre el dolor de las copias). La bandeja las llama en click.
+  window.__catalogoVendible = ()=> catProd().map(p=>({codigo:String(p.codigo||''), nombre:String(p.nombre||'')}));
+  window.__calcUnidadesM2 = (prodNombre, m2)=>{ const inf=m2PorUnidadInfo(prodNombre); return (inf.uxm2>0 && num(m2)>0) ? Math.ceil(num(m2)*inf.uxm2*(1+MERMA_RECORTES)) : 0; };
+  // Lee una conversación de WhatsApp (texto plano, un mensaje por línea) y detecta producto(s),
+  // cantidades (m² o unidades) y lugar de entrega. Conservador a propósito: lo que no reconoce
+  // queda vacío para completar a mano en el preview — nunca inventa (misma filosofía que el
+  // lector de tickets de Compras). Devuelve {items:[{producto,codigo,cantidad,m2}], lugar, zona}.
+  window.__detectarPedidoWA = function(texto){
+    const t=String(texto||'');
+    const N=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    const lineas=t.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+    const cat=catProd();
+    const RE_M2=/(\d+(?:[.,]\d+)?)\s*(?:m2|m²|mts?\.?\s*2|metros?\s+cuadrados?)/;
+    // tokens "de palabra" del nombre (≥4 letras): "loseta cribada rectangular" → [loseta,cribada,rectangular]
+    const tokensDe=p=>[...new Set(N(p.nombre).split(/[^a-z]+/).filter(w=>w.length>=4))];
+    const frec={}; cat.forEach(p=>tokensDe(p).forEach(w=>frec[w]=(frec[w]||0)+1));
+    const items=[]; const vistos=new Set();
+    lineas.forEach(ln=>{
+      const lnorm=N(ln);
+      let mejor=null, mejorScore=0;
+      cat.forEach(p=>{
+        let score=0;
+        const cod=N(p.codigo||'');
+        if(cod && new RegExp('(?:^|[^a-z0-9])'+cod+'(?:$|[^a-z0-9])').test(lnorm)) score=99;          // código exacto (LC60)
+        else if((ALIAS_PROD[p.codigo]||[]).some(a=>lnorm.includes(N(a)))) score=98;                    // alias por medida (60x40)
+        else {
+          // por prefijo → tolera plurales ("losetas" empieza con "loseta")
+          const hits=tokensDe(p).filter(w=>new RegExp('(?:^|[^a-z])'+w).test(lnorm));
+          if(hits.length>=2) score=hits.length;                                                        // "loseta cribada", "green block"
+          else if(hits.length===1 && frec[hits[0]]===1) score=1;                                       // token exclusivo de UN producto ("cordon", "liston")
+        }
+        if(score>mejorScore){ mejorScore=score; mejor=p; }
+      });
+      if(!mejor) return;
+      const key=mejor.codigo||mejor.nombre; if(vistos.has(key)) return; vistos.add(key);
+      // cantidades en la MISMA línea del producto; las unidades se buscan con los m² ya sacados
+      // para que "25 m2" no se lea también como "25 unidades"
+      const mM=lnorm.match(RE_M2);
+      const sinM2=lnorm.replace(new RegExp(RE_M2.source,'g'),' ');
+      const mU=sinM2.match(/(\d+(?:[.,]\d+)?)\s*(?:unidades?\b|u\b|uds?\b|piezas?\b|losetas?\b|bloques?\b|topes?\b|listones?\b|cordones?\b|metros?\b)/) || sinM2.match(/(?:^|[^0-9x])x\s*(\d{1,5})(?:$|[^0-9])/);
+      const m2=mM?num(String(mM[1]).replace(',','.')):0;
+      let cantidad=mU?Math.round(num(String(mU[1]).replace(',','.'))):0;
+      if(!cantidad && m2>0) cantidad=window.__calcUnidadesM2(mejor.nombre, m2);
+      items.push({producto:mejor.nombre, codigo:mejor.codigo||'', cantidad, m2});
+    });
+    // un solo producto sin cantidades en su línea → toma el primer "N m²" de toda la conversación
+    if(items.length===1 && !items[0].m2 && !items[0].cantidad){
+      const g=N(t).match(RE_M2);
+      if(g){ items[0].m2=num(String(g[1]).replace(',','.')); items[0].cantidad=window.__calcUnidadesM2(items[0].producto, items[0].m2); }
+    }
+    // lugar de entrega: mismas reglas que el "analizar chat" del Asistente
+    let lugar=''; const mD=t.match(/(?:direcci[oó]n|domicilio|entrega(?:r)?(?:\s+(?:ser[ií]a|es|va))?\s*(?:en)?)[:\s]+([^\n]{5,90})/i);
+    if(mD) lugar=mD[1].trim().replace(/^en\s+/i,'').replace(/[.,;]?\s*(cel|tel|whats|wsp|cuit)\b.*$/i,'').trim();
+    if(!lugar){ const lD=lineas.find(l=>/\b(calle|av\.?|avenida|ruta|barrio|b°|km ?\d|manzana|mza|lote|localidad)\b/i.test(l)); if(lD) lugar=lD.slice(0,90); }
+    // zona de flete: solo los dos casos inconfundibles; el resto lo elige Sofía en el preview
+    let zona=''; const tn=N(t);
+    if(/\bretir/.test(tn)) zona='retiro';
+    else if(/cordoba capital|capital de cordoba|\ben capital\b/.test(tn)) zona='capital';
+    return {items, lugar, zona};
+  };
 
   // Fuente de alertas EN VIVO: leads nuevos sin contactar + seguimientos vencidos/hoy
   window.__alertSources.push(()=>{ const A=[];
@@ -7631,6 +7705,85 @@ function buildFilterTable(cfg){
     const c=fb(); if(!c||!c.db) return;
     if(!confirm('¿Marcar los '+uids.length+' mensajes pendientes de este contacto como resueltos?')) return;
     uids.forEach(uid=> c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {estado:'resuelto'}).catch(e=>alert('Error: '+e.message)));
+  }
+
+  // ---------- Convertir la conversación en un lead del CRM ----------
+  // La detección (productos/m²/lugar) y el alta viven en el módulo CRM (__detectarPedidoWA /
+  // __nuevoLead) — acá solo se junta el texto, se muestra el preview editable y se confirma.
+  // El lead SIEMPRE pasa por el preview antes de crearse: nada se guarda solo.
+  const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  let convCtx=null;   // {k, msgs} de la conversación que se está convirtiendo
+
+  function filaConvHTML(it){
+    const prods=(convCtx&&convCtx.prods)||[];
+    return '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-fila>'+
+      '<select class="wab-cv-prod" style="flex:2;min-width:0"><option value="">— Elegir producto —</option>'+
+        prods.map(p=>'<option value="'+esc(p.nombre)+'"'+(p.nombre===it.producto?' selected':'')+'>'+esc(p.nombre)+'</option>').join('')+'</select>'+
+      '<input class="wab-cv-m2" type="number" min="0" step="0.5" placeholder="m²" value="'+(num(it.m2)||'')+'" style="width:74px" title="Metros cuadrados (si los dijo)">'+
+      '<input class="wab-cv-cant" type="number" min="0" step="1" placeholder="unid." value="'+(num(it.cantidad)||'')+'" style="width:74px" title="Unidades (se calculan solas desde los m²)">'+
+      '<button type="button" class="cmp-x wab-cv-quitar" title="Sacar este renglón">✕</button>'+
+    '</div>';
+  }
+  function abrirConvertir(k){
+    if(!window.__nuevoLead || !window.__detectarPedidoWA){ alert('El módulo CRM no está disponible.'); return; }
+    const msgs=DB.pendientes.filter(i=>(i.waId||i.telefono||i.nombre||'?')===k)
+      .sort((a,b)=>(a.creadoEn&&a.creadoEn.seconds||0)-(b.creadoEn&&b.creadoEn.seconds||0));
+    if(!msgs.length) return;
+    const base=msgs[msgs.length-1];   // el más reciente manda para nombre/teléfono
+    const det=window.__detectarPedidoWA(msgs.map(m=>m.mensaje||'').join('\n'))||{items:[],lugar:'',zona:''};
+    convCtx={k, msgs, prods:(window.__catalogoVendible?window.__catalogoVendible():[])};
+    const zs=(window.__fleteZonas?window.__fleteZonas():[]);
+    const zonasOpt=(zs.some(z=>!z.k)?'':'<option value="">— A definir —</option>')+
+      zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(z.k)===String(det.zona||'')?' selected':'')+'>'+esc(z.l)+'</option>').join('');
+    const filas=(det.items&&det.items.length?det.items:[{producto:'',cantidad:0,m2:0}]);
+    $('wab-conv-body').innerHTML =
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Datos detectados en la conversación — corregí lo que haga falta antes de crear. La conversación completa queda guardada en la nota del lead (no se pierde nada).</div>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        '<div class="cmp-field"><label>Cliente</label><input id="wab-cv-cliente" value="'+esc(base.nombre||'')+'"></div>'+
+        '<div class="cmp-field"><label>Teléfono</label><input id="wab-cv-tel" value="'+esc(base.telefono||'')+'"></div>'+
+        '<div class="cmp-field col2"><label>Lugar de entrega</label><input id="wab-cv-lugar" value="'+esc(det.lugar||'')+'" placeholder="Localidad / dirección (si lo dijo)"></div>'+
+        '<div class="cmp-field col2"><label>Forma de entrega (flete)</label><select id="wab-cv-zona">'+zonasOpt+'</select></div>'+
+      '</div>'+
+      '<div style="font-size:12px;font-weight:700;color:var(--muted);margin:10px 0 6px">PRODUCTOS QUE PIDIÓ</div>'+
+      '<div id="wab-cv-items">'+filas.map(filaConvHTML).join('')+'</div>'+
+      '<button type="button" class="cmp-btn" id="wab-cv-agregar" style="margin-bottom:12px">+ Agregar producto</button>'+
+      '<div style="display:flex;gap:8px;justify-content:flex-end">'+
+        '<button type="button" class="cmp-btn" id="wab-cv-cancelar">Cancelar</button>'+
+        '<button type="button" class="cmp-btn cmp-btn-primary" id="wab-cv-crear">✓ Crear lead en el CRM</button>'+
+      '</div>';
+    const cont=$('wab-cv-items');
+    const recalcDe=el=>{ const f=el.closest('[data-fila]'); if(!f) return;
+      const prod=f.querySelector('.wab-cv-prod').value, m2=num(f.querySelector('.wab-cv-m2').value);
+      if(prod && m2>0 && window.__calcUnidadesM2){ const u=window.__calcUnidadesM2(prod, m2); if(u>0) f.querySelector('.wab-cv-cant').value=u; } };
+    cont.addEventListener('input', e=>{ if(e.target.classList.contains('wab-cv-m2')) recalcDe(e.target); });
+    cont.addEventListener('change', e=>{ if(e.target.classList.contains('wab-cv-prod')) recalcDe(e.target); });
+    cont.addEventListener('click', e=>{ if(e.target.classList.contains('wab-cv-quitar')){ const f=e.target.closest('[data-fila]'); if(f) f.remove(); } });
+    $('wab-cv-agregar').onclick=()=>{ cont.insertAdjacentHTML('beforeend', filaConvHTML({producto:'',cantidad:0,m2:0})); };
+    $('wab-cv-cancelar').onclick=cerrarConvertir;
+    $('wab-cv-crear').onclick=crearLeadDesdeConv;
+    $('wab-conv-modal').classList.add('open');
+  }
+  function cerrarConvertir(){ $('wab-conv-modal').classList.remove('open'); convCtx=null; }
+  function crearLeadDesdeConv(){
+    if(!convCtx) return;
+    const cliente=($('wab-cv-cliente').value||'').trim(), telefono=($('wab-cv-tel').value||'').trim();
+    if(!cliente && !telefono){ alert('Cargá al menos el nombre o el teléfono.'); return; }
+    const items=[...document.querySelectorAll('#wab-cv-items [data-fila]')].map(f=>({
+      producto:f.querySelector('.wab-cv-prod').value, m2:num(f.querySelector('.wab-cv-m2').value),
+      cantidad:num(f.querySelector('.wab-cv-cant').value), precioUnit:0, descPct:0, iva:'21'
+    })).filter(i=>i.producto);
+    const nota='Conversación de WhatsApp:\n'+convCtx.msgs.map(m=>'['+fmtFecha(m.creadoEn)+'] '+(m.mensaje||'')).join('\n');
+    const payload={ cliente, telefono, lugar:($('wab-cv-lugar').value||'').trim(), zona:$('wab-cv-zona').value||'', origen:'WhatsApp', nota };
+    if(items.length) payload.items=items;
+    const m2T=items.reduce((a,i)=>a+num(i.m2),0); if(m2T>0) payload.m2=m2T;
+    let lead=null;
+    try{ lead=window.__nuevoLead(payload); }catch(e){ alert('No se pudo crear el lead: '+e.message); return; }
+    // Marca de "ya convertida" en cada mensaje del chat (leadUid) — evita duplicar el lead
+    // y deja el vínculo. Best-effort: si una escritura falla, el lead ya quedó creado igual.
+    const c=fb(); if(c&&c.db) convCtx.msgs.forEach(m=> c.FS.updateDoc(c.FS.doc(c.db,COL,m._uid), {leadUid:(lead&&lead._uid)||'creado'}).catch(()=>{}));
+    $('wab-conv-body').innerHTML='<div style="color:var(--green);font-weight:700;padding:6px 2px">✓ Lead creado en el CRM ('+esc(cliente||telefono)+'). Lo tenés en la columna “Nuevo”.</div>';
+    convCtx=null;
+    setTimeout(()=>{ $('wab-conv-modal').classList.remove('open'); }, 1600);
   }
   function aprobarEnvio(uid){
     const c=fb(); if(!c||!c.db) return;
@@ -7691,6 +7844,11 @@ function buildFilterTable(cfg){
             '</div>':'')+
           '</div>';
         }).join('');
+      // Convertir en lead: para contactos nuevos y clientes. Un lead_existente ya está en el
+      // CRM (lo dice su etiqueta) y fábrica/proveedor no son leads. Si la conversación ya se
+      // convirtió (algún mensaje con leadUid), badge en vez de botón — no se duplica.
+      const yaLead=msgs.some(m=>m.leadUid);
+      const puedeLead=(ult.tipo==='lead_nuevo'||ult.tipo==='cliente');
       return '<div class="kb-card" style="margin-bottom:8px'+(todoResuelto?';opacity:.55':'')+'">'+
         '<div class="cli">'+esc(ult.nombre||ult.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span>'+
           (msgs.length>1?' <span class="badge">'+msgs.length+' mensajes'+(pend.length&&pend.length<msgs.length?' ('+pend.length+' pend.)':'')+'</span>':'')+'</div>'+
@@ -7698,6 +7856,8 @@ function buildFilterTable(cfg){
         filas+
         '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
           (link?'<a class="kb-wa" href="'+link+'" target="_blank" rel="noopener">💬 Abrir WhatsApp</a>':'')+
+          (puedeLead?(yaLead?'<span class="badge green" title="Esta conversación ya se pasó al CRM">✓ Convertida en lead</span>'
+                            :'<button class="kb-move" style="background:var(--blue);color:#fff;border-color:var(--blue)" data-cl="'+esc(k)+'">🆕 Convertir en Lead</button>'):'')+
           (pend.length>1?'<button class="kb-move" data-rg="'+pend.map(m=>m._uid).join(',')+'">✓ Resolver los '+pend.length+' pendientes</button>':'')+
         '</div></div>';
     }).join('') : '<div class="kb-empty">No hay mensajes'+(filtroTipo||!mostrarResueltos?' con este filtro':'')+'.</div>';
@@ -7705,6 +7865,7 @@ function buildFilterTable(cfg){
     $('wab-lista').querySelectorAll('button[data-a]').forEach(b=> b.onclick=()=>aprobarEnvio(b.dataset.a));
     $('wab-lista').querySelectorAll('button[data-x]').forEach(b=> b.onclick=()=>{ const k=b.dataset.x; if(expandidos.has(k)) expandidos.delete(k); else expandidos.add(k); render(); });
     $('wab-lista').querySelectorAll('button[data-rg]').forEach(b=> b.onclick=()=>resolverVarios(b.dataset.rg.split(',').filter(Boolean)));
+    $('wab-lista').querySelectorAll('button[data-cl]').forEach(b=> b.onclick=()=>abrirConvertir(b.dataset.cl));
   }
 
   function startSync(){
@@ -7726,6 +7887,8 @@ function buildFilterTable(cfg){
     if(fuera.length) A.push({sev:'info', area:'WhatsApp', t:fuera.length+' mensaje'+(fuera.length>1?'s':'')+' llegado'+(fuera.length>1?'s':'')+' fuera de horario', act:'Revisar la Bandeja WhatsApp al abrir.', go:{page:'Bandeja WhatsApp'}});
     return A; });
 
+  $('wab-conv-cerrar').onclick=cerrarConvertir;
+  $('wab-conv-modal').addEventListener('click',e=>{ if(e.target===$('wab-conv-modal')) cerrarConvertir(); });
   boot();
 })();
 </script>
@@ -9228,9 +9391,7 @@ function buildFilterTable(cfg){
   // Si un código no tiene foto (Flete, o uno nuevo sin cargar), simplemente no se agrega — no rompe el documento.
   const IMG_PRODUCTO = {
     ULC60:'ULC60.png', ULC40:'ULC40.png', UGB35:'UGB.png', UGC35:'UGC.png', UGR35:'UGR.png',
-    // El Listón 60x8x6 es UL60. ULL50 queda como alias del código viejo (estaba mal): si alguna ficha
-    // de Base de Datos todavía lo tiene así, la foto sigue apareciendo hasta que se corrija el código.
-    TEC50:'TEC50.png', TET50:'TET50.png', UL60:'UL60.png', ULL50:'UL60.png', UCC10:'UCC10.png',
+    TEC50:'TEC50.png', TET50:'TET50.png', UL60:'UL60.png', UCC10:'UCC10.png',
     TET100:'TET100.png', TER100:'TER100.png'
   };
   function celdaCodigo(codigo){
