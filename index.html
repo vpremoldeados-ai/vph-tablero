@@ -64,6 +64,11 @@
   /* Variante compacta: para formularios densos donde la opción es solo una etiqueta corta */
   .tile.mini{min-width:0;padding:6px 12px;flex-direction:row;align-items:center}
   .tile.mini .nm{font-size:12.5px}
+  /* Variante con foto del producto a la izquierda del nombre (selector de productos del CRM).
+     Si la foto no existe se quita sola (onerror) y queda el texto, por eso .tx sigue siendo una columna. */
+  .pf-pick.wfoto,.tile.wfoto{flex-direction:row;align-items:center;gap:7px}
+  .pf-pick .ph,.tile .ph{width:28px;height:28px;flex:0 0 auto;object-fit:cover;border-radius:5px;background:var(--bg,#f1f5f9)}
+  .pf-pick .tx,.tile .tx{display:flex;flex-direction:column;gap:1px;min-width:0}
   .pf-qty{display:flex;gap:3px;align-items:center}
   .pf-qty button{width:24px;height:26px;border:1px solid var(--border);background:var(--card,#fff);border-radius:7px;cursor:pointer;font-size:15px;font-weight:800;line-height:1;color:var(--text);padding:0}
   .pf-qty button:hover{border-color:var(--accent);color:var(--accent)}
@@ -6083,25 +6088,37 @@ function buildFilterTable(cfg){
     const pallets=Math.max(Math.ceil(frac-1e-9), Math.ceil(kg/tope), 1);
     return {pallets, costo: zonaCosto(zona)*pallets, kg};
   }
+  // Pallets a COBRAR: los que calcula el sistema, salvo que se hayan cargado a mano en `palletsFlete`.
+  // Por qué existe el manual: la cuenta automática arma pallets completos (155 losetas de 75 por pallet
+  // = 3 pallets: 75+75+5), pero en la fábrica se acomodan distinto (2 pallets: 80+75) y ahí se cobran 2.
+  // ⚠️ El manual SOLO se aplica si el automático dio al menos 1 pallet: si se borraron todos los
+  // productos no se cobra un flete fantasma con un número que quedó pegado de antes.
+  const palletsFleteDe=(p,f)=>{ const man=Math.round(num(p&&p.palletsFlete)); return (man>0 && f.pallets>0) ? man : f.pallets; };
   // Reemplaza el renglón "Flete" del presupuesto según la zona y los ítems actuales.
   function aplicarFlete(p){
     p.items=(p.items||[]).filter(it=>!esItemFlete(it));
     const f=calcFlete(p.items, p.zona);
-    if(f.costo>0){
+    const pallets=palletsFleteDe(p,f);
+    const costo=zonaCosto(p.zona)*pallets;
+    if(costo>0){
       const sf=/sin facturar|sin factura/i.test(p.listaPrecios||'');
       const iva= sf?'nogravado':'21';
       // El precio de zona es FINAL (con IVA) por pallet, igual que en el cotizador → se netea para el renglón,
       // como hace aplicarProducto con los productos. Descripción simple: "Flete", cantidad = pallets,
       // precio unitario = costo por pallet — sin repetir el nombre de la zona ni el conteo entre paréntesis.
       const precioUnit = sf ? round2(zonaCosto(p.zona)) : round2(zonaCosto(p.zona)/1.21);
-      p.items.push({desc:'Flete', codigo:'FLETE', cant:f.pallets, precioUnit, descPct:0, iva});
+      p.items.push({desc:'Flete', codigo:'FLETE', cant:pallets, precioUnit, descPct:0, iva});
     }
-    return f;
+    return Object.assign({}, f, {pallets, costo, palletsAuto:f.pallets, manual:pallets!==f.pallets});
   }
   window.__fleteZonas = ()=> ZONAS.map(z=>({k:z.k,l:z.l}));
   // Cotiza el flete desde otro módulo (lo usa el CRM para el detalle en vivo del lead).
-  // items: [{desc, codigo, cant}] → {pallets, costo, kg, label, precioPallet}
-  window.__fleteCotizar = (items, zona)=>{ const f=calcFlete(items, zona); return Object.assign({}, f, {label:zonaLabel(zona), precioPallet:zonaCosto(zona)}); };
+  // items: [{desc, codigo, cant}] → {pallets, costo, kg, label, precioPallet, palletsAuto, manual}
+  // palletsManual (opcional): pallets cargados a mano; sin él la cotización es la automática de siempre.
+  window.__fleteCotizar = (items, zona, palletsManual)=>{ const f=calcFlete(items, zona);
+    const pallets=palletsFleteDe({palletsFlete:palletsManual}, f);
+    return Object.assign({}, f, {pallets, costo:zonaCosto(zona)*pallets, palletsAuto:f.pallets,
+      manual:pallets!==f.pallets, label:zonaLabel(zona), precioPallet:zonaCosto(zona)}); };
   // Abre la vista previa/PDF de un presupuesto ya guardado (la usa el CRM para el PDF de un toque)
   window.__presupuestoImprimir = p=>{ if(window.__imprimir&&window.__imprimir.presupuesto) window.__imprimir.presupuesto(paraDoc(p)); else alert('Módulo de Documentos no disponible.'); };
   const estadoLbl=k=>{ const e=ESTADOS.find(x=>x.k===k); return e?e.l:k; };
@@ -6228,7 +6245,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], zona:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
+  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], zona:'', palletsFlete:0, items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
   let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
   function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
   function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
@@ -6418,6 +6435,7 @@ function buildFilterTable(cfg){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
     if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
     p.zona = lead.zona||'';
+    p.palletsFlete = Math.round(num(lead.palletsFlete))||0;   // pallets armados a mano en el lead (0 = automático)
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     // Cantidad cargada en el lead ya incluye el 5% de recortes (CRM, recalcUnidades) — se aclara acá para que el cliente vea por qué el número no es el m² × u/m² "justo".
@@ -7331,7 +7349,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null, estadoAlAbrir=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); estadoAlAbrir = l ? (l.estado||'nuevo') : null; editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -7440,9 +7458,13 @@ function buildFilterTable(cfg){
     cont.innerHTML = prods.map((p,i)=>{
       const br=precioLista(p,lista)||num(p.precioMinorista)||num(p.precioMayorista);
       const on=enUso.has(String(p.codigo||'').trim().toUpperCase());
-      return '<button type="button" class="tile'+(on?' on':'')+'" data-pick="'+i+'" title="'+esc(p.nombre)+'">'+
-        '<span class="nm">'+esc(p.nombre)+'</span>'+
-        '<span class="pr">'+(br?money(br):'sin precio')+(p.codigo?(' · '+esc(p.codigo)):'')+'</span></button>';
+      // Foto del producto a la izquierda del nombre — las mismas del PDF (carpeta Productos/, por
+      // código). Si el producto no tiene foto, el botón queda como antes: solo texto.
+      const foto = window.__fotoProducto ? window.__fotoProducto(p.codigo) : '';
+      return '<button type="button" class="tile'+(on?' on':'')+(foto?' wfoto':'')+'" data-pick="'+i+'" title="'+esc(p.nombre)+'">'+
+        (foto?'<img class="ph" src="'+esc(foto)+'" alt="" onerror="this.remove()">':'')+
+        '<span class="tx"><span class="nm">'+esc(p.nombre)+'</span>'+
+        '<span class="pr">'+(br?money(br):'sin precio')+(p.codigo?(' · '+esc(p.codigo)):'')+'</span></span></button>';
     }).join('');
     cont.querySelectorAll('button[data-pick]').forEach(b=> b.onclick=()=> agregarRapido(prods[+b.dataset.pick]));
   }
@@ -7457,13 +7479,15 @@ function buildFilterTable(cfg){
       '<td><input data-i="'+i+'" data-k="precioUnit" value="'+num(it.precioUnit)+'" style="width:90px"></td>'+
       '<td><input data-i="'+i+'" data-k="descPct" value="'+num(it.descPct)+'" style="width:50px"></td>'+
       '<td><select data-i="'+i+'" data-k="iva" style="width:78px">'+optAlic(ALICUOTAS,it.iva||'21')+'</select></td>'+
-      '<td class="num">'+money(base*(1+al/100))+'</td>'+
+      '<td class="num" id="cf-sub-'+i+'">'+money(base*(1+al/100))+'</td>'+
       '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>'; }).join('');
+    // ⚠️ NO llamar a drawItems() mientras se tipea: reconstruye el <tbody> entero, el <input> que está
+    // en uso se destruye a mitad de camino y el foco se pierde → solo entraba UN dígito (era el bug de
+    // la carga de m²). Se refrescan SOLO los números calculados, sin tocar los <input>.
     $('cf-items').querySelectorAll('input,select').forEach(el=>{ const ev=el.tagName==='SELECT'?'change':'input'; el.addEventListener(ev,()=>{ const i=+el.dataset.i, k=el.dataset.k;
       editing.items[i][k]= (k==='cantidad'||k==='m2'||k==='precioUnit'||k==='descPct')?num(el.value):el.value;
       if(k==='m2' && recalcUnidades(i)){ const cq=$('cf-items').querySelector('input[data-i="'+i+'"][data-k="cantidad"]'); if(cq) cq.value=editing.items[i].cantidad; }
-      if(k==='cantidad'||k==='m2'||k==='precioUnit'||k==='descPct'||k==='iva'){ drawItems(); }
-      drawFleteBox(); }); });
+      updateRow(i); drawFleteBox(); }); });
     // Al elegir el producto (change/blur): fija el código, recalcula las unidades si ya hay m² cargados
     // y auto-completa precio + IVA desde el catálogo (misma regla que Ventas/Presupuestos) — así el
     // presupuesto que sale del lead ya trae los mismos números, sin tener que re-cargarlos.
@@ -7471,11 +7495,17 @@ function buildFilterTable(cfg){
       if(p){ editing.items[i].producto=p.nombre; editing.items[i].codigo=p.codigo||''; aplicarProducto(editing.items[i],p,editing.listaPrecios); }
       recalcUnidades(i); drawItems(); }));
     $('cf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); });
-    const tot=editing.items.reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
-    $('cf-tot-box').innerHTML = tot>0 ? 'Total ítems (con IVA): <b>'+money(tot)+'</b>' : '';
+    updateTot();
     drawPicker();
     drawFleteBox();
   }
+  // Refresca solo el subtotal de una fila y el total general, sin re-renderizar la tabla (ver el
+  // comentario de arriba: re-renderizar mientras se tipea rompe la carga de números de varios dígitos).
+  function updateRow(i){ const it=editing.items[i]; if(!it) return;
+    const c=$('cf-sub-'+i); if(c) c.textContent=money(itemBase(it)*(1+itemAlic(it)/100));
+    updateTot(); }
+  function updateTot(){ const tot=editing.items.reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
+    const b=$('cf-tot-box'); if(b) b.innerHTML = tot>0 ? 'Total ítems (con IVA): <b>'+money(tot)+'</b>' : ''; }
   // Detalle del flete en vivo: pallets que ocupan las unidades pedidas × precio de la forma de entrega elegida.
   function drawFleteBox(){
     const box=$('cf-flete-box'); if(!box) return;
@@ -7483,12 +7513,35 @@ function buildFilterTable(cfg){
     if(!zona){ box.innerHTML='<span style="color:var(--muted)">Elegí la <b>forma de entrega</b> arriba para calcular el flete.</span>'; return; }
     if(!window.__fleteCotizar){ box.innerHTML=''; return; }
     const items=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
-    const f=window.__fleteCotizar(items, zona);
+    const f=window.__fleteCotizar(items, zona, editing.palletsFlete);
     const cab='🚚 <b>'+esc(f.label||'')+'</b>';
     if(!items.some(it=>it.cant>0)){ box.innerHTML=cab+' · <span style="color:var(--muted)">cargá productos con cantidad para calcular el flete</span>'; return; }
     if(f.precioPallet<=0){ box.innerHTML=cab+' · <b style="color:var(--green)">sin flete</b> <span style="color:var(--muted)">('+f.pallets+' pallet'+(f.pallets!==1?'s':'')+' · '+num(f.kg).toLocaleString('es-AR')+' kg)</span>'; return; }
-    box.innerHTML=cab+' · '+f.pallets+' pallet'+(f.pallets!==1?'s':'')+' × '+money(f.precioPallet)+' = <b style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+    box.innerHTML=cab+' · <span id="cf-flete-det">'+f.pallets+' pallet'+(f.pallets!==1?'s':'')+'</span> × '+money(f.precioPallet)+' = <b id="cf-flete-costo" style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+      // Pallets a cobrar editables: la cuenta automática llena pallets completos, pero en la fábrica se
+      // acomodan distinto (155 losetas en 2 pallets de 80 y 75, en vez de 3). Vacío o 0 = automático.
+      '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
+        '<label for="cf-pallets" style="font-size:11.5px;color:var(--muted);font-weight:700">Pallets a cobrar</label>'+
+        '<input id="cf-pallets" inputmode="numeric" value="'+esc(f.pallets)+'" style="width:58px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700">'+
+        (f.manual?'<button type="button" class="cmp-rowbtn" id="cf-pallets-auto">↺ Volver al automático ('+f.palletsAuto+')</button>':'')+
+      '</div>'+
+      (f.manual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Pallets armados a mano. Por cantidad y peso darían <b>'+f.palletsAuto+'</b>: si cambiás los productos, revisá que este número siga estando bien.</div>':'')+
       '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Peso total '+num(f.kg).toLocaleString('es-AR')+' kg · el flete se consolida entre productos (tope '+num(window.__param('kgPorPallet',1500)).toLocaleString('es-AR')+' kg por pallet). Se agrega como renglón al generar el presupuesto.</div>';
+    const inp=$('cf-pallets');
+    if(inp){
+      // Mientras se tipea se actualizan SOLO los dos números (mismo motivo que en la tabla de ítems:
+      // redibujar la caja entera destruiría el input y no se podría escribir un número de 2 dígitos).
+      inp.addEventListener('input',()=>{
+        const v=Math.max(0, Math.round(num(inp.value)));
+        editing.palletsFlete=v;
+        const pl = v>0 ? v : f.palletsAuto;
+        const d=$('cf-flete-det'), c=$('cf-flete-costo');
+        if(d) d.textContent = pl+' pallet'+(pl!==1?'s':'');
+        if(c) c.textContent = money(pl*f.precioPallet);
+      });
+      inp.addEventListener('change', drawFleteBox);   // al salir del campo se repinta con el aviso/botón
+    }
+    if($('cf-pallets-auto')) $('cf-pallets-auto').onclick=()=>{ editing.palletsFlete=0; drawFleteBox(); };
   }
   function drawSegui(){
     $('cf-segui').innerHTML = (editing.seguimiento||[]).filter(Boolean).length ? editing.seguimiento.filter(Boolean).slice().reverse().map(s=>'<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b style="color:var(--muted)">'+esc(s.fecha)+':</b> '+esc(s.texto)+'</div>').join('') : '<span style="color:var(--muted)">Sin notas de seguimiento.</span>';
@@ -9182,6 +9235,11 @@ function buildFilterTable(cfg){
     const img = IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()];
     return (img?'<img src="Productos/'+img+'" alt="" style="width:24px;height:24px;object-fit:cover;border-radius:3px;vertical-align:middle;margin-right:4px" onerror="this.remove()">':'')+esc(codigo||'');
   }
+  // Ruta de la foto de un producto por su código, para reusar las MISMAS fotos del PDF fuera de este
+  // módulo (la consume el selector de productos del CRM). '' si ese código no tiene foto cargada.
+  // Se llama en tiempo de click (al abrir el form del lead), no durante la carga: este módulo se
+  // define después del CRM en el archivo.
+  window.__fotoProducto = codigo => { const img=IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()]; return img?('Productos/'+img):''; };
   // ---------- Detalle de Venta / Presupuesto ----------
   function detalle(v, esPresupuesto){
     const cli=buscarCliente(v.cliente,v.cuit)||{};
