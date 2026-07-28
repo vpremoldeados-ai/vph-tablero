@@ -762,6 +762,7 @@
         <button class="kb-viewbtn" id="crm-ver-archivados" title="Los leads Confirmados (venta) y Perdidos se archivan solos y no aparecen en el listado — tocá acá para verlos igual">📦 Ver archivados</button>
         <span class="result-count" id="crm-count" style="margin:0 0 0 auto"></span>
       </div>
+      <div id="crm-sinsegui" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.5;color:#7a5b00"></div>
       <div class="filter-bar" id="crm-filtros" style="display:none"></div>
       <div class="kb-board" id="crm-board"></div>
       <div class="tbl-wrap" id="crm-tabla-wrap" style="display:none"><table class="crm-tbl" id="crm-tabla"></table></div>
@@ -7140,6 +7141,46 @@ function buildFilterTable(cfg){
     // "nuevo" cuenta desde que ENTRÓ el lead (plazo para el 1er contacto); el resto, desde hoy.
     if(dias>0) l.proximoSeguimiento = addDiasHabiles(est==='nuevo' ? (l.fecha||hoyISO) : hoyISO, dias);
   }
+  // ---------- Leads sin próximo contacto agendado ----------
+  // Los leads viejos (cargados antes de que existiera el auto-seguimiento) quedaron sin fecha y se caen
+  // del radar: no salen en la alerta de la Vista Diaria ni en las tareas del Asistente. Acá se les
+  // calcula la fecha DESDE SU FECHA DE ALTA (+ los días hábiles que corresponden a su etapa), que es
+  // lo que habría pasado si hubieran entrado hoy.
+  // ⚠️ Por qué NO se hace solo y en silencio: cuando el Asistente da por hecho un seguimiento, deja el
+  // campo VACÍO a propósito. Si un backfill automático lo volviera a llenar, esos leads reaparecerían
+  // para siempre y el Asistente pediría contactarlos una y otra vez. Por eso es una acción explícita y
+  // se sella `seguiAgendado`: un lead ya procesado nunca se vuelve a ofrecer.
+  function proxSeguiSugerido(l){
+    const est=l.estado||'nuevo';
+    if(SIN_SEGUIMIENTO.includes(est)) return '';
+    const dias=HORARIO_SEGUIMIENTO()[est];
+    return dias>0 ? addDiasHabiles(l.fecha||hoyISO, dias) : '';
+  }
+  const leadsSinSegui = ()=> (DB.leads||[]).filter(l=>
+    !l.proximoSeguimiento && !l.seguiAgendado && ACTIVOS.includes(l.estado||'nuevo') && proxSeguiSugerido(l));
+  function renderSinSegui(){
+    const box=$('crm-sinsegui'); if(!box) return;
+    const faltan=leadsSinSegui();
+    if(!faltan.length){ box.style.display='none'; box.innerHTML=''; return; }
+    const vencidos=faltan.filter(l=>proxSeguiSugerido(l)<hoyISO).length;
+    box.style.display='';
+    box.innerHTML='📅 <b>'+faltan.length+' lead'+(faltan.length!==1?'s':'')+' sin próximo contacto agendado</b> — '+
+      'se les puede calcular la fecha desde su día de alta, según la etapa en la que están.'+
+      (vencidos?(faltan.length>1?(' <b>'+vencidos+'</b> de ellos ya '+(vencidos===1?'quedaría vencido':'quedarían vencidos')):' Ya quedaría vencido')+
+        ' (son leads viejos que nunca se retomaron).':'')+
+      ' <button class="cmp-rowbtn" id="crm-agendar-faltantes" style="border-color:var(--amber);color:#7a5b00;font-weight:800;margin-left:4px">Agendar seguimiento</button>';
+    $('crm-agendar-faltantes').onclick=agendarFaltantes;
+  }
+  function agendarFaltantes(){
+    const faltan=leadsSinSegui(); if(!faltan.length) return;
+    const muestra=faltan.slice(0,8).map(l=>'· '+(l.cliente||l.telefono||'(sin nombre)')+' → '+fmtFecha(proxSeguiSugerido(l))).join('\n');
+    if(!confirm('Se le va a agendar el próximo contacto a '+faltan.length+' lead'+(faltan.length!==1?'s':'')+':\n\n'+
+      muestra+(faltan.length>8?('\n… y '+(faltan.length-8)+' más'):'')+
+      '\n\nLos que ya pasaron de fecha van a aparecer como vencidos en la Vista Diaria y en el Asistente, que es justamente lo que hay que retomar.\n\n¿Agendar?')) return;
+    faltan.forEach(l=>{ l.proximoSeguimiento=proxSeguiSugerido(l); l.seguiAgendado=hoyISO; persist(l); });
+    render();
+    alert('✅ Listo: '+faltan.length+' lead'+(faltan.length!==1?'s':'')+' con seguimiento agendado.');
+  }
   // "Contactado" se quitó como columna del pipeline; ahora es un flag booleano en el lead (l.contactado).
   // Migración perezosa: cualquier lead viejo con estado 'contactado' vuelve a 'nuevo' marcado como contactado.
   function normalizarLeads(){ (DB.leads||[]).forEach(l=>{ if(l.estado==='contactado'){ l.estado='nuevo'; if(l.contactado===undefined) l.contactado=true; } }); }
@@ -7244,6 +7285,7 @@ function buildFilterTable(cfg){
     // archivados y ocultos, salvo que Sofía tilde "Ver archivados" o filtre ese estado a mano.
     const ocultarArchivados = !verArchivados && !filtro.estado;
     const leadsVista = ocultarArchivados ? leads.filter(l=>!ARCHIVADOS.includes(l.estado||'nuevo')) : leads;
+    renderSinSegui();
     if(VIEW==='lista') drawTabla(leadsVista); else drawBoard(leadsVista);
     const archivados = leads.length - leadsVista.length;
     $('crm-count').textContent = leadsVista.length+' leads'+(archivados?' · '+archivados+' archivados ocultos':'');
