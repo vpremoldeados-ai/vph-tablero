@@ -1227,6 +1227,55 @@
     </section>
   </div>
 
+  <div class="page" id="page-libroiva">
+    <section>
+      <h2><span class="dot" style="background:var(--orange)"></span>Libro IVA Mensual</h2>
+      <div class="asof">Genera automáticamente el libro IVA de ventas y compras para enviar al contador</div>
+
+      <div style="display:flex;gap:20px;align-items:flex-end;margin:20px 0;flex-wrap:wrap">
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Mes</label>
+          <select id="liv-mes" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;width:140px">
+            <option value="01">Enero</option>
+            <option value="02">Febrero</option>
+            <option value="03">Marzo</option>
+            <option value="04">Abril</option>
+            <option value="05">Mayo</option>
+            <option value="06">Junio</option>
+            <option value="07">Julio</option>
+            <option value="08">Agosto</option>
+            <option value="09">Septiembre</option>
+            <option value="10">Octubre</option>
+            <option value="11">Noviembre</option>
+            <option value="12">Diciembre</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Año</label>
+          <input type="number" id="liv-anio" value="2026" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;width:100px">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin:20px 0;flex-wrap:wrap">
+        <button class="btn btn-primary" id="liv-descargar-ventas" style="background:var(--green)">📥 Descargar IVA Ventas</button>
+        <button class="btn btn-primary" id="liv-descargar-compras" style="background:var(--red)">📥 Descargar IVA Compras</button>
+        <button class="btn btn-primary" id="liv-descargar-ambos" style="background:var(--blue)">📥 Descargar Ambos (un Excel, 2 hojas)</button>
+      </div>
+
+      <div style="margin-top:30px;padding:14px;background:var(--bg,#f8fafc);border-radius:8px;border-left:3px solid var(--blue)">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">ℹ️ Información</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.6">
+          • Se genera el libro con <b>todas las ventas/compras facturadas</b> del mes seleccionado<br>
+          • Descarga en formato Excel listo para enviar al contador<br>
+          • Incluye: Facturación, Notas de Crédito, Notas de Débito<br>
+          • Solo si tienen N° de Comprobante, Tipo y Condición IVA cargados<br>
+        </div>
+      </div>
+
+      <div id="liv-estado" style="margin-top:20px;font-size:13px;color:var(--muted)"></div>
+    </section>
+  </div>
+
   <footer>Tablero de Dirección VPH · Vassallo Premoldeados de Hormigón · Toledo, Córdoba · Datos en vivo de los módulos del Tablero — resumen para decisiones, no reemplaza la contabilidad.</footer>
 </main>
 
@@ -1268,7 +1317,8 @@ const PAGES = [
   { id:'costosfijos', nombre:'Costos Fijos', ico:'📌' },
   { id:'basedatos', nombre:'Base de Datos', ico:'📇' },
   { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
-  { id:'fiscal', nombre:'Fiscal', ico:'✓' }
+  { id:'fiscal', nombre:'Fiscal', ico:'✓' },
+  { id:'libroiva', nombre:'Libro IVA', ico:'📚' }
 ];
 // Permisos por rol (fail-closed). 'admin' ve todo; 'produccion' solo la carga operativa; cualquier otro rol → nada.
 const PERMISOS = { produccion: ['prodent'] };
@@ -2221,6 +2271,7 @@ function buildFilterTable(cfg){
   // y en Costos Fijos por separado, así que renombrar una categoría descuadraba los dos números.
   const CAT_FIJOS=()=> window.__catComprasFijas();
   const CAT_VARIABLES=['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
+  window.__comprasTodas = ()=> (DB.compras||[]).slice();   // lectura para el Libro IVA
   window.__resumenCompras = ()=>{
     if(!DB.compras || !DB.compras.length) return null;
     const meses={};
@@ -4624,6 +4675,7 @@ function buildFilterTable(cfg){
   [$('vnt-modal'),$('vnt-modal-cobro')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
 
   window.__ventaCalc = calc;   // expuesto para el módulo Documentos (totales de venta)
+  window.__ventasTodas = ()=> (DB.ventas||[]).slice();   // lectura para el Libro IVA
   // Crear una venta pre-cargada desde un lead del CRM
   window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
@@ -10102,6 +10154,214 @@ function buildFilterTable(cfg){
   if(window.__fbctx && window.__fbctx.auth && window.__fbctx.auth.currentUser) subscribir();
   setInterval(pintar, 8000);   // backstop (los cambios de conexión ya repintan solos)
   pintar();
+})();
+</script>
+
+<!-- ===== MÓDULO LIBRO IVA ===== -->
+<script>
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const num=v=>{ const n=parseFloat(v); return isFinite(n)?n:0; };
+  const round2=n=>Math.round(n*100)/100;
+  const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+  // Carga perezosa de SheetJS (mismo criterio que Tesseract: versión fija + SRI, se descarga solo al usar el botón)
+  let xlsxProm=null;
+  function cargarXLSX(){
+    if(window.XLSX) return Promise.resolve(window.XLSX);
+    if(xlsxProm) return xlsxProm;
+    xlsxProm=new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.integrity='sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw';
+      s.crossOrigin='anonymous';
+      s.onload=()=> window.XLSX ? res(window.XLSX) : rej(new Error('la librería no expuso XLSX'));
+      s.onerror=()=> rej(new Error('no se pudo descargar la librería de Excel (¿sin conexión?)'));
+      document.head.appendChild(s);
+    }).catch(e=>{ xlsxProm=null; throw e; });
+    return xlsxProm;
+  }
+
+  function fmtFechaAR(iso){ const p=String(iso||'').slice(0,10).split('-'); return p.length===3 ? p[2]+'/'+p[1]+'/'+p[0] : String(iso||''); }
+  function fmtCuit(c){ const d=String(c||'').replace(/\D/g,''); return d.length===11 ? d.slice(0,2)+'-'+d.slice(2,10)+'-'+d.slice(10) : String(c||''); }
+  function fmtComprobante(r){
+    const nro=String(r.nroFactura||'').replace(/\D/g,'');
+    if(!nro) return String(r.nroFactura||'');
+    const pv=String(r.puntoVenta||'').replace(/\D/g,'');
+    return (pv?pv.padStart(4,'0'):'0000')+'-'+nro.padStart(8,'0');
+  }
+
+  // La ficha de Base de Datos tiene el texto real ("Responsable Inscripto"); si no está, se deriva de la letra.
+  const COND_TXT={A:'Responsable Inscripto', M:'Responsable Inscripto', B:'Consumidor Final', C:'Monotributo'};
+  function condDe(nombre, letra, catalogo){
+    const n=String(nombre||'').trim().toLowerCase();
+    const ficha=(catalogo||[]).find(x=> String(x.nombre||'').trim().toLowerCase()===n);
+    if(ficha && ficha.condIva && String(ficha.condIva).trim().length>2) return String(ficha.condIva).trim();
+    return COND_TXT[String(letra||'').toUpperCase()] || String(letra||'');
+  }
+
+  // Desglose por alícuota (mismas reglas que calc() de Ventas/Compras: descPct por renglón, descGeneral global).
+  // Una Nota de Crédito va en NEGATIVO — resta del libro, igual que en el resto del Tablero.
+  function desglose(r){
+    const f=1-num(r.descGeneral)/100;
+    let noGrav=0, exento=0, grav=0, iva21=0, iva105=0, ivaOtras=0;
+    (r.items||[]).forEach(it=>{
+      const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*f;
+      if(it.iva==='nogravado') noGrav+=b;
+      else if(it.iva==='exento') exento+=b;
+      else { const al=num(it.iva); grav+=b;
+        if(al===21) iva21+=b*0.21;
+        else if(al===10.5) iva105+=b*0.105;
+        else if(al>0) ivaOtras+=b*al/100; }
+    });
+    const signo = r.tipoComprobante==='Nota de Crédito' ? -1 : 1;
+    return { noGrav:round2(noGrav*signo), exento:round2(exento*signo), grav:round2(grav*signo),
+             iva21:round2(iva21*signo), iva105:round2(iva105*signo), ivaOtras:round2(ivaOtras*signo), esNC:signo<0 };
+  }
+
+  function tipoCorto(r, esVenta){
+    const t=String(r.tipoComprobante||'');
+    if(t==='Nota de Crédito') return 'NC';
+    if(t==='Nota de Débito') return 'ND';
+    if(esVenta){
+      if(t==='Factura A') return 'FEA';
+      if(t==='Factura B') return 'FEB';
+      if(t==='Factura C') return 'FEC';
+      return t;
+    }
+    const letra=String(r.condIva||'').toUpperCase();   // en Compras la letra del comprobante vive en condIva
+    return letra ? 'F'+letra : 'F';
+  }
+
+  // Solo lo FACTURADO entra al libro (criterio de Marcelo 28/07): tiene que tener tipo de comprobante
+  // de factura/nota Y número de comprobante cargado. Lo demás (Sin factura, presupuestos, remitos,
+  // compras sin número) queda afuera.
+  const VENTAS_FACTURADAS=['Factura A','Factura B','Factura C','Nota de Crédito','Nota de Débito'];
+  function ventasDe(pref){
+    return (window.__ventasTodas?window.__ventasTodas():[])
+      .filter(v=> String(v.fecha||'').slice(0,7)===pref)
+      .filter(v=> VENTAS_FACTURADAS.includes(v.tipoComprobante) && String(v.nroFactura||'').trim())
+      .sort((a,b)=> String(a.fecha||'').localeCompare(String(b.fecha||'')));
+  }
+  function comprasDe(pref){
+    return (window.__comprasTodas?window.__comprasTodas():[])
+      .filter(c=> String(c.fecha||'').slice(0,7)===pref)
+      .filter(c=> String(c.nroFactura||'').trim())
+      .sort((a,b)=> String(a.fecha||'').localeCompare(String(b.fecha||'')));
+  }
+
+  function armarHoja(X, tipoLibro, mesNum, anio, regs){
+    const esVenta = tipoLibro==='Ventas';
+    const catalogo = esVenta ? (window.__catalogoClientes?window.__catalogoClientes():[])
+                             : (window.__catalogoProveedores?window.__catalogoProveedores():[]);
+    const filas = regs.map(r=>({ r, d:desglose(r) }));
+
+    // Columnas de IVA como el modelo del contador: Ventas lleva "IVA 21%"; Compras lleva "IVA 10,5%" y
+    // "IVA 21%". Una alícuota rara (27/5/2,5) suma su columna aparte SOLO si aparece — nunca se mezcla.
+    const con105 = !esVenta || filas.some(x=> x.d.iva105!==0);
+    const conOtras = filas.some(x=> x.d.ivaOtras!==0);
+    const cabIva = [];
+    if(con105) cabIva.push('IVA 10,5%');
+    cabIva.push('IVA 21%');
+    if(conOtras) cabIva.push('IVA otras alíc.');
+    const numsDe = t=>{ const a=[]; if(con105) a.push(round2(t.iva105)); a.push(round2(t.iva21)); if(conOtras) a.push(round2(t.ivaOtras)); return [round2(t.noGrav), round2(t.exento), round2(t.grav)].concat(a); };
+
+    const head=['Fecha','Tipo','N° de Comprobante','Razón Social','CUIT / DNI','Condición de IVA','Neto No Grav.','Neto Exento','Neto Grav.'].concat(cabIva);
+    const data=[
+      ['Razón Social: VPH SAS'],
+      ['Nº C.U.I.T.: 30-71784004-2','','','','','Libro IVA '+tipoLibro],
+      ['','','','','','Periodo: '+MESES[mesNum-1]+' de '+anio],
+      [],
+      head
+    ];
+
+    const tot={noGrav:0,exento:0,grav:0,iva21:0,iva105:0,ivaOtras:0};
+    const totFac={noGrav:0,exento:0,grav:0,iva21:0,iva105:0,ivaOtras:0};
+    const totNC={noGrav:0,exento:0,grav:0,iva21:0,iva105:0,ivaOtras:0};
+    filas.forEach(x=>{
+      const {r,d}=x;
+      ['noGrav','exento','grav','iva21','iva105','ivaOtras'].forEach(k=>{ tot[k]+=d[k]; (d.esNC?totNC:totFac)[k]+=d[k]; });
+      data.push([ fmtFechaAR(r.fecha), tipoCorto(r,esVenta), fmtComprobante(r),
+        (esVenta?r.cliente:r.proveedor)||'', fmtCuit(r.cuit),
+        condDe(esVenta?r.cliente:r.proveedor, r.condIva, catalogo) ].concat(numsDe(d).slice(0)));
+    });
+
+    data.push(['','','','Totales','',''].concat(numsDe(tot)));
+    data.push([]);
+    data.push(['','','','','','Totales Detallados']);
+    data.push([]);
+    data.push(['','','','','',''].concat(head.slice(6)));
+    data.push(['','','','','','Por Facturación:'].concat(numsDe(totFac)));
+    data.push(['','','','','','Por Nota de Crédito:'].concat(numsDe(totNC)));
+
+    const ws=X.utils.aoa_to_sheet(data);
+    const anchos=[{wch:11},{wch:6},{wch:16},{wch:34},{wch:15},{wch:22},{wch:13},{wch:13},{wch:14}];
+    cabIva.forEach(()=>anchos.push({wch:13}));
+    ws['!cols']=anchos;
+    // Formato de número en las columnas de importes (desde la fila de encabezado hacia abajo)
+    const primeraCol=6, cols=head.length;
+    for(let fila=5; fila<data.length; fila++){
+      for(let c=primeraCol; c<cols; c++){
+        const ref=X.utils.encode_cell({r:fila, c});
+        if(ws[ref] && typeof ws[ref].v==='number') ws[ref].z='#,##0.00';
+      }
+    }
+    return ws;
+  }
+
+  async function generar(tipo){
+    const estado=$('liv-estado');
+    try{
+      const mes=$('liv-mes').value, anio=String($('liv-anio').value||'').trim();
+      if(!/^\d{4}$/.test(anio)){ alert('Revisá el año (tiene que ser un número de 4 cifras).'); return; }
+      if(!window.__ventasTodas || !window.__comprasTodas){ alert('Los datos todavía no cargaron. Esperá unos segundos y probá de nuevo.'); return; }
+      const pref=anio+'-'+mes, mesNum=parseInt(mes,10);
+      const nombrePeriodo=MESES[mesNum-1]+'_'+anio;
+
+      const quiereV = tipo==='ventas' || tipo==='ambos';
+      const quiereC = tipo==='compras' || tipo==='ambos';
+      const vs = quiereV ? ventasDe(pref) : [];
+      const cs = quiereC ? comprasDe(pref) : [];
+      if(quiereV && quiereC && !vs.length && !cs.length){ alert('No hay ventas ni compras FACTURADAS en '+MESES[mesNum-1]+' '+anio+'.\n(Solo entran las que tienen tipo de comprobante y número cargados.)'); return; }
+      if(tipo==='ventas' && !vs.length){ alert('No hay ventas facturadas en '+MESES[mesNum-1]+' '+anio+'.\n(Solo entran las que tienen tipo de comprobante y número cargados.)'); return; }
+      if(tipo==='compras' && !cs.length){ alert('No hay compras facturadas en '+MESES[mesNum-1]+' '+anio+'.\n(Solo entran las que tienen número de comprobante cargado.)'); return; }
+
+      if(estado) estado.textContent='Generando…';
+      const X=await cargarXLSX();
+      const wb=X.utils.book_new();
+      let nombre;
+      if(tipo==='ventas'){ X.utils.book_append_sheet(wb, armarHoja(X,'Ventas',mesNum,anio,vs), 'IVA Ventas'); nombre='Libro_IVA_Ventas_'+nombrePeriodo+'.xlsx'; }
+      else if(tipo==='compras'){ X.utils.book_append_sheet(wb, armarHoja(X,'Compras',mesNum,anio,cs), 'IVA Compras'); nombre='Libro_IVA_Compras_'+nombrePeriodo+'.xlsx'; }
+      else {
+        X.utils.book_append_sheet(wb, armarHoja(X,'Ventas',mesNum,anio,vs), 'IVA Ventas');
+        X.utils.book_append_sheet(wb, armarHoja(X,'Compras',mesNum,anio,cs), 'IVA Compras');
+        nombre='Libro_IVA_'+nombrePeriodo+'.xlsx';
+      }
+      X.writeFile(wb, nombre);
+      if(estado) estado.textContent='✓ Descargado: '+nombre+' — '+
+        (quiereV? vs.length+' venta'+(vs.length===1?'':'s') : '')+
+        (quiereV&&quiereC?' · ':'')+
+        (quiereC? cs.length+' compra'+(cs.length===1?'':'s') : '')+' facturadas del período.';
+    }catch(e){
+      if(estado) estado.textContent='';
+      alert('No se pudo generar el libro: '+e.message);
+      console.error('[libro IVA]', e);
+    }
+  }
+
+  function boot(){
+    // En agosto se manda lo de julio: el período arranca en el MES ANTERIOR al de hoy.
+    const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1);
+    const selMes=$('liv-mes'), inAnio=$('liv-anio');
+    if(selMes) selMes.value=String(d.getMonth()+1).padStart(2,'0');
+    if(inAnio) inAnio.value=d.getFullYear();
+    const on=(id,t)=>{ const b=$(id); if(b) b.onclick=()=>generar(t); };
+    on('liv-descargar-ventas','ventas');
+    on('liv-descargar-compras','compras');
+    on('liv-descargar-ambos','ambos');
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
 
