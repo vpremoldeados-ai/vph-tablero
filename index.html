@@ -3830,6 +3830,23 @@ function buildFilterTable(cfg){
   // Una sola opción de cheque: en VPH el de papel casi no se usa y se opera igual que el electrónico.
   const MEDIO_CHEQUE = 'Cheque / E-Cheq';
   const MEDIOS_COBRO = ['Transferencia','Efectivo',MEDIO_CHEQUE,'Tarjeta','Mercado Pago','Viumi','Retención'];
+  // VIUMI retiene su costo (arancel + IVA + costo financiero de las cuotas) y acredita el resto en la
+  // cuenta a los ~10 días. O sea: el cliente ya pagó TODO —la venta queda saldada por el bruto— pero a
+  // la caja entra MENOS y MÁS TARDE. Contarlo como plata de hoy infla el disponible y hace que el
+  // Tablero diga que alcanza cuando no alcanza. Por ahora solo VIUMI (tarjeta y MP no se usan así).
+  const esPlataforma = m => /viumi/i.test(String(m||''));
+  const addDiasISO = (iso,n)=>{ const a=String(iso||'').slice(0,10).split('-').map(Number);
+    if(a.length!==3 || !a[0]) return iso||'';
+    const d=new Date(a[0],a[1]-1,a[2]); d.setDate(d.getDate()+n);
+    const p=x=>String(x).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); };
+  // Cuenta donde acredita la plataforma: la misma que la chequera (Banco Macro VPH), configurable.
+  const chequeraCuentaV = ()=>{ const q=String(window.__param?window.__param('cuentaChequera','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
+    return (window.__cajaCuentas?window.__cajaCuentas():[]).find(x=>String(x).trim().toLowerCase()===q) || ''; };
+  // Neto que realmente entra a la cuenta. Nunca negativo: si los descuentos superan al bruto hay un
+  // error de carga, y es mejor mostrar 0 que un ingreso negativo que ensucie la caja.
+  const netoPlataforma = c => Math.max(0, num(c.monto) - num(c.arancel) - num(c.ivaArancel) - num(c.costoFin) - num(c.retenciones));
+  window.__esPlataformaCobro = esPlataforma;
+  window.__netoPlataforma = netoPlataforma;
   const esCheque = m => /cheq/i.test(String(m||''));   // cualquier variante → se sincroniza con el módulo Cheques
   // ⚠️ El <select> tiene que incluir el medio que el cobro YA tiene aunque no esté en la lista (los
   // cargados como "Cheque" o "E-Cheq" antes de unificar). Si no, no queda nada seleccionado, el
@@ -4373,14 +4390,18 @@ function buildFilterTable(cfg){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
     const lista = v.cobros.length ? v.cobros.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid '+(c.chequeRechazado?'var(--red)':'var(--border)')+';border-radius:8px;margin-bottom:6px;font-size:13px'+(cobroEdit===i?';outline:2px solid var(--blue)':'')+'">'+
-        '<span>'+fmtFecha(c.fecha)+' · '+(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+(esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>':(c.cuenta?' <span style="color:var(--muted);font-size:11px">→ '+esc(c.cuenta)+'</span>':''))+(c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
+        '<span>'+fmtFecha(c.fecha)+' · '+esc(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+
+          (esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>'
+           : esPlataforma(c.medio)?'<span style="font-size:11px;color:'+(c.acreditado?'var(--green)':'#2f6fb2')+'"> · '+(c.acreditado?'✓ acreditado':'⏳ se acredita el '+fmtFecha(c.fechaAcreditacion))+' · neto '+money(netoPlataforma(c))+(c.cuenta?' → '+esc(c.cuenta):'')+'</span>'
+           : (c.cuenta?' <span style="color:var(--muted);font-size:11px">→ '+esc(c.cuenta)+'</span>':''))+
+          (c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
         '<span style="display:flex;gap:8px;align-items:center"><b>'+money(num(c.monto))+'</b>'+
           '<button class="cmp-rowbtn" data-cedit="'+i+'">Editar</button>'+
           '<button class="cmp-rowbtn" data-cdel="'+i+'" title="Revertir / eliminar este cobro">✕</button></span></div>').join('')
       : '<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Todavía no hay cobros registrados.</p>';
     const ed = cobroEdit!=null ? v.cobros[cobroEdit] : null;
     const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO, medioDef = ed ? ed.medio : MEDIOS_COBRO[0];
-    const chShow = esCheque(medioDef);
+    const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef);
     $('vnt-form-cobro').innerHTML =
       '<p style="margin:0 0 10px;font-size:13px">'+esc(v.cliente||'—')+' — total <b>'+money(kk.total)+'</b> · cobrado <b style="color:var(--green)">'+money(kk.cobrado)+'</b> · saldo <b style="color:'+(kk.saldo>0.5?'var(--amber)':'var(--green)')+'">'+money(kk.saldo)+'</b></p>'+
       '<div style="margin-bottom:10px">'+lista+'</div>'+
@@ -4397,11 +4418,52 @@ function buildFilterTable(cfg){
           field('Banco','','<input id="vc-ch-banco" value="'+esc((ed&&ed.chBanco)||'')+'">') +
           field('Vencimiento / fecha de cobro','col2','<input type="date" id="vc-ch-venc" value="'+((ed&&ed.chVenc)||fechaDef)+'">') +
         '</div></div>'+
+      // VIUMI retiene su costo y acredita el resto a los ~10 días. El cliente ya pagó todo (el cobro va
+      // por el BRUTO y la venta queda saldada), pero a la cuenta entra el NETO y recién en esa fecha.
+      '<div id="vc-plat-extra" style="display:'+(platShow?'block':'none')+';border:1px dashed #2f6fb2;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:#2f6fb2;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Liquidación de la plataforma</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('Se acredita el','','<input type="date" id="vc-pl-fecha" value="'+esc((ed&&ed.fechaAcreditacion)||addDiasISO(fechaDef,10))+'">') +
+          field('¿En qué cuenta se acredita?','','<select id="vc-pl-cuenta">'+cuentasOpt((ed&&ed.cuenta)||chequeraCuentaV())+'</select>') +
+          field('Arancel $','','<input id="vc-pl-arancel" value="'+((ed&&num(ed.arancel))||0)+'">') +
+          field('IVA del arancel $','','<input id="vc-pl-iva" value="'+((ed&&num(ed.ivaArancel))||0)+'">') +
+          field('Costo financiero (cuotas) $','','<input id="vc-pl-cfin" value="'+((ed&&num(ed.costoFin))||0)+'">') +
+          field('Retenciones $','','<input id="vc-pl-ret" value="'+((ed&&num(ed.retenciones))||0)+'">') +
+        '</div>'+
+        '<div id="vc-pl-neto" style="font-size:13px;margin-top:8px"></div>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-weight:400;font-size:12.5px;margin-top:8px">'+
+          '<input type="checkbox" id="vc-pl-acred"'+(ed&&ed.acreditado?' checked':'')+'> Ya se acreditó en la cuenta</label>'+
+        '<p style="font-size:11.5px;color:var(--muted);margin:6px 0 0">El cobro se registra por el <b>bruto</b> (el cliente ya no debe nada), pero a la caja entra el <b>neto</b> y recién el día que se acredita. El costo de la plataforma se carga aparte, con la factura mensual de VIUMI en Compras.</p>'+
+      '</div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
     // Si es cheque, la plata no entra a ninguna cuenta todavía (entra al cobrarse, desde el módulo Cheques).
-    $('vc-medio').addEventListener('change',()=>{ const ch=esCheque($('vc-medio').value);
+    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2);
       $('vc-cheque-extra').style.display = ch?'block':'none';
-      $('vc-cuenta-wrap').style.display = ch?'none':''; });
+      $('vc-plat-extra').style.display = pl?'block':'none';
+      // Con plataforma la cuenta se elige adentro del bloque (es la de acreditación, no la de hoy).
+      $('vc-cuenta-wrap').style.display = (ch||pl)?'none':'';
+      if(pl) sugerirLiquidacion(); });
+
+    // Al elegir VIUMI por primera vez se propone la fecha a 10 días; el IVA se completa al 21% del
+    // arancel apenas se tipea, que es como viene siempre en la liquidación.
+    function sugerirLiquidacion(){
+      const f=$('vc-pl-fecha'); if(f && !f.value) f.value=addDiasISO($('vc-fecha').value||hoyISO, 10);
+      calcNetoPlat(); }
+    function calcNetoPlat(){
+      const el=$('vc-pl-neto'); if(!el) return;
+      const bruto=num($('vc-monto').value), ar=num($('vc-pl-arancel').value), iv=num($('vc-pl-iva').value),
+            cf=num($('vc-pl-cfin').value), re=num($('vc-pl-ret').value);
+      const desc=ar+iv+cf+re, neto=Math.max(0, bruto-desc);
+      el.innerHTML = 'Bruto '+money(bruto)+' − descuentos '+money(desc)+
+        ' → <b style="color:var(--green);font-size:15px">se acreditan '+money(neto)+'</b>'+
+        (desc>bruto ? '<div style="color:var(--red);font-size:12px">⚠️ Los descuentos superan al bruto: revisá los importes.</div>'
+         : desc<=0 ? '<div style="color:var(--amber);font-size:12px">Cargá el arancel y el costo financiero de la liquidación, si no se va a acreditar el bruto entero.</div>' : ''); }
+    ['vc-monto','vc-pl-arancel','vc-pl-iva','vc-pl-cfin','vc-pl-ret'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('input',calcNetoPlat); });
+    // El IVA del arancel es 21% salvo excepción: se propone solo, pero queda editable.
+    const arEl=$('vc-pl-arancel'); if(arEl) arEl.addEventListener('input',()=>{ const iv=$('vc-pl-iva');
+      if(iv && !iv.dataset.tocado) { iv.value=Math.round(num(arEl.value)*0.21*100)/100; calcNetoPlat(); } });
+    const ivEl=$('vc-pl-iva'); if(ivEl) ivEl.addEventListener('input',()=>{ ivEl.dataset.tocado='1'; });
+    if(platShow) calcNetoPlat();
     $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
     $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
     // Tarjetas: el medio de cobro es lo que más toca Sofía y bifurca el form (cheque → datos del cheque,
@@ -4413,6 +4475,16 @@ function buildFilterTable(cfg){
       const prev = cobroEdit!=null ? v.cobros[cobroEdit] : null;
       const rec={ id:(prev&&prev.id)||('cob_'+newUid()), fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked };
       if(esCheque(rec.medio)){ rec.chNumero=$('vc-ch-num')?$('vc-ch-num').value.trim():''; rec.chBanco=$('vc-ch-banco')?$('vc-ch-banco').value.trim():''; rec.chVenc=$('vc-ch-venc')?$('vc-ch-venc').value:''; }
+      else if(esPlataforma(rec.medio)){
+        rec.fechaAcreditacion=$('vc-pl-fecha')?$('vc-pl-fecha').value:'';
+        rec.arancel=num($('vc-pl-arancel')?$('vc-pl-arancel').value:0);
+        rec.ivaArancel=num($('vc-pl-iva')?$('vc-pl-iva').value:0);
+        rec.costoFin=num($('vc-pl-cfin')?$('vc-pl-cfin').value:0);
+        rec.retenciones=num($('vc-pl-ret')?$('vc-pl-ret').value:0);
+        rec.acreditado=!!($('vc-pl-acred')&&$('vc-pl-acred').checked);
+        rec.cuenta=$('vc-pl-cuenta')?$('vc-pl-cuenta').value:'';   // dónde acredita, no dónde entró hoy
+        if(!rec.fechaAcreditacion){ alert('Poné la fecha en que se acredita la plata de la plataforma.'); return; }
+        if(netoPlataforma(rec)<=0){ alert('Los descuentos de la liquidación se comen todo el cobro. Revisá los importes.'); return; } }
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
       const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
       // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
@@ -4481,6 +4553,16 @@ function buildFilterTable(cfg){
     let nCh=0, totCh=0;
     DB.ventas.forEach(v=> (v.cobros||[]).forEach(c=>{ if(c.chequeRechazado){ nCh++; totCh+=num(c.monto); } }));
     if(nCh) A.push({sev:'bad', area:'Finanzas', t:nCh+' cheque'+(nCh>1?'s':'')+' rechazado'+(nCh>1?'s':'')+' por '+money(totCh), act:'Contactar al cliente y evaluar si conviene seguir vendiéndole a cuenta.', go:{page:'Ventas'}});
+    // Plataformas de cobro (VIUMI): lo que ya debería haber acreditado y sigue sin confirmarse. Si no
+    // se marca, la caja no cuenta esa plata y el disponible queda corto.
+    let nVen=0, totVen=0, nPend=0, totPend=0;
+    DB.ventas.forEach(v=> (v.cobros||[]).forEach(c=>{ if(!esPlataforma(c.medio) || c.acreditado) return;
+      const neto=netoPlataforma(c), f=String(c.fechaAcreditacion||'').slice(0,10);
+      if(f && f<hoyISO){ nVen++; totVen+=neto; } else { nPend++; totPend+=neto; } }));
+    if(nVen) A.push({sev:'warn', area:'Finanzas', t:nVen+' acreditación'+(nVen>1?'es':'')+' de plataforma atrasada'+(nVen>1?'s':'')+' por '+money(totVen),
+      act:'Fijate en el banco si ya entró y tildá «Ya se acreditó» en el cobro. Hasta que no lo marques, esa plata no figura en la caja.', go:{page:'Ventas'}});
+    else if(nPend) A.push({sev:'info', area:'Finanzas', t:money(totPend)+' a acreditarse de plataformas de cobro',
+      act:nPend+' cobro'+(nPend>1?'s':'')+' esperando acreditación. Ya está proyectado en Caja para el día que entra.', go:{page:'Caja / Liquidez'}});
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[]); const ncat=s=>String(s||'').trim().toUpperCase();
     let nMg=0; DB.ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return;
       let costo=0; (v.items||[]).forEach(it=>{ const pr=prods.find(p=>(it.codigo&&ncat(p.codigo)===ncat(it.codigo))||ncat(p.nombre)===ncat(it.desc)); if(pr) costo+=num(pr.costo)*num(it.cant); });
@@ -5468,7 +5550,16 @@ function buildFilterTable(cfg){
   // esos entran/salen por el módulo Cheques cuando se cobran, no en la fecha del cobro.
   function movimientosReales(desde){
     const M=[];
-    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio))) return; const f=String(c.fecha||'').slice(0,10);
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio))) return;
+      // Cobro por plataforma (VIUMI): el cliente pagó el bruto, pero a la cuenta entra el NETO y recién
+      // el día que acredita. Antes de eso no es plata disponible; contarlo hoy y por el bruto infla la
+      // caja dos veces (por fecha y por monto).
+      if(esPlataformaCobro(c.medio)){
+        if(!c.acreditado) return;
+        const fa=String(c.fechaAcreditacion||c.fecha||'').slice(0,10), neto=netoPlat(c);
+        if(fa && fa>desde && fa<=hoyISO && neto>0) M.push({fecha:fa, signo:1, monto:neto, concepto:'Acreditación '+(c.medio||'plataforma')+' · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''});
+        return; }
+      const f=String(c.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
     compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio))) return; const f=String(p.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
@@ -5532,6 +5623,11 @@ function buildFilterTable(cfg){
 
   // Cuenta de la que salen los cheques propios (Parámetros → Finanzas). Solo cuenta si está declarada
   // en Caja: si el nombre no matchea ninguna, se devuelve '' para no inventar una cuenta que no existe.
+  // Cobros por plataforma (VIUMI): las define Ventas, acá solo se consumen. Si el módulo no está
+  // cargado, se comportan como un cobro común (no se pierde plata, solo el detalle).
+  const esPlataformaCobro = m => !!(window.__esPlataformaCobro && window.__esPlataformaCobro(m));
+  const netoPlat = c => window.__netoPlataforma ? window.__netoPlataforma(c) : num(c.monto);
+
   function chequera(){
     const q=String(window.__param?window.__param('cuentaChequera','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
     if(!q) return '';
@@ -5553,7 +5649,15 @@ function buildFilterTable(cfg){
         cuenta: c.cuenta || (propio?chequera():''), cuentaAsumida: propio && !c.cuenta,
         concepto:(propio?'Cheque a pagar · ':'Cheque a cobrar · ')+(c.entidad||'—')}); });
     ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const saldo=num(calcV(v).saldo);
-      if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); } });
+      if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); }
+      // Plata de la plataforma todavía no acreditada. Va SEPARADA del saldo de la venta (que ya está
+      // en cero: el cliente pagó), igual que un cheque en cartera. Lleva cuenta, así aparece en
+      // "¿Alcanza en cada cuenta?" — es lo que va a entrar a Macro VPH ese día.
+      (v.cobros||[]).forEach(c=>{ if(!esPlataformaCobro(c.medio) || c.acreditado) return;
+        const neto=netoPlat(c); if(neto<=0.5) return;
+        E.push({fecha:String(c.fechaAcreditacion||c.fecha||'').slice(0,10)||hoyISO, signo:1, monto:neto,
+          tipo:'plataforma', cuenta:c.cuenta||'',
+          concepto:'A acreditar '+(c.medio||'plataforma')+' · '+(v.cliente||'—')}); }); });
     compras.forEach(c=>{ const total=calcCompra(c); const pagado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-pagado;
       if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); } });
     // Los costos fijos pendientes YA están en el bloque de compras de arriba (se cargan en Compras con
@@ -5650,7 +5754,7 @@ function buildFilterTable(cfg){
   function renderCuentas(d, limite){
     $('caj-sec-cuentas').style.display='';
     const filas=proyeccionPorCuenta(d, limite);
-    let h='<tr><th>Cuenta</th><th class="num">Saldo hoy</th><th class="num">Cheques a debitarse</th><th class="num">Saldo proyectado</th><th>¿Alcanza?</th></tr>';
+    let h='<tr><th>Cuenta</th><th class="num">Saldo hoy</th><th class="num">Comprometido / a entrar</th><th class="num">Saldo más bajo</th><th>¿Alcanza?</th></tr>';
     if(!filas.length) h+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Declará el saldo real para ver el detalle por cuenta.</td></tr>';
     filas.forEach(f=>{
       const estado = f.min<0
@@ -5660,14 +5764,17 @@ function buildFilterTable(cfg){
       h+='<tr><td data-label="Cuenta"><b>'+esc(f.nombre)+'</b>'+
           (f.asumidos?'<div style="font-size:10px;color:var(--muted)">'+f.asumidos+' cheque'+(f.asumidos>1?'s':'')+' sin cuenta cargada, se asume'+(f.asumidos>1?'n':'')+' de acá</div>':'')+'</td>'+
         '<td class="num" data-label="Saldo hoy">'+money(f.hoy)+'</td>'+
-        '<td class="num" data-label="A debitarse" style="color:'+(f.sale?'var(--red)':'var(--muted)')+'">'+(f.sale?'− '+money(f.sale):'—')+
-          (f.prox?'<div style="font-size:10px;color:var(--muted)">el próximo vence '+fmtFecha(f.prox.fecha)+'</div>':'')+'</td>'+
+        '<td class="num" data-label="Comprometido / a entrar">'+
+          (f.sale?'<div style="color:var(--red)">− '+money(f.sale)+'</div>':'')+
+          (f.entra?'<div style="color:var(--green)">+ '+money(f.entra)+'</div>':'')+
+          (!f.sale&&!f.entra?'<span style="color:var(--muted)">—</span>':'')+
+          (f.prox?'<div style="font-size:10px;color:var(--muted)">el próximo débito vence '+fmtFecha(f.prox.fecha)+'</div>':'')+'</td>'+
         '<td class="num" data-label="Proyectado" style="font-weight:800;color:'+(f.min<0?'var(--red)':'var(--text)')+'">'+money(f.min)+'</td>'+
         '<td data-label="¿Alcanza?" style="font-size:11.5px">'+estado+'</td></tr>'; });
     $('caj-tabla-cuentas').innerHTML=h;
     const chq=chequera();
     $('caj-cuentas-nota').innerHTML =
-      'Acá se imputan <b>solo los cheques</b>: son lo único que ya tiene cuenta y fecha ciertas. Una venta a cobrar o una compra a pagar no se reparten, porque hasta que se concretan no se sabe por qué cuenta van a pasar. Por eso es a propósito conservador — responde <i>¿me alcanza en esta cuenta para lo que ya está comprometido?</i>, no <i>cuánto voy a tener</i>. El total general está en la proyección de abajo.'+
+      'Acá se imputan solo <b>los cheques y las acreditaciones de plataformas</b> (VIUMI): son lo único que ya tiene cuenta y fecha ciertas. Una venta a cobrar o una compra a pagar no se reparten, porque hasta que se concretan no se sabe por qué cuenta van a pasar. Por eso es a propósito conservador — responde <i>¿me alcanza en esta cuenta para lo que ya está comprometido?</i>, no <i>cuánto voy a tener</i>. El total general está en la proyección de abajo.'+
       (chq ? ' Los cheques propios sin cuenta cargada se asumen de <b>'+esc(chq)+'</b> (se cambia en Parámetros → Finanzas).'
            : ' <b style="color:var(--amber)">⚠️ El parámetro «Cuenta de la que salen los cheques propios» no coincide con ninguna cuenta declarada</b>, así que los cheques propios sin cuenta no se están imputando a ninguna. Revisalo en Parámetros → Finanzas.');
   }
@@ -5837,9 +5944,18 @@ function buildFilterTable(cfg){
   // El saldo de una venta/compra ya descuenta los cobros/pagos con cheque; el cheque pendiente
   // es un importe aparte. Por eso se SUMAN, no se restan (si no, se pierde plata del cálculo).
   const chqPend=c=>c.estado==='cartera'||c.estado==='depositado';
+  // Cobros por plataforma (VIUMI): los define Ventas, acá solo se consumen.
+  const esPlatCobro = m => !!(window.__esPlataformaCobro && window.__esPlataformaCobro(m));
+  const netoPlatF = c => window.__netoPlataforma ? window.__netoPlataforma(c) : num(c.monto);
   function porCobrar(){ const R=[];
     ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const s=num(calcV(v).saldo);
-      if(s>0.5) R.push({quien:v.cliente||'—', monto:s, venc:String(v.vencimiento||'').slice(0,10)||hoyISO, tipo:'venta'}); });
+      if(s>0.5) R.push({quien:v.cliente||'—', monto:s, venc:String(v.vencimiento||'').slice(0,10)||hoyISO, tipo:'venta'});
+      // Lo que la plataforma todavía no acreditó también es plata a cobrar: la venta ya está saldada
+      // (el cliente pagó), pero ese neto no entró. Va aparte del saldo, igual que un cheque en cartera.
+      (v.cobros||[]).forEach(c=>{ if(!esPlatCobro(c.medio) || c.acreditado) return;
+        const neto=netoPlatF(c); if(neto>0.5)
+          R.push({quien:(c.medio||'Plataforma')+' · '+(v.cliente||'—'), monto:neto,
+                  venc:String(c.fechaAcreditacion||c.fecha||'').slice(0,10)||hoyISO, tipo:'plataforma'}); }); });
     cheques.forEach(c=>{ if(c.tipo!=='recibido'||!chqPend(c)) return;
       R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
     return R; }
