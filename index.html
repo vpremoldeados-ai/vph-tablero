@@ -5740,9 +5740,17 @@ function buildFilterTable(cfg){
       return {f, inn, out, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO)}; });
 
     const proyFinal = d.total+proyIn-proyOut;
+    // Plata de plataformas (VIUMI) que ya se cobró pero todavía no acreditó. Va en tarjeta propia
+    // porque es plata cierta, con fecha y cuenta: se sabe exactamente cuándo y dónde entra. Dentro de
+    // "Por cobrar (todo)" quedaba invisible, mezclada con ventas que ni siquiera se cobraron.
+    const evPlat=ev.filter(e=>e.tipo==='plataforma');
+    const totPlat=evPlat.reduce((s,e)=>s+e.monto,0);
+    const proxPlat=evPlat.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)))[0];
     $('caj-kpis').innerHTML =
       k('Disponible hoy', d.total>0?'good':'bad', money(d.total), 'Cuentas declaradas + cobros − pagos')+
-      k('Por cobrar (todo)','info', fmtM(proyIn), 'Cheques + ventas a cobrar')+
+      (evPlat.length ? k('A acreditarse (VIUMI)','info', fmtM(totPlat),
+        evPlat.length+' cobro'+(evPlat.length>1?'s':'')+' con tarjeta'+(proxPlat?' · el próximo entra el '+fmtFecha(proxPlat.fecha):'')) : '')+
+      k('Por cobrar (todo)','info', fmtM(proyIn), 'Cheques + ventas a cobrar'+(evPlat.length?' + acreditaciones':''))+
       k('Por pagar (todo)', proyOut?'warn':'good', fmtM(proyOut), 'Cheques + compras + costos fijos')+
       k('Saldo si se cumple todo', proyFinal<0?'bad':'good', money(proyFinal), 'Disponible + por cobrar − por pagar');
 
