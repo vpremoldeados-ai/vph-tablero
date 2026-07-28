@@ -6262,6 +6262,9 @@ function buildFilterTable(cfg){
     renderKpis(list); renderSummary(rows); renderFiltros(list); renderTabla(rows);
     $('pre-periodo-lbl').textContent = filtro.periodo ? '· '+labelPeriodo(filtro.periodo) : '· todos los períodos';
     $('pre-count').textContent = rows.length+' de '+list.length+' presupuestos';
+    // El CRM muestra en su listado el monto ya cotizado de cada lead: sin este aviso, un presupuesto
+    // nuevo (o que llega del snapshot después de que el CRM ya pintó) no se vería hasta recargar.
+    try{ window.dispatchEvent(new CustomEvent('vph-presupuestos')); }catch(e){}
   }
   function renderKpis(all){
     const abiertos=all.filter(x=>x.e==='borrador'||x.e==='enviado');
@@ -6518,6 +6521,7 @@ function buildFilterTable(cfg){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
     if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
     p.zona = lead.zona||'';
+    p.leadUid = lead._uid||'';   // vínculo con el lead que lo originó: el CRM lo usa para mostrar el monto cotizado
     p.palletsFlete = Math.round(num(lead.palletsFlete))||0;   // pallets armados a mano en el lead (0 = automático)
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
@@ -6549,6 +6553,25 @@ function buildFilterTable(cfg){
     const conImporte=p.items.filter(it=>!esItemFlete(it) && num(it.precioUnit)>0);
     if(!conImporte.length) return err('No se pudo calcular el presupuesto: los productos del lead no tienen precio en el catálogo (revisá que el nombre/código coincida con Base de Datos → Productos).');
     asignarNumeroYGuardar(p, pp=>{ if(typeof onDone==='function') onDone(pp); });
+  };
+  // ¿Este lead ya fue cotizado? Devuelve el presupuesto MÁS RECIENTE del lead, o null.
+  // Lo consume el listado del CRM para mostrar el monto realmente cotizado (no el estimado a ojo).
+  // Dos vías, en este orden: (1) el vínculo directo `leadUid`, que se sella al generarlo desde el CRM;
+  // (2) para los leads cotizados ANTES de que ese vínculo existiera, el nombre del cliente — pero solo
+  // contra presupuestos SIN leadUid, así uno que ya pertenece a otro lead no se le atribuye a este.
+  const normCli = s=>String(s||'').trim().toUpperCase().replace(/\s+/g,' ');
+  window.__presupuestoDeLead = function(lead){
+    if(!lead || !DB.presupuestos.length) return null;
+    let ps = lead._uid ? DB.presupuestos.filter(p=>p.leadUid && p.leadUid===lead._uid) : [];
+    let porNombre=false;
+    if(!ps.length){
+      const c=normCli(lead.cliente); if(!c) return null;
+      ps=DB.presupuestos.filter(p=>!p.leadUid && normCli(p.cliente)===c); porNombre=ps.length>0;
+    }
+    if(!ps.length) return null;
+    ps=ps.slice().sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')) || String(b.numero||'').localeCompare(String(a.numero||'')));
+    const p=ps[0];
+    return {uid:p._uid, numero:p.numero||'', fecha:p.fecha||'', estado:estadoEf(p), total:calc(p).total, cantidad:ps.length, porNombre};
   };
 
   window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
@@ -7270,13 +7293,24 @@ function buildFilterTable(cfg){
     const rows=leads.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(l=>{ try{
       const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
       const wa=waLink(l.telefono);
+      // Si el lead ya fue cotizado, la columna Monto muestra el total REAL del presupuesto (con su N°)
+      // en vez del estimado cargado a ojo. data-sortval mantiene el orden por número, porque la celda
+      // tiene dos líneas de texto y el helper de ordenamiento leería cualquier cosa.
+      const pr = window.__presupuestoDeLead ? window.__presupuestoDeLead(l) : null;
+      const montoCel = pr
+        ? '<b style="color:var(--blue)">'+money(pr.total)+'</b>'+
+          '<div style="font-size:10.5px;color:var(--muted)">📄 Presup. '+esc(pr.numero||'s/n')+
+          (pr.cantidad>1?' <span title="Este lead tiene '+pr.cantidad+' presupuestos; se muestra el último">(+'+(pr.cantidad-1)+')</span>':'')+'</div>'
+        : (num(l.monto)
+            ? money(num(l.monto))+'<div style="font-size:10.5px;color:var(--muted)">estimado</div>'
+            : '—');
       return '<tr>'+
         '<td><b>'+esc(l.cliente||'(sin nombre)')+'</b>'+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700">✓</span>':'')+
           (l.telefono?'<div style="color:var(--muted);font-size:11px">'+(wa?'<a href="'+wa+'" target="_blank" rel="noopener" style="color:var(--green)">📞 '+esc(l.telefono)+'</a>':esc(l.telefono))+'</div>':'')+'</td>'+
         '<td><span class="est-chip" style="background:'+e.c+'">'+e.l+'</span></td>'+
         '<td>'+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</td>'+
         '<td>'+esc(l.lugar||'—')+'</td>'+
-        '<td>'+(num(l.monto)?money(num(l.monto)):'—')+'</td>'+
+        '<td data-sortval="'+(pr?pr.total:num(l.monto))+'">'+montoCel+'</td>'+
         '<td>'+esc(l.origen||'—')+'</td>'+
         '<td>'+seguiBadge(l)+'</td>'+
         '<td class="acts">'+
@@ -7647,6 +7681,9 @@ function buildFilterTable(cfg){
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.leads=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { DB=loadLocal(); pregSubscribe(); plantSubscribe(); render(); } }
+  // Los presupuestos viven en otro módulo y llegan por su propio snapshot: cuando cambian, hay que
+  // repintar el listado para que el monto cotizado de cada lead quede al día sin recargar la página.
+  window.addEventListener('vph-presupuestos', ()=>{ try{ if(VIEW==='lista') render(); }catch(e){} });
   // API para que el cotizador (u otra fuente) cree leads: window.__nuevoLead({cliente, telefono, items:[{producto,cantidad}], lugar, pago, email})
   window.__nuevoLead = function(datos){ datos=datos||{};
     // Traer el máximo de datos posible aunque el origen use otros nombres de campo
