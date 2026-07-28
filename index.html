@@ -9543,7 +9543,14 @@ function buildFilterTable(cfg){
         (extrasDer||'')+'</div></div>';
   }
   function bloqueCliente(izq, der){ return '<div class="doc-cli"><div>'+izq+'</div><div class="r">'+der+'</div></div>'; }
-  function pie(){ return '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Documento no válido como factura.</span></div>'; }
+  // La leyenda "no válido como factura" corresponde a presupuestos, recibos, remitos y al detalle
+  // de una venta todavía sin facturar — y también a los comprobantes emitidos en el ambiente de
+  // PRUEBA de ARCA, que no tienen validez fiscal. En una factura o nota REAL autorizada por ARCA
+  // esa leyenda es falsa y grave: el comprobante SÍ es válido. Por eso se omite en ese caso.
+  function pie(v){
+    const autorizado = !!(v && v.cae) && (!v.arcaAmbiente || v.arcaAmbiente==='produccion');
+    return '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span>'+
+      (autorizado?'':'<span>Documento no válido como factura.</span>')+'</div>'; }
   function firma(){ return '<div class="doc-firma"><div class="lbl">RECIBIDO</div>'+
       'Firma: ..................................&nbsp;&nbsp; Aclaración: ..................................&nbsp;&nbsp; DNI: ....................&nbsp;&nbsp; Fecha: ................</div>'; }
   // Condiciones fijas que van al pie de TODOS los presupuestos (pedido de Marcelo, no se editan por presupuesto).
@@ -9590,7 +9597,7 @@ function buildFilterTable(cfg){
     // Una nota de crédito/débito NO puede salir impresa como "detalle de venta": el papel tiene
     // que decir qué comprobante es y a cuál corrige (v.compAsocDesc lo sella al emitirse).
     const esNota = v.tipoComprobante==='Nota de Crédito' || v.tipoComprobante==='Nota de Débito';
-    const titulo = esPresupuesto ? 'PRESUPUESTO' : (esNota ? String(v.tipoComprobante).toUpperCase() : 'DETALLE DE VENTA');
+    // (El título del documento se arma más abajo, en tituloFac, que ya contempla las notas.)
     let extrasDer='';
     if(esNota && v.compAsocDesc) extrasDer='<div style="margin-top:4px"><b>Corrige:</b> '+esc(v.compAsocDesc)+'</div>';
     if(esPresupuesto){ extrasDer='<div style="margin-top:4px"><b>Vto. del Presupuesto:</b> '+dmy(v.vencimiento)+'</div>'; }
@@ -9656,10 +9663,15 @@ function buildFilterTable(cfg){
         '</div></div>';
     }
     // Título/letra: si es una venta ya facturada (con CAE), mostrar FACTURA A/B; si no, el detalle interno.
-    const letraFac = v.cae ? (v.tipoComprobante==='Factura A'?'A':v.tipoComprobante==='Factura B'?'B':'X') : 'X';
+    // Letra del recuadro. Una nota de crédito/débito NO dice su letra en el tipo ("Nota de
+    // Crédito" a secas), pero fiscalmente la tiene: es la de la factura que corrige, que quedó
+    // sellada en compAsocDesc al emitirla (ej. "Factura B 0003-00000012"). Sin esto salía "X".
+    const letraNota = (String(v.compAsocDesc||'').match(/Factura\s+([AB])/i)||[])[1];
+    const letraFac = v.cae ? (v.tipoComprobante==='Factura A'?'A':v.tipoComprobante==='Factura B'?'B'
+      :(letraNota?letraNota.toUpperCase():'X')) : 'X';
     const tituloFac = v.cae ? (v.tipoComprobante||'FACTURA').toUpperCase() : (esPresupuesto?'PRESUPUESTO':'DETALLE DE VENTA');
     return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer)+
-      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+obs+caeBlock+pie();
+      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+obs+caeBlock+pie(v);
   }
 
   // ---------- Recibo de Cobranza ----------
