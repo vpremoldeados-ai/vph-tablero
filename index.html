@@ -3835,10 +3835,23 @@ function buildFilterTable(cfg){
   // la caja entra MENOS y MÁS TARDE. Contarlo como plata de hoy infla el disponible y hace que el
   // Tablero diga que alcanza cuando no alcanza. Por ahora solo VIUMI (tarjeta y MP no se usan así).
   const esPlataforma = m => /viumi/i.test(String(m||''));
-  const addDiasISO = (iso,n)=>{ const a=String(iso||'').slice(0,10).split('-').map(Number);
+  const isoDe = d=>{ const p=x=>String(x).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); };
+  // ⚠️ El plazo de VIUMI es en días HÁBILES, no corridos: una venta del 28/07 acredita el 11/08 (10
+  // hábiles = 14 corridos). Contarlo en corridos adelantaba la fecha ~4 días y había que corregirla
+  // a mano siempre. Saltea sábados, domingos y los feriados cargados en Producción.
+  const addHabilesISO = (iso,n)=>{ const a=String(iso||'').slice(0,10).split('-').map(Number);
     if(a.length!==3 || !a[0]) return iso||'';
-    const d=new Date(a[0],a[1]-1,a[2]); d.setDate(d.getDate()+n);
-    const p=x=>String(x).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); };
+    const d=new Date(a[0],a[1]-1,a[2]); let quedan=Math.max(0,Math.round(n)), tope=0;
+    while(quedan>0 && tope++<400){ d.setDate(d.getDate()+1); const w=d.getDay();
+      if(w===0||w===6) continue;
+      if(window.__esFeriado && window.__esFeriado(isoDe(d))) continue;
+      quedan--; }
+    return isoDe(d); };
+  // Comisiones de VIUMI por plan de cuotas (Parámetros → Finanzas). Sobre el BRUTO y sin IVA.
+  const viumiPlazo = ()=> Math.max(0, num(window.__param?window.__param('viumiPlazoHabiles',10):10));
+  const VIUMI_PLANES=[{c:3,k:'viumiCom3',d:8.89},{c:6,k:'viumiCom6',d:13.19},{c:9,k:'viumiCom9',d:18.49},{c:12,k:'viumiCom12',d:22.59}];
+  const viumiTasa = c=>{ const p=VIUMI_PLANES.find(x=>x.c===+c); if(!p) return 0;
+    return num(window.__param?window.__param(p.k,p.d):p.d); };
   // Cuenta donde acredita la plataforma: la misma que la chequera (Banco Macro VPH), configurable.
   const chequeraCuentaV = ()=>{ const q=String(window.__param?window.__param('cuentaChequera','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
     return (window.__cajaCuentas?window.__cajaCuentas():[]).find(x=>String(x).trim().toLowerCase()===q) || ''; };
@@ -4423,7 +4436,12 @@ function buildFilterTable(cfg){
       '<div id="vc-plat-extra" style="display:'+(platShow?'block':'none')+';border:1px dashed #2f6fb2;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:#2f6fb2;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Liquidación de la plataforma</div>'+
         '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
-          field('Se acredita el','','<input type="date" id="vc-pl-fecha" value="'+esc((ed&&ed.fechaAcreditacion)||addDiasISO(fechaDef,10))+'">') +
+          field('Plan de cuotas','','<select id="vc-pl-plan">'+
+            '<option value="">A mano</option>'+
+            VIUMI_PLANES.map(p=>'<option value="'+p.c+'">'+p.c+' cuotas · '+viumiTasa(p.c).toFixed(2).replace('.',',')+'%</option>').join('')+
+            '</select><div style="font-size:10.5px;color:var(--muted);margin-top:3px">Solo para cuotas sin interés con tarjeta <b>Macro</b>. Completa el arancel y el IVA; después confirmá contra la liquidación real.</div>') +
+          field('Se acredita el','','<input type="date" id="vc-pl-fecha" value="'+esc((ed&&ed.fechaAcreditacion)||addHabilesISO(fechaDef,viumiPlazo()))+'">'+
+            '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+viumiPlazo()+' días <b>hábiles</b> desde la venta (Parámetros → Finanzas).</div>') +
           field('¿En qué cuenta se acredita?','','<select id="vc-pl-cuenta">'+cuentasOpt((ed&&ed.cuenta)||chequeraCuentaV())+'</select>') +
           field('Arancel $','','<input id="vc-pl-arancel" value="'+((ed&&num(ed.arancel))||0)+'">') +
           field('IVA del arancel $','','<input id="vc-pl-iva" value="'+((ed&&num(ed.ivaArancel))||0)+'">') +
@@ -4450,8 +4468,28 @@ function buildFilterTable(cfg){
     // Al elegir VIUMI por primera vez se propone la fecha a 10 días; el IVA se completa al 21% del
     // arancel apenas se tipea, que es como viene siempre en la liquidación.
     function sugerirLiquidacion(){
-      const f=$('vc-pl-fecha'); if(f && !f.value) f.value=addDiasISO($('vc-fecha').value||hoyISO, 10);
+      const f=$('vc-pl-fecha'); if(f && !f.value) f.value=addHabilesISO($('vc-fecha').value||hoyISO, viumiPlazo());
       calcNetoPlat(); }
+    // Elegir el plan completa arancel e IVA con la tabla de VIUMI. Es una PROPUESTA: el número que
+    // manda es el de la liquidación, así que los campos quedan editables.
+    // Si se corrige la fecha del cobro, la de acreditación se recalcula sola — salvo que ya la hayan
+    // puesto a mano (ahí manda la liquidación, no la cuenta de días).
+    const plFecha=$('vc-pl-fecha');
+    if(plFecha) plFecha.addEventListener('input',()=>{ plFecha.dataset.tocado='1'; });
+    const fEl=$('vc-fecha');
+    if(fEl) fEl.addEventListener('change',()=>{ if(plFecha && !plFecha.dataset.tocado)
+      plFecha.value=addHabilesISO(fEl.value||hoyISO, viumiPlazo()); });
+    const planEl=$('vc-pl-plan');
+    if(planEl) planEl.addEventListener('change',()=>{
+      const c=planEl.value; if(!c) return;
+      const bruto=num($('vc-monto').value), tasa=viumiTasa(c);
+      const ar=Math.round(bruto*tasa)/100;   // tasa viene en %, por eso /100 va junto al redondeo
+      $('vc-pl-arancel').value=ar;
+      $('vc-pl-iva').value=Math.round(ar*21)/100;
+      // Con tarjeta Macro en cuotas sin interés NO se adiciona costo financiero (lo dice la tabla).
+      $('vc-pl-cfin').value=0;
+      $('vc-pl-fecha').value=addHabilesISO($('vc-fecha').value||hoyISO, viumiPlazo());
+      calcNetoPlat(); });
     function calcNetoPlat(){
       const el=$('vc-pl-neto'); if(!el) return;
       const bruto=num($('vc-monto').value), ar=num($('vc-pl-arancel').value), iv=num($('vc-pl-iva').value),
@@ -7161,6 +7199,15 @@ function buildFilterTable(cfg){
     {g:'CRM', k:'crmDiasReconsulta3', l:'Reconsulta 3 → recordar a los (días hábiles)', def:7, t:'num', hint:'Último intento antes de darlo por perdido. En 0 no se agenda.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'},
+    // VIUMI publica una tabla de comisiones por PLAZO de acreditación (1, 2, 5, 10, 20, 40 días
+    // hábiles): cuanto antes cobrás, más caro. VPH usa 10 días hábiles. ⚠️ Si cambiás el plazo hay que
+    // actualizar también las 4 comisiones — son otra columna de esa tabla. Y las tasas cambian todos
+    // los meses, así que van acá y no en el código.
+    {g:'Finanzas', k:'viumiPlazoHabiles', l:'VIUMI: días hábiles hasta la acreditación', def:10, t:'num', hint:'Plazo que tenés contratado con VIUMI. Se usa para proponer la fecha en que entra la plata (cuenta días hábiles, salteando feriados).'},
+    {g:'Finanzas', k:'viumiCom3',  l:'VIUMI: comisión 3 cuotas (%)',  def:8.89,  t:'num', hint:'Sin IVA, sobre el monto bruto. Tarjetas de crédito Macro en cuotas sin interés. Actualizala cuando VIUMI publique la tabla del mes.'},
+    {g:'Finanzas', k:'viumiCom6',  l:'VIUMI: comisión 6 cuotas (%)',  def:13.19, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
+    {g:'Finanzas', k:'viumiCom9',  l:'VIUMI: comisión 9 cuotas (%)',  def:18.49, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
+    {g:'Finanzas', k:'viumiCom12', l:'VIUMI: comisión 12 cuotas (%)', def:22.59, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas',   k:'cuentaChequera', l:'Cuenta de la que salen los cheques propios', def:'Banco Macro VPH', t:'txt', hint:'Un cheque propio se debita SIEMPRE de esta cuenta, así que el Tablero puede avisarte si ese día no va a haber fondos ahí. Se propone sola al cargar un cheque propio; si usás más de una chequera, cambiala a mano en cada cheque.'}
   ];
   window.__cfg = window.__cfg || {};
