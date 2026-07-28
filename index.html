@@ -6495,8 +6495,16 @@ function buildFilterTable(cfg){
   // ("Premoldeado", "Loseta", vacío), así que insumos y materias primas convivían con los productos
   // sin forma de distinguirlos. ⚠️ 'Servicio' tiene que escribirse EXACTAMENTE así: el código lo usa
   // para excluirlo de stock/producción (disponibilidadProducto, cargaRows, activos()).
-  const TIPOS_PROD=['Producto terminado','Insumo / Materia prima','Servicio','Reventa'];
-  const ES_INSUMO = p => String(p&&p.tipo||'')==='Insumo / Materia prima';
+  // ⚠️ MATERIA PRIMA e INSUMO son cosas distintas y van separadas (lo marcó Marcelo):
+  //  · Materia prima = se incorpora al producto (cemento, arena, piedra, hierro, aditivos).
+  //  · Insumo        = se consume en el proceso pero NO va dentro del producto (diesel, GNC, gas).
+  // Coinciden con las dos opciones del campo `categoria` de la pestaña "Insumos y MP" (vph_insumos),
+  // así que al mover una ficha se traslada con la categoría correcta.
+  const TIPOS_PROD=['Producto terminado','Materia prima','Insumo','Servicio','Reventa'];
+  // 'Insumo / Materia prima' fue el valor de la primera versión (duró unas horas): se sigue reconociendo
+  // para que una ficha marcada así no reaparezca en Ventas/Producción.
+  const NO_PRODUCTO=['Materia prima','Insumo','Insumo / Materia prima'];
+  const ES_INSUMO = p => NO_PRODUCTO.indexOf(String(p&&p.tipo||''))>=0;
   window.__esInsumoProd = ES_INSUMO;   // lo consultan Ventas/Presupuestos/CRM/Producción para ocultarlos
 
   const ENT = {
@@ -6544,7 +6552,7 @@ function buildFilterTable(cfg){
     if(num(p.stock)>0 && !confirm('Ojo: "'+nombre+'" tiene stock cargado ('+num(p.stock)+').\nAl pasarlo a Insumos y MP deja de contar como producto fabricado.\n\n¿Seguir igual?')) return;
     if(!confirm('Mover "'+nombre+'" a la pestaña "Insumos y MP".\n\n• Se crea la ficha de insumo (con el costo como precio de compra).\n• Se elimina de Productos.\n\n¿Confirmás?')) return;
     const ins={ _uid:'ins_'+slug(nombre)+'-'+Math.floor((Date.now()%1e7)).toString(36),
-      nombre, categoria:'Materia prima', unidad:String(p.unidad||'u'), precio:num(p.costo), contenido:1,
+      nombre, categoria:(String(p.tipo||'')==='Insumo' ? 'Insumo' : 'Materia prima'), unidad:String(p.unidad||'u'), precio:num(p.costo), contenido:1,
       unidadUso:String(p.unidad||'u'), iva:String(p.ivaVenta||'21'), proveedor:'', stock:num(p.stock), stockMinimo:num(p.stockMinimo),
       nota:('Movido desde Productos'+(p.nota?(' · '+p.nota):'')) };
     try{
