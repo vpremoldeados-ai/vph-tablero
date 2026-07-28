@@ -786,6 +786,17 @@
     </div>
   </div>
 
+  <!-- ================= CATEGORÍAS DE COMPRA (administrar) ================= -->
+  <div class="cmp-overlay" id="cmp-cats-modal">
+    <div class="cmp-dialog" style="max-width:620px">
+      <div class="cmp-dialog-head">
+        <h3>⚙️ Categorías de compra</h3>
+        <button class="cmp-x" id="cmp-cats-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="cmp-cats-body"></div>
+    </div>
+  </div>
+
   <!-- ================= PLANTILLAS POR PRODUCTO (WhatsApp) ================= -->
   <div class="cmp-overlay" id="crm-plant-modal">
     <div class="cmp-dialog" style="max-width:680px">
@@ -984,6 +995,7 @@
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="cmp-nueva">+ Nueva Compra</button>
           <button class="cmp-btn cmp-btn-primary" id="cmp-pago-prov-btn" style="background:var(--amber)">💰 Pago a proveedor</button>
+          <button class="cmp-btn" id="cmp-cats" title="Agregar, renombrar o eliminar las categorías de compra">⚙️ Categorías</button>
           <button class="cmp-btn" id="cmp-export">Exportar JSON</button>
           <button class="cmp-btn" id="cmp-import">Importar JSON</button>
           <input type="file" id="cmp-import-file" accept="application/json" style="display:none">
@@ -1422,14 +1434,18 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
 // (junio: $9.311.168 / 90.796 kg = $102,55/kg) aplicado a los kg vendidos del mes.
 window.__pintarPE = function(){
   if(!document.getElementById('pe-widget')) return;
-  // El facturado del mes se toma EN VIVO (ventas reales del Tablero); el % de contribución marginal
-  // se sigue estimando con el mix del último mes cerrado (no hay fuente en vivo de costo de MP por kg).
+  // El facturado del mes se toma EN VIVO (ventas reales del Tablero).
+  // El % de contribución marginal ahora también sale EN VIVO: por cada ítem vendido se toma el costo por
+  // unidad del catálogo (Base de Datos → Productos). Solo se usa si al menos el 70% de lo vendido tiene
+  // costo cargado; si no, se cae a la estimación vieja (costo de MP por kg del último cierre × kg vendidos).
   const rm = (window.__resumenMes?window.__resumenMes():null);
   const costoMPkg = rentabilidad.costoMP / rentabilidad.kgVendidos;      // $/kg mes cerrado
   const ultProd = produccionMensual[produccionMensual.length-1];
   const kgVendMes = ultProd.vendidoKg || 0;
   const costoMPest = kgVendMes * costoMPkg;
-  const margenMesPct = mesEnCurso.ventas > 0 && kgVendMes > 0 ? (1 - costoMPest/mesEnCurso.ventas) : rentabilidad.margenPct/100;
+  const margenVivoPE = (rm && rm.margenContribucion!=null && rm.coberturaCosto>=0.70) ? rm.margenContribucion : null;
+  const margenMesPct = margenVivoPE!=null ? margenVivoPE
+    : (mesEnCurso.ventas > 0 && kgVendMes > 0 ? (1 - costoMPest/mesEnCurso.ventas) : rentabilidad.margenPct/100);
   const pe = rentabilidad.costosFijos / margenMesPct;                    // PE ajustado al mix del mes
   const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
   const v = rm ? rm.ventas : mesEnCurso.ventas;                          // facturado EN VIVO
@@ -1445,7 +1461,7 @@ window.__pintarPE = function(){
   const cubierto = v >= pe;
   const colBar = cubierto ? 'var(--green)' : (pct >= (dTrans/dTot*100) ? 'var(--accent)' : 'var(--amber)');
 
-  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal estimada ' + (margenMesPct*100).toFixed(1) + '%) · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
+  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ') · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
   document.getElementById('pe-widget').innerHTML =
     '<div class="progress-wrap"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:5px">' +
       '<span>Facturado: ' + fmt$(v) + ' (' + (v/pe*100).toFixed(0) + '% del punto de equilibrio)</span>' +
@@ -1718,7 +1734,16 @@ window.__pintarCostos = function(){
   const rc = window.__resumenCompras ? window.__resumenCompras() : null;
   const rm = window.__resumenMes ? window.__resumenMes() : null;
   const vivo = !!(rc && rc.length);
-  const margenPct = (rentabilidad && rentabilidad.margenPct) ? rentabilidad.margenPct/100 : 0;
+  // Margen de contribución: se calcula EN VIVO con las ventas del mes y el costo por unidad del catálogo
+  // (Base de Datos → Productos). Solo se usa si al menos el 70% de lo vendido tiene costo cargado; si no,
+  // se cae al margen del último cierre. Nunca se muestra un margen calculado sobre pocos productos, porque
+  // lo no costeado quedaría como si fuera 100% de ganancia y daría un número mejor que la realidad.
+  const MIN_COBERTURA = 0.70;
+  const margenVivo = (rm && rm.margenContribucion!=null && rm.coberturaCosto>=MIN_COBERTURA) ? rm.margenContribucion : null;
+  const margenPct = margenVivo!=null ? margenVivo : ((rentabilidad && rentabilidad.margenPct) ? rentabilidad.margenPct/100 : 0);
+  const margenNota = margenVivo!=null
+    ? ('en vivo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido tiene costo cargado')
+    : ('del último cierre '+(META&&META.mesCerrado?META.mesCerrado:''));
 
   if(vivo){
     const ult = rc[rc.length-1];
@@ -1728,7 +1753,7 @@ window.__pintarCostos = function(){
     document.getElementById('kpis-costos').innerHTML =
       kpi('Compras '+ult.mes, fmt$(ult.total), 'En vivo desde el módulo Compras', 'info') +
       kpi('Costos fijos del mes', fmt$(ult.fijos), 'COSTO FIJO + Mano de Obra · en vivo', 'info') +
-      kpi('Punto de equilibrio', pe?fmt$(pe):'—', 'Fijos ÷ margen '+(margenPct*100).toFixed(1)+'% (margen del último cierre)', 'warn') +
+      kpi('Punto de equilibrio', pe?fmt$(pe):'—', 'Fijos ÷ margen '+(margenPct*100).toFixed(1)+'% ('+margenNota+')', 'warn') +
       kpi('Variables / total', ult.total?(ult.variables/ult.total*100).toFixed(0)+'%':'—', 'Materia prima e insumos · en vivo', 'info') +
       kpi('Resultado del mes', rm?fmt$(rm.resultado):'—', rm?'Ventas − compras · en vivo':'Esperando datos', (rm&&rm.resultado>0)?'good':'warn');
 
@@ -1762,7 +1787,11 @@ window.__pintarCostos = function(){
 
     document.getElementById('tabla-equilibrio').innerHTML =
       '<tr><td>Costos fijos del mes (COSTO FIJO + Mano de Obra) — en vivo</td><td class="num">'+fmt$(ult.fijos)+'</td></tr>' +
-      '<tr><td>Margen de contribución estimado <i style="color:var(--muted)">(del último cierre '+(META&&META.mesCerrado?META.mesCerrado:'')+')</i></td><td class="num">'+(margenPct*100).toFixed(1)+'%</td></tr>' +
+      '<tr><td>Margen de contribución'+(margenVivo!=null?' del mes':' estimado')+' <i style="color:var(--muted)">('+margenNota+')</i></td><td class="num">'+(margenPct*100).toFixed(1)+'%</td></tr>' +
+      (margenVivo!=null
+        ? '<tr><td style="color:var(--muted);font-size:12px">— costo variable de lo vendido (según el costo por unidad del catálogo)</td><td class="num" style="color:var(--muted)">'+fmt$(rm.costoVariable)+'</td></tr>'
+          +(rm.coberturaCosto<0.999?'<tr><td style="color:var(--muted);font-size:12px">— sin costo cargado (queda FUERA del cálculo, no se cuenta como ganancia)</td><td class="num" style="color:var(--muted)">'+fmt$(rm.netoVendido-(rm.netoVendido*rm.coberturaCosto))+'</td></tr>':'')
+        : '') +
       '<tr class="total"><td>Punto de equilibrio (facturación mínima)</td><td class="num"><b>'+(pe?fmt$(pe):'—')+'</b></td></tr>' +
       '<tr><td>Facturación del mes — en vivo</td><td class="num">'+(rm?fmt$(fact):'—')+'</td></tr>' +
       '<tr><td>Margen de seguridad</td><td class="num" style="color:'+(seg>=0?'var(--green)':'var(--red)')+'"><b>'+(rm&&pe?((seg>=0?'+':'')+fmt$(seg)):'—')+'</b></td></tr>';
@@ -1908,7 +1937,36 @@ function buildFilterTable(cfg){
   const hoyISO = (()=>{ const p=n=>String(n).padStart(2,'0'); return HOY.getFullYear()+'-'+p(HOY.getMonth()+1)+'-'+p(HOY.getDate()); })();
 
   // Categorías reales de compras de VPH
-  const CATEGORIAS = ['MATERIAS PRIMAS','INSUMOS','COSTO FIJO','Mano de Obra','Productos Terminados','BIENES DE USO','gastos varios'];
+  // ---------- Categorías de compra (las administra el usuario, ya no están fijas en el código) ----------
+  // Se guardan en vph_config/categoriasCompra como [{n:'NOMBRE', fijo:true|false}].
+  // ⚠️ El flag "fijo" es el que decide si la categoría entra en Costos Fijos y en el Punto de Equilibrio.
+  // Antes eso estaba hardcodeado ('COSTO FIJO' / 'Mano de Obra') en 2 lugares distintos, así que
+  // renombrar una categoría rompía esos cálculos en silencio. Ahora la marca viaja con la categoría.
+  const CAT_DEFAULT = [
+    {n:'MATERIAS PRIMAS',      fijo:false},
+    {n:'INSUMOS',              fijo:false},
+    {n:'COSTO FIJO',           fijo:true},
+    {n:'Mano de Obra',         fijo:true},
+    {n:'Productos Terminados', fijo:false},
+    {n:'BIENES DE USO',        fijo:false},
+    {n:'gastos varios',        fijo:false}
+  ];
+  let CATS = CAT_DEFAULT.map(c=>({...c}));   // se reemplaza con lo guardado en la nube al sincronizar
+  const CATEGORIAS = ()=> CATS.map(c=>c.n);  // FUNCIÓN (no constante): se lee en tiempo de uso
+  // Las categorías que cuentan como costo fijo — lo consumen Costos Fijos y el resumen de compras.
+  window.__catComprasFijas = ()=> CATS.filter(c=>c.fijo).map(c=>c.n);
+  window.__catCompras = ()=> CATS.map(c=>({...c}));
+  // Categorías realmente EN USO por las compras cargadas (aunque ya no estén en la lista): sirve para
+  // no "esconder" compras históricas en el filtro y para saber si una categoría se puede borrar.
+  const catsEnUso = ()=> [...new Set((DB.compras||[]).map(c=>String(c.categoria||'').trim()).filter(Boolean))];
+  const catsFiltro = ()=>{ const L=CATEGORIAS(); catsEnUso().forEach(n=>{ if(L.indexOf(n)<0) L.push(n); }); return L; };
+  // ⚠️ Mismo criterio que medioOpts: el <select> SIEMPRE tiene que incluir la categoría que la compra ya
+  // tiene, aunque no esté en la lista. Si no, al editar una compra vieja no queda ninguna opción
+  // seleccionada, el navegador muestra la primera y al guardar le cambia la categoría EN SILENCIO
+  // (una compra que era COSTO FIJO dejaría de contar en el Punto de Equilibrio).
+  const catOpts = (actual)=>{ const a=String(actual||''); const L=CATEGORIAS();
+    if(a && L.indexOf(a)<0) L.push(a);
+    return L.map(n=>'<option'+(n===a?' selected':'')+'>'+esc(n)+'</option>').join(''); };
   const TIPOS_COMPROB = ['Compra','Nota de Crédito','Nota de Débito'];
   const COND_IVA = ['A','B','C','M','X'];
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
@@ -1954,7 +2012,7 @@ function buildFilterTable(cfg){
   const FB_VER = '10.12.2';
   const USA_NUBE = !!(firebaseConfig && firebaseConfig.projectId);
   window.__usaNube = USA_NUBE;   // visible para otros módulos (Ventas)
-  let FS=null, AUTH=null, fbApp=null, fbDb=null, fbAuth=null, unsub=null, usuario=null;
+  let FS=null, AUTH=null, fbApp=null, fbDb=null, fbAuth=null, unsub=null, unsubCats=null, usuario=null;
 
   // ---------- Store ----------
   const KEY = 'vph_compras_v1';
@@ -1977,6 +2035,82 @@ function buildFilterTable(cfg){
     if(USA_NUBE && fbDb){ FS.deleteDoc(FS.doc(fbDb, COL, uid)).catch(e=>alert('Error al eliminar: '+e.message)); }
     else { DB.compras = DB.compras.filter(x=>x._uid!==uid); saveLocal(); render(); }
   }
+  // ---------- Administrar las categorías de compra (⚙️ Categorías) ----------
+  // Reglas de seguridad (decididas con Marcelo):
+  //  · NO se puede ELIMINAR una categoría que tenga compras cargadas (evita dejar compras huérfanas).
+  //  · RENOMBRAR una categoría en uso reescribe también esas compras, así ninguna queda con el nombre
+  //    viejo (si no, una compra que era COSTO FIJO se caería de Costos Fijos y del Punto de Equilibrio).
+  //  · La tilde "cuenta como costo fijo" es la que alimenta Costos Fijos / PE — ya no está hardcodeada.
+  let catsEdit=[];
+  function persistCats(lista){
+    CATS = lista.map(c=>({n:c.n, fijo:!!c.fijo}));
+    if(USA_NUBE && fbDb){ return FS.setDoc(FS.doc(fbDb,'vph_config','categoriasCompra'), {cats:CATS, ts:new Date().toISOString()})
+      .catch(e=>{ alert('Error al guardar las categorías: '+e.message); }); }
+    render();
+    if(window.__costosFijosRefresh) window.__costosFijosRefresh();
+    return Promise.resolve();
+  }
+  function usoDe(nombre){ const n=String(nombre||'').trim(); return (DB.compras||[]).filter(c=>String(c.categoria||'').trim()===n).length; }
+  function openCats(){ catsEdit = CATS.map(c=>({...c, orig:c.n})); drawCats(); $('cmp-cats-modal').classList.add('open'); }
+  function closeCats(){ $('cmp-cats-modal').classList.remove('open'); }
+  function drawCats(){
+    let h='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Estas son las categorías que aparecen al cargar una compra. '+
+      'La tilde <b>"Costo fijo"</b> define si esa categoría entra en la página <b>Costos Fijos</b> y en el <b>Punto de Equilibrio</b>. '+
+      'Una categoría <b>con compras cargadas no se puede eliminar</b> (si la renombrás, se actualizan también esas compras).</p>'+
+      '<div class="tbl-wrap"><table><tr><th>Categoría</th><th style="text-align:center">Costo fijo</th><th class="num">Compras</th><th></th></tr>';
+    catsEdit.forEach((c,i)=>{
+      const n=usoDe(c.orig||c.n);
+      h+='<tr><td><input type="text" data-cn="'+i+'" value="'+esc(c.n)+'" style="width:100%;padding:6px 9px;border:1px solid var(--border);border-radius:8px"></td>'+
+         '<td style="text-align:center"><input type="checkbox" data-cf="'+i+'"'+(c.fijo?' checked':'')+' style="width:18px;height:18px"></td>'+
+         '<td class="num" style="color:var(--muted)">'+(n||'—')+'</td>'+
+         '<td>'+(n>0
+            ? '<span style="font-size:11px;color:var(--muted)" title="No se puede eliminar: tiene '+n+' compra(s) cargada(s)">🔒 en uso</span>'
+            : '<button class="cmp-rowbtn" data-cdel="'+i+'" style="color:var(--red)" title="Eliminar esta categoría">🗑</button>')+'</td></tr>';
+    });
+    h+='</table></div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'+
+      '<button class="cmp-btn" id="cmp-cats-add">+ Agregar categoría</button></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="cmp-cats-cancel">Cancelar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="cmp-cats-save">Guardar</button></div>';
+    $('cmp-cats-body').innerHTML=h;
+    $('cmp-cats-body').querySelectorAll('input[data-cn]').forEach(el=> el.addEventListener('input',()=>{ catsEdit[+el.dataset.cn].n=el.value; }));
+    $('cmp-cats-body').querySelectorAll('input[data-cf]').forEach(el=> el.addEventListener('change',()=>{ catsEdit[+el.dataset.cf].fijo=el.checked; }));
+    $('cmp-cats-body').querySelectorAll('button[data-cdel]').forEach(b=> b.onclick=()=>{ catsEdit.splice(+b.dataset.cdel,1); drawCats(); });
+    $('cmp-cats-add').onclick=()=>{ catsEdit.push({n:'', fijo:false, orig:''}); drawCats(); };
+    $('cmp-cats-cancel').onclick=closeCats;
+    $('cmp-cats-save').onclick=guardarCats;
+  }
+  async function guardarCats(){
+    const lista=catsEdit.map(c=>({...c, n:String(c.n||'').trim()})).filter(c=>c.n);
+    if(!lista.length){ alert('Tiene que quedar al menos una categoría.'); return; }
+    const nombres=lista.map(c=>c.n.toUpperCase());
+    if(new Set(nombres).size!==nombres.length){ alert('Hay categorías repetidas. Revisá los nombres.'); return; }
+    // Renombres sobre categorías EN USO → hay que reescribir esas compras para que no queden huérfanas.
+    const renombres=lista.filter(c=>c.orig && c.orig!==c.n && usoDe(c.orig)>0);
+    if(renombres.length){
+      const det=renombres.map(c=>'• "'+c.orig+'" → "'+c.n+'" ('+usoDe(c.orig)+' compra(s))').join('\n');
+      if(!confirm('Se van a renombrar estas categorías y actualizar las compras que las usan:\n\n'+det+'\n\n¿Confirmás?')) return;
+    }
+    // Si una categoría que era "costo fijo" deja de serlo (o al revés), cambian Costos Fijos y el PE.
+    const antes=new Set(CATS.filter(c=>c.fijo).map(c=>c.n));
+    const ahora=new Set(lista.filter(c=>c.fijo).map(c=>c.n));
+    const cambioFijo=lista.some(c=> (c.orig && antes.has(c.orig)) !== ahora.has(c.n));
+    if(cambioFijo && !confirm('Cambiaste qué categorías cuentan como COSTO FIJO.\n\nEso modifica la página Costos Fijos, el Punto de Equilibrio y la proyección de Caja.\n\n¿Confirmás?')) return;
+    await persistCats(lista);
+    // Reescribe la categoría en las compras afectadas (una por una, para no pisar otros campos).
+    for(const c of renombres){
+      const afectadas=(DB.compras||[]).filter(x=>String(x.categoria||'').trim()===c.orig);
+      for(const comp of afectadas){
+        if(USA_NUBE && fbDb){ try{ await FS.updateDoc(FS.doc(fbDb,COL,comp._uid), {categoria:c.n}); }catch(e){ console.error('renombrar categoría:',e); } }
+        else comp.categoria=c.n;
+      }
+    }
+    if(!USA_NUBE) saveLocal();
+    closeCats(); render();
+    if(window.__costosFijosRefresh) window.__costosFijosRefresh();
+    if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+
   // Guarda SOLO el campo pagos (no la compra completa) — evita pisar otros campos cambiados por otro usuario a la vez
   function persistPagos(uid, pagos){
     if(USA_NUBE && fbDb){ FS.updateDoc(FS.doc(fbDb, COL, uid), {pagos}).catch(e=>alert('Error al guardar el pago: '+e.message)); }
@@ -2065,7 +2199,9 @@ function buildFilterTable(cfg){
   // Resumen de compras EN VIVO por mes y por categoría — lo consume la página "Costos (resumen)", que
   // antes mostraba entera la foto del cierre viejo (y podía contradecir a Finanzas EN VIVO).
   // FIJOS = las mismas categorías que usa la vista de Costos Fijos, así los dos números coinciden siempre.
-  const CAT_FIJOS=['COSTO FIJO','Mano de Obra'];
+  // Las marca el usuario con la tilde "cuenta como costo fijo" (⚙️ Categorías) — antes estaban fijas acá
+  // y en Costos Fijos por separado, así que renombrar una categoría descuadraba los dos números.
+  const CAT_FIJOS=()=> window.__catComprasFijas();
   const CAT_VARIABLES=['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
   window.__resumenCompras = ()=>{
     if(!DB.compras || !DB.compras.length) return null;
@@ -2076,7 +2212,7 @@ function buildFilterTable(cfg){
       const m=meses[mes]=meses[mes]||{mes, total:0, fijos:0, variables:0, otros:0, porCat:{}};
       const cat=c.categoria||'(sin categoría)';
       m.total+=t; m.porCat[cat]=(m.porCat[cat]||0)+t;
-      if(CAT_FIJOS.includes(cat)) m.fijos+=t;
+      if(CAT_FIJOS().includes(cat)) m.fijos+=t;
       else if(CAT_VARIABLES.includes(cat)) m.variables+=t;
       else m.otros+=t;
     });
@@ -2095,7 +2231,7 @@ function buildFilterTable(cfg){
     // periodos disponibles
     const periodos = [...new Set(DB.compras.map(c=>c.periodo))].sort().reverse();
     fillSelect($('cmp-filtro-periodo'), [{v:'', l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
-    fillSelect($('cmp-filtro-cat'), [{v:'',l:'Todas las categorías'}].concat(CATEGORIAS.map(x=>({v:x,l:x}))), filtro.cat);
+    fillSelect($('cmp-filtro-cat'), [{v:'',l:'Todas las categorías'}].concat(catsFiltro().map(x=>({v:x,l:x}))), filtro.cat);
     // Autocompletar proveedores en el buscador: al tipear una parte, el navegador ofrece los nombres
     // que matchean; al elegir uno, el listado queda filtrado a ese proveedor (ver listener de cmp-buscar).
     const dlProv=$('cmp-buscar-provs');
@@ -2268,7 +2404,7 @@ function buildFilterTable(cfg){
         field('Proveedor','col2','<input id="f-prov" list="f-prov-list" value="'+esc(c.proveedor)+'" placeholder="Nombre del proveedor">'+datalistProv()) +
         field('CUIT / DNI','','<input id="f-cuit" value="'+esc(c.cuit)+'" placeholder="00-00000000-0">') +
         field('Cond. IVA','','<select id="f-cond">'+opt(COND_IVA,c.condIva)+'</select>') +
-        field('Categoría','col2','<select id="f-cat">'+opt(CATEGORIAS,c.categoria)+'</select>') +
+        field('Categoría','col2','<select id="f-cat">'+catOpts(c.categoria)+'</select>') +
         field('Tipo comprobante','col2','<select id="f-tipo">'+opt(TIPOS_COMPROB,c.tipoComprobante)+'</select>') +
         field('Emisión','','<input type="date" id="f-fecha" value="'+c.fecha+'">') +
         field('Vto. de pago','','<input type="date" id="f-venc" value="'+c.vencimiento+'">') +
@@ -3043,7 +3179,7 @@ function buildFilterTable(cfg){
     if(conocido && conocido.nombre){
       proveedor = conocido.nombre;
       if(conocido.cond && COND_IVA.includes(conocido.cond)) condIva = conocido.cond;
-      if(conocido.categoria && CATEGORIAS.includes(conocido.categoria)) categoria = conocido.categoria;
+      if(conocido.categoria && CATEGORIAS().includes(conocido.categoria)) categoria = conocido.categoria;
       if(conocido.tipo && TIPOS_COMPROB.includes(conocido.tipo)) tipoComprobante = conocido.tipo;
       infos.push('Proveedor reconocido por '+conocido.via+' ('+conocido.veces+' compra(s) previa(s))'+(categoria?' · categoría sugerida: '+categoria:''));
     } else if(provDominio){
@@ -3165,7 +3301,7 @@ function buildFilterTable(cfg){
     if(d.cuit) editing.cuit=d.cuit;
     if(d.condIva && COND_IVA.includes(d.condIva)) editing.condIva=d.condIva;
     if(d.tipoComprobante && TIPOS_COMPROB.includes(d.tipoComprobante)) editing.tipoComprobante=d.tipoComprobante;
-    if(d.categoria && CATEGORIAS.includes(d.categoria)) editing.categoria=d.categoria;
+    if(d.categoria && CATEGORIAS().includes(d.categoria)) editing.categoria=d.categoria;
     if(d.fecha) editing.fecha=d.fecha;
     if(d.vencimiento) editing.vencimiento=d.vencimiento; else if(d.fecha) editing.vencimiento=d.fecha;
     if(d.fecha) editing.periodo=String(d.fecha).slice(0,7);
@@ -3429,7 +3565,8 @@ function buildFilterTable(cfg){
   function datalistProdCmp(){ return '<datalist id="f-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+(p.tipo?' · '+esc(p.tipo):'')+'</option>').join('')+'</datalist>'; }
   // Tipo sugerido al dar de alta un producto/servicio nuevo desde una compra: si la categoría de la
   // compra es de gasto (costo fijo, mano de obra, gastos varios), lo más común es que sea un Servicio.
-  function tipoSugeridoDesdeCompra(){ return ['COSTO FIJO','Mano de Obra','gastos varios'].includes(editing.categoria) ? 'Servicio' : ''; }
+  // Un ítem de una categoría de costo fijo (o de gastos varios) suele ser un Servicio, no un producto.
+  function tipoSugeridoDesdeCompra(){ return (CAT_FIJOS().concat(['gastos varios'])).includes(editing.categoria) ? 'Servicio' : ''; }
 
   // ---------- Export / Import ----------
   function exportJSON(){
@@ -3503,8 +3640,19 @@ function buildFilterTable(cfg){
     unsub = FS.onSnapshot(FS.collection(fbDb,COL),
       snap=>{ DB.compras = snap.docs.map(d=>({...d.data(), _uid:d.id})); render(); },
       err=>{ console.error(err); alert('Error de lectura en la nube: '+err.message+'\n(¿Publicaste las reglas de Firestore?)'); });
+    // Categorías de compra (las administra el usuario). Si el documento no existe todavía, quedan las
+    // de fábrica (CAT_DEFAULT) — no se escribe nada hasta que se toque algo en ⚙️ Categorías.
+    if(unsubCats) unsubCats();
+    unsubCats = FS.onSnapshot(FS.doc(fbDb,'vph_config','categoriasCompra'),
+      snap=>{ const d=snap.exists()?snap.data():null;
+        if(d && Array.isArray(d.cats) && d.cats.length) CATS = d.cats.map(c=>({n:String(c.n||''), fijo:!!c.fijo})).filter(c=>c.n);
+        render();
+        if(window.__costosFijosRefresh) window.__costosFijosRefresh();   // el flag "fijo" cambia qué entra en Costos Fijos
+        if(window.__refreshAlertas) window.__refreshAlertas();
+      },
+      err=>console.error('categorias de compra:',err));
   }
-  function stopSync(){ if(unsub){ unsub(); unsub=null; } }
+  function stopSync(){ if(unsub){ unsub(); unsub=null; } if(unsubCats){ unsubCats(); unsubCats=null; } }
   function buildLoginUI(){
     if($('cmp-login')) return;
     const ov=document.createElement('div'); ov.className='cmp-overlay'; ov.id='cmp-login';
@@ -3549,6 +3697,9 @@ function buildFilterTable(cfg){
   $('cmp-pago-cerrar').onclick=()=>$('cmp-modal-pago').classList.remove('open');
   $('cmp-pago-prov-btn').onclick=openPagoProv;
   $('cmp-pago-prov-cerrar').onclick=()=>$('cmp-modal-pago-prov').classList.remove('open');
+  $('cmp-cats').onclick=openCats;
+  $('cmp-cats-cerrar').onclick=closeCats;
+  $('cmp-cats-modal').addEventListener('click',e=>{ if(e.target===$('cmp-cats-modal')) closeCats(); });
   $('cmp-export').onclick=exportJSON;
   $('cmp-import').onclick=()=>$('cmp-import-file').click();
   $('cmp-import-file').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
@@ -5124,7 +5275,9 @@ function buildFilterTable(cfg){
   // Antes esta página tenía su propia colección (vph_costosfijos): obligaba a cargar todo dos veces y,
   // peor, el importe se sumaba ADEMÁS del de la compra en "A pagar" de Finanzas y en la proyección de
   // Caja → DOBLE CONTEO. Ahora hay UNA sola fuente (la compra) y esta página solo la muestra.
-  const CATS_FIJO=['COSTO FIJO','Mano de Obra'];
+  // Qué categorías cuentan como costo fijo lo define el usuario en Compras → ⚙️ Categorías (tilde
+  // "cuenta como costo fijo"). Fallback a las de siempre por si todavía no llegó la config de la nube.
+  const CATS_FIJO=()=> (window.__catComprasFijas ? window.__catComprasFijas() : ['COSTO FIJO','Mano de Obra']);
   function totalCompra(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
     (c.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; });
     neto*=f; iva*=f; const extras=num(c.percepIva)+num(c.percepIibb)+num(c.impInternos)+num(c.intereses);
@@ -5138,9 +5291,15 @@ function buildFilterTable(cfg){
       vencimiento:String(c.vencimiento||'').slice(0,10), monto:(pagada?total:saldo),
       estado:(pagada?'pagado':'confirmado'), medio:(ult.medio||''), cuenta:(ult.cuenta||''),
       fechaPago:(pagada?String(ult.fecha||'').slice(0,10):''), categoria:c.categoria||'', recurrente:false }; }
+  // Se guardan las compras CRUDAS y el filtro por categoría se aplica aparte: así, si el usuario cambia
+  // qué categorías cuentan como costo fijo (⚙️ Categorías), esta vista se recalcula sin recargar la página.
+  let _comprasRaw=[];
+  function recalcCostos(){ DB.costos=_comprasRaw.filter(x=>CATS_FIJO().includes(x.categoria)).map(desdeCompra); }
+  window.__costosFijosRefresh = ()=>{ recalcCostos(); render(); if(window.__cajaRefresh) window.__cajaRefresh(); };
   function startSync(){ if(window.__rol!=='admin') return; const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,'vph_compras'), snap=>{
-      DB.costos=snap.docs.map(d=>({...d.data(),_uid:d.id})).filter(x=>CATS_FIJO.includes(x.categoria)).map(desdeCompra);
+      _comprasRaw=snap.docs.map(d=>({...d.data(),_uid:d.id}));
+      recalcCostos();
       render(); if(window.__cajaRefresh) window.__cajaRefresh(); }, err=>console.error('costosfijos (vista de compras):',err)); }
   function stopSync(){ if(unsub){unsub();unsub=null;} }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
@@ -5822,14 +5981,34 @@ function buildFilterTable(cfg){
     const pW={}, pWn={}; cat.forEach(p=>{ const w=num(p.pesoUnit); if(!(w>0)) return;
       if(p.codigo) pW[String(p.codigo).trim().toUpperCase()]=w; if(p.nombre) pWn[normP(p.nombre)]=w; });
     const pesoItem = it => pW[String(it.codigo||'').trim().toUpperCase()] || pWn[normP(it.desc)] || 0;
+    // Costo por unidad del producto (Base de Datos → Productos, campo "Costo $" o el Costeo por receta).
+    // Sirve para el MARGEN DE CONTRIBUCIÓN del mes en curso: (neto − costo variable) ÷ neto.
+    const pC={}, pCn={}; cat.forEach(p=>{ const c=num(p.costo); if(!(c>0)) return;
+      if(p.codigo) pC[String(p.codigo).trim().toUpperCase()]=c; if(p.nombre) pCn[normP(p.nombre)]=c; });
+    const costoItem = it => pC[String(it.codigo||'').trim().toUpperCase()] || pCn[normP(it.desc)] || 0;
     let vTot=0, vCant=0, cTot=0, kgV=0; const porCli={};
+    // Margen de contribución: se suma APARTE el neto de los ítems que SÍ tienen costo cargado. Lo que no
+    // tiene costo (ej. el Flete) queda FUERA del cálculo — nunca se cuenta como si fuera 100% de margen,
+    // porque eso mostraría una rentabilidad mejor que la real. "cobertura" dice qué % del neto se pudo costear.
+    let netoCon=0, costoVar=0, netoTot=0;
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
       const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
-      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it); if(w>0) kgV+=w*num(it.cant); }); });
+      const fd=1-num(v.descGeneral)/100;
+      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it); if(w>0) kgV+=w*num(it.cant);
+        if(!it.desc && !it.codigo) return;
+        const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*fd;   // neto del renglón
+        if(!(base>0)) return;
+        netoTot+=base;
+        const cu=costoItem(it);
+        if(cu>0){ netoCon+=base; costoVar+=num(it.cant)*cu*fd; }
+      }); });
     compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; cTot+=num(calcC(c).total); });
     let topCli='—', topPct=0; const arr=Object.entries(porCli).sort((a,b)=>b[1]-a[1]);
     if(arr.length && vTot>0){ topCli=arr[0][0]; topPct=Math.round(arr[0][1]/vTot*100); }
-    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV };
+    const cobertura = netoTot>0 ? netoCon/netoTot : 0;
+    const margenContrib = netoCon>0 ? (1-costoVar/netoCon) : null;   // null = sin costos cargados, no se puede
+    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV,
+      netoVendido:netoTot, costoVariable:costoVar, coberturaCosto:cobertura, margenContribucion:margenContrib };
   };
   // Ventas mes a mes EN VIVO — lo consume el gráfico "Ingresos vs Egresos" de la Vista Diaria, que antes
   // se dibujaba una sola vez con la serie congelada del import viejo.
