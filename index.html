@@ -3387,6 +3387,8 @@ function buildFilterTable(cfg){
       // Al elegir "cheque propio" se muestra igual lo que hay en cartera: en VPH lo habitual es
       // endosar, no emitir. Tocar uno cambia el medio a endoso y lo deja elegido, de un solo clic.
       '<div id="p-cartera-aviso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
+      '<div id="p-admin-aviso" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:12.5px;background:var(--bg,#f8fafc)">'+
+        'La factura queda saldada <b>sin que salga plata de ninguna cuenta</b>: no toca el efectivo ni los bancos, y no aparece en los movimientos de Caja. Usalo para notas de crédito, compensaciones o ajustes con el proveedor.</div>'+
       '<div id="p-endoso-extra" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Cheques de clientes que le entregás</div>'+
         '<div id="p-endoso-lista"></div>'+
@@ -3401,11 +3403,14 @@ function buildFilterTable(cfg){
     // Si se paga con cheque, la plata no sale de ninguna cuenta hasta que el cheque se haga efectivo.
     // Si es un ENDOSO, además no hay datos de cheque que tipear: se elige de la cartera, y el monto
     // lo definen los cheques elegidos (no se puede endosar "una parte" de un papel).
-    $('p-medio').addEventListener('change',()=>{ const v=$('p-medio').value, ch=esCheque(v), end=esEndoso(v);
+    $('p-medio').addEventListener('change',()=>{ const v=$('p-medio').value, ch=esCheque(v), end=esEndoso(v), admin=esAdministrativo(v);
       $('p-cheque-extra').style.display = (ch&&!end)?'block':'none';
       $('p-cartera-aviso').style.display = (ch&&!end)?'block':'none';
       $('p-endoso-extra').style.display = end?'block':'none';
-      $('p-cuenta-wrap').style.display = ch?'none':'';
+      // "Cancelado administrativamente" no sale de ninguna cuenta (una nota de crédito, un ajuste,
+      // una compensación): preguntar "¿de qué cuenta sale?" ahí confunde y ensucia el saldo por cuenta.
+      $('p-cuenta-wrap').style.display = (ch||admin||v==='Cuenta Corriente')?'none':'';
+      $('p-admin-aviso').style.display = admin?'block':'none';
       $('p-monto').readOnly = end;
       if(end) drawEndosoPicker(); else { endosoSel=[]; $('p-monto').value=kk.saldo; drawCarteraAviso(); } });
 
@@ -3468,7 +3473,9 @@ function buildFilterTable(cfg){
         return; }
       const pago={ id:'pag_'+newUid(), fecha:$('p-fecha').value, monto:num($('p-monto').value), medio };
       if(esCheque(medio)){ pago.chNumero=$('p-ch-num')?$('p-ch-num').value.trim():''; pago.chBanco=$('p-ch-banco')?$('p-ch-banco').value.trim():''; pago.chVenc=$('p-ch-venc')?$('p-ch-venc').value:''; }
-      else { pago.cuenta=$('p-cuenta')?$('p-cuenta').value:''; }   // de qué cuenta salió la plata
+      else if(!esAdministrativo(medio)) pago.cuenta=$('p-cuenta')?$('p-cuenta').value:'';   // de qué cuenta salió la plata
+      // Un pago administrativo NO lleva cuenta: no salió plata de ningún lado. Guardarle una cuenta
+      // (la que quedara elegida en el selector oculto) ensuciaría el detalle por cuenta de Caja.
       const pagos=(c2.pagos||[]).slice(); pagos.push(pago); c2.pagos=pagos; persistPagos(c2._uid, pagos);
       if(esCheque(medio) && window.__upsertChequePago){ window.__upsertChequePago({ pagoId:pago.id, compraUid:c2._uid, compraNro:c2.nroFactura||c2.numero||'', entidad:c2.proveedor||'', numero:pago.chNumero, banco:pago.chBanco, monto:pago.monto, fechaEmision:pago.fecha, fechaVencimiento:pago.chVenc||pago.fecha }); }
       $('cmp-modal-pago').classList.remove('open'); };
