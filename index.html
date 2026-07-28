@@ -3357,10 +3357,20 @@ function buildFilterTable(cfg){
 
   // ---------- Pagos ----------
   let payingUid=null;
+  // CUIT lindo de leer: 30-71784004-2. Si no son 11 dígitos se muestra tal cual se cargó.
+  function fmtCuit(v){ const d=String(v||'').replace(/\D/g,''); return d.length===11 ? d.slice(0,2)+'-'+d.slice(2,10)+'-'+d.slice(10) : String(v||''); }
+  // El CUIT sale de la compra; si esa factura no lo tiene, se busca en el historial del proveedor.
+  function cuitDeProveedor(nombre, propio){ if(propio) return propio;
+    const p=proveedoresConocidos().find(x=>x.nombre===nombre); return (p&&p.cuit)||''; }
+
   function openPago(c){
     payingUid=c._uid; const kk=calc(c);
+    const cuitProv=cuitDeProveedor(c.proveedor, c.cuit);
     $('cmp-form-pago').innerHTML =
-      '<p style="margin:0 0 12px;font-size:13px">'+esc(c.proveedor)+' — saldo <b>'+money(kk.saldo)+'</b></p>'+
+      '<div style="border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:13px">'+
+        '<b>'+esc(c.proveedor||'—')+'</b>'+(cuitProv?' · <span style="font-variant-numeric:tabular-nums">CUIT '+esc(fmtCuit(cuitProv))+'</span>':' · <span style="color:var(--amber)">sin CUIT cargado</span>')+
+        '<div style="color:var(--muted);font-size:12px;margin-top:2px">Factura '+esc(c.nroFactura||c.numero||'—')+' · saldo <b style="color:var(--text)">'+money(kk.saldo)+'</b></div>'+
+      '</div>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="p-monto" value="'+kk.saldo+'">') +
         field('Fecha','','<input type="date" id="p-fecha" value="'+hoyISO+'">') +
@@ -3374,6 +3384,9 @@ function buildFilterTable(cfg){
           field('Banco','','<input id="p-ch-banco">') +
           field('Vencimiento / fecha de pago','col2','<input type="date" id="p-ch-venc" value="'+hoyISO+'">') +
         '</div></div>'+
+      // Al elegir "cheque propio" se muestra igual lo que hay en cartera: en VPH lo habitual es
+      // endosar, no emitir. Tocar uno cambia el medio a endoso y lo deja elegido, de un solo clic.
+      '<div id="p-cartera-aviso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
       '<div id="p-endoso-extra" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Cheques de clientes que le entregás</div>'+
         '<div id="p-endoso-lista"></div>'+
@@ -3390,10 +3403,27 @@ function buildFilterTable(cfg){
     // lo definen los cheques elegidos (no se puede endosar "una parte" de un papel).
     $('p-medio').addEventListener('change',()=>{ const v=$('p-medio').value, ch=esCheque(v), end=esEndoso(v);
       $('p-cheque-extra').style.display = (ch&&!end)?'block':'none';
+      $('p-cartera-aviso').style.display = (ch&&!end)?'block':'none';
       $('p-endoso-extra').style.display = end?'block':'none';
       $('p-cuenta-wrap').style.display = ch?'none':'';
       $('p-monto').readOnly = end;
-      if(end) drawEndosoPicker(); else { endosoSel=[]; $('p-monto').value=kk.saldo; } });
+      if(end) drawEndosoPicker(); else { endosoSel=[]; $('p-monto').value=kk.saldo; drawCarteraAviso(); } });
+
+    // Qué hay en la cartera para endosar, con sus montos, mientras se decide cómo pagar.
+    function drawCarteraAviso(){
+      const cont=$('p-cartera-aviso'); if(!cont) return;
+      const cart = window.__chequesEnCartera ? window.__chequesEnCartera() : [];
+      if(!cart.length){ cont.innerHTML='<span style="font-size:12.5px;color:var(--muted)">No tenés cheques de clientes en cartera para endosar: este pago sale de tu chequera.</span>'; return; }
+      const tot=cart.reduce((s,q)=>s+q.monto,0);
+      cont.innerHTML='<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Cheques de clientes disponibles para endosar · '+cart.length+' por '+money(tot)+'</div>'+
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Si en vez de emitir un cheque propio vas a entregar uno de estos, tocalo: se registra como endoso.</p>'+
+        cart.map(q=>'<button type="button" class="cmp-rowbtn" data-usar="'+esc(q.uid)+'" style="display:block;width:100%;text-align:left;margin:0 0 6px;padding:8px 10px;border-radius:8px">'+
+          (q.echeq===false?'📄 ':'')+'<b>N° '+esc(q.numero||'—')+'</b> · '+esc(q.banco||'—')+' · de <b>'+esc(q.entidad||'—')+'</b> · <b>'+money(q.monto)+'</b> · vence '+fmtFecha(q.fechaVencimiento)+'</button>').join('');
+      cont.querySelectorAll('button[data-usar]').forEach(b=> b.onclick=()=>{
+        const sel=$('p-medio'); sel.value=MEDIO_ENDOSO;
+        sel.dispatchEvent(new Event('change',{bubbles:true}));
+        if(sel.__repintar) sel.__repintar();   // el select está oculto detrás de tarjetas: hay que refrescar la marca
+        endosoSel=[b.dataset.usar]; drawEndosoPicker(); }); }
 
     function drawEndosoPicker(){
       const cart = window.__chequesEnCartera ? window.__chequesEnCartera() : [];
@@ -3479,6 +3509,10 @@ function buildFilterTable(cfg){
         field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
         '<div class="cmp-field" id="pp-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="pp-cuenta">'+cuentasOpt('')+'</select></div>' +
       '</div>'+
+      '<div id="pp-cuit" class="asof" style="margin:-8px 0 10px"></div>'+
+      // Este modal reparte UN importe entre varias facturas, así que no ofrece el endoso: un cheque no
+      // se parte en dos. Pero igual conviene ver qué hay en cartera al decidir cómo pagar.
+      '<div id="pp-cartera-aviso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
       '<div id="pp-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">Datos del cheque/e-cheque</div>'+
         '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
@@ -3497,13 +3531,28 @@ function buildFilterTable(cfg){
 
     const ppProv=$('pp-prov'), ppMonto=$('pp-monto'), ppFecha=$('pp-fecha'), ppMedio=$('pp-medio');
 
-    ppProv.addEventListener('change',()=>{ pagoProv.proveedor=ppProv.value; drawDistribucion(); });
+    ppProv.addEventListener('change',()=>{ pagoProv.proveedor=ppProv.value; drawCuitProv(); drawDistribucion(); });
+    function drawCuitProv(){
+      const n=String(pagoProv.proveedor||'').trim(), cu=n?cuitDeProveedor(n,''):'';
+      $('pp-cuit').innerHTML = !n ? '' : (cu ? 'CUIT <b style="font-variant-numeric:tabular-nums">'+esc(fmtCuit(cu))+'</b>'
+                                             : '<span style="color:var(--amber)">Ese proveedor no tiene CUIT cargado</span>'); }
+    // Lista informativa de lo que hay en cartera. El endoso en sí se hace desde la factura puntual.
+    function drawCarteraProv(){
+      const cont=$('pp-cartera-aviso'); if(!cont) return;
+      const cart = window.__chequesEnCartera ? window.__chequesEnCartera() : [];
+      if(!cart.length){ cont.innerHTML='<span style="font-size:12.5px;color:var(--muted)">No tenés cheques de clientes en cartera para endosar.</span>'; return; }
+      const tot=cart.reduce((s,q)=>s+q.monto,0);
+      cont.innerHTML='<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Tenés '+cart.length+' cheque'+(cart.length>1?'s':'')+' en cartera para endosar · '+money(tot)+'</div>'+
+        cart.map(q=>'<div style="font-size:12.5px;padding:3px 0">'+(q.echeq===false?'📄 ':'')+'<b>N° '+esc(q.numero||'—')+'</b> · '+esc(q.banco||'—')+' · de <b>'+esc(q.entidad||'—')+'</b> · <b>'+money(q.monto)+'</b> · vence '+fmtFecha(q.fechaVencimiento)+'</div>').join('')+
+        '<p style="font-size:12px;color:var(--muted);margin:8px 0 0">Para <b>endosar</b> uno de estos, hacelo desde la factura puntual (botón Pagar de la fila) o desde el módulo Cheques: acá se reparte un importe entre varias facturas y un cheque no se puede partir en dos.</p>'; }
     ppMonto.addEventListener('input',()=>{ pagoProv.monto=num(ppMonto.value); drawDistribucion(); });
     ppFecha.addEventListener('change',()=>{ pagoProv.fecha=ppFecha.value; });
     ppMedio.addEventListener('change',()=>{
       const ch=esCheque(ppMedio.value);
       const admin=esAdministrativo(ppMedio.value);
       $('pp-cheque-extra').style.display=ch?'block':'none';
+      $('pp-cartera-aviso').style.display=ch?'block':'none';
+      if(ch) drawCarteraProv();
       $('pp-cuenta-wrap').style.display=(ch||admin||ppMedio.value==='Cuenta Corriente')?'none':'block';
       pagoProv.medio=ppMedio.value;
     });
@@ -5070,7 +5119,9 @@ function buildFilterTable(cfg){
   // Los que están en la mano (estado "cartera") son los únicos que se pueden entregar.
   window.__chequesEnCartera = ()=> DB.cheques.filter(disponible)
     .map(c=>({ uid:c._uid, numero:c.numero||'', banco:c.banco||'', entidad:c.entidad||'',
-               monto:num(c.monto), fechaVencimiento:c.fechaVencimiento||'', echeq:!!c.echeq }))
+               // Mismo criterio que esPapel(): sin el campo = ECHEQ. Con !!c.echeq, un cheque viejo
+               // (que no tiene el campo) se mostraría como "papel", al revés de la realidad.
+               monto:num(c.monto), fechaVencimiento:c.fechaVencimiento||'', echeq:c.echeq!==false }))
     .sort((a,b)=>String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento)));
   // Marca el cheque como entregado a un proveedor. Lo llama Compras después de registrar el pago,
   // así el mismo papel NO genera además un cheque propio (eso lo contaría dos veces).
