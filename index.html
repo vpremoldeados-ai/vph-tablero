@@ -4107,13 +4107,34 @@ function buildFilterTable(cfg){
   }
 
   // ---------- Menú de impresión de documentos (usa window.__imprimir) ----------
-  function remitoObjDeVenta(v){
+  function remitoObjDeVenta(v, transportista){
     const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
     const cu=String(v.cuit||'').replace(/\D/g,'');
     const cli=(cu&&cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu))||cs.find(c=>(c.nombre||'').trim().toUpperCase()===(v.cliente||'').trim().toUpperCase())||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ');
     const items=(v.items||[]).filter(it=>it&&(it.desc||it.codigo)).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant)}));
-    return { numero:v.nroFactura||'', fecha:v.fecha, transportista:'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items };
+    // La venta no guarda con qué transporte sale (eso vive en el pedido de Producción y Logística), así
+    // que el transportista se elige al imprimir: define si el remito lleva la leyenda de pago en origen.
+    return { numero:v.nroFactura||'', fecha:v.fecha, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items };
+  }
+  // Paso previo al remito: con qué transporte sale. Si no es el flete propio, el PDF suma la leyenda
+  // "Pago del envío: EN ORIGEN, facturar a VPH SAS" + con quién coordinar la entrega en destino.
+  function elegirTransporte(v, ov){
+    const ts=(window.__transportes?window.__transportes():['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro']);
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;min-width:300px;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 4px;font-size:15px">Remito — ¿con qué transporte sale?</h3>'+
+      '<div style="font-size:11.5px;color:#666;margin:0 0 12px">Si no es el flete propio, el remito aclara que el envío se paga en origen y a nombre de quién se factura.</div>'+
+      '<div style="display:flex;flex-direction:column;gap:8px">'+
+        ts.map((t,i)=>'<button data-t="'+i+'" class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'">'+esc(t)+'</button>').join('')+
+      '<button data-x="1" class="cmp-btn" style="margin-top:4px">Cancelar</button></div></div>';
+    ov.querySelectorAll('button[data-t]').forEach(b=> b.onclick=()=>{
+      let t=ts[+b.dataset.t];
+      if(t==='Otro'){ t=(prompt('¿Qué transporte? (nombre de la agencia)')||'').trim(); if(!t) return; }
+      if(t==='Sin asignar') t='';
+      ov.remove();
+      try{ window.__imprimir.remito(remitoObjDeVenta(v,t)); }catch(e){ alert('Error al generar el documento: '+e.message); }
+    });
+    ov.querySelector('button[data-x]').onclick=()=>ov.remove();
   }
   function menuImprimir(v){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -4134,7 +4155,7 @@ function buildFilterTable(cfg){
     ov.querySelector('[data-doc="detalle"]').onclick=()=>go(()=>window.__imprimir.detalleVenta(v));
     ov.querySelector('[data-doc="presupuesto"]').onclick=()=>go(()=>window.__imprimir.presupuesto(v));
     ov.querySelector('[data-doc="recibo"]').onclick=()=>go(()=>window.__imprimir.recibo(v));
-    ov.querySelector('[data-doc="remito"]').onclick=()=>go(()=>window.__imprimir.remito(remitoObjDeVenta(v)));
+    ov.querySelector('[data-doc="remito"]').onclick=()=>elegirTransporte(v,ov);   // el overlay se reusa: pisa el menú con la elección de transporte
     ov.querySelector('[data-doc="cerrar"]').onclick=()=>ov.remove();
   }
 
@@ -6927,6 +6948,7 @@ function buildFilterTable(cfg){
     {g:'Logística', k:'capSanchez', l:'Capacidad camión Sánchez (pallets)',              def:8,  t:'num', hint:'Cuántos pallets entran por viaje. Se usa en Producción y Logística → Coordinar entregas para saber cuánto lugar queda en cada camión.'},
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
+    {g:'Logística', k:'transportePropio', l:'Transporte propio (flete de VPH)',          def:'Sánchez', t:'txt', hint:'El remito le agrega la leyenda "Pago del envío: EN ORIGEN, facturar a VPH SAS" a TODO envío que no sea con este transporte (Brío, Expreso Biletta, una agencia del cliente). Si tenés más de un fletero propio, separalos con coma.'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     // CRM: cuántos días hábiles se espera en CADA estado del lead antes de recordarle a Sofía la próxima
     // acción. Al mover el lead de estado se le agenda solo el "Próximo seguimiento" con estos días; cuando
@@ -7915,6 +7937,8 @@ function buildFilterTable(cfg){
   const esAdmin=()=> window.__rol==='admin';
 
   const TRANSPORTES=['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro'];
+  // Los consume Ventas al imprimir un remito (la venta no guarda transporte: se elige en el momento).
+  window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
   let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[];
@@ -8632,19 +8656,26 @@ function buildFilterTable(cfg){
     });
     window.__wa.modal({ titulo:'Programa del transportista', destino:'Copiá y pegá en el chat del transportista', texto:out.trim() });
   }
-  function imprimirRemito(pe){
-    if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
+  // Objeto de remito de un pedido, con el plan REAL de pallets de cada ítem (el que ve Gustavo al
+  // cargar el camión y el que usa el descuento de stock). Lo consume también el Asistente, así que
+  // el remito sale igual desde los dos lados. `fecha` permite imprimirlo con la de la entrega.
+  window.__remitoPedidoObj = function(pe, fecha){
     const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
     const cli=cs.find(c=>(c.nombre||'').trim().toUpperCase()===String(pe.cliente||'').trim().toUpperCase())||{};
     const dom=[pe.direccion, pe.ciudad].filter(Boolean).join(' - ') || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
     const rows=cargaRows(pe);
     const items=(pe.items||[]).filter(it=>it&&(it.producto||it.codigo)&&num(it.cantidad)>0).map(it=>{
       const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
-      return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), obs:(r&&r.pallets.length)?(r.pallets.length+(r.pallets.length!==1?' pallets ':' pallet ')+'('+r.pallets.map(nf).join('+')+')'):'' };
+      // El armado va en su propio bloque del PDF (con las unidades y el peso de cada pallet), así que
+      // acá se manda el plan crudo y la columna Observaciones queda libre.
+      return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), pallets:(r?r.pallets:null) };
     });
-    const t=totCarga(pe);
-    const resumen=t.pallets?(t.pallets+(t.pallets!==1?' pallets':' pallet')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')):'';
-    window.__imprimir.remito({ numero:'', fecha:pe.fecha||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items, palletResumen:resumen });
+    return { numero:'', fecha:fecha||pe.fecha||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
+      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items };
+  };
+  function imprimirRemito(pe){
+    if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
+    window.__imprimir.remito(window.__remitoPedidoObj(pe));
   }
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
   function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
@@ -8895,7 +8926,11 @@ function buildFilterTable(cfg){
     pedidos.filter(pe=> pe.estado==='entregado' && (pe.fechaEntregado||pe.fecha)>=isoMenos(7) && !th(pe).avisoEnt).forEach(pe=>{
       T.push({ ico:'✅', titulo:'Avisar "entregado" a '+(pe.cliente||'—')+' + remito', detalle:'Entregado el '+fmtFecha(pe.fechaEntregado||pe.fecha),
         prim:{l:'▶ Avisar', run(){ waModal({titulo:'Entregado → '+(pe.cliente||''), telefono:telDe(pe.cliente,''), adjunto:'Remito.pdf', texto:'Hola '+(primerNombre(pe.cliente)||'')+'! Ya está entregado, te paso el remito. Mil gracias!', alConfirmar(){ marcar('vph_pedidos',pe,'avisoEnt'); }}); }},
-        doc:{l:'🧾 Remito', run(){ if(!window.__imprimir) return; const cs=(window.__catalogoClientes?window.__catalogoClientes():[]); const nc=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,''); const cli=cs.find(c=>nc(c.nombre)===nc(pe.cliente))||{};
+        doc:{l:'🧾 Remito', run(){ if(!window.__imprimir) return;
+          // Mismo remito que el de Producción y Logística (con el armado real de pallets); si ese módulo
+          // todavía no cargó, se arma acá el objeto mínimo y el PDF calcula los pallets con el catálogo.
+          if(window.__remitoPedidoObj){ window.__imprimir.remito(window.__remitoPedidoObj(pe, pe.fechaEntregado||pe.fecha)); return; }
+          const cs=(window.__catalogoClientes?window.__catalogoClientes():[]); const nc=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,''); const cli=cs.find(c=>nc(c.nombre)===nc(pe.cliente))||{};
           window.__imprimir.remito({ numero:'', fecha:pe.fechaEntregado||pe.fecha, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:[pe.direccion,pe.ciudad].filter(Boolean).join(' - ')||[cli.direccion,cli.localidad].filter(Boolean).join(' - '), items:(pe.items||[]).filter(it=>it&&it.producto&&num(it.cantidad)>0).map(it=>({codigo:it.codigo||'',desc:it.producto,cant:num(it.cantidad)})) }); }},
         omit:{run(){ marcar('vph_pedidos',pe,'avisoEnt'); }} });
     });
@@ -9507,25 +9542,100 @@ function buildFilterTable(cfg){
   }
 
   // ---------- Remito (recibe objeto normalizado) ----------
-  // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva, domicilioEntrega, items:[{codigo,desc,obs,cant}], palletResumen }
+  // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva,
+  //        domicilioEntrega, items:[{codigo,desc,obs,cant,pallets}], palletResumen }
+  // items[].pallets (OPCIONAL): el plan REAL de pallets de ese ítem, en unidades por pallet (ej. [75,75,30]).
+  //   Lo manda Producción y Logística, donde Gustavo puede haber editado el armado a mano. ⚠️ Si viene, se
+  //   usa tal cual: recalcularlo acá desdibujaría el armado que se cargó de verdad en el camión. Si no
+  //   viene (remito hecho desde Ventas), se arma el plan estándar con el udPorPallet del catálogo.
+  // palletResumen: quedó solo por compatibilidad — hoy el total sale del bloque "Armado de pallets".
+
+  // Plan estándar: pallets completos y el resto en el último. Mismo criterio que Producción (planStd).
+  // Sin udPorPallet cargado no hay pallet que armar → [] (esa mercadería viaja suelta, como bultos).
+  function planStdPallets(cant, ud){
+    cant=Math.max(0,Math.round(num(cant))); ud=Math.round(num(ud));
+    if(cant<=0 || ud<=0) return [];
+    const full=Math.floor(cant/ud), resto=cant-full*ud, arr=[];
+    for(let i=0;i<full;i++) arr.push(ud);
+    if(resto>0) arr.push(resto);
+    return arr;
+  }
+  // [75,75,30] + 18 kg/u → "2 pallets de 75 u (1.350 kg c/u) + 1 de 30 u (540 kg)"
+  function armadoTxt(pallets, pesoUnit){
+    const grupos=[];
+    pallets.forEach(u=>{ const g=grupos.find(x=>x.u===u); if(g) g.n++; else grupos.push({u:u,n:1}); });
+    return grupos.map((g,i)=>{
+      const kg=num(pesoUnit)*g.u;
+      const cab = i===0 ? (g.n+' pallet'+(g.n!==1?'s':'')+' de '+nf(g.u)+' u') : (g.n+' de '+nf(g.u)+' u');
+      return cab + (kg>0 ? ' ('+nf(kg)+' kg'+(g.n>1?' c/u':'')+')' : '');
+    }).join(' + ');
+  }
+  // Transporte propio = el flete de Matías Sánchez (Córdoba Capital y hasta 30 km de Circunvalación):
+  // lo pone VPH, así que el remito no lleva ninguna aclaración de pago. Con CUALQUIER otro transporte
+  // de carga (Brío, Expreso Biletta, una agencia que consiga el cliente) el envío se paga EN ORIGEN y
+  // la agencia le factura a VPH, y en destino hay que coordinar con el comprador → leyenda obligatoria.
+  // El nombre del transporte propio es un parámetro (Base de Datos → ⚙️ Parámetros → Logística) por si
+  // algún día cambia el fletero; se pueden poner varios separados por coma.
+  const SIN_LEYENDA=['SIN ASIGNAR','RETIRA CLIENTE','RETIRO','RETIRA EN FABRICA','RETIRO EN FABRICA','A COORDINAR'];
+  function esTransportePropio(t){
+    const n=normc(t); if(!n) return true;
+    return String(window.__param?window.__param('transportePropio','Sánchez'):'Sánchez')
+      .split(',').map(s=>normc(s)).filter(Boolean).some(p=>n.indexOf(p)>=0);
+  }
+  function leyendaEnvio(obj){
+    const t=normc(obj.transportista);
+    if(!t || SIN_LEYENDA.indexOf(t)>=0 || esTransportePropio(t)) return '';
+    return '<div style="margin-top:12px;border:2px solid #111;border-radius:4px;padding:8px 10px;font-size:11.5px;line-height:1.6">'+
+      '<div style="font-weight:800;margin-bottom:3px">ENVÍO POR '+esc(String(obj.transportista).toUpperCase())+'</div>'+
+      '<div><b>Pago del envío:</b> EN ORIGEN — facturar a nombre de <b>'+esc(EMPRESA.razon)+'</b> (CUIT '+esc(EMPRESA.cuit)+').</div>'+
+      '<div><b>Coordinar entrega en destino con:</b> '+esc(obj.clienteNombre||'—')+
+        ' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................')+'</div>'+
+    '</div>';
+  }
   function remito(obj){
     obj=obj||{};
     const izq='<b>'+esc(obj.clienteNombre||'—')+'</b>'+
       (obj.clienteTel?'<br>Teléfono: '+esc(obj.clienteTel):'')+
       '<br>Domicilio de Entrega: '+esc(obj.domicilioEntrega||'—');
     const der='CUIT: '+esc(obj.clienteCuit||'—')+'<br>Cond. IVA: '+esc(obj.clienteCondIva||'—');
-    const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[]);
-    const nc=s=>String(s||'').trim().toUpperCase();
-    const bultosDe=it=>{ const pr=(it.codigo&&prods.find(p=>nc(p.codigo)===nc(it.codigo))) || prods.find(p=>nc(p.nombre)===nc(it.desc)); const ud=pr?num(pr.udPorPallet):0; return ud>0?Math.ceil(num(it.cant)/ud):num(it.cant); };
-    let filas=its.map(it=>'<tr><td>'+esc(it.codigo||'')+'</td><td>'+esc(it.desc||'')+'</td><td>'+esc(it.obs||'')+'</td><td class="n">'+nf(it.cant)+'</td><td class="n">'+nf(bultosDe(it))+'</td></tr>').join('');
+    const prodDe=it=>{ const c=normc(it.codigo); return (c&&prods.find(p=>normc(p.codigo)===c)) || prods.find(p=>normc(p.nombre)===normc(it.desc)) || null; };
+    const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0)
+      .map(it=>{ const pr=prodDe(it); const ud=pr?num(pr.udPorPallet):0;
+        const pl=(it.pallets&&it.pallets.length)?it.pallets.map(u=>Math.round(num(u))).filter(u=>u>0):planStdPallets(it.cant,ud);
+        return { it:it, pr:pr, peso:(pr?num(pr.pesoUnit):0), pallets:pl }; })
+      // El Flete y cualquier otro Servicio del catálogo no se entregan: no van al remito ni suman bultos.
+      .filter(r=> !(r.pr && String(r.pr.tipo||'')==='Servicio'));
+    const bultosDe=r=> r.pallets.length || Math.round(num(r.it.cant));
+    let filas=its.map(r=>'<tr><td>'+celdaCodigo(r.it.codigo)+'</td><td>'+esc(r.it.desc||'')+'</td><td>'+esc(r.it.obs||'')+'</td>'+
+      '<td class="n">'+nf(r.it.cant)+'</td><td class="n">'+nf(bultosDe(r))+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';
-    const totBultos=its.reduce((a,it)=>a+bultosDe(it),0);
+    const totBultos=its.reduce((a,r)=>a+bultosDe(r),0);
     const tabla='<table class="doc-tab"><tr><th>Código</th><th>Productos</th><th>Observaciones</th><th class="n">Cantidad</th><th class="n">Bultos</th></tr>'+filas+
       '<tr><td colspan="4" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>';
     const transp = obj.transportista ? '<div style="margin-bottom:8px;font-size:11.5px"><b>Transportista:</b> '+esc(obj.transportista)+'</div>' : '';
-    const pallets = obj.palletResumen ? '<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>' : '';
-    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha))+transp+bloqueCliente(izq,der)+tabla+pallets+firma()+pie();
+    // Cómo va armada la carga: cuántos pallets, de cuántas unidades cada uno y cuánto pesa cada pallet.
+    const conPal = its.filter(r=>r.pallets.length);
+    let pallets='';
+    if(conPal.length){
+      const filasP=conPal.map(r=>{
+        const kgIt=r.pallets.reduce((a,u)=>a+u*r.peso,0);
+        return '<tr><td>'+esc(r.it.codigo||'')+'</td><td>'+esc(r.it.desc||'')+'</td><td class="n">'+nf(r.it.cant)+'</td>'+
+          '<td>'+armadoTxt(r.pallets,r.peso)+'</td><td class="n">'+(kgIt>0?nf(kgIt)+' kg':'—')+'</td></tr>';
+      }).join('');
+      const totPal=conPal.reduce((a,r)=>a+r.pallets.length,0);
+      const totKg=conPal.reduce((a,r)=>a+r.pallets.reduce((b,u)=>b+u*r.peso,0),0);
+      const sinPeso=conPal.filter(r=>!(r.peso>0)).map(r=>r.it.desc||r.it.codigo||'—');
+      pallets='<h4 style="margin:12px 0 4px;font-size:12px">Armado de pallets</h4>'+
+        '<table class="doc-tab"><tr><th>Código</th><th>Producto</th><th class="n">Cantidad</th><th>Cómo van los pallets</th><th class="n">Peso</th></tr>'+filasP+
+        '<tr><td colspan="3" class="n"><b>Total</b></td><td><b>'+totPal+' pallet'+(totPal!==1?'s':'')+
+          (totKg>=1000?' · '+(Math.round(totKg/100)/10)+' t':'')+'</b></td>'+
+          '<td class="n"><b>'+(totKg>0?nf(totKg)+' kg':'—')+'</b></td></tr></table>'+
+        (sinPeso.length?'<div style="font-size:10px;color:#666;margin:-6px 0 8px">Sin peso cargado en el catálogo: '+esc(sinPeso.join(', '))+' — el total de kg no los incluye.</div>':'');
+    } else if(obj.palletResumen){
+      pallets='<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>';
+    }
+    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha))+transp+bloqueCliente(izq,der)+tabla+pallets+leyendaEnvio(obj)+firma()+pie();
   }
 
   window.__imprimir = {
