@@ -837,6 +837,7 @@
       </div>
       <p class="note" id="bd-backup-asof" style="margin:-4px 0 10px"></p>
       <div class="filter-bar" id="bd-tabs"></div>
+      <div class="filter-bar" id="bd-filtro-tipo" style="display:none"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <input type="text" class="search-box" id="bd-buscar" placeholder="Buscar..." style="margin-left:0">
         <span class="result-count" id="bd-count" style="margin:0 0 0 auto"></span>
@@ -4337,7 +4338,7 @@ function buildFilterTable(cfg){
   // "+ Nuevo" de un ítem de Compras (sueldos, alquiler, etc.), que quedan en el mismo catálogo pero NO
   // son algo que se fabrique ni se venda. seVende ausente (catálogo real de siempre) cuenta como true.
   function catProductos(){ const a=(window.__catalogoProductos ? window.__catalogoProductos() : []); const up=s=>String(s||'').trim().toUpperCase();
-    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false); }
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false && !(window.__esInsumoProd&&window.__esInsumoProd(p))); }
   function datalistProd(){ return '<datalist id="vf-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>'; }
   // Alias por dimensión: "60x40"/"40x40" (como se pide por WhatsApp) → LC60/LC40 del catálogo ("Loseta
   // Cribada Rectangular/Cuadrada"). Sin esto, un ítem que llega de un lead con ese nombre no matcheaba
@@ -6127,7 +6128,7 @@ function buildFilterTable(cfg){
   // seVende:false (altas hechas desde el "+ Nuevo" de Compras: sueldos, alquiler, etc. — no son
   // productos que se fabriquen ni se vendan). Ausente = true (catálogo real de siempre).
   function catProductos(){ const a=(window.__catalogoProductos?window.__catalogoProductos():[]); const up=s=>String(s||'').trim().toUpperCase();
-    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false); }
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false && !(window.__esInsumoProd&&window.__esInsumoProd(p))); }
   function catClientes(){ return (window.__catalogoClientes?window.__catalogoClientes():[]); }
   const ALIAS_PROD={ LC60:['60x40','60 x 40'], LC40:['40x40','40 x 40'] };
   function matchProducto(val){ const v=(val||'').trim().toLowerCase(); if(!v) return null;
@@ -6490,6 +6491,13 @@ function buildFilterTable(cfg){
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
   const ALIC=[{v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'}];
   const UNID=['u','m²','m³','kg','bolsa','pallet','servicio'];
+  // Qué ES cada ficha del catálogo. Antes "Tipo / Rubro" era texto libre y quedó inconsistente
+  // ("Premoldeado", "Loseta", vacío), así que insumos y materias primas convivían con los productos
+  // sin forma de distinguirlos. ⚠️ 'Servicio' tiene que escribirse EXACTAMENTE así: el código lo usa
+  // para excluirlo de stock/producción (disponibilidadProducto, cargaRows, activos()).
+  const TIPOS_PROD=['Producto terminado','Insumo / Materia prima','Servicio','Reventa'];
+  const ES_INSUMO = p => String(p&&p.tipo||'')==='Insumo / Materia prima';
+  window.__esInsumoProd = ES_INSUMO;   // lo consultan Ventas/Presupuestos/CRM/Producción para ocultarlos
 
   const ENT = {
     clientes: { col:'vph_clientes', label:'Clientes', sing:'Cliente', origen:'vph_ventas', campoOrigen:'cliente',
@@ -6501,8 +6509,8 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'Tipo / Rubro',t:'text'},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
-      cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'¿Qué es? (tipo)',t:'select',opts:TIPOS_PROD,cards:1},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'tipo',h:'Tipo'},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
       fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo'],cards:1},{k:'unidad',l:'Unidad de compra (bolsa, camión, m³, metro)',t:'text'},{k:'precio',l:'Precio de compra $',t:'number'},{k:'contenido',l:'Rinde por compra (ej: 50 = 50 kg por bolsa; 1 si compra = uso)',t:'number'},{k:'unidadUso',l:'Unidad de uso (kg, m³, m)',t:'text'},{k:'iva',l:'IVA',t:'select',opts2:ALIC},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
@@ -6510,7 +6518,7 @@ function buildFilterTable(cfg){
       search:['nombre','categoria','proveedor'] }
   };
 
-  let tab='clientes', q='', sortCol='nombre', sortDir=1;
+  let tab='clientes', q='', sortCol='nombre', sortDir=1, filtroTipo='';
   const store={ vph_clientes:[], vph_proveedores:[], vph_productos:[], vph_insumos:[] };
   const unsub={};
   const E=()=>ENT[tab];
@@ -6521,6 +6529,37 @@ function buildFilterTable(cfg){
     else { const a=store[E().col]; const i=a.findIndex(x=>x._uid===rec._uid); if(i>=0)a[i]=rec; else a.push(rec); saveLocal(); render(); } }
   function remove(uid){ if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,E().col,uid)).catch(e=>alert('Error: '+e.message)); }
     else { store[E().col]=data().filter(x=>x._uid!==uid); saveLocal(); render(); } }
+  // ---------- Mover una ficha de Productos a "Insumos y MP" ----------
+  // Los ítems que en realidad son materia prima (diesel, hierro, aditivos) se cargaban en Productos —
+  // normalmente por el "+ Nuevo" del módulo Compras — y quedaban mezclados con lo que se fabrica.
+  // Esto los pasa al master vph_insumos, que es lo que alimenta el costeo por receta.
+  // ⚠️ Guardas: no se mueve si ya existe uno con el mismo nombre en Insumos (evita duplicar el master),
+  // ni si el producto tiene stock/movimiento asociado en Producción (ahí hay que revisarlo a mano).
+  async function moverAInsumos(p){
+    const nombre=String(p.nombre||'').trim();
+    if(!nombre){ alert('La ficha no tiene nombre.'); return; }
+    const norm=s=>String(s||'').trim().toUpperCase();
+    if((store.vph_insumos||[]).some(i=>norm(i.nombre)===norm(nombre))){
+      alert('Ya existe "'+nombre+'" en Insumos y MP.\n\nRevisá esa ficha; si esta de Productos quedó duplicada, borrala con la ✕.'); return; }
+    if(num(p.stock)>0 && !confirm('Ojo: "'+nombre+'" tiene stock cargado ('+num(p.stock)+').\nAl pasarlo a Insumos y MP deja de contar como producto fabricado.\n\n¿Seguir igual?')) return;
+    if(!confirm('Mover "'+nombre+'" a la pestaña "Insumos y MP".\n\n• Se crea la ficha de insumo (con el costo como precio de compra).\n• Se elimina de Productos.\n\n¿Confirmás?')) return;
+    const ins={ _uid:'ins_'+slug(nombre)+'-'+Math.floor((Date.now()%1e7)).toString(36),
+      nombre, categoria:'Materia prima', unidad:String(p.unidad||'u'), precio:num(p.costo), contenido:1,
+      unidadUso:String(p.unidad||'u'), iva:String(p.ivaVenta||'21'), proveedor:'', stock:num(p.stock), stockMinimo:num(p.stockMinimo),
+      nota:('Movido desde Productos'+(p.nota?(' · '+p.nota):'')) };
+    try{
+      if(window.__usaNube){ const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+        await c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',ins._uid), {...ins});
+        await c.FS.deleteDoc(c.FS.doc(c.db,'vph_productos',p._uid));
+      } else {
+        store.vph_insumos.push(ins);
+        store.vph_productos=store.vph_productos.filter(x=>x._uid!==p._uid);
+        saveLocal();
+      }
+      closeForm(); tab='insumos'; filtroTipo=''; render();
+      alert('✅ "'+nombre+'" ahora está en Insumos y MP.\n\nRevisá el precio de compra y el "rinde por compra" para que el costeo calcule bien.');
+    }catch(e){ alert('No se pudo mover: '+e.message); }
+  }
   function saveLocal(){ try{ localStorage.setItem('vph_bd_v1', JSON.stringify(store)); }catch(e){} }
   function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem('vph_bd_v1')); if(d){ Object.assign(store,d); } }catch(e){} }
 
@@ -6530,6 +6569,20 @@ function buildFilterTable(cfg){
     $('bd-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.tab; sortCol=E().cols[0].k; q=''; if($('bd-buscar'))$('bd-buscar').value=''; render(); });
     const cols=E().cols;
     let rows=data().slice();
+    // Filtro por tipo (solo en Productos): separa a la vista los productos de los insumos/servicios,
+    // que hasta ahora convivían mezclados en la misma lista.
+    if(tab==='productos'){
+      const cont=$('bd-filtro-tipo');
+      if(cont){
+        cont.style.display='';
+        const cuenta = t => data().filter(p=> t==='' ? true : (t==='(sin tipo)' ? !String(p.tipo||'').trim() : String(p.tipo||'')===t)).length;
+        const opciones = [['','Todos']].concat(TIPOS_PROD.map(t=>[t,t]));
+        if(data().some(p=>!String(p.tipo||'').trim())) opciones.push(['(sin tipo)','⚠️ Sin tipo']);
+        cont.innerHTML = opciones.map(([v,l])=>'<button class="filter-btn'+(filtroTipo===v?' active':'')+'" data-ftipo="'+esc(v)+'">'+esc(l)+' ('+cuenta(v)+')</button>').join('');
+        cont.querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtroTipo=b.dataset.ftipo; render(); });
+      }
+      if(filtroTipo) rows = rows.filter(p=> filtroTipo==='(sin tipo)' ? !String(p.tipo||'').trim() : String(p.tipo||'')===filtroTipo);
+    } else { const cont=$('bd-filtro-tipo'); if(cont){ cont.style.display='none'; cont.innerHTML=''; } }
     if(q){ const s=q.toLowerCase(); rows=rows.filter(r=> E().search.some(k=>String(r[k]||'').toLowerCase().includes(s))); }
     rows.sort((a,b)=>{ const va=a[sortCol], vb=b[sortCol]; const na=num(va),nb=num(vb); const bothNum=(typeof va==='number'||typeof vb==='number'); const r=bothNum?(na-nb):String(va||'').localeCompare(String(vb||'')); return r*sortDir; });
     let html='<tr>'+cols.map(c=>'<th class="'+(c.money||c.num?'num':'')+'" data-sort="'+c.k+'">'+c.h+(sortCol===c.k?' <span class="arrow">'+(sortDir<0?'▼':'▲')+'</span>':'')+'</th>').join('')+'<th></th></tr>';
@@ -6561,13 +6614,28 @@ function buildFilterTable(cfg){
       const id='bf-'+f.k; let inner;
       if(f.t==='textarea') inner='<textarea id="'+id+'" rows="2">'+esc(editing[f.k])+'</textarea>';
       else if(f.t==='checkbox') inner='<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="'+id+'" '+(editing[f.k]?'checked':'')+' style="width:auto"> '+f.l+'</label>';
-      else if(f.t==='select'){ const opts = f.opts2 ? f.opts2.map(o=>'<option value="'+o.v+'"'+(String(editing[f.k])===o.v?' selected':'')+'>'+o.l+'</option>').join('') : f.opts.map(o=>'<option value="'+esc(o)+'"'+(String(editing[f.k])===String(o)?' selected':'')+'>'+(o||'—')+'</option>').join(''); inner='<select id="'+id+'">'+opts+'</select>'; }
+      else if(f.t==='select'){
+        // ⚠️ El <select> tiene que INCLUIR el valor que la ficha ya tiene, aunque no esté en la lista de
+        // opciones (ej. un "tipo" viejo como "Premoldeado"). Si no, no queda ninguna opción seleccionada,
+        // el navegador muestra la primera y al guardar le cambia el valor EN SILENCIO. Mismo criterio que
+        // medioOpts() en Ventas/Compras.
+        const act=String(editing[f.k]==null?'':editing[f.k]);
+        let opts;
+        if(f.opts2){ const L=f.opts2.slice(); if(act && !L.some(o=>String(o.v)===act)) L.push({v:act,l:act+' (valor actual)'});
+          opts=L.map(o=>'<option value="'+esc(o.v)+'"'+(act===String(o.v)?' selected':'')+'>'+esc(o.l)+'</option>').join(''); }
+        else { const L=f.opts.slice(); if(act && !L.some(o=>String(o)===act)) L.push(act);
+          opts=L.map(o=>'<option value="'+esc(o)+'"'+(act===String(o)?' selected':'')+'>'+(o||'—')+'</option>').join(''); }
+        inner='<select id="'+id+'">'+opts+'</select>'; }
       else inner='<input id="'+id+'" '+(f.t==='number'?'inputmode="decimal"':'')+' value="'+esc(editing[f.k])+'">';
       if(f.t==='checkbox') return '<div class="cmp-field '+(f.col2?'col2':'')+'">'+inner+'</div>';
       return '<div class="cmp-field '+(f.col2?'col2':'')+'"><label>'+f.l+'</label>'+inner+'</div>';
     };
+    // En Productos, si la ficha es en realidad un insumo/materia prima, se ofrece MOVERLA a la pestaña
+    // "Insumos y MP" (que es el master que alimenta el costeo por receta), en vez de dejarla mezclada.
+    const moverBtn = (tab==='productos' && editing._uid)
+      ? '<button class="cmp-btn" id="bf-mover-insumo" style="margin-right:auto" title="Pasa esta ficha a la pestaña Insumos y MP">↪ Mover a Insumos y MP</button>' : '';
     $('bd-form').innerHTML='<div class="cmp-form-grid">'+E().fields.map(fld).join('')+'</div>'+
-      '<div class="cmp-form-foot"><button class="cmp-btn" id="bf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="bf-save">Guardar</button></div>';
+      '<div class="cmp-form-foot">'+moverBtn+'<button class="cmp-btn" id="bf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="bf-save">Guardar</button></div>';
     E().fields.forEach(f=>{ const el=$('bf-'+f.k); if(!el)return; el.addEventListener(f.t==='select'||f.t==='checkbox'?'change':'input',()=>{ editing[f.k]= f.t==='checkbox'?el.checked : (f.t==='number'?num(el.value):el.value); }); });
     // Tarjetas SOLO en los campos marcados con cards:1 en la definición de la entidad. NO se puede
     // decidir por id: los ids salen de un único generador ('bf-'+f.k) y campos como `categoria` o
@@ -6576,6 +6644,7 @@ function buildFilterTable(cfg){
     if(window.__tarjetas) E().fields.forEach(f=>{ if(f.cards) window.__tarjetas('bf-'+f.k); });
     $('bf-cancel').onclick=closeForm; $('bf-save').onclick=()=>{ if(!String(editing.nombre||'').trim()){ alert('Ingresá el nombre.'); return; }
       const cb=onSavedExterno; persist(editing); const rec={...editing}; closeForm(); if(cb) cb(rec); };
+    if($('bf-mover-insumo')) $('bf-mover-insumo').onclick=()=>moverAInsumos(editing);
   }
 
   // ---------- Costeo por producto (receta que REFERENCIA el master "Insumos y MP") ----------
@@ -6943,7 +7012,7 @@ function buildFilterTable(cfg){
   // Excluye la variante interna de refuerzo de base (no se cotiza suelta) y lo marcado seVende:false
   // (altas desde el "+ Nuevo" de Compras: sueldos, alquiler, etc.). Ausente = true (catálogo de siempre).
   const catProd=()=>{ const a=(window.__catalogoProductos? window.__catalogoProductos():[]); const up=s=>String(s||'').trim().toUpperCase();
-    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false); };
+    return a.filter(p=>!(up(p.codigo) && a.some(x=>up(x.refuerzoCodigo)===up(p.codigo))) && p.seVende!==false && !(window.__esInsumoProd&&window.__esInsumoProd(p))); };
   // Alias por dimensión: en el catálogo el producto figura como "Loseta Cribada Rectangular" (LC60),
   // pero en la calle/WhatsApp se lo conoce como "60x40". Sin esto, el nombre no matcheaba con el catálogo
   // y el sistema caía a deducir los m²/u de las medidas del nombre (0,24 → 4,17 u/m²) en vez de usar el
@@ -7572,7 +7641,7 @@ function buildFilterTable(cfg){
     return (insumos||[]).some(x=> (cod && String(x.codigo||'').trim().toUpperCase()===cod) || (nom && norm(x.nombre)===nom)); }
   // `activos` = lo que se fabrica. Excluye Servicios, lo marcado seFabrica:false, y las materias primas.
   // seFabrica ausente cuenta como true (los productos reales de siempre no tienen el campo y siguen igual).
-  function activos(){ return prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio' && p.seFabrica!==false && !esMateriaPrima(p)); }
+  function activos(){ return prods.filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio' && p.seFabrica!==false && !(window.__esInsumoProd&&window.__esInsumoProd(p)) && !esMateriaPrima(p)); }
   // Resolver el código de catálogo a partir de un nombre tipeado (para que las entregas descuenten bien)
   function resolverProd(nombre,codigo){ const c=String(codigo||'').trim(); if(c){ const byc=prods.find(p=>(p.codigo||'').trim().toUpperCase()===c.toUpperCase()); if(byc) return byc; } const n=norm(nombre); const byn=prods.find(p=>norm(p.nombre)===n); return byn||null; }
 
