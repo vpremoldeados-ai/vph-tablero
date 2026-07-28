@@ -6507,6 +6507,11 @@ function buildFilterTable(cfg){
   const ES_INSUMO = p => NO_PRODUCTO.indexOf(String(p&&p.tipo||''))>=0;
   window.__esInsumoProd = ES_INSUMO;   // lo consultan Ventas/Presupuestos/CRM/Producción para ocultarlos
 
+  // Campos y columnas del master vph_insumos — compartidos por las pestañas "Materia Prima" e "Insumos"
+  // (misma colección, distinta categoría), así no se duplica la definición y no se desincronizan.
+  const CAMPOS_INSUMO=[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo'],cards:1},{k:'unidad',l:'Unidad de compra (bolsa, camión, m³, metro)',t:'text'},{k:'precio',l:'Precio de compra $',t:'number'},{k:'contenido',l:'Rinde por compra (ej: 50 = 50 kg por bolsa; 1 si compra = uso)',t:'number'},{k:'unidadUso',l:'Unidad de uso (kg, m³, m)',t:'text'},{k:'iva',l:'IVA',t:'select',opts2:ALIC},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ];
+  const COLS_INSUMO=[ {k:'nombre',h:'Nombre',b:1},{k:'categoria',h:'Categoría'},{k:'unidad',h:'Compra'},{k:'precio',h:'Precio',money:1},{k:'proveedor',h:'Proveedor'},{k:'stock',h:'Stock',num:1} ];
+
   const ENT = {
     clientes: { col:'vph_clientes', label:'Clientes', sing:'Cliente', origen:'vph_ventas', campoOrigen:'cliente',
       fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'categoria',l:'Categoría (lista)',t:'select',opts:['',...CATS],cards:1},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'localidad',l:'Localidad',t:'text'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
@@ -6520,39 +6525,54 @@ function buildFilterTable(cfg){
       fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'¿Qué es? (tipo)',t:'select',opts:TIPOS_PROD,cards:1},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'tipo',h:'Tipo'},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
-    insumos: { col:'vph_insumos', label:'Insumos y MP', sing:'Insumo / Materia prima',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'categoria',l:'Categoría',t:'select',opts:['Materia prima','Insumo'],cards:1},{k:'unidad',l:'Unidad de compra (bolsa, camión, m³, metro)',t:'text'},{k:'precio',l:'Precio de compra $',t:'number'},{k:'contenido',l:'Rinde por compra (ej: 50 = 50 kg por bolsa; 1 si compra = uso)',t:'number'},{k:'unidadUso',l:'Unidad de uso (kg, m³, m)',t:'text'},{k:'iva',l:'IVA',t:'select',opts2:ALIC},{k:'proveedor',l:'Proveedor habitual',t:'text'},{k:'stock',l:'Stock (último conteo)',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
-      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'categoria',h:'Categoría'},{k:'unidad',h:'Compra'},{k:'precio',h:'Precio',money:1},{k:'proveedor',h:'Proveedor'},{k:'stock',h:'Stock',num:1} ],
-      search:['nombre','categoria','proveedor'] }
+    // Materia prima e Insumos comparten la MISMA colección (vph_insumos) pero se muestran en pestañas
+    // separadas, filtradas por el campo `categoria` — son cosas distintas y Marcelo los quiere aparte.
+    // Las fichas viejas SIN categoría caen en Materia Prima (Arena y Piedra, que es lo que son) para que
+    // no queden invisibles; desde la ficha se pueden pasar a Insumos cambiando la categoría.
+    materiaprima: { col:'vph_insumos', label:'Materia Prima', sing:'Materia prima', filtroCat:'Materia prima', incluyeSinCat:1,
+      fields:CAMPOS_INSUMO, cols:COLS_INSUMO, search:['nombre','categoria','proveedor'] },
+    insumos: { col:'vph_insumos', label:'Insumos', sing:'Insumo', filtroCat:'Insumo',
+      fields:CAMPOS_INSUMO, cols:COLS_INSUMO, search:['nombre','categoria','proveedor'] }
   };
 
   let tab='clientes', q='', sortCol='nombre', sortDir=1, filtroTipo='';
   const store={ vph_clientes:[], vph_proveedores:[], vph_productos:[], vph_insumos:[] };
   const unsub={};
   const E=()=>ENT[tab];
-  const data=()=> store[E().col]||[];
+  // Filas de una entidad. Si tiene `filtroCat`, comparte colección con otra pestaña y se filtra por
+  // categoría (Materia Prima / Insumos sobre vph_insumos). `incluyeSinCat` recoge las fichas viejas que
+  // todavía no tienen categoría, para que no queden invisibles en ninguna de las dos.
+  const filasDe=(e)=>{ const a=store[e.col]||[];
+    if(!e.filtroCat) return a;
+    return a.filter(r=>{ const c=String(r.categoria||'').trim(); return c===e.filtroCat || (!c && e.incluyeSinCat); }); };
+  const data=()=> filasDe(E());
 
-  function persist(rec){ if(!rec._uid) rec._uid = (tab==='productos'?'prod_':tab==='insumos'?'ins_':(tab==='clientes'?'cli_':'prov_'))+slug(rec.nombre)+'-'+Math.floor((Date.now()%1e7)).toString(36);
+  function persist(rec){ if(!rec._uid) rec._uid = (tab==='productos'?'prod_':(tab==='insumos'||tab==='materiaprima')?'ins_':(tab==='clientes'?'cli_':'prov_'))+slug(rec.nombre)+'-'+Math.floor((Date.now()%1e7)).toString(36);
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,E().col,rec._uid), {...rec}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
     else { const a=store[E().col]; const i=a.findIndex(x=>x._uid===rec._uid); if(i>=0)a[i]=rec; else a.push(rec); saveLocal(); render(); } }
   function remove(uid){ if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,E().col,uid)).catch(e=>alert('Error: '+e.message)); }
     else { store[E().col]=data().filter(x=>x._uid!==uid); saveLocal(); render(); } }
-  // ---------- Mover una ficha de Productos a "Insumos y MP" ----------
-  // Los ítems que en realidad son materia prima (diesel, hierro, aditivos) se cargaban en Productos —
+  // ---------- Mover una ficha de Productos a "Materia Prima" o a "Insumos" ----------
+  // Los ítems que en realidad son MP/insumo (diesel, hierro, aditivos) se cargaban en Productos —
   // normalmente por el "+ Nuevo" del módulo Compras — y quedaban mezclados con lo que se fabrica.
-  // Esto los pasa al master vph_insumos, que es lo que alimenta el costeo por receta.
-  // ⚠️ Guardas: no se mueve si ya existe uno con el mismo nombre en Insumos (evita duplicar el master),
-  // ni si el producto tiene stock/movimiento asociado en Producción (ahí hay que revisarlo a mano).
-  async function moverAInsumos(p){
+  // Esto los pasa al master vph_insumos, que es lo que alimenta el costeo por receta. `destino` es la
+  // categoría con la que se crea la ficha: 'Materia prima' (va DENTRO del producto) o 'Insumo' (se
+  // consume en el proceso). Cada uno tiene su propio botón en la ficha.
+  // ⚠️ Guardas: no se mueve si ya existe uno con el mismo nombre en el master (evita duplicarlo),
+  // y avisa si el producto tiene stock cargado.
+  async function moverAInsumos(p, destino){
+    const cat = destino==='Insumo' ? 'Insumo' : 'Materia prima';
+    const dest = cat==='Insumo' ? 'Insumos' : 'Materia Prima';
     const nombre=String(p.nombre||'').trim();
     if(!nombre){ alert('La ficha no tiene nombre.'); return; }
     const norm=s=>String(s||'').trim().toUpperCase();
-    if((store.vph_insumos||[]).some(i=>norm(i.nombre)===norm(nombre))){
-      alert('Ya existe "'+nombre+'" en Insumos y MP.\n\nRevisá esa ficha; si esta de Productos quedó duplicada, borrala con la ✕.'); return; }
-    if(num(p.stock)>0 && !confirm('Ojo: "'+nombre+'" tiene stock cargado ('+num(p.stock)+').\nAl pasarlo a Insumos y MP deja de contar como producto fabricado.\n\n¿Seguir igual?')) return;
-    if(!confirm('Mover "'+nombre+'" a la pestaña "Insumos y MP".\n\n• Se crea la ficha de insumo (con el costo como precio de compra).\n• Se elimina de Productos.\n\n¿Confirmás?')) return;
+    const ya=(store.vph_insumos||[]).find(i=>norm(i.nombre)===norm(nombre));
+    if(ya){
+      alert('Ya existe "'+nombre+'" en '+(String(ya.categoria||'')==='Insumo'?'Insumos':'Materia Prima')+'.\n\nRevisá esa ficha; si esta de Productos quedó duplicada, borrala con la ✕.'); return; }
+    if(num(p.stock)>0 && !confirm('Ojo: "'+nombre+'" tiene stock cargado ('+num(p.stock)+').\nAl pasarlo a '+dest+' deja de contar como producto fabricado.\n\n¿Seguir igual?')) return;
+    if(!confirm('Mover "'+nombre+'" a la pestaña "'+dest+'".\n\n• Se crea la ficha con el costo como precio de compra.\n• Se elimina de Productos.\n\n¿Confirmás?')) return;
     const ins={ _uid:'ins_'+slug(nombre)+'-'+Math.floor((Date.now()%1e7)).toString(36),
-      nombre, categoria:(String(p.tipo||'')==='Insumo' ? 'Insumo' : 'Materia prima'), unidad:String(p.unidad||'u'), precio:num(p.costo), contenido:1,
+      nombre, categoria:cat, unidad:String(p.unidad||'u'), precio:num(p.costo), contenido:1,
       unidadUso:String(p.unidad||'u'), iva:String(p.ivaVenta||'21'), proveedor:'', stock:num(p.stock), stockMinimo:num(p.stockMinimo),
       nota:('Movido desde Productos'+(p.nota?(' · '+p.nota):'')) };
     try{
@@ -6564,8 +6584,8 @@ function buildFilterTable(cfg){
         store.vph_productos=store.vph_productos.filter(x=>x._uid!==p._uid);
         saveLocal();
       }
-      closeForm(); tab='insumos'; filtroTipo=''; render();
-      alert('✅ "'+nombre+'" ahora está en Insumos y MP.\n\nRevisá el precio de compra y el "rinde por compra" para que el costeo calcule bien.');
+      closeForm(); tab=(cat==='Insumo'?'insumos':'materiaprima'); filtroTipo=''; render();
+      alert('✅ "'+nombre+'" ahora está en '+dest+'.\n\nRevisá el precio de compra y el "rinde por compra" para que el costeo calcule bien.');
     }catch(e){ alert('No se pudo mover: '+e.message); }
   }
   function saveLocal(){ try{ localStorage.setItem('vph_bd_v1', JSON.stringify(store)); }catch(e){} }
@@ -6573,7 +6593,7 @@ function buildFilterTable(cfg){
 
   function render(){
     // tabs
-    $('bd-tabs').innerHTML = Object.keys(ENT).map(t=>'<button class="filter-btn'+(t===tab?' active':'')+'" data-tab="'+t+'">'+ENT[t].label+' ('+(store[ENT[t].col]||[]).length+')</button>').join('');
+    $('bd-tabs').innerHTML = Object.keys(ENT).map(t=>'<button class="filter-btn'+(t===tab?' active':'')+'" data-tab="'+t+'">'+ENT[t].label+' ('+filasDe(ENT[t]).length+')</button>').join('');
     $('bd-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.tab; sortCol=E().cols[0].k; q=''; if($('bd-buscar'))$('bd-buscar').value=''; render(); });
     const cols=E().cols;
     let rows=data().slice();
@@ -6607,12 +6627,18 @@ function buildFilterTable(cfg){
     $('bd-buscar').placeholder='Buscar '+E().label.toLowerCase()+'...';
     $('bd-note').innerHTML = tab==='productos'
       ? 'Los precios por lista (Minorista / Mayorista / Mayorista S/Factura) se usan para autocompletar el precio al cargar una venta.'
-      : '"Importar desde ventas/compras" crea automáticamente las fichas a partir de los '+(tab==='clientes'?'clientes de las ventas':'proveedores de las compras')+' ya cargados (sin duplicar).';
+      : (tab==='materiaprima'
+        ? '<b>Materia prima</b> = lo que se incorpora al producto (cemento, arena, piedra, hierro, aditivos). Es el master de precios que usa el <b>Costeo por producto</b>: cambiar un precio acá recostea todo lo que lo lleva en la receta. Las fichas viejas sin categoría se muestran acá hasta que se las clasifique.'
+        : (tab==='insumos'
+          ? '<b>Insumo</b> = lo que se consume en el proceso pero NO va dentro del producto (diesel, GNC, gas, repuestos). Se cuenta en el Conteo semanal de Producción y entra al pedido de compra cuando cae bajo el mínimo.'
+          : '"Importar desde ventas/compras" crea automáticamente las fichas a partir de los '+(tab==='clientes'?'clientes de las ventas':'proveedores de las compras')+' ya cargados (sin duplicar).'));
   }
 
   // ---------- Form ----------
   let editing=null, onSavedExterno=null;
-  function blank(){ const o={}; E().fields.forEach(f=>{ o[f.k]= f.t==='checkbox'?true : (f.t==='number'?0:''); }); if(o.hasOwnProperty('condIva'))o.condIva='A'; if(o.hasOwnProperty('ivaVenta'))o.ivaVenta='21'; if(o.hasOwnProperty('iva'))o.iva='21'; if(o.hasOwnProperty('unidad'))o.unidad='u'; if(o.hasOwnProperty('contenido'))o.contenido=1; if(o.hasOwnProperty('diasCurado'))o.diasCurado=10; return o; }
+  function blank(){ const o={}; E().fields.forEach(f=>{ o[f.k]= f.t==='checkbox'?true : (f.t==='number'?0:''); }); if(o.hasOwnProperty('condIva'))o.condIva='A'; if(o.hasOwnProperty('ivaVenta'))o.ivaVenta='21'; if(o.hasOwnProperty('iva'))o.iva='21'; if(o.hasOwnProperty('unidad'))o.unidad='u'; if(o.hasOwnProperty('contenido'))o.contenido=1; if(o.hasOwnProperty('diasCurado'))o.diasCurado=10;
+    if(E().filtroCat) o.categoria=E().filtroCat;   // el alta nace con la categoría de la pestaña (Materia Prima / Insumos)
+    return o; }
   // onSaved(rec): opcional, para que OTRO módulo (ej. Compras) se entere del alta/edición sin duplicar
   // el catálogo. defaults: campos a precargar SOLO en un alta nueva (ej. nombre tipeado en Compras).
   function openForm(r, onSaved, defaults){ editing = r?JSON.parse(JSON.stringify(r)):blank(); if(!r && defaults) Object.assign(editing, defaults); onSavedExterno = onSaved||null; $('bd-form-title').textContent=(r?'Editar ':'Nuevo ')+E().sing; drawForm(); $('bd-modal').classList.add('open'); }
@@ -6641,7 +6667,8 @@ function buildFilterTable(cfg){
     // En Productos, si la ficha es en realidad un insumo/materia prima, se ofrece MOVERLA a la pestaña
     // "Insumos y MP" (que es el master que alimenta el costeo por receta), en vez de dejarla mezclada.
     const moverBtn = (tab==='productos' && editing._uid)
-      ? '<button class="cmp-btn" id="bf-mover-insumo" style="margin-right:auto" title="Pasa esta ficha a la pestaña Insumos y MP">↪ Mover a Insumos y MP</button>' : '';
+      ? '<button class="cmp-btn" id="bf-mover-mp" title="Pasa esta ficha a la pestaña Materia Prima (va DENTRO del producto: cemento, arena, hierro, aditivos)">↪ Mover a Materia Prima</button>'+
+        '<button class="cmp-btn" id="bf-mover-insumo" style="margin-right:auto" title="Pasa esta ficha a la pestaña Insumos (se consume en el proceso: diesel, GNC, gas)">↪ Mover a Insumos</button>' : '';
     $('bd-form').innerHTML='<div class="cmp-form-grid">'+E().fields.map(fld).join('')+'</div>'+
       '<div class="cmp-form-foot">'+moverBtn+'<button class="cmp-btn" id="bf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="bf-save">Guardar</button></div>';
     E().fields.forEach(f=>{ const el=$('bf-'+f.k); if(!el)return; el.addEventListener(f.t==='select'||f.t==='checkbox'?'change':'input',()=>{ editing[f.k]= f.t==='checkbox'?el.checked : (f.t==='number'?num(el.value):el.value); }); });
@@ -6652,7 +6679,8 @@ function buildFilterTable(cfg){
     if(window.__tarjetas) E().fields.forEach(f=>{ if(f.cards) window.__tarjetas('bf-'+f.k); });
     $('bf-cancel').onclick=closeForm; $('bf-save').onclick=()=>{ if(!String(editing.nombre||'').trim()){ alert('Ingresá el nombre.'); return; }
       const cb=onSavedExterno; persist(editing); const rec={...editing}; closeForm(); if(cb) cb(rec); };
-    if($('bf-mover-insumo')) $('bf-mover-insumo').onclick=()=>moverAInsumos(editing);
+    if($('bf-mover-mp')) $('bf-mover-mp').onclick=()=>moverAInsumos(editing,'Materia prima');
+    if($('bf-mover-insumo')) $('bf-mover-insumo').onclick=()=>moverAInsumos(editing,'Insumo');
   }
 
   // ---------- Costeo por producto (receta que REFERENCIA el master "Insumos y MP") ----------
@@ -6797,8 +6825,9 @@ function buildFilterTable(cfg){
   // ---------- Sync ----------
   function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
     const c=fb(); if(!c||!c.db)return;
-    Object.values(ENT).forEach(e=>{ if(unsub[e.col]) unsub[e.col]();
-      unsub[e.col]=c.FS.onSnapshot(c.FS.collection(c.db,e.col), snap=>{ store[e.col]=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('bd '+e.col+':',err)); }); }
+    // Una suscripción por COLECCIÓN, no por pestaña: "Materia Prima" e "Insumos" comparten vph_insumos.
+    [...new Set(Object.values(ENT).map(e=>e.col))].forEach(col=>{ if(unsub[col]) unsub[col]();
+      unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ store[col]=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('bd '+col+':',err)); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){
     if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
