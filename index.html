@@ -1267,14 +1267,20 @@
       <div class="tbl-wrap"><table id="liv-tabla"></table></div>
       <div id="liv-vacio" style="color:var(--muted);font-size:14px;margin:14px 0;display:none"></div>
 
-      <h2 style="margin-top:28px"><span class="dot" style="background:var(--green)"></span>Conciliación con ARCA — facturas recibidas</h2>
-      <div class="asof">Subí el archivo de <b>ARCA → Mis Comprobantes → Recibidos</b> (CSV o Excel, tal cual lo baja el portal) y el Tablero controla las compras cargadas contra lo que ARCA dice que recibiste.</div>
+      <h2 style="margin-top:28px"><span class="dot" style="background:var(--green)"></span>Conciliación con ARCA — Mis Comprobantes</h2>
+      <div class="asof">Subí el archivo <b>tal cual lo baja el portal</b> (ARCA → Mis Comprobantes, CSV o Excel): el de <b>Recibidos</b> controla las COMPRAS cargadas; el de <b>Emitidos</b> controla las VENTAS facturadas.</div>
       <div style="display:flex;gap:12px;margin:12px 0;flex-wrap:wrap;align-items:center">
-        <button class="btn btn-primary" id="liv-arca-btn" style="background:var(--green)">📎 Subir archivo de ARCA</button>
+        <button class="btn btn-primary" id="liv-arca-btn" style="background:var(--red)">📥 Subir Recibidos (controla COMPRAS)</button>
         <input type="file" id="liv-arca-file" accept=".csv,.xlsx,.xls" style="display:none">
         <span id="liv-arca-nombre" style="font-size:13px;color:var(--muted)"></span>
       </div>
       <div id="liv-arca-res"></div>
+      <div style="display:flex;gap:12px;margin:12px 0;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary" id="liv-arcav-btn" style="background:var(--green)">📤 Subir Emitidos (controla VENTAS)</button>
+        <input type="file" id="liv-arcav-file" accept=".csv,.xlsx,.xls" style="display:none">
+        <span id="liv-arcav-nombre" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <div id="liv-arcav-res"></div>
 
       <h2 style="margin-top:28px"><span class="dot" style="background:var(--blue)"></span>Excel para el contador</h2>
       <div style="display:flex;gap:12px;margin:12px 0;flex-wrap:wrap">
@@ -1288,6 +1294,7 @@
         <div style="font-size:13px;font-weight:600;margin-bottom:8px">ℹ️ Información</div>
         <div style="font-size:13px;color:var(--muted);line-height:1.6">
           • Entra <b>solo lo facturado</b>: ventas con tipo Factura/Nota y número de comprobante; compras con número de comprobante. Lo que no tiene esos datos no va.<br>
+          • La conciliación con ARCA usa <b>dos archivos distintos</b>: Recibidos (compras) y Emitidos (ventas). Se pueden subir los dos y quedan las dos revisiones en pantalla.<br>
           • Las Notas de Crédito <b>restan</b> del libro.<br>
           • El Excel reproduce el modelo del contador (2 hojas si descargás ambos). Al contador se le manda el <b>mes cerrado</b> (botón "Mes anterior").<br>
           • El saldo de IVA de arriba es una <b>estimación de gestión</b> — la declaración jurada la arma el contador.<br>
@@ -4152,6 +4159,9 @@ function buildFilterTable(cfg){
   let chartCat=null;
 
   function render(){
+    // Aviso dirigido al Libro IVA (seguimiento + conciliación ARCA de Emitidos): se repinta solo si esa
+    // página está a la vista — al guardar/corregir una venta desde ahí, las listas se mueven al instante.
+    if(window.__pintarLibroIVA){ try{ window.__pintarLibroIVA(); }catch(e){} }
     const ventas = DB.ventas.map(v=>({ v, k:calc(v) }));
     const periodos=[...new Set(DB.ventas.map(v=>v.periodo))].filter(Boolean).sort().reverse();
     fillSelect($('vnt-filtro-periodo'), [{v:'',l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
@@ -4735,6 +4745,49 @@ function buildFilterTable(cfg){
 
   window.__ventaCalc = calc;   // expuesto para el módulo Documentos (totales de venta)
   window.__ventasTodas = ()=> (DB.ventas||[]).slice();   // lectura para el Libro IVA
+
+  // --- API para la conciliación con ARCA (la usa el módulo Libro IVA, archivo de Emitidos) ---
+  window.__abrirVenta = function(uid){
+    const v=DB.ventas.find(x=>x._uid===uid);
+    if(!v){ alert('No encontré esa venta (¿se borró?).'); return; }
+    openForm(v);
+  };
+  // Corrige SOLO datos de identificación (nunca ítems/importes/cobros). updateDoc de esos campos
+  // puntuales, así no se pisa nada que otro usuario esté editando (mismo criterio que persistCobros).
+  const CAMPOS_CORREGIBLES_V=['cuit','puntoVenta','fecha','tipoComprobante','nroFactura','periodo'];
+  window.__corregirVentaDatos = function(uid, campos){
+    const v=DB.ventas.find(x=>x._uid===uid);
+    if(!v){ alert('No encontré esa venta (¿se borró?).'); return false; }
+    const upd={};
+    CAMPOS_CORREGIBLES_V.forEach(k=>{ if(campos && campos[k]!=null) upd[k]=campos[k]; });
+    // La CLASE del comprobante es plata (una NC resta, y "Sin factura" no genera IVA débito):
+    // el cambio de tipo con un clic solo se permite entre facturas (A↔B↔C). Lo demás, abriendo la venta.
+    if(upd.tipoComprobante!=null){
+      const esF=t=>/^Factura [ABC]$/.test(String(t||''));
+      if(!esF(upd.tipoComprobante) || !esF(v.tipoComprobante)) delete upd.tipoComprobante;
+    }
+    if(upd.fecha && campos.periodo==null) upd.periodo=String(upd.fecha).slice(0,7);
+    if(!Object.keys(upd).length) return false;
+    Object.assign(v, upd);   // el objeto local queda al día ya mismo (la nube confirma por snapshot)
+    if(window.__usaNube){ const c=fb(); if(c&&c.db){ c.FS.updateDoc(c.FS.doc(c.db,COL,uid), upd).catch(e=>alert('Error al guardar la corrección: '+e.message)); } else alert('Iniciá sesión primero.'); }
+    else { saveLocal(); render(); }
+    return true;
+  };
+  // Nueva venta con el formulario precargado (comprobante de ARCA emitido por afuera del Tablero).
+  // NADA se guarda solo: se abre el form, la persona revisa y confirma.
+  window.__nuevaVentaPrecargada = function(d){
+    const v=blankVenta();
+    ['cliente','cuit','condIva','tipoComprobante','fecha','vencimiento','puntoVenta','nroFactura','nota'].forEach(k=>{ if(d && d[k]!=null && d[k]!=='') v[k]=d[k]; });
+    if(d && d.fecha){ v.periodo=String(d.fecha).slice(0,7); if(!d.vencimiento) v.vencimiento=d.fecha; }
+    if(d && Array.isArray(d.items) && d.items.length) v.items=d.items;
+    try{   // cliente recurrente por CUIT: nombre canónico + condición habitual (mismo criterio que Compras)
+      const doc=String(d && d.cuit||'').replace(/\D/g,'');
+      if(doc){ const con=clientesConocidos().find(c=>String(c.cuit||'').replace(/\D/g,'')===doc);
+        if(con && con.nombre){ v.cliente=con.nombre; if(con.cond) v.condIva=con.cond; } }
+    }catch(e){}
+    openForm(v);
+    const t=$('vnt-form-title'); if(t) t.textContent='Nueva Venta (desde ARCA)';
+  };
   // Crear una venta pre-cargada desde un lead del CRM
   window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
@@ -10367,7 +10420,8 @@ function buildFilterTable(cfg){
   const tdB=v=>'<td style="text-align:right"><b>'+money(v)+'</b></td>';
 
   let tab='ventas';
-  let ultimoArca=null;   // filas del último archivo de ARCA subido — la conciliación se recalcula en cada render
+  let ultimoArca=null;    // filas del último archivo de Recibidos (compras) — la conciliación se recalcula en cada render
+  let ultimoArcaV=null;   // ídem del último archivo de Emitidos (ventas)
   function renderLibro(){
     const cont=$('liv-kpis-saldo'), tabsEl=$('liv-tabs'), kpisTab=$('liv-kpis-tab'),
           tabla=$('liv-tabla'), vacio=$('liv-vacio'), selMes=$('liv-mes'), inAnio=$('liv-anio');
@@ -10403,9 +10457,10 @@ function buildFilterTable(cfg){
         saldo>=0?'warn':'good') +
       (aC.percIva ? kpiHtml('Percepciones de IVA (compras)', money(aC.percIva), 'crédito adicional — lo computa el contador aparte') : '');
 
-    // Si hay un archivo de ARCA subido, la conciliación se recalcula con las compras al día
+    // Si hay archivos de ARCA subidos, cada conciliación se recalcula con los datos al día
     // (así una corrección o un alta la mueven de lista sin volver a subir el archivo).
     if(ultimoArca) renderConciliacion(conciliarArca(ultimoArca, todasC));
+    if(ultimoArcaV) renderConciliacionVentas(conciliarArcaVentas(ultimoArcaV, todasV));
 
     tabsEl.innerHTML = [['ventas','📤 IVA Ventas ('+aV.n+')'],['compras','📥 IVA Compras ('+aC.n+')']]
       .map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-livtab="'+k+'">'+l+'</button>').join('');
@@ -10618,22 +10673,31 @@ function buildFilterTable(cfg){
 
   // De la matriz cruda a comprobantes: busca la fila de encabezado y mapea las columnas POR NOMBRE
   // (el orden de columnas de ARCA cambió más de una vez — no fiarse de posiciones fijas).
-  function extraerComprobantesArca(matriz){
+  // modo: 'recibidos' (compras — la contraparte es el EMISOR) o 'emitidos' (ventas — es el RECEPTOR).
+  function extraerComprobantesArca(matriz, modo){
+    const esEmitidos = modo==='emitidos';
+    const quien = esEmitidos ? 'receptor' : 'emisor';   // de qué lado está la contraparte en este archivo
+    const otro  = esEmitidos ? 'emisor'   : 'receptor';
     let hIdx=-1, cols=null;
     for(let i=0;i<Math.min(matriz.length,10);i++){
       const norm=(matriz[i]||[]).map(normTxt);
       const iFecha=norm.findIndex(h=>h.startsWith('fecha'));
       const iNro=norm.findIndex(h=>h.indexOf('desde')>=0);
       if(iFecha>=0 && iNro>=0){
-        if(norm.some(h=>h.indexOf('receptor')>=0) && !norm.some(h=>h.indexOf('emisor')>=0))
-          return { error:'Este archivo parece ser el de comprobantes EMITIDOS (tiene columnas de "Receptor"). Para controlar las compras subí el de RECIBIDOS (ARCA → Mis Comprobantes → Recibidos).' };
+        if(norm.some(h=>h.indexOf(otro)>=0) && !norm.some(h=>h.indexOf(quien)>=0))
+          return { error: esEmitidos
+            ? 'Este archivo parece ser el de comprobantes RECIBIDOS (tiene columnas de "Emisor"). Para controlar las ventas subí el de EMITIDOS (ARCA → Mis Comprobantes → Emitidos).'
+            : 'Este archivo parece ser el de comprobantes EMITIDOS (tiene columnas de "Receptor"). Para controlar las compras subí el de RECIBIDOS (ARCA → Mis Comprobantes → Recibidos).' };
+        // "Denominación Emisor/Receptor": preferir la de la contraparte si el encabezado la nombra
+        let iNom=norm.findIndex(h=>h.indexOf('denominacion')>=0 && h.indexOf(quien)>=0);
+        if(iNom<0) iNom=norm.findIndex(h=>h.indexOf('denominacion')>=0);
         cols={
           fecha:iFecha, nro:iNro,
           tipo:norm.findIndex(h=>h.indexOf('tipo')>=0 && h.indexOf('comprobante')>=0),
           pv:norm.findIndex(h=>h.indexOf('punto de venta')>=0),
-          // "Nro. Doc. Emisor" (el CUIT) — ojo: "Tipo Doc. Emisor" también trae 'doc'+'emisor', excluirla
-          cuit:norm.findIndex(h=>h.indexOf('emisor')>=0 && h.indexOf('tipo')<0 && (h.indexOf('doc')>=0||h.indexOf('cuit')>=0)),
-          nombre:norm.findIndex(h=>h.indexOf('denominacion')>=0),
+          // "Nro. Doc. Emisor/Receptor" (el CUIT/DNI) — ojo: "Tipo Doc. …" también trae 'doc', excluirla
+          cuit:norm.findIndex(h=>h.indexOf(quien)>=0 && h.indexOf('tipo')<0 && (h.indexOf('doc')>=0||h.indexOf('cuit')>=0)),
+          nombre:iNom,
           netoGrav:norm.findIndex(h=>h.indexOf('neto gravado')>=0 && h.indexOf('no gravado')<0),
           iva:norm.findIndex(h=>h==='iva'||h==='imp iva'||h==='total iva'),
           total:norm.findIndex(h=>h.indexOf('total')>=0 && h.indexOf('iva')<0 && h.indexOf('neto')<0),
@@ -10775,6 +10839,233 @@ function buildFilterTable(cfg){
     };
   }
 
+  // ---------- Conciliación de VENTAS (Mis Comprobantes → Emitidos) ----------
+  // La clave exacta es CLASE + punto de venta + número: en ARCA cada tipo de comprobante tiene su
+  // propia numeración por punto de venta (FA 305 y FB 305 pueden convivir). Para las facturas la
+  // clase lleva la letra ('FA'); para las notas queda 'NC'/'ND' porque el Tablero no guarda la letra
+  // de una nota (la manda la factura que corrige, vía compAsoc).
+  const claseArca=a=> a.esNC?'NC':(a.esND?'ND':('F'+(a.letra||'')));
+  const letraVenta=v=>{ const m=String(v.tipoComprobante||'').match(/^Factura ([ABC])$/); return m?m[1]:''; };
+  const claseVenta=v=> v.tipoComprobante==='Nota de Crédito'?'NC':(v.tipoComprobante==='Nota de Débito'?'ND':('F'+letraVenta(v)));
+  // Documento del receptor: '0' / todo ceros = consumidor final sin identificar → no se compara
+  const docReal=s=>{ const d=soloDig(s); return /[1-9]/.test(d)?d:''; };
+
+  function conciliarArcaVentas(rowsArca, ventas){
+    const conNro=ventas.filter(v=> VENTAS_FACTURADAS.includes(v.tipoComprobante))
+                       .filter(v=>{ const n=soloDig(v.nroFactura); return n && +n; });
+    const porClave={}, porPvNro={};
+    conNro.forEach(v=>{
+      const pv=+soloDig(v.puntoVenta)||0, nro=+soloDig(v.nroFactura);
+      const k=claseVenta(v)+'|'+pv+'|'+nro;
+      (porClave[k]=porClave[k]||[]).push(v);
+      (porPvNro[pv+'|'+nro]=porPvNro[pv+'|'+nro]||[]).push(v);
+    });
+    const usadas=new Set();
+    const unico=lista=>{ if(!lista) return null; const libres=lista.filter(v=>!usadas.has(v._uid)); return libres.length===1?libres[0]:null; };
+    const primero=lista=>{ if(!lista) return null; const libres=lista.filter(v=>!usadas.has(v._uid)); return libres.length?libres[0]:null; };
+
+    const ok=[], difs=[], faltan=[];
+    rowsArca.forEach(a=>{
+      let v=primero(porClave[claseArca(a)+'|'+a.pv+'|'+a.nro]);
+      if(!v) v=unico(porPvNro[a.pv+'|'+a.nro]);   // tipo/letra mal cargados pero pv+número inequívocos
+      if(!v){ faltan.push(a); return; }
+      usadas.add(v._uid);
+      const d=desglose(v);
+      const lista=[];
+      const docA=docReal(a.cuit), docV=soloDig(v.cuit);
+      if(docA){
+        if(!docV) lista.push('sin CUIT/DNI en el Tablero (ARCA dice '+fmtCuit(docA)+')');
+        else if(docV!==docA) lista.push('CUIT/DNI distinto: Tablero '+fmtCuit(docV)+' vs ARCA '+fmtCuit(docA));
+      }
+      const pvV=+soloDig(v.puntoVenta)||0;
+      if(pvV!==a.pv) lista.push(pvV?('punto de venta distinto: '+pvV+' vs ARCA '+a.pv):('sin punto de venta en el Tablero (ARCA: '+String(a.pv).padStart(4,'0')+')'));
+      if(a.fecha && String(v.fecha||'').slice(0,10)!==a.fecha) lista.push('fecha distinta: '+fmtFechaAR(v.fecha)+' vs ARCA '+fmtFechaAR(a.fecha));
+      const ccV=claseVenta(v)[0]==='F'?'F':claseVenta(v);
+      const ccA=a.esNC?'NC':(a.esND?'ND':'F');
+      const nomClase=k=> k==='NC'?'Nota de Crédito':(k==='ND'?'nota de débito':'factura');
+      if(ccV!==ccA){
+        if(ccA==='NC'||ccV==='NC') lista.push(ccA==='NC' ? ('en ARCA es NOTA DE CRÉDITO y acá está como '+nomClase(ccV)) : ('acá está como Nota de Crédito y en ARCA es '+nomClase(ccA)));
+        else lista.push('tipo distinto: acá '+nomClase(ccV)+' y en ARCA '+nomClase(ccA));
+      } else if(ccV==='F' && a.letra && letraVenta(v) && letraVenta(v)!==a.letra){
+        lista.push('letra del comprobante distinta: '+letraVenta(v)+' vs ARCA '+a.letra);
+      }
+      const totV=Math.abs(totalDe(v,true));
+      if(a.total!=null && Math.abs(totV-a.total)>0.99) lista.push('TOTAL distinto: '+money(totV)+' vs ARCA '+money(a.total));
+      else {
+        if(a.iva!=null){ const ivaV=Math.abs(d.iva21+d.iva105+d.ivaOtras); if(Math.abs(ivaV-a.iva)>0.99) lista.push('IVA distinto: '+money(ivaV)+' vs ARCA '+money(a.iva)); }
+        if(a.netoGrav!=null && a.netoGrav>0){ const nG=Math.abs(d.grav); if(Math.abs(nG-a.netoGrav)>0.99) lista.push('neto gravado distinto: '+money(nG)+' vs ARCA '+money(a.netoGrav)); }
+      }
+      if(lista.length) difs.push({a, v, lista}); else ok.push({a, v});
+    });
+
+    // Inverso — y acá es MÁS serio que en compras: una factura electrónica emitida TIENE que estar
+    // en ARCA. Si no aparece, casi seguro el número o el punto de venta están mal cargados, o la
+    // emisión nunca se concretó. (Un comprobante de PRUEBA de homologación es normal que no figure.)
+    const meses=new Set(rowsArca.map(a=>a.fecha.slice(0,7)).filter(Boolean));
+    const sobran=conNro.filter(v=> !usadas.has(v._uid) && meses.has(String(v.fecha||'').slice(0,7)));
+
+    // Pistas: ¿una de las que "faltan" ya está cargada, pero sin número o como "Sin factura"?
+    // Cargarla de nuevo la contaría DOS veces — mejor completar/corregir la que ya está.
+    // Para una venta "Sin factura" el total de gestión no incluye IVA (calc lo pone en 0), así que
+    // se compara también contra el total CON IVA reconstruido de sus renglones.
+    const totCand=v=>{
+      const t1=Math.abs(totalDe(v,true));
+      if(v.tipoComprobante!=='Sin factura') return [t1];
+      const d2=desglose(v), e2=extrasDe(v);
+      return [t1, Math.abs(round2(d2.noGrav+d2.exento+d2.grav+d2.iva21+d2.iva105+d2.ivaOtras+e2.percIva+e2.percIibb+e2.otros))];
+    };
+    const sinNro=ventas.filter(v=>{ const n=soloDig(v.nroFactura); return (!n || !+n) && v.tipoComprobante!=='Nota de Crédito'; });
+    faltan.forEach(a=>{
+      if(a.esNC) return;   // una NC que falta no puede ser una venta común ya cargada
+      const cand=sinNro.find(v=>{
+        const mismoDoc=docReal(a.cuit) && soloDig(v.cuit)===docReal(a.cuit);
+        const nv=normTxt(v.cliente), na=normTxt(a.nombre);
+        const mismoNombre=nv && na && (nv.indexOf(na.split(' ')[0])>=0 || na.indexOf(nv.split(' ')[0])>=0);
+        if(!mismoDoc && !mismoNombre) return false;
+        if(a.total==null) return mismoDoc;
+        return totCand(v).some(t=>Math.abs(t-a.total)<1);
+      });
+      if(cand){
+        if(cand.tipoComprobante==='Sin factura'){
+          a.pista='puede ser la venta a "'+cand.cliente+'" del '+fmtFechaAR(cand.fecha)+' cargada como SIN FACTURA — abrila y pasala a '+(a.letra?('Factura '+a.letra):'factura')+' con su número, NO la cargues de nuevo';
+          a.pistaAbrirUid=cand._uid;
+        } else {
+          a.pista='puede ser la venta a "'+cand.cliente+'" del '+fmtFechaAR(cand.fecha)+' cargada SIN número ('+money(Math.abs(totalDe(cand,true)))+')';
+          a.pistaUid=cand._uid;
+        }
+      }
+    });
+    return { ok, difs, faltan, sobran, meses:[...meses].sort() };
+  }
+
+  // Qué datos de identificación de una VENTA se pueden corregir con UN clic tomando a ARCA como
+  // verdad. Solo identificación — la clase (Nota de Crédito / Sin factura) y los importes son plata:
+  // se corrigen abriendo la venta. La letra solo entre facturas (A↔B↔C), nunca hacia/desde una nota.
+  function camposParaCorregirV(a, v){
+    const campos={}, etiquetas=[];
+    const docA=docReal(a.cuit), docV=soloDig(v.cuit);
+    if(docA && docV!==docA){ campos.cuit=fmtCuit(docA); etiquetas.push(docV?('CUIT/DNI: '+fmtCuit(docV)+' → '+fmtCuit(docA)):('CUIT/DNI: (vacío) → '+fmtCuit(docA))); }
+    const pvV=+soloDig(v.puntoVenta)||0;
+    if(a.pv && pvV!==a.pv){ campos.puntoVenta=String(a.pv).padStart(4,'0'); etiquetas.push('Punto de venta: '+(pvV||'(vacío)')+' → '+String(a.pv).padStart(4,'0')); }
+    if(a.fecha && String(v.fecha||'').slice(0,10)!==a.fecha){ campos.fecha=a.fecha; etiquetas.push('Fecha: '+fmtFechaAR(v.fecha)+' → '+fmtFechaAR(a.fecha)); }
+    const lv=letraVenta(v);
+    if(!a.esNC && !a.esND && a.letra && lv && lv!==a.letra){ campos.tipoComprobante='Factura '+a.letra; etiquetas.push('Letra: Factura '+lv+' → Factura '+a.letra); }
+    return { campos, etiquetas };
+  }
+
+  // Objeto de venta para precargar el formulario desde un comprobante EMITIDO que falta cargar
+  // (facturado por afuera del Tablero). Misma mecánica que compraDesdeArca: la alícuota se deduce
+  // de IVA÷neto gravado; el resto va como renglón no gravado. Nada se guarda solo.
+  function ventaDesdeArca(a){
+    const items=[];
+    if(a.netoGrav>0){
+      let tasa='21';
+      if(a.iva!=null && a.netoGrav>0){
+        const r=a.iva/a.netoGrav*100;
+        const cerca=[21,10.5,27,5,2.5,0].find(t=>Math.abs(r-t)<=1);
+        if(cerca!=null) tasa=String(cerca);
+      }
+      items.push({desc:'Según comprobante '+compArcaFmt(a), codigo:'', cant:1, precioUnit:round2(a.netoGrav), descPct:0, iva:tasa});
+      const conIva=a.netoGrav+(a.iva||0);
+      if(a.total!=null && a.total-conIva>1) items.push({desc:'No gravado / exento (según ARCA)', codigo:'', cant:1, precioUnit:round2(a.total-conIva), descPct:0, iva:'nogravado'});
+    } else if(a.total>0){
+      items.push({desc:'Según comprobante '+compArcaFmt(a)+' (sin IVA discriminado)', codigo:'', cant:1, precioUnit:round2(a.total), descPct:0, iva:'nogravado'});
+    }
+    return {
+      cliente:a.nombre||'', cuit:docReal(a.cuit)?fmtCuit(a.cuit):'',
+      condIva:a.letra==='A'?'A':'B',
+      tipoComprobante:a.esNC?'Nota de Crédito':(a.esND?'Nota de Débito':('Factura '+(a.letra||'B'))),
+      fecha:a.fecha||'', vencimiento:a.fecha||'',
+      puntoVenta:String(a.pv).padStart(4,'0'), nroFactura:String(a.nro).padStart(8,'0'),
+      nota:'Precargada desde el archivo de ARCA (Mis Comprobantes → Emitidos).',
+      items
+    };
+  }
+
+  function renderConciliacionVentas(res){
+    const cont=$('liv-arcav-res'); if(!cont) return;
+    if(res.error){ cont.innerHTML='<div class="alert warn" style="margin:8px 0"><span class="aico">⚠️</span><div>'+esc(res.error)+'</div></div>'; return; }
+    const {ok,difs,faltan,sobran,meses}=res;
+    const total=ok.length+difs.length+faltan.length;
+    if(!total){ cont.innerHTML='<div class="alert warn" style="margin:8px 0"><span class="aico">⚠️</span><div>El archivo no trae ningún comprobante. ¿Bajaste el período correcto en ARCA?</div></div>'; return; }
+    const mesesTxt=meses.map(m=>{ const p=m.split('-'); return (MESES[+p[1]-1]||m)+' '+p[0]; }).join(', ');
+    let h='<div class="kpis" style="margin:10px 0">'+
+      kpiHtml('Comprobantes emitidos en ARCA', String(total), esc(mesesTxt)) +
+      kpiHtml('✓ Coinciden', String(ok.length), 'cargados y bien', ok.length===total?'good':'') +
+      kpiHtml('⚠️ Con diferencias', String(difs.length), difs.length?'revisar campo por campo':'', difs.length?'warn':'good') +
+      kpiHtml('❌ Faltan cargar', String(faltan.length), faltan.length?'emitidas y sin cargar como venta':'', faltan.length?'bad':'good') +
+      (sobran.length?kpiHtml('🔎 Acá pero no en ARCA', String(sobran.length), 'número mal cargado o emisión que no se concretó', 'warn'):'') +
+      '</div>';
+    if(difs.length){
+      h+='<h3 style="margin:14px 0 6px">⚠️ Cargadas con diferencias ('+difs.length+')</h3>'+
+        '<div style="font-size:13px;color:var(--muted);margin-bottom:6px">"✓ Corregir datos" arregla con un clic lo que es identificación (CUIT/DNI del cliente, punto de venta, fecha, letra) tomando a ARCA como verdad. Si la diferencia es de PLATA (total, IVA) o de tipo (Nota de Crédito), abrí la venta y corregila mirando el comprobante.</div>'+
+        '<div class="tbl-wrap"><table>'+
+        '<thead><tr><th>ARCA</th><th>Receptor (ARCA)</th><th>Cargada como</th><th>Qué no coincide</th><th></th></tr></thead><tbody>';
+      difs.forEach((x,i)=>{
+        const fix=camposParaCorregirV(x.a, x.v);
+        h+='<tr><td>'+esc(tipoArcaCorto(x.a)+' '+compArcaFmt(x.a))+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.a.fecha))+'</span></td>'+
+        '<td>'+esc(x.a.nombre||'—')+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtCuit(x.a.cuit))+'</span></td>'+
+        '<td><b>'+esc(x.v.cliente||'—')+'</b><br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.v.fecha))+' · '+esc(fmtComprobante(x.v))+'</span></td>'+
+        '<td style="color:var(--amber)">'+x.lista.map(esc).join('<br>')+'</td>'+
+        '<td style="white-space:nowrap">'+(fix.etiquetas.length?'<button class="btn" data-livv-fix="'+i+'" style="font-size:12px;padding:5px 10px;background:var(--green);color:#fff;border:0;border-radius:6px;cursor:pointer">✓ Corregir datos</button> ':'')+
+          '<button class="btn" data-livv-open="'+esc(x.v._uid)+'" style="font-size:12px;padding:5px 10px;cursor:pointer">✎ Abrir venta</button></td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(faltan.length){
+      h+='<h3 style="margin:14px 0 6px">❌ Faltan cargar ('+faltan.length+')</h3>'+
+        '<div style="font-size:13px;color:var(--muted);margin-bottom:6px">Comprobantes emitidos (p. ej. por afuera del Tablero) que no están cargados como venta. "➕ Cargar" abre el formulario de Ventas ya completo — revisá y guardá. Si hay pista de que YA está cargada (sin número o como "Sin factura"), usala: cargarla de nuevo la contaría dos veces.</div>'+
+        '<div class="tbl-wrap"><table>'+
+        '<thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Cliente</th><th>CUIT / DNI</th><th style="text-align:right">Total</th><th>Pista</th><th></th></tr></thead><tbody>';
+      faltan.forEach((a,i)=>{ h+='<tr><td>'+esc(fmtFechaAR(a.fecha))+'</td><td>'+esc(tipoArcaCorto(a))+'</td><td>'+esc(compArcaFmt(a))+'</td>'+
+        '<td><b>'+esc(a.nombre||'—')+'</b></td><td>'+esc(fmtCuit(a.cuit))+'</td>'+
+        '<td style="text-align:right">'+(a.total!=null?money(a.total):'—')+'</td>'+
+        '<td style="color:var(--muted);font-size:12px">'+(a.pista?esc(a.pista):'')+'</td>'+
+        '<td style="white-space:nowrap">'+
+          (a.pistaUid?'<button class="btn" data-livv-pista="'+i+'" style="font-size:12px;padding:5px 10px;background:var(--blue);color:#fff;border:0;border-radius:6px;cursor:pointer">✎ Completar número</button> ':'')+
+          (a.pistaAbrirUid?'<button class="btn" data-livv-abrir="'+esc(a.pistaAbrirUid)+'" style="font-size:12px;padding:5px 10px;background:var(--blue);color:#fff;border:0;border-radius:6px;cursor:pointer">✎ Abrir venta</button> ':'')+
+          '<button class="btn" data-livv-cargar="'+i+'" style="font-size:12px;padding:5px 10px;background:var(--green);color:#fff;border:0;border-radius:6px;cursor:pointer">➕ Cargar</button></td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(sobran.length){
+      h+='<h3 style="margin:14px 0 6px">🔎 Cargadas como facturadas acá pero ARCA no las lista ('+sobran.length+')</h3>'+
+        '<div style="font-size:13px;color:var(--muted);margin-bottom:6px">Una factura electrónica emitida TIENE que figurar en ARCA. Si no aparece, casi siempre el número o el punto de venta están mal cargados — o la venta quedó como facturada sin que la emisión se concretara. Abrí la venta y verificá contra el comprobante real. (Un comprobante de PRUEBA de homologación es normal que no figure.)</div>'+
+        '<div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Cliente</th><th>CUIT / DNI</th><th style="text-align:right">Total</th><th></th></tr></thead><tbody>';
+      sobran.forEach(v=>{ h+='<tr><td>'+esc(fmtFechaAR(v.fecha))+'</td><td>'+esc(tipoCorto(v,true))+
+        ((v.arcaAmbiente && v.arcaAmbiente!=='produccion')?' <span class="badge" style="background:#fff3cd;color:#8a6d1a">PRUEBA</span>':'')+'</td>'+
+        '<td>'+esc(fmtComprobante(v))+'</td><td><b>'+esc(v.cliente||'—')+'</b></td><td>'+esc(fmtCuit(v.cuit))+'</td>'+
+        '<td style="text-align:right">'+money(Math.abs(totalDe(v,true)))+'</td>'+
+        '<td><button class="btn" data-livv-open="'+esc(v._uid)+'" style="font-size:12px;padding:5px 10px;cursor:pointer">✎ Abrir venta</button></td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(!difs.length && !faltan.length && !sobran.length){
+      h+='<div class="alert" style="margin:8px 0"><span class="aico">✅</span><div><b>Todo en orden:</b> los '+total+' comprobantes emitidos están cargados y coinciden.</div></div>';
+    }
+    cont.innerHTML=h;
+
+    // Acciones por fila (la conciliación se recalcula sola tras cada corrección, vía el render de Ventas)
+    cont.querySelectorAll('[data-livv-fix]').forEach(b=> b.onclick=()=>{
+      const x=difs[+b.dataset.livvFix]; if(!x) return;
+      const fix=camposParaCorregirV(x.a, x.v);
+      if(!fix.etiquetas.length) return;
+      if(!confirm('Corregir la venta a "'+(x.v.cliente||'—')+'" con los datos de ARCA:\n\n· '+fix.etiquetas.join('\n· ')+'\n\n(No toca ítems, importes ni cobros.) ¿Confirmás?')) return;
+      if(window.__corregirVentaDatos && window.__corregirVentaDatos(x.v._uid, fix.campos)) renderLibro();
+    });
+    cont.querySelectorAll('[data-livv-open]').forEach(b=> b.onclick=()=>{ if(window.__abrirVenta) window.__abrirVenta(b.dataset.livvOpen); else alert('El módulo Ventas no está disponible.'); });
+    cont.querySelectorAll('[data-livv-abrir]').forEach(b=> b.onclick=()=>{ if(window.__abrirVenta) window.__abrirVenta(b.dataset.livvAbrir); else alert('El módulo Ventas no está disponible.'); });
+    cont.querySelectorAll('[data-livv-cargar]').forEach(b=> b.onclick=()=>{
+      const a=faltan[+b.dataset.livvCargar]; if(!a) return;
+      if(a.pistaAbrirUid && !confirm('OJO: hay pista de que esta venta YA está cargada (como "Sin factura").\nSi la cargás de nuevo va a quedar DOS veces.\n\n¿Cargarla igual como venta nueva?')) return;
+      if(window.__nuevaVentaPrecargada) window.__nuevaVentaPrecargada(ventaDesdeArca(a)); else alert('El módulo Ventas no está disponible.');
+    });
+    cont.querySelectorAll('[data-livv-pista]').forEach(b=> b.onclick=()=>{
+      const a=faltan[+b.dataset.livvPista]; if(!a || !a.pistaUid) return;
+      const campos={ nroFactura:String(a.nro).padStart(8,'0'), puntoVenta:String(a.pv).padStart(4,'0') };
+      if(docReal(a.cuit)) campos.cuit=fmtCuit(a.cuit);
+      if(!confirm('Completar la venta sin número con los datos de ARCA:\n\n· Comprobante: '+compArcaFmt(a)+(docReal(a.cuit)?'\n· CUIT/DNI: '+fmtCuit(a.cuit):'')+'\n\n'+(a.pista||'')+'\n\n¿Confirmás?')) return;
+      if(window.__corregirVentaDatos && window.__corregirVentaDatos(a.pistaUid, campos)) renderLibro();
+    });
+  }
+
   function renderConciliacion(res){
     const cont=$('liv-arca-res'); if(!cont) return;
     if(res.error){ cont.innerHTML='<div class="alert warn" style="margin:8px 0"><span class="aico">⚠️</span><div>'+esc(res.error)+'</div></div>'; return; }
@@ -10851,24 +11142,30 @@ function buildFilterTable(cfg){
     });
   }
 
-  async function leerArchivoArca(file){
+  async function leerArchivoArca(file, modo){
     const nombre=String(file.name||'').toLowerCase();
     if(nombre.endsWith('.csv') || file.type==='text/csv'){
-      return extraerComprobantesArca(csvAMatriz(await file.text()));
+      return extraerComprobantesArca(csvAMatriz(await file.text()), modo);
     }
     const X=await cargarXLSX();
     const wb=X.read(await file.arrayBuffer(), {type:'array'});
     const ws=wb.Sheets[wb.SheetNames[0]];
-    return extraerComprobantesArca(X.utils.sheet_to_json(ws, {header:1, raw:true, defval:''}));
+    return extraerComprobantesArca(X.utils.sheet_to_json(ws, {header:1, raw:true, defval:''}), modo);
   }
 
-  async function procesarArca(file){
-    const nom=$('liv-arca-nombre');
+  async function procesarArca(file, modo){
+    const esV = modo==='emitidos';
+    const nom=$(esV?'liv-arcav-nombre':'liv-arca-nombre');
     try{
       if(nom) nom.textContent='Leyendo '+file.name+'…';
-      const res=await leerArchivoArca(file);
-      if(res.error){ ultimoArca=null; renderConciliacion(res); }
-      else { ultimoArca=res.rows; renderConciliacion(conciliarArca(res.rows, window.__comprasTodas?window.__comprasTodas():[])); }
+      const res=await leerArchivoArca(file, modo);
+      if(esV){
+        if(res.error){ ultimoArcaV=null; renderConciliacionVentas(res); }
+        else { ultimoArcaV=res.rows; renderConciliacionVentas(conciliarArcaVentas(res.rows, window.__ventasTodas?window.__ventasTodas():[])); }
+      } else {
+        if(res.error){ ultimoArca=null; renderConciliacion(res); }
+        else { ultimoArca=res.rows; renderConciliacion(conciliarArca(res.rows, window.__comprasTodas?window.__comprasTodas():[])); }
+      }
       if(nom) nom.textContent=file.name;
     }catch(e){
       if(nom) nom.textContent='';
@@ -10903,7 +11200,12 @@ function buildFilterTable(cfg){
     const btnArca=$('liv-arca-btn'), fileArca=$('liv-arca-file');
     if(btnArca && fileArca){
       btnArca.onclick=()=>fileArca.click();
-      fileArca.onchange=()=>{ const f=fileArca.files && fileArca.files[0]; if(f) procesarArca(f); fileArca.value=''; };
+      fileArca.onchange=()=>{ const f=fileArca.files && fileArca.files[0]; if(f) procesarArca(f,'recibidos'); fileArca.value=''; };
+    }
+    const btnArcaV=$('liv-arcav-btn'), fileArcaV=$('liv-arcav-file');
+    if(btnArcaV && fileArcaV){
+      btnArcaV.onclick=()=>fileArcaV.click();
+      fileArcaV.onchange=()=>{ const f=fileArcaV.files && fileArcaV.files[0]; if(f) procesarArca(f,'emitidos'); fileArcaV.value=''; };
     }
     // Repintar cada vez que se entra a la página (los datos de Ventas/Compras se actualizan solos por snapshot)
     document.addEventListener('click', e=>{
