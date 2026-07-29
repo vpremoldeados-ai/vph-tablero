@@ -824,7 +824,7 @@
       </div>
       <div class="filter-bar" id="wab-filtros"></div>
       <div id="wab-lista"></div>
-      <p class="note">Los mensajes entrantes de WhatsApp aparecen acá <b>agrupados por contacto</b> (una tarjeta por conversación), clasificados solos (Fábrica / Proveedor / Cliente / Lead) por el bot. El bot solo observa: no crea leads ni responde nada sin aprobación. <b>🆕 Convertir en Lead</b> arma el lead para el CRM con lo que se detecta en la conversación (producto, m², lugar) para revisar antes de crear. Fuera del horario de atención (L a V 9 a 17hs) ya le avisó al remitente que lo van a atender al abrir. <b>✓ Resuelto</b> saca ese mensaje de la lista; <b>Abrir WhatsApp</b> va directo al chat. Datos en la nube (Firestore <code>vph_wa_pendientes</code>), los escribe el bot que corre aparte.</p>
+      <p class="note">Los mensajes entrantes de WhatsApp aparecen acá <b>agrupados por contacto</b> (una tarjeta por conversación), clasificados solos (Fábrica / Proveedor / Cliente / Lead) por el bot. <b>El bot solo observa y sugiere: nunca manda un mensaje.</b> Las sugerencias (cálculos de m²/pallets, textos que ya usás, qué falta preguntar para cotizar) salen de leer conversaciones reales — <b>📋 Copiar</b> las pasa al portapapeles para que las mandes vos desde WhatsApp, editándolas si hace falta. <b>🆕 Convertir en Lead</b> arma el lead para el CRM con lo que se detecta en la conversación (producto, m², lugar) para revisar antes de crear. <b>✓ Resuelto</b> saca ese mensaje de la lista; <b>Abrir WhatsApp</b> va directo al chat. Datos en la nube (Firestore <code>vph_wa_pendientes</code>), los escribe el bot que corre aparte.</p>
     </section>
   </div>
 
@@ -8170,10 +8170,29 @@ function buildFilterTable(cfg){
     convCtx=null;
     setTimeout(()=>{ $('wab-conv-modal').classList.remove('open'); }, 1600);
   }
-  function aprobarEnvio(uid){
-    const c=fb(); if(!c||!c.db) return;
-    if(!confirm('¿Enviar esta respuesta por WhatsApp ahora?')) return;
-    c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {aprobado:true}).catch(e=>alert('Error: '+e.message));
+  // El bot NO manda mensajes: solo sugiere. Los textos sugeridos se copian al
+  // portapapeles y los envía Sofi desde WhatsApp, editándolos si hace falta.
+  // Se guardan en un array por render para no meter textos largos en el HTML.
+  let textosCopiables=[];
+  function copiarSugerencia(idx, btn){
+    const txt=textosCopiables[+idx]; if(txt==null) return;
+    const ok=()=>{ const prev=btn.textContent; btn.textContent='✓ Copiado'; setTimeout(()=>{ btn.textContent=prev; },1400); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(ok).catch(()=>fallback()); }
+    else fallback();
+    function fallback(){ const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); ok(); }catch(e){ alert('No se pudo copiar automáticamente:\n\n'+txt); } document.body.removeChild(ta); }
+  }
+  function sugerenciasHTML(sug){
+    if(!Array.isArray(sug)||!sug.length) return '';
+    return '<div style="background:var(--blue-bg);border-radius:8px;padding:7px 9px;margin-top:5px">'+
+      sug.map(x=>{
+        let h='<div style="margin-bottom:4px"><b style="font-size:12px">'+esc(x.titulo||'')+'</b>';
+        if(x.detalle) h+='<div style="font-size:11.5px;color:var(--muted);white-space:pre-line">'+esc(x.detalle)+'</div>';
+        if(x.texto){ const i=textosCopiables.push(x.texto)-1;
+          h+='<div style="font-size:11.5px;white-space:pre-line;border-left:2px solid var(--blue);padding-left:7px;margin:3px 0">'+esc(x.texto)+'</div>'+
+             '<button class="kb-move" data-cp="'+i+'" style="font-size:10.5px;padding:2px 7px">📋 Copiar</button>'; }
+        return h+'</div>';
+      }).join('')+'</div>';
   }
 
   function render(){
@@ -8202,6 +8221,7 @@ function buildFilterTable(cfg){
     const conversaciones=[...grupos.values()]; // items viene nuevo→viejo, así que el grupo del contacto con actividad más reciente queda primero y msgs[0] es su último mensaje
 
     $('wab-count').textContent = items.length+' mensaje'+(items.length!==1?'s':'')+' · '+conversaciones.length+' contacto'+(conversaciones.length!==1?'s':'');
+    textosCopiables=[];   // se re-arma en cada render, junto con el HTML que lo indexa
     $('wab-lista').innerHTML = conversaciones.length ? conversaciones.map(msgs=>{
       const ult=msgs[0];
       const k=ult.waId||ult.telefono||ult.nombre||'?';
@@ -8218,13 +8238,13 @@ function buildFilterTable(cfg){
           const res=(m.estado||'pendiente')==='resuelto';
           return '<div style="border-top:1px solid var(--border);padding:7px 0 3px;margin-top:7px'+(res&&!todoResuelto?';opacity:.55':'')+'">'+
             '<div class="ped">'+esc(m.mensaje||'')+'</div>'+
-            (m.respuestaPropuesta?'<div class="ped" style="color:var(--blue)">🤖 Sugerencia: '+esc(m.respuestaPropuesta)+'</div>':'')+
+            // Compatibilidad: los mensajes viejos guardaban una sola respuestaPropuesta.
+            sugerenciasHTML(Array.isArray(m.sugerencias)&&m.sugerencias.length ? m.sugerencias
+                            : (m.respuestaPropuesta?[{titulo:'💬 Respuesta guardada',texto:m.respuestaPropuesta}]:null))+
             '<div class="meta">'+fmtFecha(m.creadoEn)+
               (m.fueraDeHorario?' · <span class="badge amber">Fuera de horario</span>':'')+
-              (m.enviado?' · <span class="badge green">✓ Respuesta enviada</span>':(m.aprobado?' · <span class="badge blue">⏳ Aprobada, enviando…</span>':''))+
               (res?' · ✓ resuelto':'')+'</div>'+
             (!res?'<div class="acts" style="margin-top:5px">'+
-              (m.respuestaPropuesta&&!m.aprobado?'<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-a="'+m._uid+'">✅ Aprobar y enviar</button>':'')+
               '<button class="kb-move" data-r="'+m._uid+'">✓ Resuelto</button>'+
             '</div>':'')+
           '</div>';
@@ -8247,7 +8267,7 @@ function buildFilterTable(cfg){
         '</div></div>';
     }).join('') : '<div class="kb-empty">No hay mensajes'+(filtroTipo||!mostrarResueltos?' con este filtro':'')+'.</div>';
     $('wab-lista').querySelectorAll('button[data-r]').forEach(b=> b.onclick=()=>marcarResuelto(b.dataset.r));
-    $('wab-lista').querySelectorAll('button[data-a]').forEach(b=> b.onclick=()=>aprobarEnvio(b.dataset.a));
+    $('wab-lista').querySelectorAll('button[data-cp]').forEach(b=> b.onclick=()=>copiarSugerencia(b.dataset.cp, b));
     $('wab-lista').querySelectorAll('button[data-x]').forEach(b=> b.onclick=()=>{ const k=b.dataset.x; if(expandidos.has(k)) expandidos.delete(k); else expandidos.add(k); render(); });
     $('wab-lista').querySelectorAll('button[data-rg]').forEach(b=> b.onclick=()=>resolverVarios(b.dataset.rg.split(',').filter(Boolean)));
     $('wab-lista').querySelectorAll('button[data-cl]').forEach(b=> b.onclick=()=>abrirConvertir(b.dataset.cl));
