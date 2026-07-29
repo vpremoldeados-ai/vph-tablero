@@ -2292,6 +2292,42 @@ function buildFilterTable(cfg){
   const CAT_FIJOS=()=> window.__catComprasFijas();
   const CAT_VARIABLES=['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
   window.__comprasTodas = ()=> (DB.compras||[]).slice();   // lectura para el Libro IVA
+
+  // --- API para la conciliación con ARCA (la usa el módulo Libro IVA) ---
+  window.__abrirCompra = function(uid){
+    const c=DB.compras.find(x=>x._uid===uid);
+    if(!c){ alert('No encontré esa compra (¿se borró?).'); return; }
+    openForm(c);
+  };
+  // Corrige SOLO datos de identificación (nunca ítems/importes/pagos). updateDoc de esos campos
+  // puntuales, así no se pisa nada que otro usuario esté editando (mismo criterio que persistPagos).
+  const CAMPOS_CORREGIBLES=['cuit','puntoVenta','fecha','condIva','nroFactura','periodo'];
+  window.__corregirCompraDatos = function(uid, campos){
+    const c=DB.compras.find(x=>x._uid===uid);
+    if(!c){ alert('No encontré esa compra (¿se borró?).'); return false; }
+    const upd={};
+    CAMPOS_CORREGIBLES.forEach(k=>{ if(campos && campos[k]!=null) upd[k]=campos[k]; });
+    if(upd.fecha && campos.periodo==null) upd.periodo=String(upd.fecha).slice(0,7);
+    if(!Object.keys(upd).length) return false;
+    Object.assign(c, upd);   // el objeto local queda al día ya mismo (la nube confirma por snapshot)
+    if(USA_NUBE && fbDb){ FS.updateDoc(FS.doc(fbDb, COL, uid), upd).catch(e=>alert('Error al guardar la corrección: '+e.message)); }
+    else { saveLocal(); render(); }
+    return true;
+  };
+  // Nueva compra con el formulario precargado (comprobante de ARCA que falta cargar). NADA se guarda
+  // solo: se abre el form, la persona completa la categoría, revisa y confirma.
+  window.__nuevaCompraPrecargada = function(d){
+    const c=blankCompra();
+    ['proveedor','cuit','condIva','tipoComprobante','fecha','vencimiento','puntoVenta','nroFactura','nota'].forEach(k=>{ if(d && d[k]!=null && d[k]!=='') c[k]=d[k]; });
+    if(d && d.fecha){ c.periodo=String(d.fecha).slice(0,7); if(!d.vencimiento) c.vencimiento=d.fecha; }
+    if(d && Array.isArray(d.items) && d.items.length) c.items=d.items;
+    try{   // proveedor recurrente: nombre canónico + categoría habitual (mismo criterio que el lector de tickets)
+      const con=matchProveedorConocido(d && d.cuit, d && d.proveedor, '');
+      if(con){ if(con.nombre) c.proveedor=con.nombre; if(con.categoria) c.categoria=con.categoria; }
+    }catch(e){}
+    openForm(c);
+    const t=$('cmp-form-title'); if(t) t.textContent='Nueva Compra (desde ARCA)';
+  };
   window.__resumenCompras = ()=>{
     if(!DB.compras || !DB.compras.length) return null;
     const meses={};
@@ -2316,6 +2352,9 @@ function buildFilterTable(cfg){
 
   // ---------- Render principal ----------
   function render(){
+    // Aviso dirigido al Libro IVA (seguimiento + conciliación ARCA): se repinta solo si esa página
+    // está a la vista — al guardar/corregir una compra desde ahí, las listas se mueven al instante.
+    if(window.__pintarLibroIVA){ try{ window.__pintarLibroIVA(); }catch(e){} }
     const compras = DB.compras.map(c=>({ c, k:calc(c) }));
     // periodos disponibles
     const periodos = [...new Set(DB.compras.map(c=>c.periodo))].sort().reverse();
@@ -10328,6 +10367,7 @@ function buildFilterTable(cfg){
   const tdB=v=>'<td style="text-align:right"><b>'+money(v)+'</b></td>';
 
   let tab='ventas';
+  let ultimoArca=null;   // filas del último archivo de ARCA subido — la conciliación se recalcula en cada render
   function renderLibro(){
     const cont=$('liv-kpis-saldo'), tabsEl=$('liv-tabs'), kpisTab=$('liv-kpis-tab'),
           tabla=$('liv-tabla'), vacio=$('liv-vacio'), selMes=$('liv-mes'), inAnio=$('liv-anio');
@@ -10362,6 +10402,10 @@ function buildFilterTable(cfg){
         saldo>=0?'a pagar — débito mayor que crédito':'a favor — crédito mayor que débito',
         saldo>=0?'warn':'good') +
       (aC.percIva ? kpiHtml('Percepciones de IVA (compras)', money(aC.percIva), 'crédito adicional — lo computa el contador aparte') : '');
+
+    // Si hay un archivo de ARCA subido, la conciliación se recalcula con las compras al día
+    // (así una corrección o un alta la mueven de lista sin volver a subir el archivo).
+    if(ultimoArca) renderConciliacion(conciliarArca(ultimoArca, todasC));
 
     tabsEl.innerHTML = [['ventas','📤 IVA Ventas ('+aV.n+')'],['compras','📥 IVA Compras ('+aC.n+')']]
       .map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-livtab="'+k+'">'+l+'</button>').join('');
@@ -10680,13 +10724,56 @@ function buildFilterTable(cfg){
         if(a.total==null) return mismoCuit;
         return Math.abs(Math.abs(totalDe(c,false))-a.total)<1;
       });
-      if(cand) a.pista='puede ser la compra de "'+cand.proveedor+'" del '+fmtFechaAR(cand.fecha)+' cargada SIN número ('+money(Math.abs(totalDe(cand,false)))+') — completale el número y listo';
+      if(cand){ a.pista='puede ser la compra de "'+cand.proveedor+'" del '+fmtFechaAR(cand.fecha)+' cargada SIN número ('+money(Math.abs(totalDe(cand,false)))+')'; a.pistaUid=cand._uid; }
     });
     return { ok, difs, faltan, sobran, meses:[...meses].sort() };
   }
 
   const tipoArcaCorto=a=>(a.esNC?'NC':(a.esND?'ND':'F'))+(a.letra||'');
   const compArcaFmt=a=>String(a.pv).padStart(4,'0')+'-'+String(a.nro).padStart(8,'0');
+
+  // Qué datos de identificación se pueden corregir con UN clic tomando a ARCA como verdad.
+  // Solo identificación — el tipo (NC) y los importes son plata y se corrigen abriendo la compra.
+  function camposParaCorregir(a, c){
+    const campos={}, etiquetas=[];
+    const cuitC=soloDig(c.cuit);
+    if(a.cuit && cuitC!==a.cuit){ campos.cuit=fmtCuit(a.cuit); etiquetas.push(cuitC?('CUIT: '+fmtCuit(cuitC)+' → '+fmtCuit(a.cuit)):('CUIT: (vacío) → '+fmtCuit(a.cuit))); }
+    const pvC=+soloDig(c.puntoVenta)||0;
+    if(a.pv && pvC!==a.pv){ campos.puntoVenta=String(a.pv).padStart(4,'0'); etiquetas.push('Punto de venta: '+(pvC||'(vacío)')+' → '+String(a.pv).padStart(4,'0')); }
+    if(a.fecha && String(c.fecha||'').slice(0,10)!==a.fecha){ campos.fecha=a.fecha; etiquetas.push('Fecha: '+fmtFechaAR(c.fecha)+' → '+fmtFechaAR(a.fecha)); }
+    const letraC=String(c.condIva||'').toUpperCase();
+    if(a.letra && letraC!==a.letra){ campos.condIva=a.letra; etiquetas.push('Letra: '+(letraC||'(vacía)')+' → '+a.letra); }
+    return { campos, etiquetas };
+  }
+
+  // Objeto de compra para precargar el formulario desde un comprobante de ARCA que falta cargar.
+  // La alícuota se deduce de IVA÷neto gravado (21 / 10,5 / 27 / 5 / 2,5); lo que el total trae por
+  // encima del gravado+IVA va como renglón "No gravado / exento". Nada se guarda solo.
+  function compraDesdeArca(a){
+    const items=[];
+    if(a.netoGrav>0){
+      let tasa='21';
+      if(a.iva!=null && a.netoGrav>0){
+        const r=a.iva/a.netoGrav*100;
+        const cerca=[21,10.5,27,5,2.5,0].find(t=>Math.abs(r-t)<=1);
+        if(cerca!=null) tasa=String(cerca);
+      }
+      items.push({desc:'Según factura '+compArcaFmt(a), codigo:'', cant:1, precioUnit:round2(a.netoGrav), descPct:0, iva:tasa});
+      const conIva=a.netoGrav+(a.iva||0);
+      if(a.total!=null && a.total-conIva>1) items.push({desc:'No gravado / exento (según ARCA)', codigo:'', cant:1, precioUnit:round2(a.total-conIva), descPct:0, iva:'nogravado'});
+    } else if(a.total>0){
+      items.push({desc:'Según factura '+compArcaFmt(a)+' (sin IVA discriminado)', codigo:'', cant:1, precioUnit:round2(a.total), descPct:0, iva:'nogravado'});
+    }
+    return {
+      proveedor:a.nombre||'', cuit:fmtCuit(a.cuit),
+      condIva:a.letra||'A',
+      tipoComprobante:a.esNC?'Nota de Crédito':(a.esND?'Nota de Débito':'Compra'),
+      fecha:a.fecha||'', vencimiento:a.fecha||'',
+      puntoVenta:String(a.pv).padStart(4,'0'), nroFactura:String(a.nro).padStart(8,'0'),
+      nota:'Precargada desde el archivo de ARCA (Mis Comprobantes → Recibidos).',
+      items
+    };
+  }
 
   function renderConciliacion(res){
     const cont=$('liv-arca-res'); if(!cont) return;
@@ -10703,21 +10790,31 @@ function buildFilterTable(cfg){
       (sobran.length?kpiHtml('🔎 Acá pero no en ARCA', String(sobran.length), 'número/CUIT mal cargado, o comprobante no electrónico', 'warn'):'') +
       '</div>';
     if(difs.length){
-      h+='<h3 style="margin:14px 0 6px">⚠️ Cargadas con diferencias ('+difs.length+')</h3><div class="tbl-wrap"><table>'+
-        '<thead><tr><th>ARCA</th><th>Emisor (ARCA)</th><th>Cargada como</th><th>Qué no coincide</th></tr></thead><tbody>';
-      difs.forEach(x=>{ h+='<tr><td>'+esc(tipoArcaCorto(x.a)+' '+compArcaFmt(x.a))+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.a.fecha))+'</span></td>'+
+      h+='<h3 style="margin:14px 0 6px">⚠️ Cargadas con diferencias ('+difs.length+')</h3>'+
+        '<div style="font-size:13px;color:var(--muted);margin-bottom:6px">"✓ Corregir datos" arregla con un clic lo que es identificación (CUIT, punto de venta, fecha, letra) tomando a ARCA como verdad. Si la diferencia es de PLATA (total, IVA) o de tipo (Nota de Crédito), abrí la compra y corregila mirando el papel.</div>'+
+        '<div class="tbl-wrap"><table>'+
+        '<thead><tr><th>ARCA</th><th>Emisor (ARCA)</th><th>Cargada como</th><th>Qué no coincide</th><th></th></tr></thead><tbody>';
+      difs.forEach((x,i)=>{
+        const fix=camposParaCorregir(x.a, x.c);
+        h+='<tr><td>'+esc(tipoArcaCorto(x.a)+' '+compArcaFmt(x.a))+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.a.fecha))+'</span></td>'+
         '<td>'+esc(x.a.nombre||'—')+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtCuit(x.a.cuit))+'</span></td>'+
         '<td><b>'+esc(x.c.proveedor||'—')+'</b><br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.c.fecha))+' · '+esc(fmtComprobante(x.c))+'</span></td>'+
-        '<td style="color:var(--amber)">'+x.lista.map(esc).join('<br>')+'</td></tr>'; });
+        '<td style="color:var(--amber)">'+x.lista.map(esc).join('<br>')+'</td>'+
+        '<td style="white-space:nowrap">'+(fix.etiquetas.length?'<button class="btn" data-liv-fix="'+i+'" style="font-size:12px;padding:5px 10px;background:var(--green);color:#fff;border:0;border-radius:6px;cursor:pointer">✓ Corregir datos</button> ':'')+
+          '<button class="btn" data-liv-open="'+esc(x.c._uid)+'" style="font-size:12px;padding:5px 10px;cursor:pointer">✎ Abrir compra</button></td></tr>'; });
       h+='</tbody></table></div>';
     }
     if(faltan.length){
-      h+='<h3 style="margin:14px 0 6px">❌ Faltan cargar ('+faltan.length+') — buscá estas facturas</h3><div class="tbl-wrap"><table>'+
-        '<thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Emisor</th><th>CUIT</th><th style="text-align:right">Total</th><th>Pista</th></tr></thead><tbody>';
-      faltan.forEach(a=>{ h+='<tr><td>'+esc(fmtFechaAR(a.fecha))+'</td><td>'+esc(tipoArcaCorto(a))+'</td><td>'+esc(compArcaFmt(a))+'</td>'+
+      h+='<h3 style="margin:14px 0 6px">❌ Faltan cargar ('+faltan.length+')</h3>'+
+        '<div style="font-size:13px;color:var(--muted);margin-bottom:6px">"➕ Cargar" abre el formulario de Compras ya completo con los datos de ARCA — elegí la categoría, revisá y guardá. Si hay pista de una compra sin número, "✎ Completar número" le pone el número/CUIT a esa compra.</div>'+
+        '<div class="tbl-wrap"><table>'+
+        '<thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Emisor</th><th>CUIT</th><th style="text-align:right">Total</th><th>Pista</th><th></th></tr></thead><tbody>';
+      faltan.forEach((a,i)=>{ h+='<tr><td>'+esc(fmtFechaAR(a.fecha))+'</td><td>'+esc(tipoArcaCorto(a))+'</td><td>'+esc(compArcaFmt(a))+'</td>'+
         '<td><b>'+esc(a.nombre||'—')+'</b></td><td>'+esc(fmtCuit(a.cuit))+'</td>'+
         '<td style="text-align:right">'+(a.total!=null?money(a.total):'—')+'</td>'+
-        '<td style="color:var(--muted);font-size:12px">'+(a.pista?esc(a.pista):'')+'</td></tr>'; });
+        '<td style="color:var(--muted);font-size:12px">'+(a.pista?esc(a.pista):'')+'</td>'+
+        '<td style="white-space:nowrap">'+(a.pistaUid?'<button class="btn" data-liv-pista="'+i+'" style="font-size:12px;padding:5px 10px;background:var(--blue);color:#fff;border:0;border-radius:6px;cursor:pointer">✎ Completar número</button> ':'')+
+          '<button class="btn" data-liv-cargar="'+i+'" style="font-size:12px;padding:5px 10px;background:var(--green);color:#fff;border:0;border-radius:6px;cursor:pointer">➕ Cargar</button></td></tr>'; });
       h+='</tbody></table></div>';
     }
     if(sobran.length){
@@ -10731,6 +10828,27 @@ function buildFilterTable(cfg){
       h+='<div class="alert" style="margin:8px 0"><span class="aico">✅</span><div><b>Todo en orden:</b> los '+total+' comprobantes de ARCA están cargados y coinciden.</div></div>';
     }
     cont.innerHTML=h;
+
+    // Acciones por fila (la conciliación se recalcula sola tras cada corrección, vía __refreshAlertas)
+    cont.querySelectorAll('[data-liv-fix]').forEach(b=> b.onclick=()=>{
+      const x=difs[+b.dataset.livFix]; if(!x) return;
+      const fix=camposParaCorregir(x.a, x.c);
+      if(!fix.etiquetas.length) return;
+      if(!confirm('Corregir la compra de "'+(x.c.proveedor||'—')+'" con los datos de ARCA:\n\n· '+fix.etiquetas.join('\n· ')+'\n\n(No toca ítems, importes ni pagos.) ¿Confirmás?')) return;
+      if(window.__corregirCompraDatos && window.__corregirCompraDatos(x.c._uid, fix.campos)) renderLibro();
+    });
+    cont.querySelectorAll('[data-liv-open]').forEach(b=> b.onclick=()=>{ if(window.__abrirCompra) window.__abrirCompra(b.dataset.livOpen); else alert('El módulo Compras no está disponible.'); });
+    cont.querySelectorAll('[data-liv-cargar]').forEach(b=> b.onclick=()=>{
+      const a=faltan[+b.dataset.livCargar]; if(!a) return;
+      if(window.__nuevaCompraPrecargada) window.__nuevaCompraPrecargada(compraDesdeArca(a)); else alert('El módulo Compras no está disponible.');
+    });
+    cont.querySelectorAll('[data-liv-pista]').forEach(b=> b.onclick=()=>{
+      const a=faltan[+b.dataset.livPista]; if(!a || !a.pistaUid) return;
+      const campos={ nroFactura:String(a.nro).padStart(8,'0'), puntoVenta:String(a.pv).padStart(4,'0') };
+      if(a.cuit) campos.cuit=fmtCuit(a.cuit);
+      if(!confirm('Completar la compra sin número con los datos de ARCA:\n\n· Comprobante: '+compArcaFmt(a)+(a.cuit?'\n· CUIT: '+fmtCuit(a.cuit):'')+'\n\n'+(a.pista||'')+'\n\n¿Confirmás?')) return;
+      if(window.__corregirCompraDatos && window.__corregirCompraDatos(a.pistaUid, campos)) renderLibro();
+    });
   }
 
   async function leerArchivoArca(file){
@@ -10749,8 +10867,8 @@ function buildFilterTable(cfg){
     try{
       if(nom) nom.textContent='Leyendo '+file.name+'…';
       const res=await leerArchivoArca(file);
-      if(res.error){ renderConciliacion(res); }
-      else renderConciliacion(conciliarArca(res.rows, window.__comprasTodas?window.__comprasTodas():[]));
+      if(res.error){ ultimoArca=null; renderConciliacion(res); }
+      else { ultimoArca=res.rows; renderConciliacion(conciliarArca(res.rows, window.__comprasTodas?window.__comprasTodas():[])); }
       if(nom) nom.textContent=file.name;
     }catch(e){
       if(nom) nom.textContent='';
