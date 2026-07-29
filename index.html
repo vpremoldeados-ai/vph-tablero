@@ -1267,6 +1267,15 @@
       <div class="tbl-wrap"><table id="liv-tabla"></table></div>
       <div id="liv-vacio" style="color:var(--muted);font-size:14px;margin:14px 0;display:none"></div>
 
+      <h2 style="margin-top:28px"><span class="dot" style="background:var(--green)"></span>Conciliación con ARCA — facturas recibidas</h2>
+      <div class="asof">Subí el archivo de <b>ARCA → Mis Comprobantes → Recibidos</b> (CSV o Excel, tal cual lo baja el portal) y el Tablero controla las compras cargadas contra lo que ARCA dice que recibiste.</div>
+      <div style="display:flex;gap:12px;margin:12px 0;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary" id="liv-arca-btn" style="background:var(--green)">📎 Subir archivo de ARCA</button>
+        <input type="file" id="liv-arca-file" accept=".csv,.xlsx,.xls" style="display:none">
+        <span id="liv-arca-nombre" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <div id="liv-arca-res"></div>
+
       <h2 style="margin-top:28px"><span class="dot" style="background:var(--blue)"></span>Excel para el contador</h2>
       <div style="display:flex;gap:12px;margin:12px 0;flex-wrap:wrap">
         <button class="btn btn-primary" id="liv-descargar-ventas" style="background:var(--green)">📥 Descargar IVA Ventas</button>
@@ -2898,7 +2907,7 @@ function buildFilterTable(cfg){
   const CUIT_STOP = new Set(['SA','SAS','SRL','SACI','SCA','SH','LTDA','S','A','R','L']);
   function normNombre(s){
     return String(s||'').toUpperCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g,'')     // saca tildes
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')     // saca tildes
       .replace(/[^A-Z0-9]+/g,' ').trim()
       .split(' ').filter(t=>t && !CUIT_STOP.has(t)).join(' ');
   }
@@ -6302,7 +6311,7 @@ function buildFilterTable(cfg){
     // Peso por código Y por nombre normalizado: si el ítem de la venta se cargó a mano sin código,
     // igual suma sus kilos (mismo criterio que keyDe() de Producción). Antes solo miraba el código,
     // así que los "kg vendidos" quedaban CORTOS frente a los "kg fabricados" y comparar los dos engañaba.
-    const normP = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
+    const normP = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
     const pW={}, pWn={}; cat.forEach(p=>{ const w=num(p.pesoUnit); if(!(w>0)) return;
       if(p.codigo) pW[String(p.codigo).trim().toUpperCase()]=w; if(p.nombre) pWn[normP(p.nombre)]=w; });
     const pesoItem = it => pW[String(it.codigo||'').trim().toUpperCase()] || pWn[normP(it.desc)] || 0;
@@ -6842,7 +6851,7 @@ function buildFilterTable(cfg){
   const $ = id => document.getElementById(id);
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  const slug = s => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,42) || 'x';
+  const slug = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,42) || 'x';
   const fb = ()=> window.__fbctx;
   const p2=n=>String(n).padStart(2,'0'); const HOY=new Date(); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
   const fmtFecha = iso => { const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (m[3]+'/'+m[2]+'/'+m[1]) : (iso||'—'); };
@@ -7994,7 +8003,7 @@ function buildFilterTable(cfg){
   // lector de tickets de Compras). Devuelve {items:[{producto,codigo,cantidad,m2}], lugar, zona}.
   window.__detectarPedidoWA = function(texto){
     const t=String(texto||'');
-    const N=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    const N=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
     const lineas=t.split(/\n+/).map(s=>s.trim()).filter(Boolean);
     const cat=catProd();
     const RE_M2=/(\d+(?:[.,]\d+)?)\s*(?:m2|m²|mts?\.?\s*2|metros?\s+cuadrados?)/;
@@ -8322,7 +8331,7 @@ function buildFilterTable(cfg){
   const nf = n=>Math.round(n||0).toLocaleString('es-AR');
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const esc = s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  const norm = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
+  const norm = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
   const keyDe = (cod,nom)=>{ const c=String(cod||'').trim(); return c ? c.toUpperCase() : norm(nom); };
   const HOY=new Date(); const p2=n=>String(n).padStart(2,'0'); const hoyISO=HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
   const fmtFecha=s=>{ if(!s)return'—'; if(/^\d{4}-\d{2}-\d{2}/.test(s)){ const [a,m,d]=s.slice(0,10).split('-'); return d+'/'+m+'/'+a.slice(2);} return String(s); };
@@ -9324,7 +9333,7 @@ function buildFilterTable(cfg){
           // Mismo remito que el de Producción y Logística (con el armado real de pallets); si ese módulo
           // todavía no cargó, se arma acá el objeto mínimo y el PDF calcula los pallets con el catálogo.
           if(window.__remitoPedidoObj){ window.__imprimir.remito(window.__remitoPedidoObj(pe, pe.fechaEntregado||pe.fecha)); return; }
-          const cs=(window.__catalogoClientes?window.__catalogoClientes():[]); const nc=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,''); const cli=cs.find(c=>nc(c.nombre)===nc(pe.cliente))||{};
+          const cs=(window.__catalogoClientes?window.__catalogoClientes():[]); const nc=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); const cli=cs.find(c=>nc(c.nombre)===nc(pe.cliente))||{};
           window.__imprimir.remito({ numero:'', fecha:pe.fechaEntregado||pe.fecha, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:[pe.direccion,pe.ciudad].filter(Boolean).join(' - ')||[cli.direccion,cli.localidad].filter(Boolean).join(' - '), items:(pe.items||[]).filter(it=>it&&it.producto&&num(it.cantidad)>0).map(it=>({codigo:it.codigo||'',desc:it.producto,cant:num(it.cantidad)})) }); }},
         omit:{run(){ marcar('vph_pedidos',pe,'avisoEnt'); }} });
     });
@@ -9698,7 +9707,7 @@ function buildFilterTable(cfg){
 
   // Catálogo de clientes (para domicilio/teléfono en los documentos)
   const clientes = ()=> (window.__catalogoClientes ? window.__catalogoClientes() : []);
-  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   function buscarCliente(nombre,cuit){ const cs=clientes(); const cu=String(cuit||'').replace(/\D/g,''); if(cu){ const bc=cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu); if(bc) return bc; } const n=normc(nombre); return cs.find(c=>normc(c.nombre)===n)||null; }
 
   // Cálculo de la venta (reutiliza el del módulo Ventas; si no está, cae a uno propio)
@@ -10075,7 +10084,7 @@ function buildFilterTable(cfg){
 (function(){
   'use strict';
   const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   const clientes = () => (window.__catalogoClientes ? window.__catalogoClientes() : []);
   function buscarCli(nombre,cuit){ const cs=clientes(); const cu=String(cuit||'').replace(/\D/g,''); if(cu){ const bc=cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu); if(bc) return bc; } const n=normc(nombre); return cs.find(c=>normc(c.nombre)===n)||null; }
 
@@ -10520,6 +10529,236 @@ function buildFilterTable(cfg){
     }
   }
 
+  // ---------- Conciliación con ARCA (Mis Comprobantes → Recibidos) ----------
+  const soloDig=s=>String(s==null?'':s).replace(/\D/g,'');
+  const normTxt=s=>String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+
+  // Número del archivo: "1.234,56" (AR), "1234,56", "1234.56" o celda ya numérica del Excel
+  function numArca(v){
+    if(typeof v==='number') return v;
+    let t=String(v==null?'':v).trim().replace(/[^\d,.\-]/g,'');
+    if(!t || !/\d/.test(t)) return 0;
+    if(t.indexOf(',')>=0) t=t.replace(/\./g,'').replace(',','.');
+    else if(/^-?\d{1,3}(\.\d{3})+$/.test(t)) t=t.replace(/\./g,'');
+    const n=parseFloat(t); return isFinite(n)?n:0;
+  }
+  function fechaArca(v){
+    if(typeof v==='number' && v>20000 && v<80000){   // fecha serial de Excel
+      return new Date(Math.round((v-25569)*86400*1000)).toISOString().slice(0,10);
+    }
+    const s=String(v==null?'':v).trim();
+    let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if(m){ let a=m[3]; if(a.length===2)a='20'+a; return a+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'); }
+    return '';
+  }
+  // Códigos de comprobante de ARCA — los mismos que usa el lector de QR del módulo Compras
+  const ARCA_NC=[3,8,13,53,203,208,213], ARCA_ND=[2,7,12,52,202,207,212];
+  const ARCA_LETRA=c=>[1,2,3,51,52,53,201,202,203].indexOf(c)>=0?'A':([6,7,8,206,207,208].indexOf(c)>=0?'B':([11,12,13,211,212,213].indexOf(c)>=0?'C':''));
+
+  // CSV de ARCA: separador ; (por las dudas también tab o coma), comillas opcionales
+  function csvAMatriz(texto){
+    const lineas=String(texto||'').replace(/^\uFEFF/,'').split(/\r?\n/).filter(l=>l.trim()!=='');
+    if(!lineas.length) return [];
+    const sep=[';','\t',','].map(s=>({s, n:lineas[0].split(s).length})).sort((a,b)=>b.n-a.n)[0].s;
+    return lineas.map(l=>{
+      const celdas=[]; let cur='', enComillas=false;
+      for(let i=0;i<l.length;i++){ const ch=l[i];
+        if(ch==='"'){ enComillas=!enComillas; continue; }
+        if(ch===sep && !enComillas){ celdas.push(cur); cur=''; continue; }
+        cur+=ch; }
+      celdas.push(cur);
+      return celdas.map(c=>c.trim());
+    });
+  }
+
+  // De la matriz cruda a comprobantes: busca la fila de encabezado y mapea las columnas POR NOMBRE
+  // (el orden de columnas de ARCA cambió más de una vez — no fiarse de posiciones fijas).
+  function extraerComprobantesArca(matriz){
+    let hIdx=-1, cols=null;
+    for(let i=0;i<Math.min(matriz.length,10);i++){
+      const norm=(matriz[i]||[]).map(normTxt);
+      const iFecha=norm.findIndex(h=>h.startsWith('fecha'));
+      const iNro=norm.findIndex(h=>h.indexOf('desde')>=0);
+      if(iFecha>=0 && iNro>=0){
+        if(norm.some(h=>h.indexOf('receptor')>=0) && !norm.some(h=>h.indexOf('emisor')>=0))
+          return { error:'Este archivo parece ser el de comprobantes EMITIDOS (tiene columnas de "Receptor"). Para controlar las compras subí el de RECIBIDOS (ARCA → Mis Comprobantes → Recibidos).' };
+        cols={
+          fecha:iFecha, nro:iNro,
+          tipo:norm.findIndex(h=>h.indexOf('tipo')>=0 && h.indexOf('comprobante')>=0),
+          pv:norm.findIndex(h=>h.indexOf('punto de venta')>=0),
+          // "Nro. Doc. Emisor" (el CUIT) — ojo: "Tipo Doc. Emisor" también trae 'doc'+'emisor', excluirla
+          cuit:norm.findIndex(h=>h.indexOf('emisor')>=0 && h.indexOf('tipo')<0 && (h.indexOf('doc')>=0||h.indexOf('cuit')>=0)),
+          nombre:norm.findIndex(h=>h.indexOf('denominacion')>=0),
+          netoGrav:norm.findIndex(h=>h.indexOf('neto gravado')>=0 && h.indexOf('no gravado')<0),
+          iva:norm.findIndex(h=>h==='iva'||h==='imp iva'||h==='total iva'),
+          total:norm.findIndex(h=>h.indexOf('total')>=0 && h.indexOf('iva')<0 && h.indexOf('neto')<0),
+        };
+        hIdx=i; break;
+      }
+    }
+    if(hIdx<0) return { error:'No encontré el encabezado (columnas "Fecha…" y "Número Desde"). ¿Es el archivo de Mis Comprobantes de ARCA, sin editar?' };
+    const get=(fila,i)=> (i>=0 && i<fila.length) ? fila[i] : '';
+    const rows=[];
+    for(let i=hIdx+1;i<matriz.length;i++){
+      const f=matriz[i]||[];
+      const nro=soloDig(get(f,cols.nro)); if(!nro || !+nro) continue;   // filas vacías o de totales
+      const tipoTxt=String(get(f,cols.tipo)||'').trim();
+      const cod=parseInt(tipoTxt,10)||0;
+      rows.push({
+        fecha:fechaArca(get(f,cols.fecha)),
+        cod, tipoTxt,
+        esNC:ARCA_NC.indexOf(cod)>=0, esND:ARCA_ND.indexOf(cod)>=0, letra:ARCA_LETRA(cod),
+        pv:+soloDig(get(f,cols.pv))||0,
+        nro:+nro,
+        cuit:soloDig(get(f,cols.cuit)),
+        nombre:String(get(f,cols.nombre)||'').trim(),
+        netoGrav: cols.netoGrav>=0 ? Math.abs(numArca(get(f,cols.netoGrav))) : null,
+        iva: cols.iva>=0 ? Math.abs(numArca(get(f,cols.iva))) : null,
+        total: cols.total>=0 ? Math.abs(numArca(get(f,cols.total))) : null,
+      });
+    }
+    return { rows };
+  }
+
+  // Cruce: cada comprobante de ARCA contra las compras cargadas (de CUALQUIER mes — si está con la
+  // fecha mal cargada igual lo encuentra y marca la diferencia). El match va del más exacto al más
+  // laxo: CUIT+ptoVta+número → CUIT+número (pto de venta mal/sin cargar) → ptoVta+número inequívoco.
+  function conciliarArca(rowsArca, compras){
+    const conNro=compras.filter(c=>{ const n=soloDig(c.nroFactura); return n && +n; });
+    const porClave={}, porCuitNro={}, porPvNro={};
+    conNro.forEach(c=>{
+      const cuit=soloDig(c.cuit), pv=+soloDig(c.puntoVenta)||0, nro=+soloDig(c.nroFactura);
+      if(cuit){ (porClave[cuit+'|'+pv+'|'+nro]=porClave[cuit+'|'+pv+'|'+nro]||[]).push(c);
+                (porCuitNro[cuit+'|'+nro]=porCuitNro[cuit+'|'+nro]||[]).push(c); }
+      (porPvNro[pv+'|'+nro]=porPvNro[pv+'|'+nro]||[]).push(c);
+    });
+    const usadas=new Set();
+    const unico=lista=>{ if(!lista) return null; const libres=lista.filter(c=>!usadas.has(c._uid)); return libres.length===1?libres[0]:null; };
+    const primero=lista=>{ if(!lista) return null; const libres=lista.filter(c=>!usadas.has(c._uid)); return libres.length?libres[0]:null; };
+
+    const ok=[], difs=[], faltan=[];
+    rowsArca.forEach(a=>{
+      let c=primero(porClave[a.cuit+'|'+a.pv+'|'+a.nro]);
+      if(!c) c=unico(porCuitNro[a.cuit+'|'+a.nro]);
+      if(!c) c=unico(porPvNro[a.pv+'|'+a.nro]);
+      if(!c){ faltan.push(a); return; }
+      usadas.add(c._uid);
+      const d=desglose(c);
+      const lista=[];
+      const cuitC=soloDig(c.cuit);
+      if(!cuitC) lista.push('sin CUIT en el Tablero (ARCA dice '+fmtCuit(a.cuit)+')');
+      else if(cuitC!==a.cuit) lista.push('CUIT distinto: Tablero '+fmtCuit(cuitC)+' vs ARCA '+fmtCuit(a.cuit));
+      const pvC=+soloDig(c.puntoVenta)||0;
+      if(pvC!==a.pv) lista.push(pvC?('punto de venta distinto: '+pvC+' vs ARCA '+a.pv):('sin punto de venta en el Tablero (ARCA: '+String(a.pv).padStart(4,'0')+')'));
+      if(a.fecha && String(c.fecha||'').slice(0,10)!==a.fecha) lista.push('fecha distinta: '+fmtFechaAR(c.fecha)+' vs ARCA '+fmtFechaAR(a.fecha));
+      const esNCc=c.tipoComprobante==='Nota de Crédito';
+      if(esNCc!==a.esNC) lista.push(a.esNC?'en ARCA es NOTA DE CRÉDITO y acá está cargada como compra':'acá está como Nota de Crédito y en ARCA es factura/débito');
+      const letraC=String(c.condIva||'').toUpperCase();
+      if(a.letra && letraC && letraC!==a.letra) lista.push('letra del comprobante distinta: '+letraC+' vs ARCA '+a.letra);
+      const totC=Math.abs(totalDe(c,false));
+      if(a.total!=null && Math.abs(totC-a.total)>0.99) lista.push('TOTAL distinto: '+money(totC)+' vs ARCA '+money(a.total));
+      else {
+        if(a.iva!=null){ const ivaC=Math.abs(d.iva21+d.iva105+d.ivaOtras); if(Math.abs(ivaC-a.iva)>0.99) lista.push('IVA distinto: '+money(ivaC)+' vs ARCA '+money(a.iva)); }
+        if(a.netoGrav!=null && a.netoGrav>0){ const nG=Math.abs(d.grav); if(Math.abs(nG-a.netoGrav)>0.99) lista.push('neto gravado distinto: '+money(nG)+' vs ARCA '+money(a.netoGrav)); }
+      }
+      if(lista.length) difs.push({a, c, lista}); else ok.push({a, c});
+    });
+
+    // Inverso: compras con número, de los meses que cubre el archivo, que ARCA no lista
+    const meses=new Set(rowsArca.map(a=>a.fecha.slice(0,7)).filter(Boolean));
+    const sobran=conNro.filter(c=> !usadas.has(c._uid) && meses.has(String(c.fecha||'').slice(0,7)));
+
+    // Pistas: ¿una de las que "faltan" es en realidad una compra cargada SIN número?
+    const sinNro=compras.filter(c=>{ const n=soloDig(c.nroFactura); return !n || !+n; });
+    faltan.forEach(a=>{
+      const cand=sinNro.find(c=>{
+        const mismoCuit=soloDig(c.cuit) && soloDig(c.cuit)===a.cuit;
+        const np=normTxt(c.proveedor), na=normTxt(a.nombre);
+        const mismoNombre=np && na && (np.indexOf(na.split(' ')[0])>=0 || na.indexOf(np.split(' ')[0])>=0);
+        if(!mismoCuit && !mismoNombre) return false;
+        if(a.total==null) return mismoCuit;
+        return Math.abs(Math.abs(totalDe(c,false))-a.total)<1;
+      });
+      if(cand) a.pista='puede ser la compra de "'+cand.proveedor+'" del '+fmtFechaAR(cand.fecha)+' cargada SIN número ('+money(Math.abs(totalDe(cand,false)))+') — completale el número y listo';
+    });
+    return { ok, difs, faltan, sobran, meses:[...meses].sort() };
+  }
+
+  const tipoArcaCorto=a=>(a.esNC?'NC':(a.esND?'ND':'F'))+(a.letra||'');
+  const compArcaFmt=a=>String(a.pv).padStart(4,'0')+'-'+String(a.nro).padStart(8,'0');
+
+  function renderConciliacion(res){
+    const cont=$('liv-arca-res'); if(!cont) return;
+    if(res.error){ cont.innerHTML='<div class="alert warn" style="margin:8px 0"><span class="aico">⚠️</span><div>'+esc(res.error)+'</div></div>'; return; }
+    const {ok,difs,faltan,sobran,meses}=res;
+    const total=ok.length+difs.length+faltan.length;
+    if(!total){ cont.innerHTML='<div class="alert warn" style="margin:8px 0"><span class="aico">⚠️</span><div>El archivo no trae ningún comprobante. ¿Bajaste el período correcto en ARCA?</div></div>'; return; }
+    const mesesTxt=meses.map(m=>{ const p=m.split('-'); return (MESES[+p[1]-1]||m)+' '+p[0]; }).join(', ');
+    let h='<div class="kpis" style="margin:10px 0">'+
+      kpiHtml('Comprobantes en ARCA', String(total), esc(mesesTxt)) +
+      kpiHtml('✓ Coinciden', String(ok.length), 'cargados y bien', ok.length===total?'good':'') +
+      kpiHtml('⚠️ Con diferencias', String(difs.length), difs.length?'revisar campo por campo':'', difs.length?'warn':'good') +
+      kpiHtml('❌ Faltan cargar', String(faltan.length), faltan.length?'están en ARCA y acá no':'', faltan.length?'bad':'good') +
+      (sobran.length?kpiHtml('🔎 Acá pero no en ARCA', String(sobran.length), 'número/CUIT mal cargado, o comprobante no electrónico', 'warn'):'') +
+      '</div>';
+    if(difs.length){
+      h+='<h3 style="margin:14px 0 6px">⚠️ Cargadas con diferencias ('+difs.length+')</h3><div class="tbl-wrap"><table>'+
+        '<thead><tr><th>ARCA</th><th>Emisor (ARCA)</th><th>Cargada como</th><th>Qué no coincide</th></tr></thead><tbody>';
+      difs.forEach(x=>{ h+='<tr><td>'+esc(tipoArcaCorto(x.a)+' '+compArcaFmt(x.a))+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.a.fecha))+'</span></td>'+
+        '<td>'+esc(x.a.nombre||'—')+'<br><span style="color:var(--muted);font-size:12px">'+esc(fmtCuit(x.a.cuit))+'</span></td>'+
+        '<td><b>'+esc(x.c.proveedor||'—')+'</b><br><span style="color:var(--muted);font-size:12px">'+esc(fmtFechaAR(x.c.fecha))+' · '+esc(fmtComprobante(x.c))+'</span></td>'+
+        '<td style="color:var(--amber)">'+x.lista.map(esc).join('<br>')+'</td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(faltan.length){
+      h+='<h3 style="margin:14px 0 6px">❌ Faltan cargar ('+faltan.length+') — buscá estas facturas</h3><div class="tbl-wrap"><table>'+
+        '<thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Emisor</th><th>CUIT</th><th style="text-align:right">Total</th><th>Pista</th></tr></thead><tbody>';
+      faltan.forEach(a=>{ h+='<tr><td>'+esc(fmtFechaAR(a.fecha))+'</td><td>'+esc(tipoArcaCorto(a))+'</td><td>'+esc(compArcaFmt(a))+'</td>'+
+        '<td><b>'+esc(a.nombre||'—')+'</b></td><td>'+esc(fmtCuit(a.cuit))+'</td>'+
+        '<td style="text-align:right">'+(a.total!=null?money(a.total):'—')+'</td>'+
+        '<td style="color:var(--muted);font-size:12px">'+(a.pista?esc(a.pista):'')+'</td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(sobran.length){
+      h+='<h3 style="margin:14px 0 6px">🔎 Cargadas acá pero ARCA no las lista ('+sobran.length+')</h3>'+
+        '<div style="font-size:13px;color:var(--muted);margin-bottom:6px">Casi siempre es un número o CUIT mal tipeado (por eso no matchea), o un comprobante que no es electrónico. Abrí la compra y compará con el papel.</div>'+
+        '<div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Comprobante</th><th>Proveedor</th><th>CUIT</th><th style="text-align:right">Total</th></tr></thead><tbody>';
+      sobran.forEach(c=>{ h+='<tr><td>'+esc(fmtFechaAR(c.fecha))+'</td><td>'+esc(fmtComprobante(c))+'</td><td><b>'+esc(c.proveedor||'—')+'</b></td><td>'+esc(fmtCuit(c.cuit))+'</td><td style="text-align:right">'+money(Math.abs(totalDe(c,false)))+'</td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(!difs.length && !faltan.length && !sobran.length){
+      h+='<div class="alert" style="margin:8px 0"><span class="aico">✅</span><div><b>Todo en orden:</b> los '+total+' comprobantes de ARCA están cargados y coinciden.</div></div>';
+    }
+    cont.innerHTML=h;
+  }
+
+  async function leerArchivoArca(file){
+    const nombre=String(file.name||'').toLowerCase();
+    if(nombre.endsWith('.csv') || file.type==='text/csv'){
+      return extraerComprobantesArca(csvAMatriz(await file.text()));
+    }
+    const X=await cargarXLSX();
+    const wb=X.read(await file.arrayBuffer(), {type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    return extraerComprobantesArca(X.utils.sheet_to_json(ws, {header:1, raw:true, defval:''}));
+  }
+
+  async function procesarArca(file){
+    const nom=$('liv-arca-nombre');
+    try{
+      if(nom) nom.textContent='Leyendo '+file.name+'…';
+      const res=await leerArchivoArca(file);
+      if(res.error){ renderConciliacion(res); }
+      else renderConciliacion(conciliarArca(res.rows, window.__comprasTodas?window.__comprasTodas():[]));
+      if(nom) nom.textContent=file.name;
+    }catch(e){
+      if(nom) nom.textContent='';
+      alert('No pude leer el archivo: '+e.message);
+      console.error('[conciliación ARCA]', e);
+    }
+  }
+
   function ponerPeriodo(d){
     const selMes=$('liv-mes'), inAnio=$('liv-anio');
     if(selMes) selMes.value=String(d.getMonth()+1).padStart(2,'0');
@@ -10543,6 +10782,11 @@ function buildFilterTable(cfg){
     on('liv-descargar-ventas','ventas');
     on('liv-descargar-compras','compras');
     on('liv-descargar-ambos','ambos');
+    const btnArca=$('liv-arca-btn'), fileArca=$('liv-arca-file');
+    if(btnArca && fileArca){
+      btnArca.onclick=()=>fileArca.click();
+      fileArca.onchange=()=>{ const f=fileArca.files && fileArca.files[0]; if(f) procesarArca(f); fileArca.value=''; };
+    }
     // Repintar cada vez que se entra a la página (los datos de Ventas/Compras se actualizan solos por snapshot)
     document.addEventListener('click', e=>{
       if(e.target && e.target.closest && e.target.closest('.nav-item')){
