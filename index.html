@@ -4320,28 +4320,11 @@ function buildFilterTable(cfg){
     const cli=(cu&&cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu))||cs.find(c=>(c.nombre||'').trim().toUpperCase()===(v.cliente||'').trim().toUpperCase())||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ');
     const items=(v.items||[]).filter(it=>it&&(it.desc||it.codigo)).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant)}));
-    // La venta no guarda con qué transporte sale (eso vive en el pedido de Producción y Logística), así
-    // que el transportista se elige al imprimir: define si el remito lleva la leyenda de pago en origen.
-    return { numero:v.nroFactura||'', fecha:v.fecha, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items };
-  }
-  // Paso previo al remito: con qué transporte sale. Si no es el flete propio, el PDF suma la leyenda
-  // "Pago del envío: EN ORIGEN, facturar a VPH SAS" + con quién coordinar la entrega en destino.
-  function elegirTransporte(v, ov){
-    const ts=(window.__transportes?window.__transportes():['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro']);
-    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;min-width:300px;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
-      '<h3 style="margin:0 0 4px;font-size:15px">Remito — ¿con qué transporte sale?</h3>'+
-      '<div style="font-size:11.5px;color:#666;margin:0 0 12px">Si no es el flete propio, el remito aclara que el envío se paga en origen y a nombre de quién se factura.</div>'+
-      '<div style="display:flex;flex-direction:column;gap:8px">'+
-        ts.map((t,i)=>'<button data-t="'+i+'" class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'">'+esc(t)+'</button>').join('')+
-      '<button data-x="1" class="cmp-btn" style="margin-top:4px">Cancelar</button></div></div>';
-    ov.querySelectorAll('button[data-t]').forEach(b=> b.onclick=()=>{
-      let t=ts[+b.dataset.t];
-      if(t==='Otro'){ t=(prompt('¿Qué transporte? (nombre de la agencia)')||'').trim(); if(!t) return; }
-      if(t==='Sin asignar') t='';
-      ov.remove();
-      try{ window.__imprimir.remito(remitoObjDeVenta(v,t)); }catch(e){ alert('Error al generar el documento: '+e.message); }
-    });
-    ov.querySelector('button[data-x]').onclick=()=>ov.remove();
+    // ⚠️ La fecha del remito es la de la ENTREGA, no la de la venta (pueden ser días distintos): se
+    // propone HOY y se confirma en el formulario de datos de entrega. Lo mismo el transporte, que la
+    // venta no guarda (vive en el pedido de Producción) y define la leyenda de pago en origen; y la
+    // dirección/teléfono, que vienen de la ficha del cliente y ahí se pueden corregir para este envío.
+    return { numero:v.nroFactura||'', fecha:hoyISO, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items };
   }
   function menuImprimir(v){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -4362,7 +4345,7 @@ function buildFilterTable(cfg){
     ov.querySelector('[data-doc="detalle"]').onclick=()=>go(()=>window.__imprimir.detalleVenta(v));
     ov.querySelector('[data-doc="presupuesto"]').onclick=()=>go(()=>window.__imprimir.presupuesto(v));
     ov.querySelector('[data-doc="recibo"]').onclick=()=>go(()=>window.__imprimir.recibo(v));
-    ov.querySelector('[data-doc="remito"]').onclick=()=>elegirTransporte(v,ov);   // el overlay se reusa: pisa el menú con la elección de transporte
+    ov.querySelector('[data-doc="remito"]').onclick=()=>{ ov.remove(); window.__imprimir.remitoDatos(remitoObjDeVenta(v)); };   // pide fecha de entrega, dirección, teléfono y transporte
     ov.querySelector('[data-doc="cerrar"]').onclick=()=>ov.remove();
   }
 
@@ -9165,12 +9148,15 @@ function buildFilterTable(cfg){
       // acá se manda el plan crudo y la columna Observaciones queda libre.
       return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), pallets:(r?r.pallets:null) };
     });
-    return { numero:'', fecha:fecha||pe.fecha||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
+    // ⚠️ La fecha del remito es la de la ENTREGA: si el pedido ya se entregó, esa; si no, la fecha
+    // requerida por el cliente; y si no hay ninguna, HOY. Nunca `pe.fecha`, que es cuándo se cargó
+    // el pedido. Igual se confirma en el formulario de datos de entrega antes de imprimir.
+    return { numero:'', fecha:fecha||pe.fechaEntregado||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items };
   };
   function imprimirRemito(pe){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
-    window.__imprimir.remito(window.__remitoPedidoObj(pe));
+    window.__imprimir.remitoDatos(window.__remitoPedidoObj(pe));
   }
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
   function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
@@ -9424,9 +9410,9 @@ function buildFilterTable(cfg){
         doc:{l:'🧾 Remito', run(){ if(!window.__imprimir) return;
           // Mismo remito que el de Producción y Logística (con el armado real de pallets); si ese módulo
           // todavía no cargó, se arma acá el objeto mínimo y el PDF calcula los pallets con el catálogo.
-          if(window.__remitoPedidoObj){ window.__imprimir.remito(window.__remitoPedidoObj(pe, pe.fechaEntregado||pe.fecha)); return; }
+          if(window.__remitoPedidoObj){ window.__imprimir.remitoDatos(window.__remitoPedidoObj(pe, pe.fechaEntregado||pe.fecha)); return; }
           const cs=(window.__catalogoClientes?window.__catalogoClientes():[]); const nc=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); const cli=cs.find(c=>nc(c.nombre)===nc(pe.cliente))||{};
-          window.__imprimir.remito({ numero:'', fecha:pe.fechaEntregado||pe.fecha, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:[pe.direccion,pe.ciudad].filter(Boolean).join(' - ')||[cli.direccion,cli.localidad].filter(Boolean).join(' - '), items:(pe.items||[]).filter(it=>it&&it.producto&&num(it.cantidad)>0).map(it=>({codigo:it.codigo||'',desc:it.producto,cant:num(it.cantidad)})) }); }},
+          window.__imprimir.remitoDatos({ numero:'', fecha:pe.fechaEntregado||pe.fecha, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:[pe.direccion,pe.ciudad].filter(Boolean).join(' - ')||[cli.direccion,cli.localidad].filter(Boolean).join(' - '), items:(pe.items||[]).filter(it=>it&&it.producto&&num(it.cantidad)>0).map(it=>({codigo:it.codigo||'',desc:it.producto,cant:num(it.cantidad)})) }); }},
         omit:{run(){ marcar('vph_pedidos',pe,'avisoEnt'); }} });
     });
     // 6) Cobros vencidos (recuerda cada 7 días)
@@ -9896,12 +9882,14 @@ function buildFilterTable(cfg){
   }
 
   // ---------- Bloques compartidos ----------
-  function encabezado(letra, titulo, numero, fecha, extrasDer){
+  // labelFecha: el remito NO se emite, se ENTREGA — ahí el papel tiene que decir "Fecha de Entrega"
+  // (pedido de Marcelo, 28/07). El resto de los documentos siguen con "Fecha de Emisión".
+  function encabezado(letra, titulo, numero, fecha, extrasDer, labelFecha){
     return '<div class="doc-top"><span class="lt">'+esc(letra)+'</span>'+esc(titulo)+(numero?' '+esc(numero):'')+'</div>'+
       '<div class="doc-head"><div><img src="Productos/logo.png" alt="" style="height:48px;display:block;margin-bottom:6px" onerror="this.remove()"><div class="doc-razon">'+esc(EMPRESA.razon)+'</div>'+
         '<div>'+esc(EMPRESA.domicilio)+'</div><div>Tel: '+esc(EMPRESA.tel)+'</div>'+
         '<div>'+esc(EMPRESA.email)+'</div><div>'+esc(EMPRESA.web)+'</div></div>'+
-      '<div class="doc-fisc"><div><b>Fecha de Emisión:</b> '+esc(fecha)+'</div>'+
+      '<div class="doc-fisc"><div><b>'+esc(labelFecha||'Fecha de Emisión')+':</b> '+esc(fecha)+'</div>'+
         '<div><b>CUIT:</b> '+esc(EMPRESA.cuit)+'</div><div><b>Ingresos Brutos:</b> '+esc(EMPRESA.iibb)+'</div>'+
         '<div><b>Inicio de Actividades:</b> '+esc(EMPRESA.inicio)+'</div><div><b>Condición IVA:</b> '+esc(EMPRESA.iva)+'</div>'+
         (extrasDer||'')+'</div></div>';
@@ -10113,9 +10101,13 @@ function buildFilterTable(cfg){
   }
   function remito(obj){
     obj=obj||{};
+    // Dirección de entrega y teléfono de contacto SIEMPRE visibles (pedido de Marcelo, 28/07): el que
+    // maneja el camión tiene que poder leerlos del papel. Si faltan, se imprimen los puntitos para
+    // completarlos a mano en vez de un guioncito que no le sirve a nadie.
+    const aMano='.................................................';
     const izq='<b>'+esc(obj.clienteNombre||'—')+'</b>'+
-      (obj.clienteTel?'<br>Teléfono: '+esc(obj.clienteTel):'')+
-      '<br>Domicilio de Entrega: '+esc(obj.domicilioEntrega||'—');
+      '<br><b>Dirección de entrega:</b> '+(obj.domicilioEntrega?esc(obj.domicilioEntrega):aMano)+
+      '<br><b>Teléfono de contacto:</b> '+(obj.clienteTel?esc(obj.clienteTel):aMano);
     const der='CUIT: '+esc(obj.clienteCuit||'—')+'<br>Cond. IVA: '+esc(obj.clienteCondIva||'—');
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[]);
     const prodDe=it=>{ const c=normc(it.codigo); return (c&&prods.find(p=>normc(p.codigo)===c)) || prods.find(p=>normc(p.nombre)===normc(it.desc)) || null; };
@@ -10154,14 +10146,78 @@ function buildFilterTable(cfg){
     } else if(obj.palletResumen){
       pallets='<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>';
     }
-    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha))+transp+bloqueCliente(izq,der)+tabla+pallets+leyendaEnvio(obj)+firma()+pie();
+    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha), '', 'Fecha de Entrega')+transp+bloqueCliente(izq,der)+tabla+pallets+leyendaEnvio(obj)+firma()+pie();
+  }
+
+  // Los 3 datos que el remito necesita sí o sí y que el documento de origen no siempre tiene bien
+  // (pedido de Marcelo, 28/07): a dónde se entrega, con quién se coordina y QUÉ DÍA se entrega —
+  // más el transporte, que define la leyenda de pago en origen. Todo llega precargado (ficha del
+  // cliente / pedido), así que en el caso normal es confirmar y listo, pero se puede corregir sin
+  // tener que ir a editar la venta ni el pedido.
+  const hoyDoc = ()=> HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
+  const isoOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s||'').slice(0,10)) ? String(s).slice(0,10) : '';
+  function pedirDatosRemito(obj){
+    obj=Object.assign({}, obj||{});
+    const ts=(window.__transportes?window.__transportes():['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro']);
+    let transp=String(obj.transportista||'');
+    const viejo=document.getElementById('rem-datos'); if(viejo) viejo.remove();
+    const ov=document.createElement('div'); ov.id='rem-datos';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100001;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto';
+    const inp='width:100%;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;font:14px system-ui;box-sizing:border-box;color:#111;background:#fff';
+    const lbl='display:block;font:700 11.5px system-ui;color:#475569;margin:11px 0 3px';
+    const pintarTransp=()=> ts.map(t=>{
+        const on = (t==='Sin asignar' && !transp) || (t!=='Otro' && normc(t)===normc(transp)) ||
+                   (t==='Otro' && transp && !ts.some(x=>x!=='Otro'&&normc(x)===normc(transp)));
+        return '<button type="button" data-t="'+esc(t)+'" style="flex:1 1 auto;padding:8px 10px;border-radius:8px;cursor:pointer;font:600 12.5px system-ui;'+
+          (on?'border:2px solid #2563eb;background:#eff6ff;color:#1d4ed8':'border:1px solid #cbd5e1;background:#fff;color:#334155')+'">'+
+          esc(t==='Otro'&&on?transp:t)+'</button>';
+      }).join('');
+    function render(){
+      ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:400px;max-width:100%;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+        '<h3 style="margin:0 0 2px;font-size:15px">Remito — datos de la entrega</h3>'+
+        '<div style="font-size:11.5px;color:#666">Es lo que va impreso en el papel que firma quien recibe.</div>'+
+        '<label style="'+lbl+'">Fecha de entrega</label><input id="rem-fecha" type="date" value="'+esc(obj.fecha||'')+'" style="'+inp+'">'+
+        '<label style="'+lbl+'">Dirección de entrega</label><input id="rem-dom" value="'+esc(obj.domicilioEntrega||'')+'" placeholder="Calle, número, localidad" style="'+inp+'">'+
+        '<label style="'+lbl+'">Teléfono de contacto</label><input id="rem-tel" value="'+esc(obj.clienteTel||'')+'" placeholder="Con quién se coordina en destino" style="'+inp+'">'+
+        '<label style="'+lbl+'">Transporte</label><div id="rem-transp" style="display:flex;flex-wrap:wrap;gap:6px">'+pintarTransp()+'</div>'+
+        '<div style="display:flex;gap:8px;margin-top:16px">'+
+          '<button id="rem-cancel" class="cmp-btn" style="flex:0 0 auto">Cancelar</button>'+
+          '<button id="rem-ok" class="cmp-btn cmp-btn-primary" style="flex:1 1 auto">🚚 Generar remito</button>'+
+        '</div></div>';
+      // Se busca DENTRO del overlay (no por getElementById): render() corre antes de adjuntarlo al
+      // documento, así que un getElementById devolvería null y el formulario no llegaría a mostrarse.
+      const leer=()=>{ obj.fecha=ov.querySelector('#rem-fecha').value||''; obj.domicilioEntrega=ov.querySelector('#rem-dom').value.trim(); obj.clienteTel=ov.querySelector('#rem-tel').value.trim(); };
+      ov.querySelectorAll('#rem-transp button').forEach(b=> b.onclick=()=>{
+        leer();
+        let t=b.dataset.t;
+        if(t==='Otro'){ t=(prompt('¿Qué transporte? (nombre de la agencia)', (transp&&!ts.some(x=>normc(x)===normc(transp)))?transp:'')||'').trim(); if(!t) return; }
+        transp = (t==='Sin asignar') ? '' : t;
+        render();
+      });
+      ov.querySelector('#rem-cancel').onclick=()=>ov.remove();
+      ov.querySelector('#rem-ok').onclick=()=>{
+        leer();
+        if(!obj.fecha){ alert('Cargá la fecha de entrega — es la que va impresa en el remito.'); return; }
+        if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
+        obj.transportista=transp;
+        ov.remove();
+        try{ window.__imprimir.remito(obj); }catch(e){ alert('Error al generar el documento: '+e.message); }
+      };
+    }
+    obj.fecha = isoOk(obj.fecha) || hoyDoc();
+    document.body.appendChild(ov);
+    render();
+    ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
   }
 
   window.__imprimir = {
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):(v._uid||''), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
-    remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha))
+    remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha)),
+    // Camino normal desde Ventas / Producción / Asistente: pide y confirma los datos de la entrega
+    // (fecha, dirección, teléfono, transporte) y recién ahí arma el PDF.
+    remitoDatos:  o => pedirDatosRemito(o)
   };
 })();
 </script>
