@@ -7348,8 +7348,10 @@ function buildFilterTable(cfg){
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
     {g:'Logística', k:'transportePropio', l:'Transporte propio (flete de VPH)',          def:'Sánchez', t:'txt', hint:'El remito le agrega la leyenda "Pago del envío: EN ORIGEN, facturar a VPH SAS" a TODO envío que no sea con este transporte (Brío, Expreso Biletta, una agencia del cliente). Si tenés más de un fletero propio, separalos con coma.'},
-    {g:'Logística', k:'remitoPtoVenta', l:'Punto de venta de los remitos',                def:'0001', t:'txt', hint:'Va adelante del número: 0001-00000045. Solo números.'},
-    {g:'Logística', k:'remitoDesde',    l:'Numerar los remitos desde el N°',              def:0, t:'num', hint:'Si ya venías usando un talonario de papel, poné acá el próximo número libre para que el Tablero no repita uno ya impreso. En 0 sigue la numeración del sistema. Una vez emitido un remito más alto, este número deja de tener efecto.'},
+    // Defaults tomados del talonario REAL de VPH: el último remito emitido antes del Tablero fue el
+    // R 0002-00002758 (dato de Marcelo, 30/07), así que el primero que numere el sistema es el 2759.
+    {g:'Logística', k:'remitoPtoVenta', l:'Punto de venta de los remitos',                def:'0002', t:'txt', hint:'Va adelante del número: 0002-00002759. Solo números.'},
+    {g:'Logística', k:'remitoDesde',    l:'Numerar los remitos desde el N°',              def:2759, t:'num', hint:'Próximo número libre del talonario. El último remito emitido antes del Tablero fue el 0002-00002758, por eso arranca en 2759. Una vez emitido un remito más alto, este número deja de tener efecto (manda el correlativo del sistema).'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     // CRM: cuántos días hábiles se espera en CADA estado del lead antes de recordarle a Sofía la próxima
     // acción. Al mover el lead de estado se le agenda solo el "Próximo seguimiento" con estos días; cuando
@@ -10294,8 +10296,10 @@ function buildFilterTable(cfg){
 
   // Punto de venta y desde qué número arranca (Parámetros → Logística): si VPH ya venía usando un
   // talonario de papel, `remitoDesde` evita que el Tablero repita números que ya existen impresos.
-  const ptoVenta = ()=> String(window.__param?window.__param('remitoPtoVenta','0001'):'0001').replace(/\D/g,'').padStart(4,'0').slice(-4);
-  const desdeMin = ()=> Math.max(0, Math.round(num(window.__param?window.__param('remitoDesde',0):0))-1);
+  // Defaults = el talonario real de VPH (último en papel: R 0002-00002758) por si los parámetros
+  // todavía no llegaron de Firestore: así el 1er remito del sistema sale igual con el número que va.
+  const ptoVenta = ()=> String(window.__param?window.__param('remitoPtoVenta','0002'):'0002').replace(/\D/g,'').padStart(4,'0').slice(-4);
+  const desdeMin = ()=> Math.max(0, Math.round(num(window.__param?window.__param('remitoDesde',2759):2759))-1);
   const fmtNum = n => ptoVenta()+'-'+String(Math.round(num(n))).padStart(8,'0');
   const maxUsado = ()=> DB.remitos.reduce((a,r)=>Math.max(a,Math.round(num(r.numeroInt))),0);
   // Piso del contador: el mayor entre lo que dice el contador, lo que ya se emitió y el "desde"
