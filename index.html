@@ -8703,6 +8703,10 @@ function buildFilterTable(cfg){
       if(!it.producto && !it.codigo) return;
       const pr=resolverProd(it.producto,it.codigo);
       if(pr && (pr.tipo||'')==='Servicio') return;
+      // El Flete puede venir como renglón del pedido SIN estar cargado en el catálogo (pasó: código
+      // "FLE"): ahí `pr` es null y el chequeo de arriba no lo agarra. Un servicio no se carga en el
+      // camión — si se cuela, suma un pallet fantasma al viaje y al remito.
+      if(!pr && (/\b(flete|acarreo|env[ií]o|servicio|mano de obra|colocaci[oó]n)\b/i.test(String(it.producto||'')) || /^fle/i.test(String(it.codigo||'').trim()))) return;
       const key=keyDe(it.codigo,it.producto);
       const ud=pr?num(pr.udPorPallet):0, peso=pr?num(pr.pesoUnit):0, cant=Math.round(num(it.cantidad));
       const guardado = pe.plan && pe.plan[key] && pe.plan[key].length;
@@ -10201,6 +10205,23 @@ function buildFilterTable(cfg){
     return t+(pvNro?' N° '+pvNro:' (sin número)');
   }
   window.__refComprobante = refComprobante;
+  // ¿Este renglón es un servicio y no mercadería? Primero manda el catálogo; si el ítem no está
+  // cargado ahí, se cae al nombre/código (los productos de VPH son losetas, blocks, topes, listones
+  // y cordones: ninguno se llama así, no hay riesgo de sacar mercadería real por error).
+  const RX_SERVICIO=/\b(flete|acarreo|env[ií]o|servicio|mano de obra|colocaci[oó]n)\b/i;
+  function esServicioItem(r){
+    if(r.pr) return String(r.pr.tipo||'')==='Servicio';
+    return RX_SERVICIO.test(String(r.it.desc||'')) || /^fle/i.test(String(r.it.codigo||'').trim());
+  }
+  // ¿El plan de pallets que llegó es un armado REAL o el "no sé cómo paletizar esto"? Cuando un
+  // producto no tiene udPorPallet, Producción arma un único pallet con TODA la cantidad — eso no es
+  // un pallet de verdad y no debe contarse (si no, un renglón suelto suma un pallet fantasma).
+  // Un plan de varios pallets, o de uno con menos unidades que el total, SÍ es un armado real.
+  function planEsReal(r){
+    if(!r.pallets.length) return false;
+    if(r.ud>0) return true;
+    return !(r.pallets.length===1 && r.pallets[0]===Math.round(num(r.it.cant)));
+  }
   function remito(obj){
     obj=obj||{};
     // Dirección de entrega y teléfono de contacto SIEMPRE visibles (pedido de Marcelo, 28/07): el que
@@ -10216,10 +10237,13 @@ function buildFilterTable(cfg){
     const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0)
       .map(it=>{ const pr=prodDe(it); const ud=pr?num(pr.udPorPallet):0;
         const pl=(it.pallets&&it.pallets.length)?it.pallets.map(u=>Math.round(num(u))).filter(u=>u>0):planStdPallets(it.cant,ud);
-        return { it:it, pr:pr, peso:(pr?num(pr.pesoUnit):0), pallets:pl }; })
-      // El Flete y cualquier otro Servicio del catálogo no se entregan: no van al remito ni suman bultos.
-      .filter(r=> !(r.pr && String(r.pr.tipo||'')==='Servicio'));
-    const bultosDe=r=> r.pallets.length || Math.round(num(r.it.cant));
+        return { it:it, pr:pr, ud:ud, peso:(pr?num(pr.pesoUnit):0), pallets:pl }; })
+      // Un SERVICIO no se entrega: no va al remito ni suma bultos ni pallets. Lo normal es detectarlo
+      // por el catálogo (tipo 'Servicio'), pero el Flete puede venir como renglón de una venta o de un
+      // pedido SIN estar cargado en el catálogo (pasó de verdad: código "FLE", y el remito lo contaba
+      // como un pallet más). Por eso, si el ítem no matchea ningún producto, se mira el nombre/código.
+      .filter(r=> !esServicioItem(r));
+    const bultosDe=r=> planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant));
     let filas=its.map(r=>'<tr><td>'+celdaCodigo(r.it.codigo)+'</td><td>'+esc(r.it.desc||'')+'</td><td>'+esc(r.it.obs||'')+'</td>'+
       '<td class="n">'+nf(r.it.cant)+'</td><td class="n">'+nf(bultosDe(r))+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';
@@ -10232,7 +10256,7 @@ function buildFilterTable(cfg){
       (obj.comprobanteAsoc ? esc(obj.comprobanteAsoc) : 'entrega sin comprobante asociado')+'</div>';
     const transp = obj.transportista ? '<div style="margin-bottom:8px;font-size:11.5px"><b>Transportista:</b> '+esc(obj.transportista)+'</div>' : '';
     // Cómo va armada la carga: cuántos pallets, de cuántas unidades cada uno y cuánto pesa cada pallet.
-    const conPal = its.filter(r=>r.pallets.length);
+    const conPal = its.filter(planEsReal);
     let pallets='';
     if(conPal.length){
       const filasP=conPal.map(r=>{
