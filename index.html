@@ -4324,7 +4324,11 @@ function buildFilterTable(cfg){
     // propone HOY y se confirma en el formulario de datos de entrega. Lo mismo el transporte, que la
     // venta no guarda (vive en el pedido de Producción) y define la leyenda de pago en origen; y la
     // dirección/teléfono, que vienen de la ficha del cliente y ahí se pueden corregir para este envío.
-    return { numero:v.nroFactura||'', fecha:hoyISO, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items };
+    // ⚠️ `numero` va VACÍO: el remito tiene numeración PROPIA (la asigna el módulo Remitos al emitirlo).
+    // El número de factura viaja aparte, en ventaUid/comprobanteAsoc, que es la asociación venta↔remito.
+    const nro=v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):'sin número';
+    return { numero:'', fecha:hoyISO, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items,
+      ventaUid:v._uid||'', comprobanteAsoc:(v.tipoComprobante||'Venta')+' '+nro+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -7221,7 +7225,8 @@ function buildFilterTable(cfg){
   // todavía salen el débito VISA y el margen histórico) y roles (para poder reconstruir los permisos).
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
-    'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles'];
+    'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
+    'vph_feriados','vph_wa_pendientes','vph_remitos'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -7343,6 +7348,8 @@ function buildFilterTable(cfg){
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
     {g:'Logística', k:'transportePropio', l:'Transporte propio (flete de VPH)',          def:'Sánchez', t:'txt', hint:'El remito le agrega la leyenda "Pago del envío: EN ORIGEN, facturar a VPH SAS" a TODO envío que no sea con este transporte (Brío, Expreso Biletta, una agencia del cliente). Si tenés más de un fletero propio, separalos con coma.'},
+    {g:'Logística', k:'remitoPtoVenta', l:'Punto de venta de los remitos',                def:'0001', t:'txt', hint:'Va adelante del número: 0001-00000045. Solo números.'},
+    {g:'Logística', k:'remitoDesde',    l:'Numerar los remitos desde el N°',              def:0, t:'num', hint:'Si ya venías usando un talonario de papel, poné acá el próximo número libre para que el Tablero no repita uno ya impreso. En 0 sigue la numeración del sistema. Una vez emitido un remito más alto, este número deja de tener efecto.'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     // CRM: cuántos días hábiles se espera en CADA estado del lead antes de recordarle a Sofía la próxima
     // acción. Al mover el lead de estado se le agenda solo el "Próximo seguimiento" con estos días; cuando
@@ -9151,8 +9158,11 @@ function buildFilterTable(cfg){
     // ⚠️ La fecha del remito es la de la ENTREGA: si el pedido ya se entregó, esa; si no, la fecha
     // requerida por el cliente; y si no hay ninguna, HOY. Nunca `pe.fecha`, que es cuándo se cargó
     // el pedido. Igual se confirma en el formulario de datos de entrega antes de imprimir.
+    // `numero` vacío: lo asigna el módulo Remitos al emitir. `ventaUid` es la venta que originó el
+    // pedido (si vino de una): el formulario del remito la deja cambiar antes de imprimir.
     return { numero:'', fecha:fecha||pe.fechaEntregado||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
-      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items };
+      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items,
+      pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'' };
   };
   function imprimirRemito(pe){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -10124,6 +10134,10 @@ function buildFilterTable(cfg){
     const totBultos=its.reduce((a,r)=>a+bultosDe(r),0);
     const tabla='<table class="doc-tab"><tr><th>Código</th><th>Productos</th><th>Observaciones</th><th class="n">Cantidad</th><th class="n">Bultos</th></tr>'+filas+
       '<tr><td colspan="4" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>';
+    // Contra qué comprobante se entrega: es lo que permite atar el papel a la factura (y al revés,
+    // saber si una venta ya salió). Si el remito no tiene venta asociada, se dice explícitamente.
+    const asoc = '<div style="margin-bottom:8px;font-size:11.5px"><b>Corresponde a:</b> '+
+      (obj.comprobanteAsoc ? esc(obj.comprobanteAsoc) : 'entrega sin comprobante asociado')+'</div>';
     const transp = obj.transportista ? '<div style="margin-bottom:8px;font-size:11.5px"><b>Transportista:</b> '+esc(obj.transportista)+'</div>' : '';
     // Cómo va armada la carga: cuántos pallets, de cuántas unidades cada uno y cuánto pesa cada pallet.
     const conPal = its.filter(r=>r.pallets.length);
@@ -10146,7 +10160,7 @@ function buildFilterTable(cfg){
     } else if(obj.palletResumen){
       pallets='<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>';
     }
-    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha), '', 'Fecha de Entrega')+transp+bloqueCliente(izq,der)+tabla+pallets+leyendaEnvio(obj)+firma()+pie();
+    return encabezado('R','REMITO', esc(obj.numero||''), dmy(obj.fecha), '', 'Fecha de Entrega')+asoc+transp+bloqueCliente(izq,der)+tabla+pallets+leyendaEnvio(obj)+firma()+pie();
   }
 
   // Los 3 datos que el remito necesita sí o sí y que el documento de origen no siempre tiene bien
@@ -10172,11 +10186,33 @@ function buildFilterTable(cfg){
           (on?'border:2px solid #2563eb;background:#eff6ff;color:#1d4ed8':'border:1px solid #cbd5e1;background:#fff;color:#334155')+'">'+
           esc(t==='Otro'&&on?transp:t)+'</button>';
       }).join('');
+    // Ventas del MISMO cliente para asociar el remito (las más nuevas primero). El remito puede salir
+    // antes de facturar, así que "Sin asociar" siempre es una opción válida.
+    const ventasCli=(()=>{
+      const todas=(window.__ventasTodas?window.__ventasTodas():[]);
+      const cu=String(obj.clienteCuit||'').replace(/\D/g,''), nom=normc(obj.clienteNombre);
+      return todas.filter(v=>{ const vc=String(v.cuit||'').replace(/\D/g,''); return (cu&&vc===cu) || (nom&&normc(v.cliente)===nom); })
+        .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).slice(0,25);
+    })();
+    const labelVenta=v=>{ const nro=v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):'sin número'; return (v.tipoComprobante||'Venta')+' '+nro+' · '+dmy(v.fecha); };
+    if(obj.ventaUid && !obj.comprobanteAsoc){ const v=ventasCli.find(x=>x._uid===obj.ventaUid); if(v) obj.comprobanteAsoc=labelVenta(v); }
+    // Remitos ya emitidos para esta venta / este pedido: se ofrecen para REIMPRIMIR con su número
+    // original en vez de quemar uno nuevo (el papel que firmó el cliente tiene que poder repetirse).
+    const yaEmitidos=(window.__remitosDe?window.__remitosDe({ventaUid:obj.ventaUid, pedidoUid:obj.pedidoUid}):[]);
     function render(){
+      const opsVenta='<option value="">— Sin asociar —</option>'+
+        ventasCli.map(v=>'<option value="'+esc(v._uid)+'"'+(obj.ventaUid===v._uid?' selected':'')+'>'+esc(labelVenta(v))+'</option>').join('');
+      const prox=(window.__remitoProximo?window.__remitoProximo():'');
       ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:400px;max-width:100%;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
         '<h3 style="margin:0 0 2px;font-size:15px">Remito — datos de la entrega</h3>'+
         '<div style="font-size:11.5px;color:#666">Es lo que va impreso en el papel que firma quien recibe.</div>'+
+        (prox?'<div style="margin-top:8px;padding:7px 9px;border-radius:8px;background:#f1f5f9;font-size:11.5px;color:#334155">Se va a emitir el <b>Remito N° '+esc(prox)+'</b> — el número queda usado aunque después no lo imprimas.</div>':'')+
+        (yaEmitidos.length?'<div style="margin-top:8px;padding:7px 9px;border-radius:8px;background:#fff7ed;border:1px solid #fed7aa;font-size:11.5px;color:#7c2d12">'+
+          'Esta entrega ya tiene '+yaEmitidos.length+' remito'+(yaEmitidos.length!==1?'s':'')+':<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">'+
+          yaEmitidos.map((r,i)=>'<button type="button" data-re="'+i+'" style="padding:5px 8px;border-radius:7px;border:1px solid #fdba74;background:#fff;color:#9a3412;cursor:pointer;font:600 11.5px system-ui">🖨️ N° '+esc(r.numero)+'</button>').join('')+
+          '</div></div>':'')+
         '<label style="'+lbl+'">Fecha de entrega</label><input id="rem-fecha" type="date" value="'+esc(obj.fecha||'')+'" style="'+inp+'">'+
+        '<label style="'+lbl+'">Factura / venta asociada</label><select id="rem-venta" style="'+inp+'">'+opsVenta+'</select>'+
         '<label style="'+lbl+'">Dirección de entrega</label><input id="rem-dom" value="'+esc(obj.domicilioEntrega||'')+'" placeholder="Calle, número, localidad" style="'+inp+'">'+
         '<label style="'+lbl+'">Teléfono de contacto</label><input id="rem-tel" value="'+esc(obj.clienteTel||'')+'" placeholder="Con quién se coordina en destino" style="'+inp+'">'+
         '<label style="'+lbl+'">Transporte</label><div id="rem-transp" style="display:flex;flex-wrap:wrap;gap:6px">'+pintarTransp()+'</div>'+
@@ -10186,7 +10222,13 @@ function buildFilterTable(cfg){
         '</div></div>';
       // Se busca DENTRO del overlay (no por getElementById): render() corre antes de adjuntarlo al
       // documento, así que un getElementById devolvería null y el formulario no llegaría a mostrarse.
-      const leer=()=>{ obj.fecha=ov.querySelector('#rem-fecha').value||''; obj.domicilioEntrega=ov.querySelector('#rem-dom').value.trim(); obj.clienteTel=ov.querySelector('#rem-tel').value.trim(); };
+      const leer=()=>{ obj.fecha=ov.querySelector('#rem-fecha').value||''; obj.domicilioEntrega=ov.querySelector('#rem-dom').value.trim(); obj.clienteTel=ov.querySelector('#rem-tel').value.trim();
+        const uid=ov.querySelector('#rem-venta').value; obj.ventaUid=uid;
+        const v=uid?ventasCli.find(x=>x._uid===uid):null; obj.comprobanteAsoc = v?labelVenta(v):''; };
+      ov.querySelectorAll('button[data-re]').forEach(b=> b.onclick=()=>{
+        const r=yaEmitidos[+b.dataset.re]; ov.remove();
+        try{ window.__imprimir.remito(window.__remitoParaImprimir(r)); }catch(e){ alert('Error al reimprimir: '+e.message); }
+      });
       ov.querySelectorAll('#rem-transp button').forEach(b=> b.onclick=()=>{
         leer();
         let t=b.dataset.t;
@@ -10200,9 +10242,19 @@ function buildFilterTable(cfg){
         if(!obj.fecha){ alert('Cargá la fecha de entrega — es la que va impresa en el remito.'); return; }
         if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
         obj.transportista=transp;
-        ov.remove();
-        try{ window.__imprimir.remito(obj); }catch(e){ alert('Error al generar el documento: '+e.message); }
+        const btn=ov.querySelector('#rem-ok'); btn.disabled=true; btn.textContent='Numerando…';
+        emitirEImprimir(obj, ov, btn);
       };
+    }
+    // Numera (correlativo, atómico) y registra el remito antes de imprimirlo. Si el módulo de remitos
+    // no está o la escritura falla, NO se traba la salida del camión: se ofrece imprimir sin número.
+    function emitirEImprimir(o, ov, btn){
+      const salir=x=>{ ov.remove(); try{ window.__imprimir.remito(x); }catch(e){ alert('Error al generar el documento: '+e.message); } };
+      if(!window.__remitoEmitir){ salir(o); return; }
+      window.__remitoEmitir(o).then(salir).catch(e=>{
+        if(btn){ btn.disabled=false; btn.textContent='🚚 Generar remito'; }
+        if(confirm('No se pudo numerar el remito: '+e.message+'\n\n¿Imprimirlo SIN número igual?')) salir(o);
+      });
     }
     obj.fecha = isoOk(obj.fecha) || hoyDoc();
     document.body.appendChild(ov);
@@ -10219,6 +10271,102 @@ function buildFilterTable(cfg){
     // (fecha, dirección, teléfono, transporte) y recién ahí arma el PDF.
     remitoDatos:  o => pedirDatosRemito(o)
   };
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO REMITOS — numeración correlativa y registro de los emitidos.
+     Un remito impreso es un papel que sale de la fábrica: tiene que tener
+     número propio, no repetirse nunca y poder rastrearse hasta la venta.
+     Colección vph_remitos (+ doc _contador con el último número usado).
+     Expone window.__remitoEmitir / __remitosDe / __remitoProximo.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const COL='vph_remitos', CONT='_contador', KEY='vph_remitos_v1';
+  const num = v => { if(typeof v==='number') return isNaN(v)?0:v; const n=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(n)?0:n; };
+  const fb = ()=> window.__fbctx;
+  let DB={remitos:[], ultimo:0}, unsub=null;
+
+  function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(KEY)); if(d&&Array.isArray(d.remitos)) return d; }catch(e){} return {remitos:[], ultimo:0}; }
+  function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
+
+  // Punto de venta y desde qué número arranca (Parámetros → Logística): si VPH ya venía usando un
+  // talonario de papel, `remitoDesde` evita que el Tablero repita números que ya existen impresos.
+  const ptoVenta = ()=> String(window.__param?window.__param('remitoPtoVenta','0001'):'0001').replace(/\D/g,'').padStart(4,'0').slice(-4);
+  const desdeMin = ()=> Math.max(0, Math.round(num(window.__param?window.__param('remitoDesde',0):0))-1);
+  const fmtNum = n => ptoVenta()+'-'+String(Math.round(num(n))).padStart(8,'0');
+  const maxUsado = ()=> DB.remitos.reduce((a,r)=>Math.max(a,Math.round(num(r.numeroInt))),0);
+  // Piso del contador: el mayor entre lo que dice el contador, lo que ya se emitió y el "desde"
+  // configurado. Así ni un contador borrado ni un parámetro mal puesto pueden repetir un número.
+  const piso = cont => Math.max(Math.round(num(cont)), maxUsado(), desdeMin());
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; stopSync();
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{
+      DB.remitos=[]; DB.ultimo=0;
+      snap.forEach(d=>{ if(d.id===CONT){ DB.ultimo=num((d.data()||{}).ultimo); return; } DB.remitos.push({...d.data(), _uid:d.id}); });
+    }, e=>console.warn('remitos:', e.message));
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
+
+  // Remitos ya emitidos para una venta / un pedido — evita numerar dos veces la misma entrega.
+  window.__remitosDe = function(f){
+    f=f||{};
+    return DB.remitos.filter(r=> (f.ventaUid && r.ventaUid===f.ventaUid) || (f.pedidoUid && r.pedidoUid===f.pedidoUid))
+      .sort((a,b)=> num(b.numeroInt)-num(a.numeroInt));
+  };
+  // Próximo número, solo para mostrarlo antes de emitir (NO lo consume).
+  window.__remitoProximo = ()=> fmtNum(piso(DB.ultimo)+1);
+
+  // Emite: toma el número siguiente de forma ATÓMICA y guarda el remito en la misma transacción
+  // (mismo patrón que la numeración de presupuestos). Devuelve una promesa con el objeto numerado.
+  // Si dos personas emiten a la vez, la transacción reintenta sola y cada una se lleva su número.
+  window.__remitoEmitir = function(obj){
+    obj=Object.assign({}, obj||{});
+    if(!window.__usaNube){
+      const n=piso(DB.ultimo)+1;
+      obj.numeroInt=n; obj.numero=fmtNum(n); obj._uid='rem_'+String(n).padStart(8,'0');
+      DB.ultimo=n; DB.remitos.push(registro(obj)); saveLocal();
+      return Promise.resolve(obj);
+    }
+    const c=fb(); if(!c||!c.db) return Promise.reject(new Error('Iniciá sesión para numerar el remito.'));
+    return c.FS.runTransaction(c.db, async (tx)=>{
+      const ref=c.FS.doc(c.db,COL,CONT);
+      const snap=await tx.get(ref);
+      const n=piso(snap.exists()?num(snap.data().ultimo):0)+1;
+      obj.numeroInt=n; obj.numero=fmtNum(n); obj._uid='rem_'+String(n).padStart(8,'0');
+      tx.set(ref,{ultimo:n},{merge:true});
+      tx.set(c.FS.doc(c.db,COL,obj._uid), registro(obj));
+      return n;
+    }).then(()=>obj);
+  };
+  // Lo que queda guardado del remito: quién, qué, cuándo y contra qué comprobante. Los ítems van
+  // con su plan de pallets, así una reimpresión sale idéntica al papel que firmó el cliente.
+  function registro(o){
+    const c=fb(), u=(c&&c.auth&&c.auth.currentUser)?c.auth.currentUser.email:'';
+    return { numero:o.numero||'', numeroInt:Math.round(num(o.numeroInt)), fecha:o.fecha||'',
+      cliente:o.clienteNombre||'', clienteCuit:o.clienteCuit||'', clienteCondIva:o.clienteCondIva||'',
+      clienteTel:o.clienteTel||'', domicilioEntrega:o.domicilioEntrega||'', transportista:o.transportista||'',
+      ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'',
+      items:(o.items||[]).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant), pallets:(it.pallets||null)})),
+      usuario:u, ts:new Date().toISOString() };
+  }
+  // Vuelve a armar el objeto de impresión de un remito ya emitido (reimpresión con el MISMO número).
+  window.__remitoParaImprimir = function(r){
+    return { numero:r.numero||'', numeroInt:r.numeroInt, fecha:r.fecha||'', transportista:r.transportista||'',
+      clienteNombre:r.cliente||'', clienteCuit:r.clienteCuit||'', clienteCondIva:r.clienteCondIva||'',
+      clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'',
+      comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
+  };
+
+  if(window.__usaNube){
+    window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+    window.__afterLogin.push(()=>startSync());
+    window.__afterLogout.push(()=>{ stopSync(); DB={remitos:[], ultimo:0}; });
+    if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+  } else { DB=loadLocal(); }
 })();
 </script>
 
