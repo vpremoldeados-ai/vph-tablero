@@ -4233,7 +4233,12 @@ function buildFilterTable(cfg){
   // Columnas de la tabla (algunas se pueden ocultar para reducir el ancho). off=oculta por defecto.
   const badgeEstado={ cobrado:'<span class="cmp-estado pagado">Cobrado</span>', acobrar:'<span class="cmp-estado apagar">A cobrar</span>', vencido:'<span class="cmp-estado vencido">Vencido</span>', parcial:'<span class="cmp-estado parcial">Parcial</span>' };
   const arcaBadge=e=> e==='Aprobado'?'<span class="badge green">Aprobado</span>':e==='Pendiente'?'<span class="badge amber">Pendiente</span>':'<span style="color:var(--muted)">—</span>';
-  function facLabel(v){ if(v.tipoComprobante==='Sin factura') return '<span class="badge" style="background:#eceffb;color:#5b6b9a">Sin factura</span>'; return (v.puntoVenta||v.nroFactura)?((v.condIva||'')+' '+(v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).trim():'—'; }
+  // Una venta sin factura muestra su número INTERNO (el correlativo propio), que es como se la nombra
+  // en el remito y al hablar con el cliente. Si todavía no lo tiene, se ve el badge de siempre.
+  function facLabel(v){ if(v.tipoComprobante==='Sin factura') return num(v.nroInterno)>0
+      ? '<span class="badge" style="background:#eceffb;color:#5b6b9a">Sin factura N° '+esc(v.nroInterno)+'</span>'
+      : '<span class="badge" style="background:#eceffb;color:#5b6b9a">Sin factura</span>';
+    return (v.puntoVenta||v.nroFactura)?((v.condIva||'')+' '+(v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).trim():'—'; }
   function accionesCell(v,k){ const tieneCobros=(v.cobros||[]).length>0; const esNC=v.tipoComprobante==='Nota de Crédito';
     // Se puede emitir electrónicamente una Factura A/B, y una nota de crédito o débito
     // SIEMPRE Y CUANDO ya tenga indicada la factura que corrige (si no, ARCA la rechaza).
@@ -4326,7 +4331,9 @@ function buildFilterTable(cfg){
     // dirección/teléfono, que vienen de la ficha del cliente y ahí se pueden corregir para este envío.
     // ⚠️ `numero` va VACÍO: el remito tiene numeración PROPIA (la asigna el módulo Remitos al emitirlo).
     // El número de factura viaja aparte, en ventaUid/comprobanteAsoc, que es la asociación venta↔remito.
-    const nro=v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):'sin número';
+    // Una venta sin factura se nombra por su número INTERNO; una facturada, por el comprobante.
+    const nro = v.nroFactura ? ((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura)
+              : (num(v.nroInterno)>0 ? ('N° '+v.nroInterno) : 'sin número');
     return { numero:'', fecha:hoyISO, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items,
       ventaUid:v._uid||'', comprobanteAsoc:(v.tipoComprobante||'Venta')+' '+nro+' · '+fmtFecha(v.fecha) };
   }
@@ -4376,7 +4383,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
   function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); editing.listaPrecios=normLista(editing.listaPrecios); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
   function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; _onSaved=null; }
 
@@ -4404,8 +4411,10 @@ function buildFilterTable(cfg){
         esc(et(x))+'</option>').join('');
   }
 
+  let tipoAlDibujar='';   // con qué tipo de comprobante se dibujó el form (ver el change de vf-tipo)
   function drawForm(){
     const v=editing;
+    tipoAlDibujar=v.tipoComprobante||'';
     const opt=(arr,sel)=> arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join('');
     $('vnt-form').innerHTML =
       '<div class="cmp-form-grid">'+
@@ -4424,6 +4433,9 @@ function buildFilterTable(cfg){
         field('Período contable','','<input type="month" id="vf-per" value="'+v.periodo+'">') +
         field('Pto. Venta','','<input id="vf-pv" value="'+esc(v.puntoVenta)+'" placeholder="0010">') +
         field('N° Factura','','<input id="vf-nro" value="'+esc(v.nroFactura)+'" placeholder="00000000">') +
+        // Solo para las ventas SIN FACTURA: su correlativo propio. Se asigna solo al guardar; queda
+        // editable para poder cargar el número que traía una venta del sistema anterior.
+        (esSinFactura(v) ? field('N° interno (venta sin factura)','','<input id="vf-nroint" value="'+esc(v.nroInterno||'')+'" inputmode="numeric" placeholder="se asigna solo al guardar">') : '') +
       '</div>'+
       '<h4 style="margin:6px 0 8px;font-size:13px">Ítems</h4>'+
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead><tbody id="vf-items"></tbody></table></div>'+
@@ -4443,12 +4455,16 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="vf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="vf-save">Guardar venta</button></div>';
     drawItems();
-    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
+    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-nroint:nroInterno','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
       const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
       el.addEventListener('input',()=>{ editing[key]=el.value; if(['vf-descg','vf-piva','vf-piibb','vf-impint','vf-int'].includes(id)) drawTotals(); });
     });
     // El selector de factura a corregir solo aparece en notas de crédito/débito.
     $('vf-tipo').addEventListener('change',()=>{
+      // Pasar a/desde "Sin factura" agrega o saca el campo de N° interno → hay que redibujar el form.
+      // El valor ya quedó en `editing` (binding genérico de arriba), así que no se pierde nada.
+      const eraSin=esSinFactura({tipoComprobante:tipoAlDibujar}), esSin=esSinFactura({tipoComprobante:$('vf-tipo').value});
+      if(eraSin!==esSin){ drawForm(); return; }
       const w=$('vf-asoc-wrap'); if(!w) return;
       const esNota=esNotaCD($('vf-tipo').value);
       w.style.display = esNota?'':'none';
@@ -4493,14 +4509,43 @@ function buildFilterTable(cfg){
       '<div class="cmp-tot-row big"><span>Total Venta</span><span>'+money(kk.total)+'</span></div>';
   }
   let _onSaved=null;   // callback opcional (ej. marcar un presupuesto como convertido SOLO si se guarda la venta)
+  // ---------- Número interno de las ventas SIN FACTURA ----------
+  // Una venta sin factura no tiene comprobante fiscal, pero igual es una venta que sale de la fábrica
+  // y hay que poder nombrarla (en el remito, al hablar con el cliente, para buscarla). Por eso lleva un
+  // correlativo PROPIO, que continúa la serie que traía el sistema anterior (el último fue el 2313).
+  // ⚠️ Es un campo APARTE de `nroFactura` a propósito: el Libro IVA y la conciliación con ARCA miran el
+  // número de comprobante para decidir qué está facturado — meter un número interno ahí ensuciaría el
+  // libro del contador.
+  const esSinFactura = v => String(v&&v.tipoComprobante||'')==='Sin factura';
+  const nroInternoDesde = ()=> Math.max(0, Math.round(num(window.__param('ventaInternaDesde',2314))));
+  const maxNroInterno = ()=> (DB.ventas||[]).reduce((a,v)=>Math.max(a, Math.round(num(v.nroInterno))),0);
+  // Numeración atómica (mismo patrón que presupuestos y remitos): el piso es el mayor entre el
+  // contador, el número más alto ya usado y el parámetro de arranque, así nunca se repite uno.
+  function asignarNroInterno(v){
+    if(!esSinFactura(v) || num(v.nroInterno)>0) return Promise.resolve(v);
+    if(!window.__usaNube){ v.nroInterno=Math.max(maxNroInterno(), nroInternoDesde()-1)+1; return Promise.resolve(v); }
+    const c=fb(); if(!c||!c.db) return Promise.resolve(v);   // sin sesión no se traba el guardado: queda sin número
+    return c.FS.runTransaction(c.db, async (tx)=>{
+      const ref=c.FS.doc(c.db,'vph_config','contadores');
+      const snap=await tx.get(ref);
+      const n=Math.max(snap.exists()?num(snap.data().ventasInternas):0, maxNroInterno(), nroInternoDesde()-1)+1;
+      tx.set(ref,{ventasInternas:n},{merge:true});
+      return n;
+    }).then(n=>{ v.nroInterno=n; return v; })
+      .catch(e=>{ console.warn('nro interno:', e.message); return v; });
+  }
   function saveForm(){
     if(!editing.cliente.trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
     if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
     if(!editing._uid) editing._uid=newUid();
     const cb=_onSaved; _onSaved=null;
-    persistVenta(editing); closeForm();
-    if(cb){ try{ cb(); }catch(e){ console.error('venta onSaved:',e); } }
+    const v=editing;
+    closeForm();
+    asignarNroInterno(v).then(()=>{
+      persistVenta(v);
+      if(cb){ try{ cb(); }catch(e){ console.error('venta onSaved:',e); } }
+    });
   }
 
   // ---------- Cobros (registrar / editar / revertir / borrar) ----------
@@ -7351,6 +7396,7 @@ function buildFilterTable(cfg){
     // Defaults tomados del talonario REAL de VPH: el último remito emitido antes del Tablero fue el
     // R 0002-00002758 (dato de Marcelo, 30/07), así que el primero que numere el sistema es el 2759.
     {g:'Logística', k:'remitoPtoVenta', l:'Punto de venta de los remitos',                def:'0002', t:'txt', hint:'Va adelante del número: 0002-00002759. Solo números.'},
+    {g:'Ventas', k:'ventaInternaDesde', l:'Numerar las ventas SIN FACTURA desde el N°',   def:2314, t:'num', hint:'Correlativo propio de las ventas que no llevan factura (para nombrarlas en el remito y al hablar con el cliente). Sigue la serie del sistema anterior, cuya última venta fue la 2313.'},
     {g:'Logística', k:'remitoDesde',    l:'Numerar los remitos desde el N°',              def:2759, t:'num', hint:'Próximo número libre del talonario. El último remito emitido antes del Tablero fue el 0002-00002758, por eso arranca en 2759. Una vez emitido un remito más alto, este número deja de tener efecto (manda el correlativo del sistema).'},
     {g:'Flete', k:'kgPorPallet',    l:'Tope de kg por pallet',                          def:1500, t:'num', hint:'Se usa para consolidar el flete: los pallets salen del mayor entre las fracciones por producto y el peso total.'},
     // CRM: cuántos días hábiles se espera en CADA estado del lead antes de recordarle a Sofía la próxima
@@ -9957,7 +10003,10 @@ function buildFilterTable(cfg){
     const cli=buscarCliente(v.cliente,v.cuit)||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
     // Comprobante ya facturado: "puntoVenta-nroFactura" (ej 0001-00000002); si no, lo de siempre.
-    const numero = esc(v.cae ? ((v.puntoVenta||'')+'-'+(v.nroFactura||'')) : (v.nroFactura||v._uid||''));
+    // Sin factura: se imprime el número INTERNO de la venta (su correlativo propio), no el uid interno
+    // de la base, que al cliente no le dice nada y no coincide con lo que ve Marcelo en el listado.
+    const numero = esc(v.cae ? ((v.puntoVenta||'')+'-'+(v.nroFactura||''))
+      : (v.nroFactura || (num(v.nroInterno)>0 ? ('N° '+v.nroInterno) : (v._uid||''))));
     // Una nota de crédito/débito NO puede salir impresa como "detalle de venta": el papel tiene
     // que decir qué comprobante es y a cuál corrige (v.compAsocDesc lo sella al emitirse).
     const esNota = v.tipoComprobante==='Nota de Crédito' || v.tipoComprobante==='Nota de Débito';
@@ -10196,7 +10245,9 @@ function buildFilterTable(cfg){
       return todas.filter(v=>{ const vc=String(v.cuit||'').replace(/\D/g,''); return (cu&&vc===cu) || (nom&&normc(v.cliente)===nom); })
         .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).slice(0,25);
     })();
-    const labelVenta=v=>{ const nro=v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):'sin número'; return (v.tipoComprobante||'Venta')+' '+nro+' · '+dmy(v.fecha); };
+    const labelVenta=v=>{ const nro = v.nroFactura ? ((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura)
+        : (num(v.nroInterno)>0 ? ('N° '+v.nroInterno) : 'sin número');
+      return (v.tipoComprobante||'Venta')+' '+nro+' · '+dmy(v.fecha); };
     if(obj.ventaUid && !obj.comprobanteAsoc){ const v=ventasCli.find(x=>x._uid===obj.ventaUid); if(v) obj.comprobanteAsoc=labelVenta(v); }
     // Remitos ya emitidos para esta venta / este pedido: se ofrecen para REIMPRIMIR con su número
     // original en vez de quemar uno nuevo (el papel que firmó el cliente tiene que poder repetirse).
