@@ -4331,11 +4331,13 @@ function buildFilterTable(cfg){
     // dirección/teléfono, que vienen de la ficha del cliente y ahí se pueden corregir para este envío.
     // ⚠️ `numero` va VACÍO: el remito tiene numeración PROPIA (la asigna el módulo Remitos al emitirlo).
     // El número de factura viaja aparte, en ventaUid/comprobanteAsoc, que es la asociación venta↔remito.
-    // Una venta sin factura se nombra por su número INTERNO; una facturada, por el comprobante.
-    const nro = v.nroFactura ? ((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura)
-              : (num(v.nroInterno)>0 ? ('N° '+v.nroInterno) : 'sin número');
+    // "Detalle de Vta N° 2314" si no tiene factura, "Factura A N° 0010-00000123" si la tiene. El texto
+    // lo arma el módulo Documentos (__refComprobante) para que sea el MISMO que ofrece el selector de
+    // venta asociada del formulario del remito y no queden dos redacciones distintas en el papel.
+    const ref = window.__refComprobante ? window.__refComprobante(v)
+              : ((v.tipoComprobante||'Venta')+' '+(v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):('N° '+(v.nroInterno||''))));
     return { numero:'', fecha:hoyISO, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items,
-      ventaUid:v._uid||'', comprobanteAsoc:(v.tipoComprobante||'Venta')+' '+nro+' · '+fmtFecha(v.fecha) };
+      ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -10160,6 +10162,18 @@ function buildFilterTable(cfg){
         ' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................')+'</div>'+
     '</div>';
   }
+  // Cómo se nombra una venta en el remito (pedido de Marcelo, 30/07): una venta sin factura se
+  // referencia como "Detalle de Vta N° <interno>" y una facturada por su comprobante,
+  // "Factura A N° 0010-00000123". Es UNA sola función para que el texto salga igual desde Ventas
+  // (al armar el remito) y desde el selector de venta asociada del formulario.
+  function refComprobante(v){
+    if(!v) return '';
+    const t=String(v.tipoComprobante||'').trim();
+    if(t==='Sin factura' || !t){ const n=Math.round(num(v.nroInterno)); return 'Detalle de Vta'+(n>0?' N° '+n:' (sin número)'); }
+    const pvNro = v.nroFactura ? ((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura) : '';
+    return t+(pvNro?' N° '+pvNro:' (sin número)');
+  }
+  window.__refComprobante = refComprobante;
   function remito(obj){
     obj=obj||{};
     // Dirección de entrega y teléfono de contacto SIEMPRE visibles (pedido de Marcelo, 28/07): el que
@@ -10245,9 +10259,7 @@ function buildFilterTable(cfg){
       return todas.filter(v=>{ const vc=String(v.cuit||'').replace(/\D/g,''); return (cu&&vc===cu) || (nom&&normc(v.cliente)===nom); })
         .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).slice(0,25);
     })();
-    const labelVenta=v=>{ const nro = v.nroFactura ? ((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura)
-        : (num(v.nroInterno)>0 ? ('N° '+v.nroInterno) : 'sin número');
-      return (v.tipoComprobante||'Venta')+' '+nro+' · '+dmy(v.fecha); };
+    const labelVenta=v=> refComprobante(v)+' · '+dmy(v.fecha);
     if(obj.ventaUid && !obj.comprobanteAsoc){ const v=ventasCli.find(x=>x._uid===obj.ventaUid); if(v) obj.comprobanteAsoc=labelVenta(v); }
     // Remitos ya emitidos para esta venta / este pedido: se ofrecen para REIMPRIMIR con su número
     // original en vez de quemar uno nuevo (el papel que firmó el cliente tiene que poder repetirse).
