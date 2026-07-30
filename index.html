@@ -1227,6 +1227,32 @@
     </section>
   </div>
 
+  <!-- Remitos emitidos: listado, reimpresión, edición y baja. El número NO se reutiliza al borrar. -->
+  <div class="page" id="page-remitos">
+    <section>
+      <h2><span class="dot" style="background:var(--blue)"></span>Remitos emitidos</h2>
+      <div class="asof">Los remitos que salieron con la mercadería, con su número correlativo propio.</div>
+      <div class="kpis" id="rmt-kpis"></div>
+      <div style="display:flex;gap:10px;align-items:center;margin:14px 0 10px;flex-wrap:wrap">
+        <input id="rmt-buscar" placeholder="Buscar por número, cliente o transporte…" style="flex:1 1 260px;min-width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px">
+        <select id="rmt-periodo" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px"></select>
+      </div>
+      <div class="tbl-wrap"><table id="rmt-tabla"></table></div>
+      <div id="rmt-vacio" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+    </section>
+  </div>
+
+  <!-- ================= EDITAR REMITO (overlay) ================= -->
+  <div class="cmp-overlay" id="rmt-modal">
+    <div class="cmp-dialog">
+      <div class="cmp-dialog-head">
+        <h3 id="rmt-form-title">Editar remito</h3>
+        <button class="cmp-x" id="rmt-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="rmt-form"></div>
+    </div>
+  </div>
+
   <div class="page" id="page-libroiva">
     <section>
       <h2><span class="dot" style="background:var(--orange)"></span>Libro IVA — seguimiento del mes</h2>
@@ -1338,6 +1364,7 @@ const PAGES = [
   { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
+  { id:'remitos', nombre:'Remitos', ico:'🚚' },
   { id:'compras', nombre:'Compras', ico:'🧾' },
   { id:'cheques', nombre:'Cheques', ico:'🏦' },
   { id:'caja', nombre:'Caja / Liquidez', ico:'💵' },
@@ -10374,6 +10401,7 @@ function buildFilterTable(cfg){
     unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{
       DB.remitos=[]; DB.ultimo=0;
       snap.forEach(d=>{ if(d.id===CONT){ DB.ultimo=num((d.data()||{}).ultimo); return; } DB.remitos.push({...d.data(), _uid:d.id}); });
+      render();   // la página "Remitos" se repinta sola con cada cambio (igual que el resto de los módulos)
     }, e=>console.warn('remitos:', e.message));
   }
   function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
@@ -10428,12 +10456,176 @@ function buildFilterTable(cfg){
       comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
   };
 
+  // ================= Página "Remitos": listado, reimpresión, edición y baja =================
+  const $=id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const normc = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const nf = n => Math.round(num(n)).toLocaleString('es-AR');
+  const fmtFecha = s => { const m=String(s||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(m)) return '—'; const [a,me,d]=m.split('-'); return d+'/'+me+'/'+a.slice(2); };
+  const labelPeriodo = p => { const [a,m]=String(p||'').split('-'); if(!a||!m) return '(sin fecha)';
+    return ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][(+m)-1]+' '+a; };
+  let filtro={periodo:'', q:''};
+
+  function persistir(r){
+    if(!r._uid) return Promise.reject(new Error('remito sin id'));
+    const {_uid, ...datos}=r;
+    if(!window.__usaNube){ const i=DB.remitos.findIndex(x=>x._uid===_uid); if(i>=0)DB.remitos[i]=r; saveLocal(); render(); return Promise.resolve(); }
+    const c=fb(); if(!c||!c.db) return Promise.reject(new Error('Iniciá sesión.'));
+    return c.FS.setDoc(c.FS.doc(c.db,COL,_uid), datos);
+  }
+  function eliminar(r){
+    if(!window.__usaNube){ DB.remitos=DB.remitos.filter(x=>x._uid!==r._uid); saveLocal(); render(); return Promise.resolve(); }
+    const c=fb(); if(!c||!c.db) return Promise.reject(new Error('Iniciá sesión.'));
+    return c.FS.deleteDoc(c.FS.doc(c.db,COL,r._uid));
+  }
+
+  function render(){
+    if(!$('rmt-tabla')) return;
+    const todos=DB.remitos.slice().sort((a,b)=>num(b.numeroInt)-num(a.numeroInt));
+    // Filtro por mes (los períodos salen de los remitos que hay) + búsqueda libre.
+    const periodos=[...new Set(todos.map(r=>String(r.fecha||'').slice(0,7)).filter(Boolean))].sort().reverse();
+    const sel=$('rmt-periodo');
+    if(sel){ sel.innerHTML='<option value="">Todos los períodos</option>'+periodos.map(p=>'<option value="'+esc(p)+'"'+(filtro.periodo===p?' selected':'')+'>'+esc(labelPeriodo(p))+'</option>').join('');
+      sel.onchange=()=>{ filtro.periodo=sel.value; render(); }; }
+    const q=normc(filtro.q);
+    const rows=todos.filter(r=>{
+      if(filtro.periodo && String(r.fecha||'').slice(0,7)!==filtro.periodo) return false;
+      if(!q) return true;
+      return normc(r.numero).includes(q) || normc(r.cliente).includes(q) || normc(r.transportista).includes(q) || normc(r.comprobante).includes(q);
+    });
+    // KPIs: cuántos van, cuántos este mes y cuál fue el último número emitido.
+    const hoyMes=new Date().toISOString().slice(0,7);
+    const delMes=todos.filter(r=>String(r.fecha||'').slice(0,7)===hoyMes).length;
+    const k=(l,v,s)=>'<div class="kpi"><div class="label">'+l+'</div><div class="value">'+v+'</div><div class="sub">'+s+'</div></div>';
+    if($('rmt-kpis')) $('rmt-kpis').innerHTML =
+      k('Remitos emitidos', nf(todos.length), 'En total') +
+      k('Este mes', nf(delMes), labelPeriodo(hoyMes)) +
+      k('Último número', todos.length?esc(todos[0].numero):'—', 'El próximo será el '+esc(window.__remitoProximo()));
+    const bultos=r=>(r.items||[]).reduce((a,it)=>a+((it.pallets&&it.pallets.length)?it.pallets.length:0),0);
+    $('rmt-tabla').innerHTML =
+      '<thead><tr><th>N° Remito</th><th>Fecha entrega</th><th>Cliente</th><th>Corresponde a</th><th>Transporte</th><th>Entrega</th><th></th></tr></thead><tbody>'+
+      (rows.length?rows.map(r=>'<tr>'+
+        '<td><b>'+esc(r.numero||'—')+'</b></td>'+
+        '<td>'+fmtFecha(r.fecha)+'</td>'+
+        '<td>'+esc(r.cliente||'—')+(r.domicilioEntrega?'<div style="font-size:11px;color:var(--muted)">'+esc(r.domicilioEntrega)+'</div>':'')+'</td>'+
+        '<td style="font-size:12px">'+esc(r.comprobante||'—')+'</td>'+
+        '<td>'+esc(r.transportista||'—')+'</td>'+
+        '<td style="font-size:12px">'+esc((r.items||[]).map(it=>nf(it.cant)+' '+(it.codigo||it.desc||'')).join(' · ')||'—')+'</td>'+
+        '<td style="white-space:nowrap">'+
+          '<button class="cmp-rowbtn" data-ract="print" data-id="'+esc(r._uid)+'" title="Reimprimir con el mismo número">🖨️</button>'+
+          '<button class="cmp-rowbtn" data-ract="edit" data-id="'+esc(r._uid)+'">Editar</button>'+
+          '<button class="cmp-rowbtn" data-ract="del" data-id="'+esc(r._uid)+'" title="Eliminar el remito">✕</button>'+
+        '</td></tr>').join('')
+        : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:14px">'+(todos.length?'Ningún remito coincide con la búsqueda.':'Todavía no se emitió ningún remito. Salen desde Ventas o desde Producción y Logística, con el botón 🚚 Remito.')+'</td></tr>')+
+      '</tbody>';
+    $('rmt-tabla').querySelectorAll('button[data-ract]').forEach(b=> b.onclick=()=>{
+      const r=DB.remitos.find(x=>x._uid===b.dataset.id); if(!r) return;
+      const a=b.dataset.ract;
+      if(a==='print'){ if(window.__imprimir) window.__imprimir.remito(window.__remitoParaImprimir(r)); }
+      else if(a==='edit') abrirEdicion(r);
+      else if(a==='del'){
+        // El número NO se reutiliza: el contador guarda el último emitido. Se dice en el confirm para
+        // que nadie espere que borrando el último "se libere" ese número.
+        if(!confirm('¿Eliminar el remito '+(r.numero||'')+' de '+(r.cliente||'—')+'?\n\nSe borra del Tablero (el papel que ya se entregó no se puede recuperar desde acá).\nEl número NO se reutiliza: el próximo remito sigue siendo el '+window.__remitoProximo()+'.')) return;
+        eliminar(r).catch(e=>alert('No se pudo eliminar: '+e.message));
+      }
+    });
+    if($('rmt-vacio')) $('rmt-vacio').textContent = rows.length? (rows.length+' remito'+(rows.length!==1?'s':'')+' en pantalla · el número de un remito eliminado no se vuelve a usar.') : '';
+    if(window.__ordenable) window.__ordenable($('rmt-tabla'));
+  }
+
+  // ---------- Edición ----------
+  let editando=null;
+  function abrirEdicion(r){ editando=JSON.parse(JSON.stringify(r)); drawEdicion(); $('rmt-modal').classList.add('open'); }
+  function cerrarEdicion(){ $('rmt-modal').classList.remove('open'); editando=null; }
+  function drawEdicion(){
+    const r=editando; if(!r) return;
+    $('rmt-form-title').textContent='Remito '+(r.numero||'');
+    const ventas=(window.__ventasTodas?window.__ventasTodas():[]);
+    const cu=String(r.clienteCuit||'').replace(/\D/g,''), nom=normc(r.cliente);
+    const suyas=ventas.filter(v=>{ const vc=String(v.cuit||'').replace(/\D/g,''); return (cu&&vc===cu)||(nom&&normc(v.cliente)===nom); })
+      .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).slice(0,25);
+    const refDe=v=> (window.__refComprobante?window.__refComprobante(v):(v.tipoComprobante||'Venta'))+' · '+fmtFecha(v.fecha);
+    const campo=(l,inner,ancho)=>'<div class="cmp-field'+(ancho?' '+ancho:'')+'"><label>'+l+'</label>'+inner+'</div>';
+    const prods=(window.__catalogoProductos?window.__catalogoProductos():[]).filter(p=>String(p.tipo||'')!=='Servicio');
+    const dl='<datalist id="rmt-prod-list">'+prods.map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
+    $('rmt-form').innerHTML=
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">El número del remito no se cambia: es el que ya salió impreso.</div>'+
+      '<div class="cmp-form-grid">'+
+        campo('Fecha de entrega','<input type="date" id="rmt-fecha" value="'+esc(String(r.fecha||'').slice(0,10))+'">')+
+        campo('Transporte','<input id="rmt-transp" value="'+esc(r.transportista||'')+'" placeholder="Sánchez, Brío, …">')+
+        campo('Cliente','<input id="rmt-cli" value="'+esc(r.cliente||'')+'">','col2')+
+        campo('Dirección de entrega','<input id="rmt-dom" value="'+esc(r.domicilioEntrega||'')+'" placeholder="Calle, número, localidad">','col2')+
+        campo('Teléfono de contacto','<input id="rmt-tel" value="'+esc(r.clienteTel||'')+'">')+
+        campo('Factura / venta asociada','<select id="rmt-venta"><option value="">— Sin asociar —</option>'+
+          suyas.map(v=>'<option value="'+esc(v._uid)+'"'+(r.ventaUid===v._uid?' selected':'')+'>'+esc(refDe(v))+'</option>').join('')+
+          (r.ventaUid && !suyas.some(v=>v._uid===r.ventaUid) ? '<option value="'+esc(r.ventaUid)+'" selected>'+esc(r.comprobante||'(la venta asociada actual)')+'</option>' : '')+
+          '</select>')+
+      '</div>'+
+      '<h4 style="margin:10px 0 6px;font-size:13px">Mercadería entregada</h4>'+
+      '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:46%">Producto</th><th>Código</th><th>Cantidad</th><th></th></tr></thead><tbody id="rmt-items"></tbody></table></div>'+dl+
+      '<button class="cmp-rowbtn" id="rmt-additem" style="margin-top:6px">+ Agregar producto</button>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="rmt-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="rmt-save">Guardar cambios</button></div>';
+    drawItems();
+    [['rmt-fecha','fecha'],['rmt-transp','transportista'],['rmt-cli','cliente'],['rmt-dom','domicilioEntrega'],['rmt-tel','clienteTel']].forEach(([id,key])=>{
+      const el=$(id); if(el) el.addEventListener('input',()=>{ editando[key]=el.value; });
+    });
+    $('rmt-venta').addEventListener('change',()=>{
+      const uid=$('rmt-venta').value; editando.ventaUid=uid;
+      const v=ventas.find(x=>x._uid===uid);
+      editando.comprobante = v ? refDe(v) : '';
+    });
+    $('rmt-additem').onclick=()=>{ editando.items=(editando.items||[]).concat([{codigo:'',desc:'',cant:1,pallets:null}]); drawItems(); };
+    $('rmt-cancel').onclick=cerrarEdicion;
+    $('rmt-save').onclick=guardarEdicion;
+  }
+  function drawItems(){
+    const its=editando.items||[];
+    $('rmt-items').innerHTML = its.length? its.map((it,i)=>'<tr>'+
+      '<td><input list="rmt-prod-list" data-ri="desc" data-i="'+i+'" value="'+esc(it.desc||'')+'" placeholder="Producto"></td>'+
+      '<td><input data-ri="codigo" data-i="'+i+'" value="'+esc(it.codigo||'')+'" style="width:90px"></td>'+
+      '<td><input data-ri="cant" data-i="'+i+'" value="'+esc(it.cant)+'" inputmode="decimal" style="width:90px"></td>'+
+      '<td><button class="cmp-rowbtn" data-rdel="'+i+'">✕</button></td></tr>').join('')
+      : '<tr><td colspan="4" style="color:var(--muted);font-size:12px">Sin productos cargados.</td></tr>';
+    $('rmt-items').querySelectorAll('input[data-ri]').forEach(el=> el.addEventListener('input',()=>{
+      const i=+el.dataset.i, k=el.dataset.ri;
+      if(k==='cant') editando.items[i].cant=num(el.value);
+      else {
+        editando.items[i][k]=el.value;
+        // Completar el código solo si el producto matchea el catálogo (evita códigos inventados).
+        if(k==='desc' && !editando.items[i].codigo){
+          const p=(window.__catalogoProductos?window.__catalogoProductos():[]).find(x=>normc(x.nombre)===normc(el.value));
+          if(p&&p.codigo){ editando.items[i].codigo=p.codigo; const cel=$('rmt-items').querySelector('input[data-ri="codigo"][data-i="'+i+'"]'); if(cel) cel.value=p.codigo; }
+        }
+      }
+      // ⚠️ Al cambiar la cantidad a mano se descarta el plan de pallets guardado: era el armado REAL de
+      // esa carga y ya no le corresponde. El PDF lo recalcula con el udPorPallet del catálogo.
+      if(k==='cant') editando.items[i].pallets=null;
+    }));
+    $('rmt-items').querySelectorAll('button[data-rdel]').forEach(b=> b.onclick=()=>{ editando.items.splice(+b.dataset.rdel,1); drawItems(); });
+  }
+  function guardarEdicion(){
+    const r=editando; if(!r) return;
+    if(!String(r.fecha||'').trim()){ alert('El remito necesita la fecha de entrega.'); return; }
+    r.items=(r.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
+    r.editadoPor=(fb()&&fb().auth&&fb().auth.currentUser)?fb().auth.currentUser.email:'';
+    r.editadoTs=new Date().toISOString();
+    persistir(r).then(cerrarEdicion).catch(e=>alert('No se pudo guardar: '+e.message));
+  }
+
+  function wire(){
+    if($('rmt-cerrar')) $('rmt-cerrar').onclick=cerrarEdicion;
+    if($('rmt-buscar')) $('rmt-buscar').addEventListener('input',()=>{ filtro.q=$('rmt-buscar').value; render(); });
+    const ov=$('rmt-modal'); if(ov) ov.addEventListener('click',e=>{ if(e.target===ov) cerrarEdicion(); });
+  }
+
   if(window.__usaNube){
     window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
     window.__afterLogin.push(()=>startSync());
-    window.__afterLogout.push(()=>{ stopSync(); DB={remitos:[], ultimo:0}; });
+    window.__afterLogout.push(()=>{ stopSync(); DB={remitos:[], ultimo:0}; render(); });
     if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
   } else { DB=loadLocal(); }
+  wire(); render();
 })();
 </script>
 
