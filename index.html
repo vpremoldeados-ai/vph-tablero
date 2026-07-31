@@ -2448,13 +2448,47 @@ function buildFilterTable(cfg){
     return p.id;
   };
 
-  // Otras compras de MANO DE OBRA del mismo mes que NO son la de esta quincena. Sirve para avisar
-  // antes de duplicar: si el sueldo ya se cargó a mano en Compras, confirmarlo acá lo contaría DOS
-  // veces (infla "A pagar", los costos fijos y hunde la proyección de caja).
+  // Compras del mes que YA son un sueldo cargado a mano. Sirve para avisar antes de duplicar: si el
+  // sueldo ya está en Compras, confirmarlo otra vez desde Sueldos lo contaría DOS veces (infla
+  // "A pagar", los costos fijos y hunde la proyección de caja).
+  // ⚠️ NO alcanza con mirar la categoría "Mano de Obra": en VPH los sueldos están cargados como una
+  // compra POR PERSONA con categoría COSTO FIJO (proveedor = el nombre del empleado). Por eso se
+  // busca por NOMBRE en cualquier categoría, y en el mes entero — la compra cubre las 2 quincenas.
+  // Es un AVISO, así que conviene que sobre y no que falte: con 1 solo token en común ya lo marca
+  // como "posible" (nombres mal tipeados: "HERTZ JOSE" por "HERZ JOSE FRANCISCO").
+  const normProv = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
+  window.__comprasDeSueldos = (periodo, nombres, exceptUid)=>{
+    const per=String(periodo||'').slice(0,7); if(!per) return [];
+    const listas=(nombres||[]).map(n=>({ nombre:n, t:normProv(n).split(' ').filter(x=>x.length>=4) }))
+                              .filter(x=>x.t.length);
+    if(!listas.length) return [];
+    const out=[];
+    DB.compras.forEach(c=>{
+      if(c._uid===exceptUid) return;
+      if(String(c.fecha||'').slice(0,7)!==per) return;
+      const p=normProv(c.proveedor);
+      if(!p) return;
+      let mejor=null, max=0;
+      listas.forEach(x=>{ const n=x.t.filter(k=>p.indexOf(k)>=0).length; if(n>max){ max=n; mejor=x.nombre; } });
+      if(max>=1) out.push({ uid:c._uid, proveedor:c.proveedor||'', categoria:c.categoria||'', fecha:c.fecha||'',
+        total:calc(c).total, saldo:calc(c).saldo, empleado:mejor, seguro:max>=2 });
+    });
+    return out;
+  };
+  // Compat: se sigue exponiendo la versión vieja (mira solo la categoría Mano de Obra).
   window.__comprasManoObraDe = (periodo, exceptUid)=>{
     const per=String(periodo||'').slice(0,7); if(!per) return [];
     return DB.compras.filter(c=> c._uid!==exceptUid && String(c.categoria||'')===SUE_CAT && String(c.fecha||'').slice(0,7)===per)
       .map(c=>({ uid:c._uid, proveedor:c.proveedor||'', fecha:c.fecha||'', total:calc(c).total }));
+  };
+  // Agrega un renglón a una compra ya cargada (lo usa Sueldos para sumarle un aumento que no estaba).
+  window.__agregarItemCompra = (uid, item)=>{
+    const c=DB.compras.find(x=>x._uid===uid); if(!c||!item) return false;
+    const it={ desc:String(item.desc||'Ajuste'), codigo:'', cant:1,
+      precioUnit:round2(num(item.monto)), descPct:0, iva:item.iva||'nogravado' };
+    c.items=(c.items||[]).concat([it]);
+    persistCompra(c);
+    return true;
   };
 
   // Resumen de compras EN VIVO por mes y por categoría — lo consume la página "Costos (resumen)", que
@@ -11390,17 +11424,25 @@ function buildFilterTable(cfg){
     pintarKpis();
   }
 
+  // Sueldos de esa gente que YA están cargados como compra (a mano, una por persona). Si existen,
+  // confirmar la quincena creando otra compra contaría todo dos veces.
+  function sueldosYaEnCompras(L){
+    if(!window.__comprasDeSueldos) return [];
+    const nombres=liquidanEn(sel).map(e=>e.nombre).filter(Boolean);
+    return window.__comprasDeSueldos(String(L.desde).slice(0,7), nombres, 'sue_'+L.periodo+'_Q'+L.quincena);
+  }
   function pintarAvisoLiq(L){
     const el=$('sue-liq-aviso'); if(!el) return;
-    const otras = window.__comprasManoObraDe ? window.__comprasManoObraDe(String(L.desde).slice(0,7), 'sue_'+L.periodo+'_Q'+L.quincena) : [];
-    let h='';
-    if(otras.length){
-      h+='<div style="border:1px solid var(--amber);background:rgba(245,158,11,.08);border-radius:8px;padding:10px 12px;font-size:12.5px">'+
-        '⚠️ <b>Ojo con contar dos veces.</b> Ese mes ya tiene '+otras.length+' compra'+(otras.length>1?'s':'')+' cargada'+(otras.length>1?'s':'')+' en <b>Mano de Obra</b> además de esta quincena: '+
-        otras.map(o=>esc(o.proveedor||'(sin proveedor)')+' '+money0(o.total)+' del '+fmtFecha(o.fecha)).join(' · ')+
-        '. Si son los mismos sueldos, borralas desde Compras antes de confirmar.</div>';
-    }
-    el.innerHTML=h;
+    const ya=sueldosYaEnCompras(L);
+    if(!ya.length){ el.innerHTML=''; return; }
+    const seguras=ya.filter(o=>o.seguro), dudosas=ya.filter(o=>!o.seguro);
+    const linea=o=>esc(o.proveedor||'(sin proveedor)')+' — '+money0(o.total)+
+      (o.saldo>0.5?' (saldo '+money0(o.saldo)+')':' (pagada)')+' · '+esc(o.categoria);
+    el.innerHTML='<div style="border:1px solid var(--amber);background:rgba(245,158,11,.08);border-radius:8px;padding:10px 12px;font-size:12.5px">'+
+      '⚠️ <b>Estos sueldos ya están cargados como compra.</b> Si confirmás creando otra compra, el mes queda contado DOS veces.'+
+      (seguras.length?'<div style="margin-top:6px">'+seguras.map(linea).join('<br>')+'</div>':'')+
+      (dudosas.length?'<div style="margin-top:6px;color:var(--muted)">Puede que estas también sean sueldos: '+dudosas.map(linea).join(' · ')+'</div>':'')+
+      '<div style="margin-top:6px">Usá <b>"Confirmar sin crear la compra"</b>, o borralas desde Compras si preferís que las genere el Tablero.</div></div>';
   }
 
   function pintarPieLiq(L){
@@ -11415,15 +11457,20 @@ function buildFilterTable(cfg){
     el.innerHTML=estado+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
       (cerrada
-        ? '<span style="color:var(--green);font-weight:600">✓ Quincena confirmada'+(L.confirmadaPor?' por '+esc(L.confirmadaPor):'')+'</span>'+
+        ? '<span style="color:var(--green);font-weight:600">✓ Quincena confirmada'+(L.confirmadaPor?' por '+esc(L.confirmadaPor):'')+
+            (L.sinCompra?' <span style="font-weight:400;color:var(--muted)">(sin compra propia: los sueldos ya estaban cargados en Compras)</span>':'')+'</span>'+
           '<button class="cmp-btn" id="sue-reabrir">↩ Reabrir para corregir</button>'
-        : '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar">✓ Confirmar quincena e imputar en Compras</button>')+
+        : (sueldosYaEnCompras(L).length
+            ? '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar-sin">✓ Confirmar sin crear la compra</button>'+
+              '<button class="cmp-btn" id="sue-confirmar">Confirmar y crear la compra igual</button>'
+            : '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar">✓ Confirmar quincena e imputar en Compras</button>'))+
       '<button class="cmp-btn" id="sue-recibos-todos">🖨️ Recibos de todos</button>'+
       '</div>'+
       '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Confirmar crea (o actualiza) UNA compra de '+money0(t.devengado)+
       ' en la categoría <b>Mano de Obra</b>, con fecha '+fmtFecha(L.hasta)+' y vencimiento '+fmtFecha(L.fechaPago)+
       '. Desde ahí sale en Caja, Finanzas, Costos Fijos y el Punto de Equilibrio — <b>no la cargues también a mano en Compras</b>.</div>';
-    if($('sue-confirmar')) $('sue-confirmar').onclick=()=>confirmarQuincena(L);
+    if($('sue-confirmar')) $('sue-confirmar').onclick=()=>confirmarQuincena(L, true);
+    if($('sue-confirmar-sin')) $('sue-confirmar-sin').onclick=()=>confirmarQuincena(L, false);
     if($('sue-reabrir'))   $('sue-reabrir').onclick=()=>reabrirQuincena(L);
     if($('sue-ver-compra'))$('sue-ver-compra').onclick=()=>{ if(window.__abrirCompra) window.__abrirCompra(c.uid); };
     if($('sue-recibos-todos')) $('sue-recibos-todos').onclick=()=>{
@@ -11433,24 +11480,38 @@ function buildFilterTable(cfg){
     };
   }
 
-  function confirmarQuincena(L){
+  // crearCompra=false: la quincena se marca liquidada pero NO se escribe ninguna compra, porque los
+  // sueldos ya están cargados a mano (una compra por persona). Es la única forma de cerrar la quincena
+  // sin contar el mes dos veces.
+  function confirmarQuincena(L, crearCompra){
     const t=totalesDe(sel);
     if(!(t.devengado>0)){ alert('No hay nada para confirmar: todas las filas dan cero.'); return; }
-    const otras = window.__comprasManoObraDe ? window.__comprasManoObraDe(String(L.desde).slice(0,7), 'sue_'+L.periodo+'_Q'+L.quincena) : [];
+    const ya=sueldosYaEnCompras(L);
     let msg='Confirmar '+etiquetaQ(sel)+':\n\n'+
       '· Devengado: '+money(t.devengado)+' ('+t.cant+' empleado'+(t.cant===1?'':'s')+')\n'+
       '· Adelantos ya pagados: '+money(t.adelantos)+'\n'+
-      '· Queda por pagar: '+money(t.aPagar)+'\n\n'+
-      'Se crea/actualiza la compra "'+String(P('sueProveedor','Sueldos y jornales'))+'" en Mano de Obra por '+money(t.devengado)+
-      ', con vencimiento el '+fmtFecha(L.fechaPago)+'.';
-    if(otras.length) msg+='\n\n⚠️ ATENCIÓN: ese mes ya tiene '+otras.length+' compra(s) en Mano de Obra por '+
-      money(otras.reduce((a,o)=>a+num(o.total),0))+'. Si son estos mismos sueldos, van a quedar contados DOS VECES.';
+      '· Queda por pagar: '+money(t.aPagar)+'\n\n';
+    if(crearCompra){
+      msg+='Se crea/actualiza la compra "'+String(P('sueProveedor','Sueldos y jornales'))+'" en Mano de Obra por '+
+        money(t.devengado)+', con vencimiento el '+fmtFecha(L.fechaPago)+'.';
+      if(ya.length) msg+='\n\n🔴 ATENCIÓN: ese mes YA tiene '+ya.length+' compra(s) de sueldo cargadas ('+
+        money(ya.reduce((a,o)=>a+num(o.total),0))+'). Si son estos mismos sueldos van a quedar contados DOS VECES.\n'+
+        'Si es así, cancelá y usá "Confirmar sin crear la compra".';
+    } else {
+      msg+='NO se va a crear ninguna compra: los sueldos ya están cargados en Compras, una por persona.\n'+
+        'La quincena queda marcada como liquidada y los recibos se pueden imprimir igual.\n\n'+
+        '⚠️ Revisá que el saldo de esas compras coincida con lo que dice acá — si no, la deuda que ves en '+
+        'Finanzas no es la real.';
+    }
     if(!confirm(msg+'\n\n¿Confirmás?')) return;
-    if(!window.__upsertCompraSueldos){ alert('El módulo Compras no está disponible.'); return; }
-    const uid=window.__upsertCompraSueldos({ periodo:L.periodo, quincena:L.quincena, monto:t.devengado,
-      proveedor:String(P('sueProveedor','Sueldos y jornales')), fecha:L.hasta, vencimiento:L.fechaPago,
-      detalle:'Sueldos — '+etiquetaQ(sel), nota:'Generado por el módulo Sueldos ('+t.cant+' empleados). Editalo desde ahí, no acá.' });
-    L.estado='confirmada'; L.compraUid=uid;
+    let uid='';
+    if(crearCompra){
+      if(!window.__upsertCompraSueldos){ alert('El módulo Compras no está disponible.'); return; }
+      uid=window.__upsertCompraSueldos({ periodo:L.periodo, quincena:L.quincena, monto:t.devengado,
+        proveedor:String(P('sueProveedor','Sueldos y jornales')), fecha:L.hasta, vencimiento:L.fechaPago,
+        detalle:'Sueldos — '+etiquetaQ(sel), nota:'Generado por el módulo Sueldos ('+t.cant+' empleados). Editalo desde ahí, no acá.' });
+    }
+    L.estado='confirmada'; L.compraUid=uid; L.sinCompra=!crearCompra;
     const c=fb(); L.confirmadaPor=(c&&c.auth&&c.auth.currentUser)?c.auth.currentUser.email:'';
     L.confirmadaTs=new Date().toISOString();
     persistLiq(L,true); render();
