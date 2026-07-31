@@ -11524,9 +11524,10 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Confirmar crea (o actualiza) <b>una compra por persona</b> — '+
       t.cant+' en total por '+money0(t.devengado)+' — en la categoría <b>'+esc(String(P('sueCategoria','Mano de Obra')))+
-      '</b>, con fecha '+fmtFecha(L.hasta)+' y vencimiento '+fmtFecha(L.fechaPago)+
+      '</b>, con fecha de pago '+fmtFecha(L.fechaPago)+
       (liquidanEn(sel).some(esMensual)?' (los mensuales, el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+')':'')+
-      '. Desde ahí salen en Caja, Finanzas, Costos Fijos y el Punto de Equilibrio — <b>no las cargues también a mano</b>.</div>';
+      '. El costo se computa en el mes en que se paga. Desde ahí salen en Caja, Finanzas, Costos Fijos '+
+      'y el Punto de Equilibrio — <b>no las cargues también a mano</b>.</div>';
     if($('sue-confirmar')) $('sue-confirmar').onclick=()=>confirmarQuincena(L, true);
     if($('sue-confirmar-sin')) $('sue-confirmar-sin').onclick=()=>confirmarQuincena(L, false);
     if($('sue-reabrir'))   $('sue-reabrir').onclick=()=>reabrirQuincena(L);
@@ -11551,8 +11552,9 @@ function buildFilterTable(cfg){
     if(crearCompra){
       msg+='Se crea/actualiza UNA COMPRA POR PERSONA ('+t.cant+' en total) en la categoría "'+
         String(P('sueCategoria','Mano de Obra'))+'", por '+money(t.devengado)+' en conjunto.\n'+
-        'Vencimiento: quincenales el '+fmtFecha(L.fechaPago)+
-        (liquidanEn(sel).some(esMensual)?' · mensuales el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel)):'')+'.';
+        'Se pagan: los quincenales el '+fmtFecha(L.fechaPago)+
+        (liquidanEn(sel).some(esMensual)?' · los mensuales el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel)):'')+
+        '.\nEl costo se computa en el mes en que se paga.';
       if(ya.length) msg+='\n\n🔴 ATENCIÓN: ese mes YA tiene '+ya.length+' compra(s) de sueldo cargadas ('+
         money(ya.reduce((a,o)=>a+num(o.total),0))+'). Si son estos mismos sueldos van a quedar contados DOS VECES.\n'+
         'Si es así, cancelá y usá "Confirmar sin crear la compra".';
@@ -11569,8 +11571,13 @@ function buildFilterTable(cfg){
       liquidanEn(sel).forEach(e=>{
         const k=liquidarFila(filaDe(L,e), e);
         if(!(k.devengado>0)) return;
+        // ⚠️ La FECHA de la compra es la de PAGO, no la del cierre de la quincena: el costo se computa
+        // en el mes en que se paga (criterio de Marcelo, 30/07). Por eso el sueldo de julio de un
+        // MENSUAL, que se cobra en agosto, es costo de AGOSTO. Para un quincenal las dos fechas caen
+        // en el mismo mes, así que no cambia nada — salvo que se configure el pago de la 2ª quincena
+        // para el 1 o el 2 del mes siguiente, y ahí ese costo también se va al mes siguiente.
         window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:e._uid, empNombre:e.nombre,
-          cuil:e.cuil||'', monto:k.devengado, fecha:L.hasta, vencimiento:fechaPagoDe(L,e),
+          cuil:e.cuil||'', monto:k.devengado, fecha:fechaPagoDe(L,e), vencimiento:fechaPagoDe(L,e),
           detalle: esMensual(e) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
           nota:'Generado por el módulo Sueldos. Editalo desde ahí, no acá.' });
         hechas++;
@@ -11827,7 +11834,7 @@ function buildFilterTable(cfg){
     // confirmó, se crea con su devengado de ahora y se actualiza sola al confirmar.
     const dev=liquidarFila(filaDe(L,emp), emp).devengado;
     const uid=window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
-      empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:L.hasta,
+      empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:fechaPagoDe(L,emp),
       vencimiento:fechaPagoDe(L,emp),
       detalle: esMensual(emp) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
       nota:'Generado por el módulo Sueldos.' });
