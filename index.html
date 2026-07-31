@@ -10193,7 +10193,10 @@ function buildFilterTable(cfg){
       .doc-cli{ display:flex; justify-content:space-between; gap:20px; border:1px solid #999; border-radius:4px; padding:8px 10px; margin-bottom:10px; font-size:11.5px; line-height:1.5; }
       .doc-cli .r{ text-align:right; }
       table.doc-tab{ width:100%; max-width:100%; table-layout:auto; border-collapse:collapse; font-size:10.5px; margin-bottom:10px; }
-      table.doc-tab th{ background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 5px; text-align:left; overflow-wrap:break-word; }
+      /* position/cursor: los th de la app son sticky y cliqueables (se ordena por columna). En un
+         documento para imprimir eso no corresponde — el encabezado flotaba al scrollear la vista
+         previa y el puntero invitaba a ordenar una tabla que no ordena. */
+      table.doc-tab th{ background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 5px; text-align:left; overflow-wrap:break-word; position:static; cursor:default; }
       table.doc-tab td{ border:1px solid #e2e8f0; padding:5px 5px; overflow-wrap:break-word; }
       table.doc-tab td.n, table.doc-tab th.n{ text-align:right; white-space:normal; }
       .doc-tot{ width:52%; margin-left:48%; font-size:12px; }
@@ -10675,9 +10678,24 @@ function buildFilterTable(cfg){
       '<td class="n">'+money(Math.abs(num(r.importe)))+'</td></tr>';
     // Los descuentos se listan en POSITIVO en su propia columna (la columna ya dice "Descuentos") y
     // recién restan en el bloque de totales — igual que en la planilla, y así no hay dos signos.
-    const tabla = (titulo, rows)=>'<table class="doc-tab"><tr><th style="width:46%">'+esc(titulo)+'</th>'+
-      '<th class="n" style="width:14%">Cant.</th><th class="n" style="width:20%">Valor ref.</th><th class="n" style="width:20%">Parcial</th></tr>'+
-      (rows.length?rows.map(fila).join(''):'<tr><td colspan="4" style="text-align:center;color:#888">—</td></tr>')+'</table>';
+    // Cada lado cierra con SU PROPIO subtotal (pedido de Marcelo, 31/07): lo que suma a la izquierda,
+    // lo que resta a la derecha, cada uno sumado al pie de su lista, sin tener que ir hasta el final
+    // de la hoja para saber cuánto da cada bloque.
+    const H=o.haberes||[], D=o.descuentos||[];
+    // Las dos listas se rellenan hasta la misma cantidad de renglones para que los dos subtotales
+    // queden a la MISMA altura (un lado suele tener 4 conceptos y el otro ninguno).
+    const nFilas=Math.max(H.length, D.length, 3);
+    const cuerpo = rows => rows.map(fila).join('')+
+      Array.from({length:Math.max(0,nFilas-rows.length)},()=>'<tr class="rs-vacia"><td>&nbsp;</td><td></td><td></td><td></td></tr>').join('');
+    // ⚠️ table-layout:fixed + <colgroup>: con el layout automático el navegador reparte según el
+    // contenido y el TÍTULO de la columna pesa más que los números, así que "Parcial" salía
+    // recortado como "PARC" y quedaba pegado al bloque de al lado.
+    const tabla = (titulo, rows, totLbl, tot)=>'<table class="doc-tab rs-tab">'+
+      '<colgroup><col style="width:40%"><col style="width:10%"><col style="width:24%"><col style="width:26%"></colgroup>'+
+      '<thead><tr><th class="rs-cab" colspan="4">'+esc(titulo)+'</th></tr>'+
+        '<tr><th>Concepto</th><th class="n">Cant.</th><th class="n">Valor ref.</th><th class="n">Importe</th></tr></thead>'+
+      '<tbody>'+cuerpo(rows)+'</tbody>'+
+      '<tfoot><tr><td colspan="3">'+esc(totLbl)+'</td><td class="n">'+money(Math.abs(num(tot)))+'</td></tr></tfoot></table>';
     const idz=[e.legajo?'Legajo '+esc(e.legajo):'', e.dni?'DNI '+esc(e.dni):'', e.cuil?'CUIL '+esc(e.cuil):''].filter(Boolean).join(' · ');
     return '<div class="rs-copia">'+
       '<div class="doc-cli"><div><b>'+esc(e.nombre||'—')+'</b>'+(idz?'<br>'+idz:'')+
@@ -10686,13 +10704,13 @@ function buildFilterTable(cfg){
         (e.fechaIngreso?'Ingreso: '+dmy(e.fechaIngreso)+'<br>':'')+
         'Fecha de pago: '+dmy(o.fechaPago)+'</div></div>'+
       '<div class="rs-cols">'+
-        '<div>'+tabla('Haberes', o.haberes||[])+'</div>'+
-        '<div>'+tabla('Descuentos', o.descuentos||[])+'</div>'+
+        '<div>'+tabla('Haberes — conceptos que suman', H, 'TOTAL HABERES', o.totalHaberes)+'</div>'+
+        '<div>'+tabla('Descuentos — conceptos que restan', D, 'TOTAL DESCUENTOS', o.totalDescuentos)+'</div>'+
       '</div>'+
-      '<div class="rs-tot">'+
-        '<div class="row"><span>Total haberes</span><span>'+money(o.totalHaberes)+'</span></div>'+
-        '<div class="row"><span>Total descuentos</span><span>&minus; '+money(Math.abs(num(o.totalDescuentos)))+'</span></div>'+
-        '<div class="row big"><span>NETO A COBRAR</span><span>'+money(o.neto)+'</span></div>'+
+      '<div class="rs-neto">'+
+        '<div class="rs-calc">Total haberes <b>'+money(o.totalHaberes)+'</b> &nbsp;&minus;&nbsp; '+
+          'Total descuentos <b>'+money(Math.abs(num(o.totalDescuentos)))+'</b></div>'+
+        '<div class="rs-big">NETO A COBRAR <span>'+money(o.neto)+'</span></div>'+
       '</div>'+
       // Si la otra quincena del mes todavía no está liquidada, el mes se estima duplicando esta —
       // así lo hacía la planilla. Se aclara, para que el papel no afirme un número que no es.
@@ -10708,11 +10726,24 @@ function buildFilterTable(cfg){
     const st='<style>'+
       '.rs-hoja + .rs-hoja{ page-break-before:always; border-top:2px dashed #94a3b8; margin-top:18px; padding-top:18px; }'+
       '.rs-copia{ border:1px solid #cbd5e1; border-radius:4px; padding:9px 11px; margin-bottom:8px; }'+
-      '.rs-cols{ display:flex; gap:10px; align-items:flex-start; }'+
+      '.rs-cols{ display:flex; gap:14px; align-items:flex-start; }'+
       '.rs-cols > div{ flex:1 1 0; min-width:0; }'+
-      '.rs-tot{ width:56%; margin-left:44%; font-size:11.5px; }'+
-      '.rs-tot .row{ display:flex; justify-content:space-between; padding:2px 0; }'+
-      '.rs-tot .row.big{ border-top:2px solid #111; font-weight:800; font-size:12.5px; padding-top:4px; margin-top:2px; }'+
+      // Tipografía y padding más chicos que el resto de los documentos: son DOS tablas de 4 columnas
+      // en el ancho de una, así que cada columna tiene la mitad de lugar que en una factura.
+      'table.rs-tab{ table-layout:fixed; font-size:10px; margin-bottom:0; }'+
+      'table.rs-tab th, table.rs-tab td{ padding:4px 4px; }'+
+      // ⚠️ Los th de la APP van en mayúscula y con letter-spacing (regla global de la hoja de
+      // estilos, no del documento). En una tabla angosta como esta, eso solo —sin cambiar una letra
+      // del texto— empujaba las columnas lo suficiente como para recortar los títulos.
+      'table.rs-tab th{ text-transform:none; letter-spacing:0; font-size:10px; color:#111; }'+
+      'table.rs-tab .rs-cab{ text-align:center; background:#e2e8f0; font-size:10.5px; }'+
+      'table.rs-tab tfoot td{ background:#f8fafc; font-weight:800; border-top:2px solid #94a3b8; }'+
+      '.rs-vacia td{ border-color:#eef2f7; }'+
+      '.rs-neto{ display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:9px;'+
+        ' border:1px solid #94a3b8; border-radius:4px; padding:6px 10px; background:#f8fafc; }'+
+      '.rs-calc{ font-size:11px; color:#334155; }'+
+      '.rs-big{ font-weight:800; font-size:13px; white-space:nowrap; }'+
+      '.rs-big span{ margin-left:10px; }'+
       '.rs-ref{ font-size:10px; color:#555; margin-top:6px; }'+
       '.rs-firma{ font-size:11px; margin-top:14px; }'+
       '.rs-pie{ font-size:9px; color:#666; margin-top:10px; border-top:1px solid #e2e8f0; padding-top:4px; }'+
