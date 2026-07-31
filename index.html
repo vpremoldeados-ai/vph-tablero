@@ -116,13 +116,20 @@
   .tbl-wrap{overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:13.5px}
   th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border);white-space:nowrap}
-  /* Ventas: el nombre del cliente era lo que ensanchaba la tabla y obligaba a scrollear a la
-     derecha (el nombre MÁS largo definía el ancho de toda la columna, porque th,td va con
-     white-space:nowrap). Acá se destraba ese nowrap SOLO para el nombre, que puede pasar a dos
-     renglones, y se le acota el ancho. Los importes y las fechas conservan el nowrap para que
-     nunca se partan en dos líneas. */
-  .vnt-cli{white-space:normal;max-width:220px;line-height:1.3;overflow-wrap:break-word;
+  /* ---- Celdas de TEXTO LARGO (nombres, conceptos, botones) ----------------------------------
+     El problema: th,td va con white-space:nowrap, así que en una columna de nombres el nombre
+     MÁS largo define el ancho de TODA la columna y la tabla termina más ancha que la pantalla.
+     (Medido: en Ventas la columna Cliente pedía 582px por un solo cliente de 70 caracteres.)
+     Estas clases destraban el nowrap SOLO en esas celdas y les acotan el ancho. Los importes y
+     las fechas NO las llevan a propósito: un total partido en dos líneas se lee mal.
+       .cel-nombre   → nombres propios: 2 renglones como máximo, el resto con puntos suspensivos
+                       (poner también title="..." con el nombre completo para el tooltip).
+       .cel-envuelve → texto secundario que puede crecer hacia abajo sin cortarse.
+       .cel-acciones → grupos de botones, que pasan a dos filas en vez de estirar la tabla. */
+  .cel-nombre{white-space:normal;max-width:220px;line-height:1.3;overflow-wrap:break-word;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .cel-envuelve{white-space:normal;max-width:170px;line-height:1.3;overflow-wrap:break-word}
+  .cel-acciones{white-space:normal;max-width:235px}
   th{background:#f7f9fc;color:#54637a;font-size:11px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none;position:sticky;top:0}
   th:hover{background:#eef2f8}
   th .arrow{font-size:9px;opacity:.6}
@@ -2769,7 +2776,7 @@ function buildFilterTable(cfg){
       html += '<tr>'+
         '<td>'+badgeEstado[k.estado]+'</td>'+
         '<td>'+fmtFecha(c.fecha)+'</td>'+
-        '<td><b>'+esc(c.proveedor)+'</b>'+(c.tipoComprobante!=='Compra'?' <span class="badge blue">'+esc(c.tipoComprobante)+'</span>':'')+'</td>'+
+        '<td><div class="cel-nombre" title="'+esc(c.proveedor)+'"><b>'+esc(c.proveedor)+'</b>'+(c.tipoComprobante!=='Compra'?' <span class="badge blue">'+esc(c.tipoComprobante)+'</span>':'')+'</div></td>'+
         '<td>'+c.categoria+'</td>'+
         '<td style="font-variant-numeric:tabular-nums">'+fac+'</td>'+
         '<td class="num"><b>'+money(k.total)+'</b></td>'+
@@ -4559,7 +4566,7 @@ function buildFilterTable(cfg){
     {k:'estado', h:'Estado', opt:true, cell:r=>badgeEstado[r.k.estado]||''},
     {k:'arca', h:'ARCA', opt:true, off:true, cell:r=>arcaBadge(r.v.arca)},
     {k:'fecha', h:'Emisión', sort:'fecha', opt:true, cell:r=>fmtFecha(r.v.fecha)},
-    {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<div class="vnt-cli" title="'+esc(r.v.cliente||'')+'"><b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')+'</div>'},
+    {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<div class="cel-nombre" title="'+esc(r.v.cliente||'')+'"><b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')+'</div>'},
     {k:'categoria', h:'Categoría', opt:true, off:true, cell:r=>r.v.categoria||'—'},
     {k:'factura', h:'N° Factura', opt:true, cell:r=>'<span style="font-variant-numeric:tabular-nums">'+facLabel(r.v)+'</span>'},
     {k:'total', h:'Total', sort:'total', num:true, cell:r=>'<b>'+money(r.k.total)+'</b>'},
@@ -5339,13 +5346,13 @@ function buildFilterTable(cfg){
       const sub = esEndosado(c) ? '<div style="font-size:9.5px;color:#8b5cf6">→ endosado a '+esc(c.endosadoA||'—')+(c.endosoCompraNro?' · fact. '+esc(c.endosoCompraNro):'')+'</div>'
                 : c.origen==='cobro' ? '<div style="font-size:9.5px;color:var(--muted)">↩ de Ventas</div>'
                 : c.origen==='pago'  ? '<div style="font-size:9.5px;color:var(--muted)">↩ de Compras</div>' : '';
-      html+='<tr><td>'+(ter?'📥 De terceros':'📤 Propio')+sub+'</td>'+
+      html+='<tr><td><div class="cel-envuelve">'+(ter?'📥 De terceros':'📤 Propio')+sub+'</div></td>'+
         // Se señala el PAPEL, que es la excepción: si no dice nada, es un ECHEQ (lo normal acá).
         '<td>'+esc(c.numero||'—')+(esPapel(c)?'<div style="font-size:9.5px;color:var(--muted);font-weight:700">📄 papel</div>':'')+'</td>'+
-        '<td>'+esc(c.banco||'—')+'</td><td><b>'+esc(c.entidad||'—')+'</b></td>'+
+        '<td>'+esc(c.banco||'—')+'</td><td><div class="cel-nombre" title="'+esc(c.entidad||'')+'"><b>'+esc(c.entidad||'—')+'</b></div></td>'+
         '<td>'+fmtFecha(c.fechaEmision)+'</td><td'+(venc?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.fechaVencimiento)+(venc?' ⏰':'')+'</td>'+
         '<td class="num"><b>'+money(num(c.monto))+'</b></td><td>'+badgeEstado(c.estado,c.tipo)+'</td>'+
-        '<td style="white-space:nowrap">'+
+        '<td class="cel-acciones">'+
           // Un cheque de terceros en la mano: lo habitual en VPH es endosarlo a un proveedor; depositarlo casi nunca.
           (ter&&c.estado==='cartera'?'<button class="cmp-rowbtn" data-act="endosar" data-id="'+c._uid+'">↪ Endosar</button><button class="cmp-rowbtn" data-act="depositar" data-id="'+c._uid+'">Depositar</button>':'')+
           // Un endosado ya no lo cobramos nosotros (lo cobra el proveedor). Lo único que puede pasar es que REBOTE.
@@ -5997,8 +6004,8 @@ function buildFilterTable(cfg){
     let html='<tr><th>Concepto</th><th>Proveedor</th><th>Vencimiento</th><th class="num">Monto</th><th>Medio</th><th>Estado</th><th></th></tr>';
     if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:22px">Sin costos fijos para este filtro.</td></tr>';
     rows.forEach(c=>{ const v=vencido(c);
-      html+='<tr><td data-label="Concepto"><b>'+esc(c.concepto||'—')+'</b>'+(c.recurrente?' <span style="font-size:9.5px;color:var(--muted)" title="Se repite todos los meses">🔁</span>':'')+'</td>'+
-        '<td data-label="Proveedor">'+esc(c.proveedor||'—')+'</td>'+
+      html+='<tr><td data-label="Concepto"><div class="cel-nombre" title="'+esc(c.concepto||'')+'"><b>'+esc(c.concepto||'—')+'</b>'+(c.recurrente?' <span style="font-size:9.5px;color:var(--muted)" title="Se repite todos los meses">🔁</span>':'')+'</div></td>'+
+        '<td data-label="Proveedor"><div class="cel-nombre" title="'+esc(c.proveedor||'')+'">'+esc(c.proveedor||'—')+'</div></td>'+
         '<td data-label="Vencimiento"'+(v?' style="color:var(--red);font-weight:700"':'')+'>'+fmtFecha(c.vencimiento)+(v?' ⚠️':'')+(c.estado==='pagado'&&c.fechaPago?'<div style="font-size:9.5px;color:var(--green)">pagado '+fmtFecha(c.fechaPago)+'</div>':'')+'</td>'+
         '<td class="num" data-label="Monto"><b>'+money(num(c.monto))+'</b></td>'+
         '<td data-label="Medio">'+esc(c.medio||'—')+'</td>'+
@@ -12994,7 +13001,7 @@ function buildFilterTable(cfg){
         '<td>'+esc(fmtFechaAR(r.fecha))+'</td>'+
         '<td>'+esc(tipoCorto(r,esVenta))+(esVenta&&r.cae?' <span class="badge blue">ARCA</span>':'')+'</td>'+
         '<td data-sortval="'+compSort+'">'+esc(fmtComprobante(r))+'</td>'+
-        '<td><b>'+esc(nom||'—')+'</b></td>'+
+        '<td><div class="cel-nombre" title="'+esc(nom||'')+'"><b>'+esc(nom||'—')+'</b></div></td>'+
         '<td>'+esc(fmtCuit(r.cuit))+'</td>'+
         '<td>'+esc(condDe(nom, r.condIva, catalogo))+'</td>'+
         td(d.grav)+(con105?td(d.iva105):'')+td(d.iva21)+(conOtras?td(d.ivaOtras):'')+td(e.percIva)+tdB(total)+
