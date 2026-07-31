@@ -1316,7 +1316,8 @@
 
       <div id="sue-view-adel" style="display:none">
         <div style="display:flex;gap:10px;align-items:center;margin:14px 0 10px;flex-wrap:wrap">
-          <button class="cmp-btn cmp-btn-primary" id="sue-btn-adel">+ Registrar adelanto</button>
+          <button class="cmp-btn cmp-btn-primary" id="sue-btn-pagoq">💵 Pagar la quincena</button>
+          <button class="cmp-btn" id="sue-btn-adel">+ Registrar adelanto</button>
           <div id="sue-adel-barra" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap"></div>
         </div>
         <div id="sue-adel-nota" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
@@ -1367,6 +1368,19 @@
         <button class="cmp-x" id="sue-adel-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="sue-adel-form"></div>
+    </div>
+  </div>
+
+  <!-- ================= PAGO DE LA QUINCENA (overlay) =================
+       Se paga a TODOS de una vez: es como sale en la realidad (una fecha, un medio, una cuenta).
+       El pago se guarda en la compra de cada persona — la plata sigue viviendo en Compras. -->
+  <div class="cmp-overlay" id="sue-modal-pago">
+    <div class="cmp-dialog" style="max-width:760px">
+      <div class="cmp-dialog-head">
+        <h3 id="sue-pago-title">Pagar la quincena</h3>
+        <button class="cmp-x" id="sue-pago-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="sue-pago-form"></div>
     </div>
   </div>
 
@@ -2472,6 +2486,10 @@ function buildFilterTable(cfg){
     const pref=uidSueldo(periodo,quincena,'');
     return DB.compras.filter(c=>String(c._uid||'').indexOf(pref)===0).map(fichaCompra);
   };
+  // Una compra CUALQUIERA por su uid. La usa Sueldos para leer el saldo de una compra que se cargó a
+  // mano y se vinculó al empleado (los sueldos de VPH anteriores al módulo están así: una compra por
+  // persona por el mes entero, en COSTO FIJO). Sin esto, Sueldos solo ve las que generó él mismo.
+  window.__compraPorUid = uid=>{ const c=DB.compras.find(x=>x._uid===uid); return c?fichaCompra(c):null; };
 
   // Crea o actualiza la compra de UN empleado. Conserva los pagos ya cargados (los adelantos): son
   // plata que ya salió y no dependen de cuánto se recalculó el devengado.
@@ -11345,37 +11363,72 @@ function buildFilterTable(cfg){
     }
     return L.filas[emp._uid];
   }
-  // Los adelantos SON los pagos de la compra de CADA empleado, marcados como tales — no hay una copia
-  // aparte que se pueda desincronizar (una sola fuente de verdad, ver el encabezado del módulo).
-  function adelantosDe(s){
-    const cs=window.__comprasSueldoDeQuincena?window.__comprasSueldoDeQuincena(perDe(s), s.quincena):[];
+  // La compra de UN empleado en esta quincena. Puede ser la que generó el Tablero (uid sue_*) o una
+  // cargada A MANO que se vinculó desde acá (f.compraUid) — los sueldos anteriores al módulo están
+  // así, una compra por persona por el mes entero. Con la vinculación, Sueldos ve el saldo REAL y se
+  // puede pagar desde acá; sin ella solo veía las suyas y mostraba como impago algo ya pagado.
+  function compraDeEmp(s, empUid){
+    const L=liqDe(s);
+    const uidMan=L && L.filas && L.filas[empUid] && L.filas[empUid].compraUid;
+    if(uidMan && window.__compraPorUid){ const c=window.__compraPorUid(uidMan); if(c) return c; }
+    return window.__compraSueldo ? window.__compraSueldo(perDe(s), s.quincena, empUid) : null;
+  }
+  // Los pagos SON los pagos de la compra de CADA empleado — no hay una copia aparte que se pueda
+  // desincronizar (una sola fuente de verdad, ver el encabezado del módulo). Un adelanto es un pago
+  // marcado `sueEsAdelanto`; el resto son los pagos de la quincena (o de la compra vinculada).
+  function pagosDe(s, soloAdelantos){
     const out=[];
-    cs.forEach(c=>(c.pagos||[]).forEach(p=>{ if(p&&p.sueEsAdelanto) out.push({...p, compraUid:c.uid}); }));
+    const vistas=new Set();
+    (empsDeQuincena(s)||[]).forEach(e=>{
+      const c=compraDeEmp(s, e._uid); if(!c || vistas.has(c.uid)) return;
+      vistas.add(c.uid);
+      (c.pagos||[]).forEach(p=>{ if(p && (!soloAdelantos || p.sueEsAdelanto))
+        out.push({...p, compraUid:c.uid, empUid:p.sueEmpUid||e._uid, empNombre:p.sueEmpNombre||e.nombre||''}); });
+    });
+    // Las compras del Tablero de empleados que ya no se liquidan acá (una baja) igual tienen que
+    // aparecer: es plata que salió.
+    const cs=window.__comprasSueldoDeQuincena?window.__comprasSueldoDeQuincena(perDe(s), s.quincena):[];
+    cs.forEach(c=>{ if(vistas.has(c.uid)) return; vistas.add(c.uid);
+      (c.pagos||[]).forEach(p=>{ if(p && (!soloAdelantos || p.sueEsAdelanto))
+        out.push({...p, compraUid:c.uid, empUid:p.sueEmpUid||c.empUid||'', empNombre:p.sueEmpNombre||c.proveedor||''}); }); });
     return out.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
   }
+  const adelantosDe = s => pagosDe(s, true);
   const adelantoDeEmp=(s,empUid)=>{
-    const c=window.__compraSueldo?window.__compraSueldo(perDe(s), s.quincena, empUid):null;
-    if(!c) return 0;
+    const c=compraDeEmp(s,empUid); if(!c) return 0;
     return round2((c.pagos||[]).filter(p=>p&&p.sueEsAdelanto).reduce((a,p)=>a+num(p.monto),0));
   };
+  const pagadoDeEmp=(s,empUid)=>{ const c=compraDeEmp(s,empUid); return c?round2(num(c.pagado)):0; };
+  // Lo que todavía hay que pagarle. Con compra, manda SU SALDO: una compra cargada a mano cubre el MES
+  // entero, así que restarle los pagos al devengado de UNA quincena daría de menos (la 1ª quincena ya
+  // pagada se descontaría dos veces). Sin compra todavía, es el devengado menos los adelantos.
+  function faltaDeEmp(s, emp, devengado){
+    const c=compraDeEmp(s, emp._uid);
+    if(c) return round2(num(c.saldo));
+    return round2(num(devengado)-adelantoDeEmp(s, emp._uid));
+  }
 
-  function totalesDe(s){
-    const L=liqDe(s); if(!L) return { devengado:0, adelantos:0, aPagar:0, cant:0 };
-    // Se recorre la UNIÓN de los que se liquidan en esa quincena y los que ya tienen fila cargada.
-    // ⚠️ No alcanza con recorrer L.filas: las filas las materializa renderLiq(), que corre DESPUÉS de
-    // pintar los KPI, así que un empleado nuevo no entraba en el total hasta el render siguiente y el
-    // encabezado mostraba MENOS plata que la tabla de abajo. Y no alcanza con recorrer solo los
-    // activos: alguien que se fue a mitad de la quincena tiene que seguir sumando lo que se le liquidó.
-    const uids=new Set(Object.keys(L.filas||{}));
+  // Los empleados que cuentan en una quincena: la UNIÓN de los que se liquidan en ella y los que ya
+  // tienen fila cargada.
+  // ⚠️ No alcanza con recorrer L.filas: las filas las materializa renderLiq(), que corre DESPUÉS de
+  // pintar los KPI, así que un empleado nuevo no entraba en el total hasta el render siguiente y el
+  // encabezado mostraba MENOS plata que la tabla de abajo. Y no alcanza con recorrer solo los
+  // activos: alguien que se fue a mitad de la quincena tiene que seguir sumando lo que se le liquidó.
+  function empsDeQuincena(s){
+    const L=liqDe(s); const uids=new Set(L?Object.keys(L.filas||{}):[]);
     liquidanEn(s).forEach(e=>uids.add(e._uid));
-    let dev=0, cant=0;
-    uids.forEach(uid=>{
-      const emp=EMP.find(e=>e._uid===uid); if(!emp) return;
+    const out=[]; uids.forEach(uid=>{ const e=EMP.find(x=>x._uid===uid); if(e) out.push(e); });
+    return out;
+  }
+  function totalesDe(s){
+    const L=liqDe(s); if(!L) return { devengado:0, adelantos:0, pagado:0, aPagar:0, cant:0 };
+    let dev=0, cant=0, pag=0, falta=0;
+    empsDeQuincena(s).forEach(emp=>{
       const k=liquidarFila(filaDe(L,emp), emp, L.quincena); if(k.devengado>0) cant++;
-      dev+=k.devengado;
+      dev+=k.devengado; pag+=pagadoDeEmp(s, emp._uid); falta+=faltaDeEmp(s, emp, k.devengado);
     });
     const ade=round2(adelantosDe(s).reduce((a,p)=>a+num(p.monto),0));
-    return { devengado:round2(dev), adelantos:ade, aPagar:round2(dev-ade), cant };
+    return { devengado:round2(dev), adelantos:ade, pagado:round2(pag), aPagar:round2(falta), cant };
   }
 
   // ==================== Render ====================
@@ -11396,7 +11449,7 @@ function buildFilterTable(cfg){
   function pintarTabs(){
     const L=liqDe(sel), pend = L && L.estado!=='confirmada';
     $('sue-tabs').innerHTML=[['liq','🧮 Liquidación'+(pend?' (sin confirmar)':'')],['emp','👤 Empleados ('+activosEn(hoyISO).length+')'],
-      ['adel','💵 Adelantos'],['vac','🏖️ Vacaciones'],['sac','🎁 Aguinaldo']]
+      ['adel','💵 Pagos y adelantos'],['vac','🏖️ Vacaciones'],['sac','🎁 Aguinaldo']]
       .map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-suetab="'+k+'">'+esc(l)+'</button>').join('');
     $('sue-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.suetab; render(); });
   }
@@ -11406,7 +11459,7 @@ function buildFilterTable(cfg){
     $('sue-kpis').innerHTML =
       kpi(String(activosEn(hoyISO).length),'Empleados activos')+
       kpi(money0(t.devengado), etiquetaQ(sel)+' — devengado')+
-      kpi(money0(t.adelantos),'Adelantos ya pagados', t.adelantos>0?'var(--amber)':'')+
+      kpi(money0(t.pagado),'Ya pagado'+(t.adelantos>0?' (incluye '+money0(t.adelantos)+' de adelantos)':''), t.pagado>0?'var(--amber)':'')+
       kpi(money0(t.aPagar),'Falta pagar de esta quincena', t.aPagar>0?'var(--red)':'var(--green)')+
       kpi(L&&L.estado==='confirmada'?'✓ Confirmada':'Abierta','Estado de la quincena', L&&L.estado==='confirmada'?'var(--green)':'var(--muted)');
   }
@@ -11494,7 +11547,8 @@ function buildFilterTable(cfg){
       th('P.vac',86,'Plus vacacional')+th('SAC',86,'SAC / Medio aguinaldo')+th('Bono',88,'Bono, con su concepto')+
       th('Pres.',46,'Presentismo',true)+
       th('H.aus',44,'Horas de ausentismo')+th('Faltas',48,'Días de falta')+th('Otros',88,'Otros descuentos, con su concepto')+
-      th('Devengado',88)+th('Adelantos',84)+th('A pagar',84)+'</tr>';
+      th('Devengado',88)+th('Pagado',84,'Adelantos y pagos ya imputados a su compra')+
+      th('Falta',84,'Lo que todavía hay que pagarle: el saldo de su compra')+'</tr>';
     // Se separan los QUINCENALES de la fábrica de los MENSUALES: cobran en fechas distintas, el costo
     // se imputa a meses distintos y el recibo dice otra cosa. Verlos mezclados confunde.
     const grupos=[
@@ -11509,10 +11563,17 @@ function buildFilterTable(cfg){
     const nCols=hayComision?17:16, colMedio=hayComision?13:12;
     const separar=grupos.length>1;   // con un solo grupo no hace falta encabezarlo
 
-    let tDev=0, tAde=0;
+    let tDev=0, tAde=0, tFalta=0, hayDelMes=false;
     const filaDeEmp = e=>{
-      const f=filaDe(L,e), k=liquidarFila(f,e,L.quincena), ade=adelantoDeEmp(sel,e._uid);
-      tDev+=k.devengado; tAde+=ade;
+      const f=filaDe(L,e), k=liquidarFila(f,e,L.quincena);
+      const pag=pagadoDeEmp(sel,e._uid), falta=faltaDeEmp(sel,e,k.devengado);
+      // Una compra cargada a mano cubre el MES entero (las 2 quincenas), así que su "pagado" es mayor
+      // que el devengado de esta quincena y leído sin contexto parece que se le pagó de más. Se marca
+      // con un ° y el detalle va en el title.
+      const cEmp=compraDeEmp(sel,e._uid);
+      const delMes = cEmp && Math.abs(num(cEmp.total)-k.devengado)>1;
+      if(delMes) hayDelMes=true;
+      tDev+=k.devengado; tAde+=pag; tFalta+=falta;
       const distinto = num(f.basicoMes)!==num(e.basicoMes) && num(e.basicoMes)>0;
       // Comisión: se muestra cuánto daría HOY para poder refrescarla, pero manda lo guardado en la fila.
       const cHoy = num(e.comisionPct)>0 ? comisionCalculada(e, L.periodo) : null;
@@ -11559,33 +11620,41 @@ function buildFilterTable(cfg){
         '<td class="n">'+nIn(round2(num(f.otrosDesc)),'sue-i',e._uid,'otrosDesc','0.01')+
           tIn(f.otrosDescDesc,e._uid,'otrosDescDesc','Concepto')+'</td>'+
         '<td class="n sue-c-dev" style="white-space:nowrap"><b>'+money0(k.devengado)+'</b></td>'+
-        '<td class="n sue-c-ade" style="white-space:nowrap">'+(ade>0?money0(ade):'—')+'</td>'+
-        '<td class="n sue-c-pag" style="white-space:nowrap"><b>'+money0(k.devengado-ade)+'</b></td></tr>';
+        '<td class="n sue-c-ade" style="white-space:nowrap"'+
+          (delMes?' title="De su compra de '+esc(money(cEmp.total))+', que cubre el mes entero (las 2 quincenas)"':'')+'>'+
+          (pag>0?money0(pag)+(delMes?'<span style="color:var(--muted)">°</span>':''):'—')+'</td>'+
+        '<td class="n sue-c-pag" style="white-space:nowrap"><b>'+(falta>0.5?money0(falta):
+          '<span style="color:var(--green)">✓ pagado</span>')+'</b></td></tr>';
     };
 
     grupos.forEach(g=>{
       if(separar) html+='<tr class="sue-grupo"><td colspan="'+nCols+'" style="background:var(--bg,#f1f5f9);border-top:2px solid var(--border);padding:7px 8px">'+
         '<b>'+esc(g.titulo)+'</b> <span style="color:var(--muted)">('+g.emps.length+')</span>'+
         '<div style="font-size:10.5px;color:var(--muted);font-weight:400">'+esc(g.sub)+'</div></td></tr>';
-      const antesD=tDev, antesA=tAde;
+      const antesD=tDev, antesA=tAde, antesF=tFalta;
       html+=g.emps.map(filaDeEmp).join('');
       if(separar){
-        const d=round2(tDev-antesD), a=round2(tAde-antesA);
+        const d=round2(tDev-antesD), a=round2(tAde-antesA), fl=round2(tFalta-antesF);
         html+='<tr class="sue-sub" data-sub="'+g.k+'"><td style="color:var(--muted)">Subtotal '+esc(g.titulo.split(' —')[0].toLowerCase())+'</td>'+
           '<td colspan="'+colMedio+'"></td>'+
           '<td class="n" id="sue-sub-'+g.k+'-dev" style="white-space:nowrap">'+money0(d)+'</td>'+
           '<td class="n" id="sue-sub-'+g.k+'-ade" style="white-space:nowrap">'+money0(a)+'</td>'+
-          '<td class="n" id="sue-sub-'+g.k+'-pag" style="white-space:nowrap">'+money0(d-a)+'</td></tr>';
+          '<td class="n" id="sue-sub-'+g.k+'-pag" style="white-space:nowrap">'+money0(fl)+'</td></tr>';
       }
     });
     html+='<tr class="total"><td><b>TOTAL</b></td><td colspan="'+colMedio+'"></td>'+
       '<td class="n" id="sue-tot-dev" style="white-space:nowrap"><b>'+money0(tDev)+'</b></td>'+
       '<td class="n" id="sue-tot-ade" style="white-space:nowrap"><b>'+money0(tAde)+'</b></td>'+
-      '<td class="n" id="sue-tot-pag" style="white-space:nowrap"><b>'+money0(tDev-tAde)+'</b></td></tr>';
+      '<td class="n" id="sue-tot-pag" style="white-space:nowrap"><b>'+money0(tFalta)+'</b></td></tr>';
     // ⚠️ min-width con la SUMA de los anchos. Con table-layout:fixed, si el contenedor es más angosto
     // que la tabla el navegador ESCALA las columnas hacia abajo y los números quedan recortados
     // adentro de los campos. Con min-width no se encoge: scrollea dentro de .tbl-wrap (overflow-x:auto)
     // y todo se lee entero, que es lo que importa.
+    // Aclaración del ° — sin esto, "Pagado $1.464.055" en una quincena de $682.028 se lee como que se
+    // le pagó de más, cuando en realidad esa compra cubre el mes entero.
+    if(hayDelMes) html+='<tr><td colspan="'+nCols+'" style="font-size:10.5px;color:var(--muted);padding:6px 8px;border:0">'+
+      '° Su sueldo está cargado como UNA compra por el mes entero (las 2 quincenas), así que ahí se ve el pagado del mes. '+
+      'Lo que importa es la columna <b>Falta</b>: es lo que todavía hay que darle.</td></tr>';
     $('sue-tabla-liq').style.minWidth=anchoTotal+'px';
     $('sue-tabla-liq').innerHTML=html;
     wireLiq(L);
@@ -11637,25 +11706,26 @@ function buildFilterTable(cfg){
   }
   function refrescarFila(L, emp){
     const tr=$('sue-tabla-liq').querySelector('tr[data-fila="'+CSS.escape(emp._uid)+'"]'); if(!tr) return;
-    const k=liquidarFila(filaDe(L,emp),emp,L.quincena), ade=adelantoDeEmp(sel,emp._uid);
+    const k=liquidarFila(filaDe(L,emp),emp,L.quincena);
+    const falta=faltaDeEmp(sel,emp,k.devengado);
     const set=(cls,txt)=>{ const c=tr.querySelector('.'+cls); if(c) c.innerHTML=txt; };
     set('sue-c-quin', money0(esMensual(emp)?k.V.mes:k.V.quincena));
     set('sue-c-dev','<b>'+money0(k.devengado)+'</b>');
-    set('sue-c-pag','<b>'+money0(k.devengado-ade)+'</b>');
+    set('sue-c-pag','<b>'+(falta>0.5?money0(falta):'<span style="color:var(--green)">✓ pagado</span>')+'</b>');
     // Subtotales por grupo (quincenales / mensuales) — se recalculan sin repintar la tabla, para no
     // sacarle el foco al campo que se está tipeando.
     [['q',e=>!esMensual(e)],['m',esMensual]].forEach(([g,filtro])=>{
       if(!$('sue-sub-'+g+'-dev')) return;
-      let d=0,a=0;
-      liquidanEn(sel).filter(filtro).forEach(x=>{ d+=liquidarFila(filaDe(L,x),x,L.quincena).devengado; a+=adelantoDeEmp(sel,x._uid); });
-      d=round2(d); a=round2(a);
-      $('sue-sub-'+g+'-dev').innerHTML=money0(d);
-      $('sue-sub-'+g+'-ade').innerHTML=money0(a);
-      $('sue-sub-'+g+'-pag').innerHTML=money0(d-a);
+      let d=0,a=0,fl=0;
+      liquidanEn(sel).filter(filtro).forEach(x=>{ const kk=liquidarFila(filaDe(L,x),x,L.quincena);
+        d+=kk.devengado; a+=pagadoDeEmp(sel,x._uid); fl+=faltaDeEmp(sel,x,kk.devengado); });
+      $('sue-sub-'+g+'-dev').innerHTML=money0(round2(d));
+      $('sue-sub-'+g+'-ade').innerHTML=money0(round2(a));
+      $('sue-sub-'+g+'-pag').innerHTML=money0(round2(fl));
     });
     const t=totalesDe(sel);
     if($('sue-tot-dev')) $('sue-tot-dev').innerHTML='<b>'+money0(t.devengado)+'</b>';
-    if($('sue-tot-ade')) $('sue-tot-ade').innerHTML='<b>'+money0(t.adelantos)+'</b>';
+    if($('sue-tot-ade')) $('sue-tot-ade').innerHTML='<b>'+money0(t.pagado)+'</b>';
     if($('sue-tot-pag')) $('sue-tot-pag').innerHTML='<b>'+money0(t.aPagar)+'</b>';
     pintarKpis();
   }
@@ -11665,7 +11735,11 @@ function buildFilterTable(cfg){
   function sueldosYaEnCompras(L){
     if(!window.__comprasDeSueldos) return [];
     const nombres=liquidanEn(sel).map(e=>e.nombre).filter(Boolean);
-    return window.__comprasDeSueldos(String(L.desde).slice(0,7), nombres, 'sue_'+L.periodo+'_Q'+L.quincena);
+    // Una compra YA VINCULADA a un empleado no es un duplicado: es justamente la compra de esa
+    // quincena, y el Tablero ya sabe que no tiene que crear otra.
+    const vinc=new Set(Object.keys((L.filas)||{}).map(uid=>L.filas[uid].compraUid).filter(Boolean));
+    return window.__comprasDeSueldos(String(L.desde).slice(0,7), nombres, 'sue_'+L.periodo+'_Q'+L.quincena)
+      .filter(o=>!vinc.has(o.uid));
   }
   function pintarAvisoLiq(L){
     const el=$('sue-liq-aviso'); if(!el) return;
@@ -11684,7 +11758,8 @@ function buildFilterTable(cfg){
   function pintarPieLiq(L){
     const el=$('sue-liq-pie'); if(!el) return;
     const t=totalesDe(sel), cerrada=L.estado==='confirmada';
-    const cs=window.__comprasSueldoDeQuincena?window.__comprasSueldoDeQuincena(L.periodo,L.quincena):[];
+    // Las compras de la quincena: las que generó el Tablero MÁS las que se vincularon a mano.
+    const cs=comprasDeLaQuincena(sel);
     let estado='';
     if(cs.length){
       const tot=round2(cs.reduce((a,x)=>a+num(x.total),0)), pag=round2(cs.reduce((a,x)=>a+num(x.pagado),0));
@@ -11702,6 +11777,7 @@ function buildFilterTable(cfg){
             ? '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar-sin">✓ Confirmar sin crear la compra</button>'+
               '<button class="cmp-btn" id="sue-confirmar">Confirmar y crear la compra igual</button>'
             : '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar">✓ Confirmar quincena e imputar en Compras</button>'))+
+      (t.aPagar>0.5?'<button class="cmp-btn'+(cerrada?' cmp-btn-primary':'')+'" id="sue-pagar">💵 Pagar la quincena · '+money0(t.aPagar)+'</button>':'')+
       '<button class="cmp-btn" id="sue-recibos-todos">🖨️ Recibos de todos</button>'+
       '</div>'+
       '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Confirmar crea (o actualiza) <b>una compra por persona</b> — '+
@@ -11714,6 +11790,7 @@ function buildFilterTable(cfg){
     if($('sue-confirmar')) $('sue-confirmar').onclick=()=>confirmarQuincena(L, true);
     if($('sue-confirmar-sin')) $('sue-confirmar-sin').onclick=()=>confirmarQuincena(L, false);
     if($('sue-reabrir'))   $('sue-reabrir').onclick=()=>reabrirQuincena(L);
+    if($('sue-pagar'))     $('sue-pagar').onclick=()=>abrirPagoQuincena();
     if($('sue-recibos-todos')) $('sue-recibos-todos').onclick=()=>{
       const emps=liquidanEn(sel).filter(e=>liquidarFila(filaDe(L,e),e,L.quincena).devengado>0);
       if(!emps.length){ alert('No hay ninguna liquidación con importe en esta quincena.'); return; }
@@ -11748,13 +11825,21 @@ function buildFilterTable(cfg){
         '⚠️ Revisá que el saldo de esas compras coincida con lo que dice acá — si no, la deuda que ves en '+
         'Finanzas no es la real.';
     }
+    // Los que ya tienen su compra vinculada no llevan una compra nueva: ya están en Compras.
+    const vinculados=liquidanEn(sel).filter(e=>filaDe(L,e).compraUid);
+    if(crearCompra && vinculados.length)
+      msg+='\n\nNO se les crea compra a '+vinculados.map(e=>e.nombre||'').join(', ')+
+        ': su sueldo ya está cargado en Compras y quedó vinculado desde acá.';
     if(!confirm(msg+'\n\n¿Confirmás?')) return;
-    let hechas=0;
+    let hechas=0; const saltadas=[];
     if(crearCompra){
       if(!window.__upsertCompraSueldo){ alert('El módulo Compras no está disponible.'); return; }
       liquidanEn(sel).forEach(e=>{
-        const k=liquidarFila(filaDe(L,e), e, L.quincena);
+        const f=filaDe(L,e), k=liquidarFila(f, e, L.quincena);
         if(!(k.devengado>0)) return;
+        // 🔴 Si esta persona ya tiene su compra VINCULADA (una cargada a mano), crear además la del
+        // Tablero contaría su sueldo DOS veces. La vinculada es la buena: el pago ya se registra ahí.
+        if(f.compraUid){ saltadas.push(e.nombre||''); return; }
         // ⚠️ `fecha` = en qué MES se computa el costo · `vencimiento` = cuándo sale la plata. Para un
         // quincenal pueden caer en meses distintos (trabaja en julio, cobra el 1 de agosto): el costo
         // va a julio y la caja lo proyecta en agosto. Ver fechaCostoDe().
@@ -11765,7 +11850,8 @@ function buildFilterTable(cfg){
         hechas++;
       });
     }
-    L.estado='confirmada'; L.compraUid=''; L.sinCompra=!crearCompra; L.comprasGeneradas=hechas;
+    L.estado='confirmada'; L.compraUid=''; L.sinCompra=!crearCompra && !hechas; L.comprasGeneradas=hechas;
+    L.vinculadas=saltadas.length;
     const c=fb(); L.confirmadaPor=(c&&c.auth&&c.auth.currentUser)?c.auth.currentUser.email:'';
     L.confirmadaTs=new Date().toISOString();
     persistLiq(L,true); render();
@@ -11952,28 +12038,36 @@ function buildFilterTable(cfg){
     $('sue-adel-barra').innerHTML=barraPeriodo('sue-adel');
     wireBarraPeriodo('sue-adel');
 
-    const ade=adelantosDe(sel);
-    $('sue-adel-nota').innerHTML='Un adelanto sale de la caja <b>el día que se lo das</b>: queda registrado como un pago de la compra de sueldos de '+
-      esc(etiquetaQ(sel))+', con su fecha y su cuenta. Después se descuenta del recibo, sin volver a mover plata.';
-    let html='<tr><th>Fecha</th><th>Empleado</th><th class="n">Monto</th><th>Medio</th><th>Cuenta</th><th>Nota</th><th></th></tr>';
-    if(!ade.length) html+='<tr><td colspan="7" style="padding:14px;color:var(--muted)">Sin adelantos en esta quincena.</td></tr>';
-    ade.forEach(p=>{
-      const e=EMP.find(x=>x._uid===p.sueEmpUid);
-      html+='<tr><td>'+fmtFecha(p.fecha)+'</td><td><b>'+esc((e&&e.nombre)||p.sueEmpNombre||'—')+'</b></td>'+
+    // Se listan TODOS los pagos de la quincena, no solo los adelantos: el adelanto y el pago del
+    // saldo son la misma cosa (plata que se le dio), y verlos juntos es lo que permite responder
+    // "¿cuánto le pagué de esta quincena?" sin ir a Compras.
+    const todos=pagosDe(sel);
+    $('sue-adel-nota').innerHTML='Todo lo que se pagó de <b>'+esc(etiquetaQ(sel))+'</b>: los adelantos y el pago del saldo. '+
+      'Cada uno sale de la caja <b>el día que lo cargás</b> y queda registrado como un pago de la compra de esa persona '+
+      '(Compras → '+esc(String(P('sueCategoria','Mano de Obra')))+'). Un adelanto además se descuenta del recibo.';
+    let html='<tr><th>Fecha</th><th>Empleado</th><th>Concepto</th><th class="n">Monto</th><th>Medio</th><th>Cuenta</th><th>Nota</th><th></th></tr>';
+    if(!todos.length) html+='<tr><td colspan="8" style="padding:14px;color:var(--muted)">Todavía no se pagó nada de esta quincena.</td></tr>';
+    todos.forEach(p=>{
+      const e=EMP.find(x=>x._uid===p.empUid);
+      html+='<tr><td>'+fmtFecha(p.fecha)+'</td><td><b>'+esc((e&&e.nombre)||p.empNombre||'—')+'</b></td>'+
+        '<td>'+(p.sueEsAdelanto?'<span style="color:var(--amber);font-weight:600">Adelanto</span>':'Pago')+'</td>'+
         '<td class="n">'+money0(p.monto)+'</td><td>'+esc(p.medio||'—')+'</td><td>'+esc(p.cuenta||'—')+'</td>'+
         '<td>'+esc(p.sueNota||'')+'</td>'+
         '<td style="text-align:center"><button class="cmp-rowbtn" data-adelx="'+esc(p.id)+'">✕ Anular</button></td></tr>';
     });
-    const tot=round2(ade.reduce((a,p)=>a+num(p.monto),0));
-    html+='<tr class="total"><td><b>TOTAL</b></td><td></td><td class="n"><b>'+money0(tot)+'</b></td><td colspan="4"></td></tr>';
+    const tot=round2(todos.reduce((a,p)=>a+num(p.monto),0));
+    html+='<tr class="total"><td><b>TOTAL</b></td><td></td><td></td><td class="n"><b>'+money0(tot)+'</b></td><td colspan="4"></td></tr>';
     $('sue-tabla-adel').innerHTML=html;
     $('sue-tabla-adel').querySelectorAll('button[data-adelx]').forEach(b=> b.onclick=()=>anularAdelanto(L, b.dataset.adelx));
+    if(window.__ordenable) window.__ordenable('sue-tabla-adel');
   }
   function anularAdelanto(L, pagoId){
-    const p=adelantosDe(sel).find(x=>x.id===pagoId); if(!p) return;
-    if(!confirm('¿Anular el adelanto de '+money(p.monto)+' del '+fmtFecha(p.fecha)+'?\n\nEsa plata vuelve a figurar como disponible en la caja de ese día y deja de descontarse del recibo.')) return;
+    const p=pagosDe(sel).find(x=>x.id===pagoId); if(!p) return;
+    const qué=p.sueEsAdelanto?'el adelanto':'el pago';
+    if(!confirm('¿Anular '+qué+' de '+money(p.monto)+' del '+fmtFecha(p.fecha)+'?\n\nEsa plata vuelve a figurar como disponible en la caja de ese día'+
+      (p.sueEsAdelanto?' y deja de descontarse del recibo.':' y vuelve a figurar como deuda con esa persona.'))) return;
     if(window.__anularPagoCompra && window.__anularPagoCompra(p.compraUid, pagoId)) render();
-    else alert('No se pudo anular el adelanto.');
+    else alert('No se pudo anular.');
   }
   function abrirAdelanto(){
     const L=liqOCrear(sel);
@@ -12004,6 +12098,195 @@ function buildFilterTable(cfg){
     $('sue-a-save').onclick=()=>guardarAdelanto(L);
     $('sue-modal-adel').classList.add('open');
   }
+  // ---------- PAGO DE LA QUINCENA ----------
+  // Las compras de esta quincena: las que generó el Tablero MÁS las vinculadas a mano.
+  function comprasDeLaQuincena(s){
+    const out=[], vistas=new Set();
+    (window.__comprasSueldoDeQuincena?window.__comprasSueldoDeQuincena(perDe(s), s.quincena):[])
+      .forEach(c=>{ if(!vistas.has(c.uid)){ vistas.add(c.uid); out.push(c); } });
+    empsDeQuincena(s).forEach(e=>{ const c=compraDeEmp(s,e._uid);
+      if(c && !vistas.has(c.uid)){ vistas.add(c.uid); out.push(c); } });
+    return out;
+  }
+  // Compras cargadas a mano que PODRÍAN ser el sueldo de este empleado, para poder vincularlas.
+  // Reusa la guarda anti doble conteo (busca por nombre en cualquier categoría, ver Compras) y deja
+  // afuera las que ya están tomadas por otro empleado de la misma quincena.
+  // 🔴 Esa guarda matchea con UN SOLO token en común a propósito, porque como AVISO conviene que sobre
+  // ("HERTZ JOSE" tiene que pescar a "HERZ JOSE FRANCISCO"). Pero acá se VINCULA y se PAGA, así que un
+  // match flojo manda plata a la persona equivocada: a "VASSALLO MARCELO ALEJANDRO" le aparecía la
+  // compra de "ESCOBEDO ALEJANDRO ARIEL" por compartir "ALEJANDRO". Por eso se puntúa de nuevo acá:
+  // las de 2+ tokens (seguras) van primero y son las únicas que se pueden preseleccionar solas.
+  function candidatasDe(s, emp){
+    if(!window.__comprasDeSueldos) return [];
+    const L=liqDe(s);
+    const tomadas=new Set();
+    Object.keys((L&&L.filas)||{}).forEach(uid=>{ const u=L.filas[uid].compraUid; if(u && uid!==emp._uid) tomadas.add(u); });
+    // Una compra que matchea MEJOR con otro empleado de la nómina no es candidata de este: así la de
+    // Escobedo deja de ofrecerse en la fila de Vassallo aunque compartan un nombre.
+    const otros=empsDeQuincena(s).filter(x=>x._uid!==emp._uid).map(x=>x.nombre).filter(Boolean);
+    const mejorAjeno={};
+    (otros.length?window.__comprasDeSueldos(perDe(s), otros):[]).forEach(c=>{ if(c.seguro) mejorAjeno[c.uid]=true; });
+    return window.__comprasDeSueldos(perDe(s), [emp.nombre||''])
+      .filter(c=>!tomadas.has(c.uid))
+      .filter(c=>c.seguro || !mejorAjeno[c.uid])
+      .sort((a,b)=> (b.seguro?1:0)-(a.seguro?1:0) || String(a.fecha).localeCompare(String(b.fecha)));
+  }
+  function abrirPagoQuincena(){
+    const L=liqOCrear(sel);
+    const emps=empsDeQuincena(sel).filter(e=>liquidarFila(filaDe(L,e),e,L.quincena).devengado>0);
+    if(!emps.length){ alert('En esta quincena no hay ninguna liquidación con importe.'); return; }
+    const cuentas=(window.__cajaCuentas?window.__cajaCuentas():[]);
+    const medios=['Transferencia','Efectivo'];
+    const fSug=L.fechaPago||hoyISO;
+    let html='<p style="margin:0 0 12px;font-size:13px;color:var(--muted)">Pago de la <b>'+esc(etiquetaQ(sel))+
+      '</b>. Se registra en la compra de cada persona (Compras → '+esc(String(P('sueCategoria','Mano de Obra')))+
+      '), así sale de la caja el día que elijas y no se cuenta dos veces.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
+        '<div class="cmp-field"><label>Fecha del pago</label><input type="date" id="sue-p-fecha" value="'+esc(fSug)+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+        '<div class="cmp-field"><label>Medio</label><select id="sue-p-medio" class="cmp-select" style="width:100%">'+medios.map(m=>'<option>'+esc(m)+'</option>').join('')+'</select></div>'+
+        '<div class="cmp-field"><label>¿De qué cuenta sale?</label><select id="sue-p-cuenta" class="cmp-select" style="width:100%">'+
+          (cuentas.length?cuentas.map(c=>'<option>'+esc(c)+'</option>').join(''):'<option value="">—</option>')+'</select></div>'+
+      '</div>'+
+      '<table class="cmp-items-tbl" style="width:100%;margin-top:12px"><tr>'+
+        '<th style="width:34px;text-align:center"></th><th style="text-align:left">Empleado</th>'+
+        '<th class="n">Devengado</th><th class="n">Ya pagado</th><th class="n">Le pagás</th></tr>';
+    let porVincular=0;
+    emps.forEach(e=>{
+      const k=liquidarFila(filaDe(L,e),e,L.quincena);
+      let c=compraDeEmp(sel,e._uid), falta=faltaDeEmp(sel,e,k.devengado);
+      const cand=c?[]:candidatasDe(sel,e);
+      // Si hay UNA sola candidata segura (2+ tokens del nombre), se preselecciona: en la práctica es
+      // SU compra, y dejar elegida "crear una nueva" invita a duplicar el sueldo con un solo clic de
+      // más. Con varias, o con una dudosa, no se elige nada y lo decide la persona.
+      const seguras=cand.filter(x=>x.seguro);
+      const pre = seguras.length===1 ? seguras[0] : null;
+      if(pre){ falta=round2(num(pre.saldo)); porVincular++; }
+      html+='<tr data-pfila="'+esc(e._uid)+'">'+
+        '<td style="text-align:center"><input type="checkbox" class="sue-p-chk" data-euid="'+esc(e._uid)+'"'+
+          (falta>0.5?' checked':'')+(falta>0.5?'':' disabled')+'></td>'+
+        '<td style="text-align:left"><b>'+esc(e.nombre||'')+'</b>'+
+          (cand.length?'<div style="margin-top:3px"><select class="cmp-select sue-p-vinc" data-euid="'+esc(e._uid)+'" style="width:100%;font-size:11px">'+
+              cand.map(x=>'<option value="'+esc(x.uid)+'" data-saldo="'+esc(round2(num(x.saldo)))+'"'+(pre&&pre.uid===x.uid?' selected':'')+'>'+
+                esc(x.proveedor)+' · '+esc(x.categoria)+' · '+fmtFecha(x.fecha)+' · saldo '+money0(x.saldo)+
+                (x.seguro?'':' — ¿es esta? revisala')+'</option>').join('')+
+              '<option value="" data-saldo="'+esc(round2(falta))+'"'+(pre?'':' selected')+'>⚠️ Crear una compra NUEVA para esta quincena</option></select>'+
+              '<div style="font-size:10px;color:var(--muted);margin-top:2px">'+
+                (pre?'Su sueldo ya está cargado en Compras: el pago va ahí y no se duplica.'
+                    :'Hay compras que pueden ser su sueldo. Elegí la correcta o vas a duplicarlo.')+'</div></div>'
+            :'')+
+          (c?'<div style="font-size:10px;color:var(--muted);margin-top:2px">Compra: '+esc(c.proveedor)+' · total '+money0(c.total)+'</div>':'')+'</td>'+
+        '<td class="n">'+money0(k.devengado)+'</td>'+
+        '<td class="n">'+(pre?money0(pre.total-pre.saldo):(c&&num(c.pagado)>0?money0(c.pagado):'—'))+'</td>'+
+        '<td class="n"><input type="number" step="0.01" min="0" class="sue-p-monto" data-euid="'+esc(e._uid)+'"'+
+          ' value="'+esc(falta>0.5?round2(falta):'')+'" style="width:100%;box-sizing:border-box;padding:4px 6px;border:1px solid var(--border);border-radius:6px;text-align:right"></td></tr>';
+    });
+    html+='<tr class="total"><td colspan="4" style="text-align:right"><b>TOTAL A PAGAR</b></td>'+
+      '<td class="n"><b id="sue-p-total">—</b></td></tr></table>'+
+      (porVincular?'<div style="border:1px solid var(--border);background:var(--bg,#f1f5f9);border-radius:8px;padding:8px 10px;font-size:11.5px;margin-top:10px">'+
+        '↔ <b>'+porVincular+'</b> de estos sueldos ya están cargados como compra a mano. Quedan vinculados al pagar, '+
+        'así que desde ahora la grilla te va a mostrar el saldo real de cada uno y el Tablero no les va a crear una compra aparte.</div>':'')+
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Podés destildar a quien no le pagues hoy, o cambiarle el importe para pagarle una parte. '+
+      'Lo que quede sin pagar sigue figurando como deuda.</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="sue-p-cancel">Cancelar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="sue-p-save">Registrar el pago</button></div>';
+    $('sue-pago-form').innerHTML=html;
+    if(window.__tarjetas){ window.__tarjetas('sue-p-medio'); window.__tarjetas('sue-p-cuenta'); }
+    const recalc=()=>{
+      let tot=0;
+      $('sue-pago-form').querySelectorAll('.sue-p-chk').forEach(ch=>{
+        if(!ch.checked) return;
+        const inp=$('sue-pago-form').querySelector('.sue-p-monto[data-euid="'+CSS.escape(ch.dataset.euid)+'"]');
+        tot+=num(inp&&inp.value);
+      });
+      $('sue-p-total').textContent = tot>0 ? money0(round2(tot)) : '—';
+    };
+    $('sue-pago-form').querySelectorAll('.sue-p-chk,.sue-p-monto').forEach(x=>{ x.oninput=recalc; x.onchange=recalc; });
+    // Al cambiar de compra cambia lo que se le debe: el importe sigue al SALDO de la elegida. Si no,
+    // quedaría el de la compra anterior y se pagaría de más o de menos sin que se note.
+    $('sue-pago-form').querySelectorAll('.sue-p-vinc').forEach(s2=> s2.onchange=()=>{
+      const op=s2.options[s2.selectedIndex];
+      const inp=$('sue-pago-form').querySelector('.sue-p-monto[data-euid="'+CSS.escape(s2.dataset.euid)+'"]');
+      if(inp && op && op.dataset.saldo!=null){ const v=round2(num(op.dataset.saldo)); inp.value = v>0.5? v : ''; }
+      recalc();
+    });
+    recalc();
+    $('sue-p-cancel').onclick=()=>$('sue-modal-pago').classList.remove('open');
+    $('sue-p-save').onclick=()=>guardarPagoQuincena(L);
+    $('sue-modal-pago').classList.add('open');
+  }
+  function guardarPagoQuincena(L){
+    const fecha=$('sue-p-fecha').value, medio=$('sue-p-medio').value, cuenta=$('sue-p-cuenta').value;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))){ alert('Cargá la fecha del pago.'); return; }
+    if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
+    const items=[];
+    $('sue-pago-form').querySelectorAll('.sue-p-chk').forEach(ch=>{
+      if(!ch.checked) return;
+      const uid=ch.dataset.euid, emp=EMP.find(x=>x._uid===uid); if(!emp) return;
+      const inp=$('sue-pago-form').querySelector('.sue-p-monto[data-euid="'+CSS.escape(uid)+'"]');
+      const monto=round2(num(inp&&inp.value)); if(!(monto>0)) return;
+      const vin=$('sue-pago-form').querySelector('.sue-p-vinc[data-euid="'+CSS.escape(uid)+'"]');
+      items.push({ emp, monto, vincular:(vin&&vin.value)||'' });
+    });
+    if(!items.length){ alert('No hay a quién pagarle: tildá al menos uno y cargale el importe.'); return; }
+    // 🔴 Dos personas no pueden cobrar de la MISMA compra: sería pagarle dos veces a una y nada a la
+    // otra, y encima dejaría un sueldo sin registrar. Se corta antes de escribir nada.
+    const porCompra={};
+    items.forEach(x=>{ if(x.vincular) (porCompra[x.vincular]=porCompra[x.vincular]||[]).push(x.emp.nombre||''); });
+    const choque=Object.keys(porCompra).filter(u=>porCompra[u].length>1);
+    if(choque.length){
+      alert('Hay una misma compra elegida para más de una persona:\n\n'+
+        choque.map(u=>'· '+porCompra[u].join(' y ')).join('\n')+
+        '\n\nCada uno tiene que tener la suya. Corregilo antes de seguir.');
+      return;
+    }
+    const tot=round2(items.reduce((a,x)=>a+x.monto,0));
+    // Pagar de más no se bloquea (puede haber un ajuste), pero sí se avisa: es plata real saliendo.
+    // ⚠️ El saldo hay que medirlo contra la compra que se va a VINCULAR en este mismo pago, no contra
+    // la de antes: si no, pagarle el saldo real de su compra (más alto que el devengado de la
+    // quincena, porque esa compra cubre el mes entero) disparaba el aviso para todos y dejaba de
+    // significar algo.
+    const excedidos=items.filter(x=>{
+      if(x.vincular){ const c=window.__compraPorUid?window.__compraPorUid(x.vincular):null;
+        return c ? x.monto > round2(num(c.saldo))+0.5 : false; }
+      const k=liquidarFila(filaDe(L,x.emp), x.emp, L.quincena);
+      return x.monto > faltaDeEmp(sel, x.emp, k.devengado)+0.5;
+    });
+    let msg='Registrar el pago de '+etiquetaQ(sel)+':\n\n'+
+      items.map(x=>'· '+(x.emp.nombre||'')+': '+money(x.monto)).join('\n')+
+      '\n\nTOTAL: '+money(tot)+'\nFecha: '+fmtFecha(fecha)+' · '+medio+(cuenta?' · '+cuenta:'')+'\n\n'+
+      'Sale de la caja el '+fmtFecha(fecha)+' y se descuenta de la deuda con cada uno.';
+    if(excedidos.length) msg+='\n\n⚠️ A '+excedidos.map(x=>x.emp.nombre||'').join(', ')+
+      ' le estás pagando MÁS de lo que falta. Revisá el importe si no es un ajuste a propósito.';
+    if(fecha>hoyISO) msg+='\n\n⚠️ La fecha es futura: la caja va a mostrar esa salida recién ese día.';
+    if(!confirm(msg)) return;
+    let hechos=0; const fallaron=[];
+    items.forEach(x=>{
+      try{
+        const f=filaDe(L,x.emp);
+        // Vincular la compra elegida, si es una cargada a mano. Queda guardada en la fila, así la
+        // grilla muestra desde ahora el saldo REAL de esa compra y no se crea una duplicada.
+        if(x.vincular) f.compraUid=x.vincular;
+        let uid=f.compraUid;
+        if(!uid){
+          const dev=liquidarFila(f, x.emp, L.quincena).devengado;
+          uid=window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:x.emp._uid,
+            empNombre:x.emp.nombre, cuil:x.emp.cuil||'', monto:Math.max(dev, x.monto), fecha:fechaCostoDe(L,x.emp),
+            vencimiento:fechaPagoDe(L,x.emp),
+            detalle: esMensual(x.emp) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
+            nota:'Generado por el módulo Sueldos.' });
+        }
+        const id=window.__registrarPagoCompra(uid, { fecha, monto:x.monto, medio, cuenta,
+          sueEmpUid:x.emp._uid, sueEmpNombre:x.emp.nombre||'', sueNota:'Pago de '+etiquetaQ(sel) });
+        if(id) hechos++; else fallaron.push(x.emp.nombre||'');
+      }catch(err){ fallaron.push(x.emp.nombre||''); }
+    });
+    persistLiq(L,true);
+    $('sue-modal-pago').classList.remove('open');
+    render();
+    if(fallaron.length) alert('Se registraron '+hechos+' de '+items.length+' pagos.\n\nNo se pudo con: '+fallaron.join(', ')+
+      '.\nRevisalos en Compras antes de volver a intentar, para no pagar dos veces.');
+  }
+
   function guardarAdelanto(L){
     const empUid=$('sue-a-emp').value, monto=num($('sue-a-monto').value), fecha=$('sue-a-fecha').value;
     const emp=EMP.find(x=>x._uid===empUid);
@@ -12014,8 +12297,11 @@ function buildFilterTable(cfg){
     if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
     // La compra de ESE empleado tiene que existir para colgarle el pago. Si la quincena todavía no se
     // confirmó, se crea con su devengado de ahora y se actualiza sola al confirmar.
-    const dev=liquidarFila(filaDe(L,emp), emp, L.quincena).devengado;
-    const uid=window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
+    // Si ya tiene una compra VINCULADA (cargada a mano), el adelanto va ahí: crear otra duplicaría
+    // el sueldo, que es justo lo que la vinculación evita.
+    const fEmp=filaDe(L,emp);
+    const dev=liquidarFila(fEmp, emp, L.quincena).devengado;
+    const uid=fEmp.compraUid || window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
       empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:fechaCostoDe(L,emp),
       vencimiento:fechaPagoDe(L,emp),
       detalle: esMensual(emp) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
@@ -12192,12 +12478,15 @@ function buildFilterTable(cfg){
   function wire(){
     if($('sue-cerrar')) $('sue-cerrar').onclick=cerrarLegajo;
     if($('sue-adel-cerrar')) $('sue-adel-cerrar').onclick=()=>$('sue-modal-adel').classList.remove('open');
+    if($('sue-pago-cerrar')) $('sue-pago-cerrar').onclick=()=>$('sue-modal-pago').classList.remove('open');
     if($('sue-btn-nuevo')) $('sue-btn-nuevo').onclick=()=>abrirLegajo(null);
     if($('sue-btn-adel')) $('sue-btn-adel').onclick=abrirAdelanto;
+    if($('sue-btn-pagoq')) $('sue-btn-pagoq').onclick=abrirPagoQuincena;
     if($('sue-emp-buscar')) $('sue-emp-buscar').addEventListener('input',()=>{ filtroEmp.q=$('sue-emp-buscar').value; renderEmp(); });
     if($('sue-emp-bajas')) $('sue-emp-bajas').addEventListener('change',()=>{ filtroEmp.bajas=$('sue-emp-bajas').checked; renderEmp(); });
     const ov=$('sue-modal'); if(ov) ov.addEventListener('click',e=>{ if(e.target===ov) cerrarLegajo(); });
     const ov2=$('sue-modal-adel'); if(ov2) ov2.addEventListener('click',e=>{ if(e.target===ov2) ov2.classList.remove('open'); });
+    const ov3=$('sue-modal-pago'); if(ov3) ov3.addEventListener('click',e=>{ if(e.target===ov3) ov3.classList.remove('open'); });
   }
 
   if(window.__usaNube){
