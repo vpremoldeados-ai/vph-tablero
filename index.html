@@ -10705,7 +10705,8 @@ function buildFilterTable(cfg){
   // Cantidades con hasta 2 decimales pero sin ceros al pepe ("1" y no "1,00"; "2,5" y no "2,50").
   const cantDoc = n => { const v=Math.round(num(n)*100)/100;
     return v.toLocaleString('es-AR',{minimumFractionDigits:0, maximumFractionDigits:2}); };
-  function reciboSueldoCuerpo(o, copia){
+  // (el 2º argumento —la leyenda ORIGINAL/DUPLICADO— se sacó el 31/07 a pedido de Marcelo)
+  function reciboSueldoCuerpo(o){
     const e=o.empleado||{};
     const fila = r=>'<tr><td>'+esc(r.concepto||'')+'</td>'+
       '<td class="n">'+(r.cant==null?'':cantDoc(r.cant))+'</td>'+
@@ -10747,13 +10748,13 @@ function buildFilterTable(cfg){
           'Total descuentos <b>'+money(Math.abs(num(o.totalDescuentos)))+'</b></div>'+
         '<div class="rs-big">NETO A COBRAR <span>'+money(o.neto)+'</span></div>'+
       '</div>'+
-      // Si la otra quincena del mes todavía no está liquidada, el mes se estima duplicando esta —
-      // así lo hacía la planilla. Se aclara, para que el papel no afirme un número que no es.
+      // Remuneración del mes = básico + presentismo del mes; el día es eso ÷ 20 y la hora, el día ÷ 8.
       '<div class="rs-ref">Remuneración del mes: '+money(o.totalMes)+(o.totalMesEstimado?' (estimada)':'')+
         ' · Valor del día: '+money(o.valorDia)+' · Valor de la hora: '+money(o.valorHora)+'</div>'+
       '<div class="rs-firma">Recibí conforme la suma de <b>'+money(o.neto)+'</b>'+
         '<div style="margin-top:16px">Firma: ..............................................&nbsp;&nbsp; Aclaración: ..............................................&nbsp;&nbsp; Fecha: ....................</div></div>'+
-      '<div class="rs-pie">'+esc(copia)+' · Comprobante interno de pago. No reemplaza al recibo de sueldo del Art. 140 LCT.</div>'+
+      // Sin la leyenda de ORIGINAL/DUPLICADO (pedido de Marcelo, 31/07): las dos copias salen iguales.
+      '<div class="rs-pie">Comprobante interno de pago. No reemplaza al recibo de sueldo del Art. 140 LCT.</div>'+
     '</div>';
   }
   function reciboSueldo(o){
@@ -10787,8 +10788,7 @@ function buildFilterTable(cfg){
     // cada hoja el recibo va por duplicado: uno firmado para la empresa y otro para el empleado.
     const hoja = r => '<div class="rs-hoja">'+
       encabezado('R','RECIBO DE SUELDO', '', dmy(r.fechaPago), '', 'Fecha de Pago')+
-      reciboSueldoCuerpo(r,'ORIGINAL — queda firmado en la empresa')+
-      reciboSueldoCuerpo(r,'DUPLICADO — se lo lleva el empleado')+'</div>';
+      reciboSueldoCuerpo(r)+reciboSueldoCuerpo(r)+'</div>';
     const lote = (Array.isArray(o.lote)&&o.lote.length) ? o.lote : [o];
     return st+lote.map(hoja).join('')+pie();
   }
@@ -11125,12 +11125,22 @@ function buildFilterTable(cfg){
        día = básico ÷ 20 · hora = día ÷ 8 · sábado = día × 1,5 · hora extra = hora × 1,5 · feriado = día × 2
      Los divisores y factores son parámetros (Base de Datos → ⚙️ Parámetros → Sueldos), no constantes:
      son la convención de VPH, no la ley, y si cambian se tocan en un solo lugar. */
-  function valoresDe(basicoMes){
-    const mes=num(basicoMes);
+  // ⚠️ El PRESENTISMO es parte del BÁSICO (pedido de Marcelo, 31/07): dejó de ser un renglón aparte
+  // del recibo y entra en la base. `presMes` es el presentismo del MES entero (dos veces el de la
+  // quincena para un quincenal, una sola para un mensual), así que:
+  //    remuneración del mes = básico + presentismo · valor del día = eso ÷ 20 · valor de la hora = día ÷ 8
+  // Con eso `quincena` = básico por quincena CON presentismo, que es el renglón base del recibo.
+  // 🔴 Esto mueve también el valor del sábado, de la hora extra, del feriado y de las faltas — todos
+  // salen del valor del día. Es a propósito: si el presentismo es parte del sueldo, la hora extra se
+  // paga sobre el sueldo con presentismo.
+  // `presMes` es opcional: sin él se comporta como antes (lo usan los tests y cualquier llamador viejo).
+  function valoresDe(basicoMes, presMes){
+    const basico=num(basicoMes), pres=num(presMes);
+    const mes=basico+pres;
     const dias=Math.max(1, num(P('sueDiasMes',20)));
     const horas=Math.max(1, num(P('sueHorasDia',8)));
     const dia=mes/dias, hora=dia/horas;
-    return { mes, quincena:mes/2, dia, hora,
+    return { mes, basico, pres, quincena:mes/2, dia, hora,
       valSabado: dia*num(P('sueFactorSab',1.5)),
       valHoraExtra: hora*num(P('sueFactorHE',1.5)),
       valFeriado: dia*num(P('sueFactorFer',2)) };
@@ -11149,18 +11159,25 @@ function buildFilterTable(cfg){
 
   function liquidarFila(f, emp, quincena){
     f=f||{}; emp=emp||{};
-    const V=valoresDe(f.basicoMes!=null&&f.basicoMes!==''?f.basicoMes:emp.basicoMes);
     const presMonto=(emp.presentismo!=null&&emp.presentismo!=='')?num(emp.presentismo):num(P('suePresentismo',10000));
     const mensual=esMensual(emp);
+    // El presentismo del MES: dos veces el de la quincena para un quincenal (cobra dos por mes), una
+    // sola para un mensual. Si no le corresponde, la base queda como el básico pelado.
+    const cobraPres = !!f.presentismo && presMonto>0;
+    const presMes = cobraPres ? (mensual?presMonto:presMonto*2) : 0;
+    const V=valoresDe(f.basicoMes!=null&&f.basicoMes!==''?f.basicoMes:emp.basicoMes, presMes);
     const base=mensual?V.mes:V.quincena;
     const H=[];
     // Si la fila guarda el BÁSICO ANTERIOR, el recibo muestra dos renglones en vez de uno: lo que
     // venía cobrando y el aumento aparte. Pedido de Marcelo — un aumento tiene que verse, no venir
     // escondido dentro de un básico más grande. El total no cambia: es el mismo importe partido.
+    // ⚠️ Se compara contra el BÁSICO pelado (V.basico), no contra V.mes, que ahora lleva el
+    // presentismo: comparar contra el total daría un "aumento" que en realidad es el presentismo.
     const basAnt=num(f.basicoAnterior);
-    const hayAumento = basAnt>0 && Math.abs(basAnt-V.mes)>0.005;
+    const hayAumento = basAnt>0 && Math.abs(basAnt-V.basico)>0.005;
     if(hayAumento){
-      const baseAnt = mensual ? basAnt : basAnt/2;
+      // El básico anterior también lleva su presentismo, si no el aumento sale inflado por ese monto.
+      const baseAnt = mensual ? (basAnt+presMes) : ((basAnt+presMes)/2);
       H.push({concepto:(mensual?'Básico mensual':'Básico por quincena'), cant:1, valor:baseAnt, importe:baseAnt});
       H.push({concepto:'Aumento '+(mensual?'del mes':(num(quincena)===2?'2ª quincena':num(quincena)===1?'1ª quincena':'de sueldo')),
               cant:null, valor:null, importe:round2(base-baseAnt)});
@@ -11174,7 +11191,7 @@ function buildFilterTable(cfg){
     if(num(f.plusVacacional)>0) H.push({concepto:'Plus vacacional',     cant:null, valor:null, importe:num(f.plusVacacional)});
     if(num(f.sac)>0)            H.push({concepto:'SAC / Medio aguinaldo', cant:null, valor:null, importe:num(f.sac)});
     if(num(f.bonos)>0)          H.push({concepto:(String(f.bonosDesc||'').trim()||'Bono'), cant:null, valor:null, importe:num(f.bonos)});
-    if(f.presentismo && presMonto>0) H.push({concepto:'Presentismo', cant:1, valor:presMonto, importe:presMonto});
+    // El PRESENTISMO ya no es un renglón: viaja adentro del básico (ver valoresDe).
     const D=[];
     if(num(f.horasAusencia)>0) D.push({concepto:'Horas de ausentismo', cant:num(f.horasAusencia), valor:V.hora, importe:num(f.horasAusencia)*V.hora});
     if(num(f.diasFalta)>0)     D.push({concepto:'Días de ausentismo',  cant:num(f.diasFalta),     valor:V.dia,  importe:num(f.diasFalta)*V.dia});
@@ -11879,15 +11896,14 @@ function buildFilterTable(cfg){
   }
 
   // ---------- Recibo ----------
+  // Remuneración del mes = DOS veces el básico por quincena MÁS dos veces el presentismo (criterio de
+  // Marcelo, 31/07), que es exactamente `V.mes` — básico mensual + el presentismo del mes.
+  // ⚠️ Es la BASE del sueldo, no lo devengado: no lleva horas extras, bonos, SAC ni el retroactivo de
+  // un aumento. Antes se sumaban las dos quincenas devengadas (o se duplicaba esta y decía
+  // "estimada"), así que un mes con horas extras mostraba un "valor del día" más alto que el real y
+  // el número cambiaba según lo que se hubiera cargado. Ahora es estable y no necesita estimarse.
   function remuneracionDelMes(L, emp){
-    // Un MENSUAL cobra todo en una sola quincena: su remuneración del mes ES este devengado.
-    if(esMensual(emp)) return { monto: liquidarFila(filaDe(L,emp),emp,L.quincena).devengado, real:true };
-    // La del mes = las DOS quincenas del período. Si la otra todavía no está cargada, se estima
-    // duplicando esta (es lo que hacía la planilla) y el recibo lo dice.
-    const otra=LIQ.find(x=>x._uid==='liq_'+L.periodo+'_Q'+(num(L.quincena)===2?1:2));
-    const esta=liquidarFila(filaDe(L,emp),emp,L.quincena).devengado;
-    if(esReal(otra) && otra.filas && otra.filas[emp._uid]) return { monto:round2(esta+liquidarFila(otra.filas[emp._uid],emp,otra.quincena).devengado), real:true };
-    return { monto:round2(esta*2), real:false };
+    return { monto: round2(liquidarFila(filaDe(L,emp),emp,L.quincena).V.mes), real:true };
   }
   function reciboObj(L, emp){
     const f=filaDe(L,emp), k=liquidarFila(f,emp,L.quincena);
