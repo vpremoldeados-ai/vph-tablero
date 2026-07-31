@@ -11389,17 +11389,31 @@ function buildFilterTable(cfg){
       '<th class="n">Plus vac.</th><th class="n">SAC</th><th class="n">Bono</th><th style="text-align:center">Present.</th>'+
       '<th class="n">Hs aus.</th><th class="n">Faltas</th><th class="n">Otros desc.</th>'+
       '<th class="n">Devengado</th><th class="n">Adelantos</th><th class="n">A pagar</th><th></th></tr>';
+    // Se separan los QUINCENALES de la fábrica de los MENSUALES: cobran en fechas distintas, el costo
+    // se imputa a meses distintos y el recibo dice otra cosa. Verlos mezclados confunde.
+    const grupos=[
+      { k:'q', emps:emps.filter(e=>!esMensual(e)),
+        titulo:'Quincenales — de la fábrica',
+        sub:'Cobran el '+fmtFecha(L.fechaPago)+' · el costo se imputa a '+MESES[sel.mes-1]+' '+sel.anio },
+      { k:'m', emps:emps.filter(esMensual),
+        titulo:'Mensuales — mes completo',
+        sub:'A mes vencido: cobran el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+
+            ' · el costo se imputa a '+MESES[sel.mes%12]+' '+(sel.mes===12?sel.anio+1:sel.anio) }
+    ].filter(g=>g.emps.length);
+    const nCols=hayComision?18:17, colMedio=hayComision?13:12;
+    const separar=grupos.length>1;   // con un solo grupo no hace falta encabezarlo
+
     let tDev=0, tAde=0;
-    emps.forEach(e=>{
+    const filaDeEmp = e=>{
       const f=filaDe(L,e), k=liquidarFila(f,e), ade=adelantoDeEmp(sel,e._uid);
       tDev+=k.devengado; tAde+=ade;
       const distinto = num(f.basicoMes)!==num(e.basicoMes) && num(e.basicoMes)>0;
       // Comisión: se muestra cuánto daría HOY para poder refrescarla, pero manda lo guardado en la fila.
       const cHoy = num(e.comisionPct)>0 ? comisionCalculada(e, L.periodo) : null;
       const comDif = cHoy && Math.abs(cHoy.monto-num(f.comision))>0.5;
-      html+='<tr data-fila="'+esc(e._uid)+'">'+
+      return '<tr data-fila="'+esc(e._uid)+'">'+
         '<td style="white-space:nowrap"><b>'+esc(e.nombre||'—')+'</b>'+(e.legajo?' <span style="color:var(--muted)">#'+esc(e.legajo)+'</span>':'')+
-          (esMensual(e)?'<div style="font-size:10px;color:var(--muted)">mensual · mes completo</div>':'')+'</td>'+
+          (esMensual(e)&&!separar?'<div style="font-size:10px;color:var(--muted)">mensual · mes completo</div>':'')+'</td>'+
         // El ↻ (traer el básico del legajo) SOLO con la quincena abierta: en una confirmada cambiaría
         // lo liquidado sin tocar la compra que ya está en Compras, y los dos números quedarían distintos.
         '<td class="n" style="white-space:nowrap">'+nIn(round2(num(f.basicoMes)),'sue-i',e._uid,'basicoMes','0.01')+
@@ -11427,8 +11441,24 @@ function buildFilterTable(cfg){
         '<td class="n sue-c-ade">'+(ade>0?money0(ade):'—')+'</td>'+
         '<td class="n sue-c-pag"><b>'+money0(k.devengado-ade)+'</b></td>'+
         '<td style="text-align:center;white-space:nowrap"><button class="cmp-rowbtn" data-recibo="'+esc(e._uid)+'">🖨️ Recibo</button></td></tr>';
+    };
+
+    grupos.forEach(g=>{
+      if(separar) html+='<tr class="sue-grupo"><td colspan="'+nCols+'" style="background:var(--bg,#f1f5f9);border-top:2px solid var(--border);padding:7px 8px">'+
+        '<b>'+esc(g.titulo)+'</b> <span style="color:var(--muted)">('+g.emps.length+')</span>'+
+        '<div style="font-size:10.5px;color:var(--muted);font-weight:400">'+esc(g.sub)+'</div></td></tr>';
+      const antesD=tDev, antesA=tAde;
+      html+=g.emps.map(filaDeEmp).join('');
+      if(separar){
+        const d=round2(tDev-antesD), a=round2(tAde-antesA);
+        html+='<tr class="sue-sub" data-sub="'+g.k+'"><td style="color:var(--muted)">Subtotal '+esc(g.titulo.split(' —')[0].toLowerCase())+'</td>'+
+          '<td colspan="'+colMedio+'"></td>'+
+          '<td class="n" id="sue-sub-'+g.k+'-dev">'+money0(d)+'</td>'+
+          '<td class="n" id="sue-sub-'+g.k+'-ade">'+money0(a)+'</td>'+
+          '<td class="n" id="sue-sub-'+g.k+'-pag">'+money0(d-a)+'</td><td></td></tr>';
+      }
     });
-    html+='<tr class="total"><td><b>TOTAL</b></td><td colspan="'+(hayComision?13:12)+'"></td>'+
+    html+='<tr class="total"><td><b>TOTAL</b></td><td colspan="'+colMedio+'"></td>'+
       '<td class="n" id="sue-tot-dev"><b>'+money0(tDev)+'</b></td>'+
       '<td class="n" id="sue-tot-ade"><b>'+money0(tAde)+'</b></td>'+
       '<td class="n" id="sue-tot-pag"><b>'+money0(tDev-tAde)+'</b></td><td></td></tr>';
@@ -11481,6 +11511,17 @@ function buildFilterTable(cfg){
     set('sue-c-quin', money0(esMensual(emp)?k.V.mes:k.V.quincena));
     set('sue-c-dev','<b>'+money0(k.devengado)+'</b>');
     set('sue-c-pag','<b>'+money0(k.devengado-ade)+'</b>');
+    // Subtotales por grupo (quincenales / mensuales) — se recalculan sin repintar la tabla, para no
+    // sacarle el foco al campo que se está tipeando.
+    [['q',e=>!esMensual(e)],['m',esMensual]].forEach(([g,filtro])=>{
+      if(!$('sue-sub-'+g+'-dev')) return;
+      let d=0,a=0;
+      liquidanEn(sel).filter(filtro).forEach(x=>{ d+=liquidarFila(filaDe(L,x),x).devengado; a+=adelantoDeEmp(sel,x._uid); });
+      d=round2(d); a=round2(a);
+      $('sue-sub-'+g+'-dev').innerHTML=money0(d);
+      $('sue-sub-'+g+'-ade').innerHTML=money0(a);
+      $('sue-sub-'+g+'-pag').innerHTML=money0(d-a);
+    });
     const t=totalesDe(sel);
     if($('sue-tot-dev')) $('sue-tot-dev').innerHTML='<b>'+money0(t.devengado)+'</b>';
     if($('sue-tot-ade')) $('sue-tot-ade').innerHTML='<b>'+money0(t.adelantos)+'</b>';
