@@ -11081,14 +11081,25 @@ function buildFilterTable(cfg){
   // del básico mensual ÷ los días del mes. Lo único que cambia es el renglón base del recibo.
   const esMensual = e => String((e&&e.formaPago)||'quincenal')==='mensual';
 
-  function liquidarFila(f, emp){
+  function liquidarFila(f, emp, quincena){
     f=f||{}; emp=emp||{};
     const V=valoresDe(f.basicoMes!=null&&f.basicoMes!==''?f.basicoMes:emp.basicoMes);
     const presMonto=(emp.presentismo!=null&&emp.presentismo!=='')?num(emp.presentismo):num(P('suePresentismo',10000));
     const mensual=esMensual(emp);
     const base=mensual?V.mes:V.quincena;
     const H=[];
-    H.push({concepto:(mensual?'Básico mensual':'Básico por quincena'), cant:1, valor:base, importe:base});
+    // Si la fila guarda el BÁSICO ANTERIOR, el recibo muestra dos renglones en vez de uno: lo que
+    // venía cobrando y el aumento aparte. Pedido de Marcelo — un aumento tiene que verse, no venir
+    // escondido dentro de un básico más grande. El total no cambia: es el mismo importe partido.
+    const basAnt=num(f.basicoAnterior);
+    const hayAumento = basAnt>0 && Math.abs(basAnt-V.mes)>0.005;
+    if(hayAumento){
+      const baseAnt = mensual ? basAnt : basAnt/2;
+      H.push({concepto:(mensual?'Básico mensual':'Básico por quincena'), cant:1, valor:baseAnt, importe:baseAnt});
+      H.push({concepto:'Aumento '+(mensual?'del mes':(num(quincena)===2?'2ª quincena':num(quincena)===1?'1ª quincena':'de sueldo')),
+              cant:null, valor:null, importe:round2(base-baseAnt)});
+    }
+    else H.push({concepto:(mensual?'Básico mensual':'Básico por quincena'), cant:1, valor:base, importe:base});
     if(num(f.comision)>0) H.push({ concepto:'Comisión'+(num(f.comisionPct)>0?' '+nPct(f.comisionPct)+'%':'')+' sobre las ventas del mes',
       cant:null, valor:null, importe:num(f.comision) });
     if(num(f.sabados)>0)        H.push({concepto:'Sábados trabajados',  cant:num(f.sabados),     valor:V.valSabado,    importe:num(f.sabados)*V.valSabado});
@@ -11296,7 +11307,7 @@ function buildFilterTable(cfg){
     L.filas=L.filas||{};
     if(!L.filas[emp._uid]){
       const c=comisionCalculada(emp, L.periodo);
-      L.filas[emp._uid]={ basicoMes:num(emp.basicoMes), sabados:0, horasExtras:0, feriados:0,
+      L.filas[emp._uid]={ basicoMes:num(emp.basicoMes), basicoAnterior:0, sabados:0, horasExtras:0, feriados:0,
         plusVacacional:0, sac:0, bonos:0, bonosDesc:'', presentismo: emp.cobraPresentismo===false?0:1,
         comision:c.monto, comisionPct:c.pct, comisionBase:c.base,
         horasAusencia:0, diasFalta:0, otrosDesc:0, otrosDescDesc:'' };
@@ -11329,7 +11340,7 @@ function buildFilterTable(cfg){
     let dev=0, cant=0;
     uids.forEach(uid=>{
       const emp=EMP.find(e=>e._uid===uid); if(!emp) return;
-      const k=liquidarFila(filaDe(L,emp), emp); if(k.devengado>0) cant++;
+      const k=liquidarFila(filaDe(L,emp), emp, L.quincena); if(k.devengado>0) cant++;
       dev+=k.devengado;
     });
     const ade=round2(adelantosDe(s).reduce((a,p)=>a+num(p.monto),0));
@@ -11469,7 +11480,7 @@ function buildFilterTable(cfg){
 
     let tDev=0, tAde=0;
     const filaDeEmp = e=>{
-      const f=filaDe(L,e), k=liquidarFila(f,e), ade=adelantoDeEmp(sel,e._uid);
+      const f=filaDe(L,e), k=liquidarFila(f,e,L.quincena), ade=adelantoDeEmp(sel,e._uid);
       tDev+=k.devengado; tAde+=ade;
       const distinto = num(f.basicoMes)!==num(e.basicoMes) && num(e.basicoMes)>0;
       // Comisión: se muestra cuánto daría HOY para poder refrescarla, pero manda lo guardado en la fila.
@@ -11486,6 +11497,12 @@ function buildFilterTable(cfg){
         // El ↻ (traer el básico del legajo) SOLO con la quincena abierta: en una confirmada cambiaría
         // lo liquidado sin tocar la compra que ya está en Compras, y los dos números quedarían distintos.
         '<td class="n">'+nIn(round2(num(f.basicoMes)),'sue-i',e._uid,'basicoMes','0.01')+
+          // Básico ANTERIOR: si se carga, el recibo separa "lo que venía cobrando" del "aumento".
+          // Se completa solo al usar el ↻ (guarda el que había antes de traer el del legajo).
+          '<input type="number" step="0.01" min="0" value="'+esc(num(f.basicoAnterior)?round2(num(f.basicoAnterior)):'')+'"'+dis+
+            ' data-euid="'+esc(e._uid)+'" data-campo="basicoAnterior" class="sue-i" placeholder="Anterior"'+
+            ' title="Básico que venía cobrando. Si lo cargás, el recibo muestra el aumento como renglón aparte."'+
+            ' style="'+inpBase+'padding:2px 4px;font-size:10px;margin-top:2px;text-align:right">'+
           (distinto?'<div style="font-size:9.5px;color:var(--amber);line-height:1.25" title="El legajo dice '+money(e.basicoMes)+'">legajo '+money0(e.basicoMes)+
             (cerrada?'':' <button class="cmp-rowbtn" data-sync="'+esc(e._uid)+'" style="padding:0 3px">↻</button>')+'</div>':'')+'</td>'+
         '<td class="n sue-c-quin">'+money0(esMensual(e)?k.V.mes:k.V.quincena)+'</td>'+
@@ -11568,7 +11585,11 @@ function buildFilterTable(cfg){
     }));
     t.querySelectorAll('button[data-sync]').forEach(b=> b.onclick=()=>{
       const e=EMP.find(x=>x._uid===b.dataset.sync); if(!e) return;
-      filaDe(L,e).basicoMes=num(e.basicoMes); persistLiq(L,true); render();
+      const f=filaDe(L,e), anterior=num(f.basicoMes);
+      // Se guarda el básico que había ANTES de traer el nuevo: así el recibo puede mostrar el aumento
+      // como renglón aparte sin que haya que acordarse del número viejo.
+      if(anterior>0 && Math.abs(anterior-num(e.basicoMes))>0.005) f.basicoAnterior=anterior;
+      f.basicoMes=num(e.basicoMes); persistLiq(L,true); render();
     });
     // ↻ de la comisión: recalcula con las ventas que hay AHORA (por si se cargaron después de abrir la quincena)
     t.querySelectorAll('button[data-com]').forEach(b=> b.onclick=()=>{
@@ -11585,7 +11606,7 @@ function buildFilterTable(cfg){
   }
   function refrescarFila(L, emp){
     const tr=$('sue-tabla-liq').querySelector('tr[data-fila="'+CSS.escape(emp._uid)+'"]'); if(!tr) return;
-    const k=liquidarFila(filaDe(L,emp),emp), ade=adelantoDeEmp(sel,emp._uid);
+    const k=liquidarFila(filaDe(L,emp),emp,L.quincena), ade=adelantoDeEmp(sel,emp._uid);
     const set=(cls,txt)=>{ const c=tr.querySelector('.'+cls); if(c) c.innerHTML=txt; };
     set('sue-c-quin', money0(esMensual(emp)?k.V.mes:k.V.quincena));
     set('sue-c-dev','<b>'+money0(k.devengado)+'</b>');
@@ -11595,7 +11616,7 @@ function buildFilterTable(cfg){
     [['q',e=>!esMensual(e)],['m',esMensual]].forEach(([g,filtro])=>{
       if(!$('sue-sub-'+g+'-dev')) return;
       let d=0,a=0;
-      liquidanEn(sel).filter(filtro).forEach(x=>{ d+=liquidarFila(filaDe(L,x),x).devengado; a+=adelantoDeEmp(sel,x._uid); });
+      liquidanEn(sel).filter(filtro).forEach(x=>{ d+=liquidarFila(filaDe(L,x),x,L.quincena).devengado; a+=adelantoDeEmp(sel,x._uid); });
       d=round2(d); a=round2(a);
       $('sue-sub-'+g+'-dev').innerHTML=money0(d);
       $('sue-sub-'+g+'-ade').innerHTML=money0(a);
@@ -11663,7 +11684,7 @@ function buildFilterTable(cfg){
     if($('sue-confirmar-sin')) $('sue-confirmar-sin').onclick=()=>confirmarQuincena(L, false);
     if($('sue-reabrir'))   $('sue-reabrir').onclick=()=>reabrirQuincena(L);
     if($('sue-recibos-todos')) $('sue-recibos-todos').onclick=()=>{
-      const emps=liquidanEn(sel).filter(e=>liquidarFila(filaDe(L,e),e).devengado>0);
+      const emps=liquidanEn(sel).filter(e=>liquidarFila(filaDe(L,e),e,L.quincena).devengado>0);
       if(!emps.length){ alert('No hay ninguna liquidación con importe en esta quincena.'); return; }
       imprimirRecibo(L, emps);
     };
@@ -11701,7 +11722,7 @@ function buildFilterTable(cfg){
     if(crearCompra){
       if(!window.__upsertCompraSueldo){ alert('El módulo Compras no está disponible.'); return; }
       liquidanEn(sel).forEach(e=>{
-        const k=liquidarFila(filaDe(L,e), e);
+        const k=liquidarFila(filaDe(L,e), e, L.quincena);
         if(!(k.devengado>0)) return;
         // ⚠️ `fecha` = en qué MES se computa el costo · `vencimiento` = cuándo sale la plata. Para un
         // quincenal pueden caer en meses distintos (trabaja en julio, cobra el 1 de agosto): el costo
@@ -11726,16 +11747,16 @@ function buildFilterTable(cfg){
   // ---------- Recibo ----------
   function remuneracionDelMes(L, emp){
     // Un MENSUAL cobra todo en una sola quincena: su remuneración del mes ES este devengado.
-    if(esMensual(emp)) return { monto: liquidarFila(filaDe(L,emp),emp).devengado, real:true };
+    if(esMensual(emp)) return { monto: liquidarFila(filaDe(L,emp),emp,L.quincena).devengado, real:true };
     // La del mes = las DOS quincenas del período. Si la otra todavía no está cargada, se estima
     // duplicando esta (es lo que hacía la planilla) y el recibo lo dice.
     const otra=LIQ.find(x=>x._uid==='liq_'+L.periodo+'_Q'+(num(L.quincena)===2?1:2));
-    const esta=liquidarFila(filaDe(L,emp),emp).devengado;
-    if(esReal(otra) && otra.filas && otra.filas[emp._uid]) return { monto:round2(esta+liquidarFila(otra.filas[emp._uid],emp).devengado), real:true };
+    const esta=liquidarFila(filaDe(L,emp),emp,L.quincena).devengado;
+    if(esReal(otra) && otra.filas && otra.filas[emp._uid]) return { monto:round2(esta+liquidarFila(otra.filas[emp._uid],emp,otra.quincena).devengado), real:true };
     return { monto:round2(esta*2), real:false };
   }
   function reciboObj(L, emp){
-    const f=filaDe(L,emp), k=liquidarFila(f,emp);
+    const f=filaDe(L,emp), k=liquidarFila(f,emp,L.quincena);
     const adel=adelantosDe(sel).filter(p=>p.sueEmpUid===emp._uid);
     const totAdel=round2(adel.reduce((a,p)=>a+num(p.monto),0));
     const desc=k.descuentos.map(r=>({concepto:r.concepto, cant:r.cant, valor:r.valor, importe:r.importe}));
@@ -11962,7 +11983,7 @@ function buildFilterTable(cfg){
     if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
     // La compra de ESE empleado tiene que existir para colgarle el pago. Si la quincena todavía no se
     // confirmó, se crea con su devengado de ahora y se actualiza sola al confirmar.
-    const dev=liquidarFila(filaDe(L,emp), emp).devengado;
+    const dev=liquidarFila(filaDe(L,emp), emp, L.quincena).devengado;
     const uid=window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
       empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:fechaCostoDe(L,emp),
       vencimiento:fechaPagoDe(L,emp),
@@ -12036,7 +12057,7 @@ function buildFilterTable(cfg){
       [1,2].forEach(q=>{ const L=LIQ.find(x=>x._uid==='liq_'+per+'_Q'+q);
         if(!esReal(L)||!L.filas||!L.filas[emp._uid]) return;
         const f={...L.filas[emp._uid], sac:0};   // el SAC no integra la base del propio SAC
-        mes+=liquidarFila(f,emp).totalHaberes; quincenas++; });
+        mes+=liquidarFila(f,emp,q).totalHaberes; quincenas++; });
       // Con una sola quincena cargada, el mes se estima duplicándola: si no, un mes a medio liquidar
       // parecería la MITAD del sueldo y bajaría el aguinaldo sugerido sin motivo.
       if(quincenas===1) mes*=2;
