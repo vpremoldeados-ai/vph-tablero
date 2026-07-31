@@ -285,6 +285,68 @@
   // desde el arranque para todos los módulos. El módulo Parámetros lo llena desde vph_config/parametros.
   window.__cfg = window.__cfg || {};
   window.__param = window.__param || function(k, fallback){ const v = window.__cfg[k]; return (v===undefined||v===null||v==='') ? fallback : v; };
+  /* ---------- LISTAS DE PRECIO — fuente ÚNICA para Ventas, Presupuestos y CRM ----------
+     Antes cada módulo tenía su propia copia del array y de normLista(); una quedaba distinta y el
+     mismo cliente se preciaba diferente según por dónde entrara. Acá viven una sola vez.
+
+     El precio del catálogo es SIEMPRE final (con IVA). Las listas "sin facturar" cobran ese mismo
+     precio MENOS 10,5% — medio IVA — (decisión de Marcelo, 31/07). El campo "Precio Mayorista
+     S/Factura" de la ficha del producto quedó SIN USO: manda el cálculo.  */
+  const LISTAS_PRECIO_ARR = [
+    '1 Minorista Consumidor Final',      // con IVA incluido · factura B
+    '2 Minorista Sin Facturar',          // precio final − 10,5% · sin factura
+    '3 Minorista Responsable Inscripto', // IVA discriminado · factura A
+    '4 Lista Promedio',
+    '5 Mayorista Facturado',             // IVA discriminado · factura A
+    '6 Mayorista Sin Facturar'           // precio final − 10,5% · sin factura
+  ];
+  window.__listasPrecio = ()=> LISTAS_PRECIO_ARR.slice();
+  window.__listaDefecto = { minorista: LISTAS_PRECIO_ARR[0], mayorista: LISTAS_PRECIO_ARR[4] };
+  /* ⚠️ normLista: traduce el nombre GUARDADO en una venta/presupuesto/lead/cliente al nombre actual.
+     Antes tomaba el PRIMER DÍGITO del nombre y lo usaba como índice del array. Al renumerar las listas
+     (31/07) ese atajo le habría cambiado la lista a TODO lo ya cargado — una venta guardada como
+     "1 Mayorista Responsable Inscripto" habría pasado a leerse como "2 Minorista Sin Facturar" y se
+     habría re-preciado sola al reabrirla. Por eso ahora la equivalencia es explícita, por nombre. */
+  const LISTAS_VIEJAS = {
+    '0 minorista consumidor final':      '1 Minorista Consumidor Final',
+    '0 minorista responsable inscripto': '1 Minorista Consumidor Final',      // nombre anterior al 17/07
+    '1 mayorista responsable inscripto': '5 Mayorista Facturado',
+    '2 mayorista sin facturar':          '6 Mayorista Sin Facturar',
+    '3 minorista responsable inscripto': '3 Minorista Responsable Inscripto',
+    '4 lista promedio':                  '4 Lista Promedio'
+  };
+  window.__normLista = function(v){
+    const s = String(v==null?'':v).trim(); if(!s) return s;
+    const k = s.toLowerCase().replace(/\s+/g,' ');
+    if(LISTAS_VIEJAS[k]) return LISTAS_VIEJAS[k];
+    const exacta = LISTAS_PRECIO_ARR.find(x=>x.toLowerCase()===k);
+    return exacta || s;   // desconocida: se respeta tal cual, no se adivina
+  };
+  // Opciones para un <select> de lista: SIEMPRE incluye el valor guardado aunque ya no esté en el
+  // catálogo de listas (mismo patrón que medioOpts en Compras/Ventas). Sin esto, abrir un registro
+  // viejo mostraría la primera opción y guardarlo le cambiaría la lista EN SILENCIO.
+  window.__listaOpts = function(actual){
+    const ls = LISTAS_PRECIO_ARR.slice();
+    const a = window.__normLista(actual);
+    if(a && !ls.includes(a)) ls.push(a);
+    return ls;
+  };
+  // Precio de un producto para una lista. Devuelve el precio FINAL (con IVA), ya con el descuento
+  // de las listas sin facturar aplicado. El fallback también lo lleva: si un producto no tiene el
+  // precio de su lista cargado, se usa el que haya, pero sin cobrarle de más al que no factura.
+  window.__DESC_SIN_FACTURA = 0.105;
+  window.__precioDeLista = function(prod, lista){
+    const r2 = n => Math.round((n||0)*100)/100;
+    const nn = v => { const n=parseFloat(v); return isNaN(n)?0:n; };
+    const s = String(lista||'');
+    const mino = nn(prod && prod.precioMinorista), mayo = nn(prod && prod.precioMayorista);
+    let base;
+    if(/promedio/i.test(s))       base = r2((mino+mayo)/2);
+    else if(/mayorista/i.test(s)) base = mayo;
+    else                          base = mino;
+    if(!base) base = mino || mayo;                                  // lo que haya cargado
+    return /sin factura/i.test(s) ? r2(base*(1-window.__DESC_SIN_FACTURA)) : base;
+  };
   // Fuentes de alertas EN VIVO: cada módulo hace window.__alertSources.push(()=>[...]) al arrancar.
   window.__alertSources = window.__alertSources || [];
   window.__refreshAlertas = window.__refreshAlertas || function(){};   // lo reemplaza el motor de alertas tras el login
@@ -4247,10 +4309,10 @@ function buildFilterTable(cfg){
   const round2 = n => Math.round(n*100)/100;
 
   const CATEGORIAS = ['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
-  const LISTAS = ['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto','4 Lista Promedio'];
+  const LISTAS = window.__listasPrecio();   // fuente única (script 1) — no duplicar el array acá
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
-  const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
+  const normLista=v=>window.__normLista(v);   // equivalencia con los nombres viejos: script 1
   const VENDEDORES = [];   // se autocompletan desde las ventas cargadas (no hardcodear nombres)
   const TIPOS_COMPROB = ['Factura A','Factura B','Factura C','Sin factura','Nota de Crédito','Nota de Débito','Presupuesto','Remito'];
   // Una nota de crédito o débito SIEMPRE corrige un comprobante anterior y ARCA exige indicar
@@ -4701,7 +4763,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
   function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); editing.listaPrecios=normLista(editing.listaPrecios); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
   function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; _onSaved=null; }
 
@@ -4741,7 +4803,7 @@ function buildFilterTable(cfg){
         field('Cond. IVA','','<select id="vf-cond">'+opt(COND_IVA,v.condIva)+'</select>') +
         field('Categoría','col2','<select id="vf-cat">'+opt(CATEGORIAS,v.categoria)+'</select>') +
         field('Vendedor','','<input id="vf-vend" list="vf-vend-list" value="'+esc(v.vendedor)+'" placeholder="Vendedor">'+datalistVend()) +
-        field('Lista de precios','','<select id="vf-lista">'+opt(LISTAS,v.listaPrecios)+'</select>') +
+        field('Lista de precios','','<select id="vf-lista">'+opt(window.__listaOpts(v.listaPrecios),v.listaPrecios)+'</select>') +
         field('Tipo comprobante','','<select id="vf-tipo">'+opt(TIPOS_COMPROB,v.tipoComprobante)+'</select>') +
         '<div class="cmp-field col2" id="vf-asoc-wrap"'+(esNotaCD(v.tipoComprobante)?'':' style="display:none"')+
           '><label>Factura que corrige (la pide ARCA)</label><select id="vf-asoc">'+optAsoc(v)+'</select></div>' +
@@ -5026,7 +5088,7 @@ function buildFilterTable(cfg){
     let p=cat.find(p=>(p.nombre||'').toLowerCase()===v || (p.codigo||'').toLowerCase()===v);
     if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
     return p; }
-  function precioLista(prod, lista){ if(/promedio/i.test(lista||'')) return round2((num(prod.precioMinorista)+num(prod.precioMayorista))/2); if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
+  function precioLista(prod, lista){ return window.__precioDeLista(prod, lista); }   // fuente única: script 1
   function aplicarProducto(it, prod, lista){ it.codigo=prod.codigo||''; const bruto = precioLista(prod,lista) || num(prod.precioMinorista) || num(prod.precioMayorista); const sf=/sin factura/i.test(lista||'');
     if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); } }
 
@@ -6846,10 +6908,10 @@ function buildFilterTable(cfg){
 
   const COL='vph_presupuestos', KEY='vph_presupuestos_v1';
   const CATEGORIAS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
-  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto','4 Lista Promedio'];
+  const LISTAS=window.__listasPrecio();   // fuente única (script 1) — no duplicar el array acá
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
-  const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
+  const normLista=v=>window.__normLista(v);   // equivalencia con los nombres viejos: script 1
   const COND_IVA=['A','B','C','M','X'];
   const ALICUOTAS=[{v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'}];
   const ESTADOS=[{k:'borrador',l:'Borrador',c:'#95a5b8'},{k:'enviado',l:'Enviado',c:'#2f6fb2'},{k:'aceptado',l:'Aceptado',c:'#1e9e5a'},{k:'rechazado',l:'Rechazado',c:'#d64541'},{k:'convertido',l:'Convertido a venta',c:'#8a5cc0'}];
@@ -6951,7 +7013,7 @@ function buildFilterTable(cfg){
     let p=cat.find(p=>(p.nombre||'').toLowerCase()===v||(p.codigo||'').toLowerCase()===v);
     if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
     return p; }
-  function precioLista(prod,lista){ if(/promedio/i.test(lista||'')) return round2((num(prod.precioMinorista)+num(prod.precioMayorista))/2); if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); }
+  function precioLista(prod,lista){ return window.__precioDeLista(prod, lista); }   // fuente única: script 1
   function aplicarProducto(it,prod,lista){ it.codigo=prod.codigo||''; const bruto=precioLista(prod,lista)||num(prod.precioMinorista)||num(prod.precioMayorista); const sf=/sin factura/i.test(lista||''); if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto);} else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit=al>0?round2(bruto/(1+al/100)):round2(bruto);} }
   function clientesConocidos(){ const m={}; catClientes().forEach(c=>{ if(c.nombre&&!m[c.nombre]) m[c.nombre]={nombre:c.nombre,cuit:c.cuit,cond:c.condIva}; }); DB.presupuestos.forEach(p=>{ if(p.cliente&&!m[p.cliente]) m[p.cliente]={nombre:p.cliente,cuit:p.cuit,cond:p.condIva}; }); return Object.values(m); }
   function datalistCli(){ return '<datalist id="pf-cli-list">'+clientesConocidos().map(c=>'<option value="'+esc(c.nombre)+'">').join('')+'</datalist>'; }
@@ -7046,7 +7108,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:LISTAS[1], zona:'', palletsFlete:0, items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
+  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, zona:'', palletsFlete:0, items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
   let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
   function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
   function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
@@ -7063,7 +7125,7 @@ function buildFilterTable(cfg){
         field('CUIT / DNI','','<input id="pf-cuit" value="'+esc(p.cuit)+'" placeholder="00-00000000-0">') +
         field('Cond. IVA','','<select id="pf-cond">'+opt(COND_IVA,p.condIva)+'</select>') +
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
-        field('Lista de precios','','<select id="pf-lista">'+opt(LISTAS,p.listaPrecios)+'</select>') +
+        field('Lista de precios','','<select id="pf-lista">'+opt(window.__listaOpts(p.listaPrecios),p.listaPrecios)+'</select>') +
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
         field('Forma de entrega (flete)','col2','<div class="pf-picker" id="pf-zona-picker" style="margin:2px 0 0"></div>') +
       '</div>'+
@@ -7921,10 +7983,10 @@ function buildFilterTable(cfg){
   const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Teléfono','Referido','Manual'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
-  const LISTAS=['0 Minorista Consumidor Final','1 Mayorista Responsable Inscripto','2 Mayorista Sin Facturar','3 Minorista Responsable Inscripto','4 Lista Promedio'];
+  const LISTAS=window.__listasPrecio();   // fuente única (script 1) — no duplicar el array acá
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
-  const normLista=v=>{ const m=String(v||'').match(/^\s*(\d)/); return m ? (LISTAS[+m[1]]||v) : v; };
+  const normLista=v=>window.__normLista(v);   // equivalencia con los nombres viejos: script 1
 
   let DB={leads:[]}, q='', unsub=null, uidSeq=Date.now();
   // Vista Lista: alternativa al kanban horizontal, pensada para leer rápido sin scrollear a los costados
@@ -7974,7 +8036,7 @@ function buildFilterTable(cfg){
   // usa el presupuesto al convertir el lead — no hace falta re-tipear precios en dos lugares.
   const round2 = n => Math.round(n*100)/100;
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
-  const precioLista=(prod,lista)=>{ if(/promedio/i.test(lista||'')) return round2((num(prod.precioMinorista)+num(prod.precioMayorista))/2); if(/minorista/i.test(lista||'')) return num(prod.precioMinorista); if(/sin factura/i.test(lista||'')) return num(prod.precioMayoristaSF); return num(prod.precioMayorista); };
+  const precioLista=(prod,lista)=>window.__precioDeLista(prod, lista);   // fuente única: script 1
   function aplicarProducto(it,prod,lista){ it.codigo=prod.codigo||''; const bruto=precioLista(prod,lista)||num(prod.precioMinorista)||num(prod.precioMayorista); const sf=/sin factura/i.test(lista||'');
     if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); } }
   // m² totales del lead: suma de m² por ítem (o el campo viejo l.m2 si no hay ítems con m²)
@@ -8250,7 +8312,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null, estadoAlAbrir=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:LISTAS[0], origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); estadoAlAbrir = l ? (l.estado||'nuevo') : null; editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -8270,7 +8332,7 @@ function buildFilterTable(cfg){
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
-        fld('Lista de precios','','<select id="cf-lista">'+opt(LISTAS,l.listaPrecios)+'</select>') +
+        fld('Lista de precios','','<select id="cf-lista">'+opt(window.__listaOpts(l.listaPrecios),l.listaPrecios)+'</select>') +
         fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'">') +
         fld('Cond. IVA','','<select id="cf-cond">'+opt(['A','B','C','M','X'],l.condIva)+'</select>') +
       '</div>'+
