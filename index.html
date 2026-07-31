@@ -8605,6 +8605,9 @@ function buildFilterTable(cfg){
     const msgs=DB.pendientes.filter(i=>(i.waId||i.telefono||i.nombre||'?')===k)
       .sort((a,b)=>(a.creadoEn&&a.creadoEn.seconds||0)-(b.creadoEn&&b.creadoEn.seconds||0));
     if(!msgs.length) return;
+    // Un chat clasificado "Lead (seguimiento)" puede ser un lead REAL en gestión (ojo con
+    // duplicarlo) o la secuela de un lead basura del bot viejo — decide la persona mirando el CRM.
+    if(msgs[msgs.length-1].tipo==='lead_existente' && !confirm('Este contacto ya figura como lead en el CRM (puede ser un lead real en gestión, o uno creado de más por el bot viejo).\n¿Igual querés crear un lead NUEVO con esta conversación?')) return;
     const base=msgs[msgs.length-1];   // el más reciente manda para nombre/teléfono
     const det=window.__detectarPedidoWA(msgs.map(m=>m.mensaje||'').join('\n'))||{items:[],lugar:'',zona:''};
     convCtx={k, msgs, prods:(window.__catalogoVendible?window.__catalogoVendible():[])};
@@ -8743,8 +8746,11 @@ function buildFilterTable(cfg){
       // Convertir en lead: para contactos nuevos y clientes. Un lead_existente ya está en el
       // CRM (lo dice su etiqueta) y fábrica/proveedor no son leads. Si la conversación ya se
       // convirtió (algún mensaje con leadUid), badge en vez de botón — no se duplica.
-      const yaLead=msgs.some(m=>m.leadUid);
-      const puedeLead=(ult.tipo==='lead_nuevo'||ult.tipo==='cliente');
+      // leadUid con prefijo 'wa' = lead que creó SOLO el bot VIEJO (incidente 31/07: quedó una
+      // copia vieja del bot corriendo en otra máquina, creando leads por su cuenta) — eso no
+      // cuenta como conversión hecha por una persona, así que no tapa el botón.
+      const yaLead=msgs.some(m=>m.leadUid && !/^wa/.test(String(m.leadUid)));
+      const puedeLead=(ult.tipo==='lead_nuevo'||ult.tipo==='cliente'||ult.tipo==='lead_existente');
       return '<div class="kb-card" style="margin-bottom:8px'+(todoResuelto?';opacity:.55':'')+'">'+
         '<div class="cli">'+esc(ult.nombre||ult.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span>'+
           (msgs.length>1?' <span class="badge">'+msgs.length+' mensajes'+(pend.length&&pend.length<msgs.length?' ('+pend.length+' pend.)':'')+'</span>':'')+'</div>'+
