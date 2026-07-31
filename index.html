@@ -37,7 +37,10 @@
   .sidebar-foot{padding:14px 20px;font-size:10.5px;color:#67788f;border-top:1px solid rgba(255,255,255,.08);line-height:1.5}
 
   /* ---------- MAIN ---------- */
-  main{margin-left:230px;flex:1;padding:0 30px 40px}
+  /* min-width:0 — sin esto, un ítem flex NO se encoge por debajo del ancho de su contenido, así que
+     una tabla ancha estiraba el <main> y desbordaba la PÁGINA entera (había que scrollear todo,
+     barra lateral incluida) en vez de scrollear adentro de su .tbl-wrap, que ya tiene overflow-x:auto. */
+  main{margin-left:230px;flex:1;min-width:0;padding:0 30px 40px}
   .topbar{display:flex;align-items:center;gap:14px;padding:20px 0 6px;flex-wrap:wrap}
   .topbar h1{margin:0;font-size:21px;font-weight:800}
   .topbar .date{color:var(--muted);font-size:13px}
@@ -1264,6 +1267,29 @@
       <div id="sue-view-liq">
         <div id="sue-liq-barra" style="display:flex;gap:10px;align-items:flex-end;margin:14px 0 10px;flex-wrap:wrap"></div>
         <div id="sue-liq-aviso" style="margin-bottom:10px"></div>
+        <style>
+          /* table-layout:fixed = manda el ancho que pone cada <th>. Con el layout automático el
+             navegador reparte según el CONTENIDO, y como los campos son width:100% no "pedían"
+             espacio: las columnas se encogían al ancho del título y el número quedaba recortado
+             adentro del campo (un <input> recorta sin desbordar, así que no se nota midiendo la celda). */
+          #sue-tabla-liq{ table-layout:fixed; }
+          #sue-tabla-liq th, #sue-tabla-liq td{ padding-left:5px; padding-right:5px; overflow:hidden; }
+          /* La hoja de estilos general pone white-space:nowrap en TODAS las celdas (th,td). Acá el
+             nombre del empleado y las notitas al pie de una celda tienen que poder pasar a 2 renglones
+             —"VASSALLO MARCELO ALEJANDRO" pide 219px y la columna tiene 170—, si no se cortan a la
+             mitad. Las celdas de PLATA conservan su nowrap propio (lo llevan en el style de la celda)
+             para que un importe nunca se parta en dos líneas. */
+          #sue-tabla-liq td:first-child, #sue-tabla-liq td div{ white-space:normal; }
+          /* Los títulos son lo que más empuja el ancho de una columna de números: una celda que muestra
+             un "3" no debería necesitar 50px porque el encabezado dice "FALTAS". Los th de la hoja
+             general van en mayúscula y con letter-spacing, que acá suma varios px por columna. */
+          #sue-tabla-liq th{ font-size:11px; letter-spacing:0; }
+          /* Las flechitas del campo numérico comen ~15px por columna y acá no hacen falta:
+             son 13 columnas de números y se cargan tipeando. */
+          #sue-tabla-liq input[type=number]{ -moz-appearance:textfield; }
+          #sue-tabla-liq input[type=number]::-webkit-outer-spin-button,
+          #sue-tabla-liq input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+        </style>
         <div class="tbl-wrap" style="overflow-x:auto"><table id="sue-tabla-liq" style="font-size:12px"></table></div>
         <div id="sue-liq-pie" style="margin-top:12px"></div>
       </div>
@@ -11374,21 +11400,48 @@ function buildFilterTable(cfg){
       $('sue-liq-aviso').innerHTML=''; $('sue-liq-pie').innerHTML=''; return;
     }
 
+    // ⚠️ display:block. Un <input> es inline-block: sin esto, el campo de concepto se ponía AL LADO
+    // del importe en vez de abajo y desbordaba la celda (necesitaba 159px en una de 96), que es el
+    // "se pisa" que se veía. Con width:100% cada campo se adapta al ancho de SU columna, así que los
+    // anchos se manejan en un solo lugar: el <th> (ver ANCHOS).
+    const inpBase='display:block;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:5px;';
     const nIn=(v,cls,uid,campo,step)=>'<input type="number" step="'+(step||'1')+'" min="0" value="'+esc(v===0?'':v)+'"'+dis+
-      ' data-euid="'+esc(uid)+'" data-campo="'+esc(campo)+'" class="'+cls+'" style="width:100%;max-width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;font-size:12px;text-align:right">';
+      ' data-euid="'+esc(uid)+'" data-campo="'+esc(campo)+'" class="'+cls+'" style="'+inpBase+'padding:3px 4px;font-size:12px;text-align:right">';
     // Concepto libre del bono / del descuento: es lo que sale IMPRESO en el recibo. Sin esto, un bono
     // aparece como "Bono" a secas y el empleado no sabe de qué le están pagando (o descontando).
+    // El title lleva el TEXTO CARGADO: un concepto largo no entra en la columna y así se lee entero
+    // pasando el mouse, sin tener que ensanchar la tabla por un caso puntual.
     const tIn=(v,uid,campo,ph)=>'<input type="text" value="'+esc(v==null?'':v)+'" placeholder="'+esc(ph)+'"'+dis+
-      ' data-euid="'+esc(uid)+'" data-campo="'+esc(campo)+'" class="sue-t" title="Sale impreso en el recibo"'+
-      ' style="width:100%;max-width:78px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;font-size:10px;margin-top:2px">';
+      ' data-euid="'+esc(uid)+'" data-campo="'+esc(campo)+'" class="sue-t"'+
+      ' title="'+esc(v?String(v)+' — sale impreso en el recibo':'Concepto: sale impreso en el recibo')+'"'+
+      ' style="'+inpBase+'padding:2px 4px;font-size:10px;margin-top:2px">';
 
     const hayComision = emps.some(e=>num(e.comisionPct)>0);
-    let html='<tr><th>Empleado</th><th class="n">Básico mes</th><th class="n">A liquidar</th>'+
-      '<th class="n">Sáb.</th><th class="n">Hs extra</th><th class="n">Feriados</th>'+
-      (hayComision?'<th class="n">Comisión</th>':'')+
-      '<th class="n">Plus vac.</th><th class="n">SAC</th><th class="n">Bono</th><th style="text-align:center">Present.</th>'+
-      '<th class="n">Hs aus.</th><th class="n">Faltas</th><th class="n">Otros desc.</th>'+
-      '<th class="n">Devengado</th><th class="n">Adelantos</th><th class="n">A pagar</th><th></th></tr>';
+    // Ancho de cada columna, en un solo lugar. Las de CANTIDAD (sábados, horas, faltas) llevan números
+    // de 1 o 2 dígitos, así que no necesitan más de 46px; las de PLATA tienen que entrar "$ 2.290.476".
+    // Los encabezados van abreviados a propósito: con auto-layout el título es lo que más empuja el
+    // ancho de la columna, así que "Feriados" obligaba a 78px para una celda que muestra un "2".
+    const th=(txt,w,tit,centro)=>'<th'+(centro?' style="text-align:center;width:'+w+'px"':' class="n" style="width:'+w+'px"')+
+      (tit?' title="'+esc(tit)+'"':'')+'>'+esc(txt)+'</th>';
+    // ⚠️ Con table-layout:fixed TODAS las columnas necesitan ancho, incluida la primera: si se le deja
+    // "auto" y las demás ya suman el ancho del contenedor, el navegador le da CERO y los nombres se
+    // pisan entre sí. La suma da ~1.330px; si la pantalla es más angosta, el contenedor scrollea
+    // (tbl-wrap tiene overflow-x:auto), que es preferible a que el contenido se monte.
+    // El botón de imprimir ya no tiene columna propia: va al lado del nombre. Una columna entera para
+    // un ícono son ~42px que le hacen falta a los importes.
+    // Las de IMPORTE tienen que dar para 9-10 dígitos ("250890.12") sin recortar: ~86px. Las de
+    // CANTIDAD llevan 1 o 2 dígitos y con 44px sobra. Si la suma no entra en la pantalla, scrollea
+    // (min-width abajo) — preferible a comprimir y que los números queden cortados.
+    const ANCHOS=[155,88,84,44,44,44].concat(hayComision?[80]:[]).concat([86,86,88,46,44,48,88,88,84,84]);
+    const anchoTotal=ANCHOS.reduce((a,b)=>a+b,0);
+    let html='<tr><th style="width:155px">Empleado</th>'+
+      th('Básico',88,'Básico mensual')+th('A liquid.',84,'Lo que se liquida en esta quincena')+
+      th('Sáb',44,'Sábados trabajados')+th('H.ext',44,'Horas extras')+th('Fer',44,'Feriados trabajados')+
+      (hayComision?th('Comis.',80,'Comisión por ventas'):'')+
+      th('P.vac',86,'Plus vacacional')+th('SAC',86,'SAC / Medio aguinaldo')+th('Bono',88,'Bono, con su concepto')+
+      th('Pres.',46,'Presentismo',true)+
+      th('H.aus',44,'Horas de ausentismo')+th('Faltas',48,'Días de falta')+th('Otros',88,'Otros descuentos, con su concepto')+
+      th('Devengado',88)+th('Adelantos',84)+th('A pagar',84)+'</tr>';
     // Se separan los QUINCENALES de la fábrica de los MENSUALES: cobran en fechas distintas, el costo
     // se imputa a meses distintos y el recibo dice otra cosa. Verlos mezclados confunde.
     const grupos=[
@@ -11400,7 +11453,7 @@ function buildFilterTable(cfg){
         sub:'A mes vencido: cobran el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+
             ' · el costo se imputa a '+MESES[sel.mes%12]+' '+(sel.mes===12?sel.anio+1:sel.anio) }
     ].filter(g=>g.emps.length);
-    const nCols=hayComision?18:17, colMedio=hayComision?13:12;
+    const nCols=hayComision?17:16, colMedio=hayComision?13:12;
     const separar=grupos.length>1;   // con un solo grupo no hace falta encabezarlo
 
     let tDev=0, tAde=0;
@@ -11411,22 +11464,31 @@ function buildFilterTable(cfg){
       // Comisión: se muestra cuánto daría HOY para poder refrescarla, pero manda lo guardado en la fila.
       const cHoy = num(e.comisionPct)>0 ? comisionCalculada(e, L.periodo) : null;
       const comDif = cHoy && Math.abs(cHoy.monto-num(f.comision))>0.5;
+      // El nombre SÍ envuelve: "VASSALLO MARCELO ALEJANDRO" pide 219px y la columna tiene 170. Antes
+      // con nowrap+overflow:hidden se cortaba a la mitad. En dos renglones se lee entero y la tabla
+      // no se ensancha por el nombre más largo de la nómina.
       return '<tr data-fila="'+esc(e._uid)+'">'+
-        '<td style="white-space:nowrap"><b>'+esc(e.nombre||'—')+'</b>'+(e.legajo?' <span style="color:var(--muted)">#'+esc(e.legajo)+'</span>':'')+
+        '<td style="line-height:1.25" title="'+esc(e.nombre||'')+'">'+
+          '<button class="cmp-rowbtn" data-recibo="'+esc(e._uid)+'" title="Imprimir el recibo" style="padding:1px 5px;float:right;margin-left:4px">🖨️</button>'+
+          '<b>'+esc(e.nombre||'—')+'</b>'+(e.legajo?' <span style="color:var(--muted)">#'+esc(e.legajo)+'</span>':'')+
           (esMensual(e)&&!separar?'<div style="font-size:10px;color:var(--muted)">mensual · mes completo</div>':'')+'</td>'+
         // El ↻ (traer el básico del legajo) SOLO con la quincena abierta: en una confirmada cambiaría
         // lo liquidado sin tocar la compra que ya está en Compras, y los dos números quedarían distintos.
-        '<td class="n" style="white-space:nowrap">'+nIn(round2(num(f.basicoMes)),'sue-i',e._uid,'basicoMes','0.01')+
-          (distinto?'<div style="font-size:10px;color:var(--amber)">legajo: '+money0(e.basicoMes)+
-            (cerrada?'':' <button class="cmp-rowbtn" data-sync="'+esc(e._uid)+'" style="padding:0 4px">↻</button>')+'</div>':'')+'</td>'+
+        '<td class="n">'+nIn(round2(num(f.basicoMes)),'sue-i',e._uid,'basicoMes','0.01')+
+          (distinto?'<div style="font-size:9.5px;color:var(--amber);line-height:1.25" title="El legajo dice '+money(e.basicoMes)+'">legajo '+money0(e.basicoMes)+
+            (cerrada?'':' <button class="cmp-rowbtn" data-sync="'+esc(e._uid)+'" style="padding:0 3px">↻</button>')+'</div>':'')+'</td>'+
         '<td class="n sue-c-quin">'+money0(esMensual(e)?k.V.mes:k.V.quincena)+'</td>'+
         '<td class="n">'+nIn(num(f.sabados),'sue-i',e._uid,'sabados','0.5')+'</td>'+
         '<td class="n">'+nIn(num(f.horasExtras),'sue-i',e._uid,'horasExtras','0.5')+'</td>'+
         '<td class="n">'+nIn(num(f.feriados),'sue-i',e._uid,'feriados','0.5')+'</td>'+
-        (hayComision ? '<td class="n" style="white-space:nowrap">'+
+        // La base de la comisión (ej. "1,5% de $32.698.392") no entra en la columna: va en el title y
+        // en pantalla queda solo el porcentaje, más el ↻ si lo guardado difiere de lo que da hoy.
+        (hayComision ? '<td class="n">'+
           (cHoy ? nIn(round2(num(f.comision)),'sue-i',e._uid,'comision','0.01')+
-             '<div style="font-size:10px;color:'+(comDif?'var(--amber)':'var(--muted)')+'">'+nPct(cHoy.pct)+'% de '+money0(cHoy.base)+
-             (comDif?' = '+money0(cHoy.monto)+' <button class="cmp-rowbtn" data-com="'+esc(e._uid)+'" style="padding:0 4px">↻</button>':'')+'</div>'
+             '<div style="font-size:9.5px;line-height:1.25;color:'+(comDif?'var(--amber)':'var(--muted)')+'"'+
+             ' title="'+nPct(cHoy.pct)+'% de '+esc(money(cHoy.base))+' vendidos (sin flete) = '+esc(money(cHoy.monto))+'">'+
+             nPct(cHoy.pct)+'%'+
+             (comDif?' → '+money0(cHoy.monto)+' <button class="cmp-rowbtn" data-com="'+esc(e._uid)+'" style="padding:0 3px">↻</button>':'')+'</div>'
            : '<span style="color:var(--muted)">—</span>')+'</td>' : '')+
         '<td class="n">'+nIn(round2(num(f.plusVacacional)),'sue-i',e._uid,'plusVacacional','0.01')+'</td>'+
         '<td class="n">'+nIn(round2(num(f.sac)),'sue-i',e._uid,'sac','0.01')+'</td>'+
@@ -11437,10 +11499,9 @@ function buildFilterTable(cfg){
         '<td class="n">'+nIn(num(f.diasFalta),'sue-i',e._uid,'diasFalta','0.5')+'</td>'+
         '<td class="n">'+nIn(round2(num(f.otrosDesc)),'sue-i',e._uid,'otrosDesc','0.01')+
           tIn(f.otrosDescDesc,e._uid,'otrosDescDesc','Concepto')+'</td>'+
-        '<td class="n sue-c-dev"><b>'+money0(k.devengado)+'</b></td>'+
-        '<td class="n sue-c-ade">'+(ade>0?money0(ade):'—')+'</td>'+
-        '<td class="n sue-c-pag"><b>'+money0(k.devengado-ade)+'</b></td>'+
-        '<td style="text-align:center;white-space:nowrap"><button class="cmp-rowbtn" data-recibo="'+esc(e._uid)+'">🖨️ Recibo</button></td></tr>';
+        '<td class="n sue-c-dev" style="white-space:nowrap"><b>'+money0(k.devengado)+'</b></td>'+
+        '<td class="n sue-c-ade" style="white-space:nowrap">'+(ade>0?money0(ade):'—')+'</td>'+
+        '<td class="n sue-c-pag" style="white-space:nowrap"><b>'+money0(k.devengado-ade)+'</b></td></tr>';
     };
 
     grupos.forEach(g=>{
@@ -11453,15 +11514,20 @@ function buildFilterTable(cfg){
         const d=round2(tDev-antesD), a=round2(tAde-antesA);
         html+='<tr class="sue-sub" data-sub="'+g.k+'"><td style="color:var(--muted)">Subtotal '+esc(g.titulo.split(' —')[0].toLowerCase())+'</td>'+
           '<td colspan="'+colMedio+'"></td>'+
-          '<td class="n" id="sue-sub-'+g.k+'-dev">'+money0(d)+'</td>'+
-          '<td class="n" id="sue-sub-'+g.k+'-ade">'+money0(a)+'</td>'+
-          '<td class="n" id="sue-sub-'+g.k+'-pag">'+money0(d-a)+'</td><td></td></tr>';
+          '<td class="n" id="sue-sub-'+g.k+'-dev" style="white-space:nowrap">'+money0(d)+'</td>'+
+          '<td class="n" id="sue-sub-'+g.k+'-ade" style="white-space:nowrap">'+money0(a)+'</td>'+
+          '<td class="n" id="sue-sub-'+g.k+'-pag" style="white-space:nowrap">'+money0(d-a)+'</td></tr>';
       }
     });
     html+='<tr class="total"><td><b>TOTAL</b></td><td colspan="'+colMedio+'"></td>'+
-      '<td class="n" id="sue-tot-dev"><b>'+money0(tDev)+'</b></td>'+
-      '<td class="n" id="sue-tot-ade"><b>'+money0(tAde)+'</b></td>'+
-      '<td class="n" id="sue-tot-pag"><b>'+money0(tDev-tAde)+'</b></td><td></td></tr>';
+      '<td class="n" id="sue-tot-dev" style="white-space:nowrap"><b>'+money0(tDev)+'</b></td>'+
+      '<td class="n" id="sue-tot-ade" style="white-space:nowrap"><b>'+money0(tAde)+'</b></td>'+
+      '<td class="n" id="sue-tot-pag" style="white-space:nowrap"><b>'+money0(tDev-tAde)+'</b></td></tr>';
+    // ⚠️ min-width con la SUMA de los anchos. Con table-layout:fixed, si el contenedor es más angosto
+    // que la tabla el navegador ESCALA las columnas hacia abajo y los números quedan recortados
+    // adentro de los campos. Con min-width no se encoge: scrollea dentro de .tbl-wrap (overflow-x:auto)
+    // y todo se lee entero, que es lo que importa.
+    $('sue-tabla-liq').style.minWidth=anchoTotal+'px';
     $('sue-tabla-liq').innerHTML=html;
     wireLiq(L);
     pintarAvisoLiq(L);
@@ -11480,7 +11546,9 @@ function buildFilterTable(cfg){
     // Los conceptos son texto libre y no cambian ningún importe: se guardan, sin repintar la fila.
     t.querySelectorAll('input.sue-t').forEach(inp=> inp.addEventListener('input',()=>{
       const e=EMP.find(x=>x._uid===inp.dataset.euid); if(!e) return;
-      filaDe(L,e)[inp.dataset.campo]=inp.value; persistLiq(L);
+      filaDe(L,e)[inp.dataset.campo]=inp.value;
+      inp.title = inp.value ? inp.value+' — sale impreso en el recibo' : 'Concepto: sale impreso en el recibo';
+      persistLiq(L);
     }));
     t.querySelectorAll('input.sue-chk').forEach(inp=> inp.addEventListener('change',()=>{
       const e=EMP.find(x=>x._uid===inp.dataset.euid); if(!e) return;
