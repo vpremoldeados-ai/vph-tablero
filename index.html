@@ -2434,6 +2434,23 @@ function buildFilterTable(cfg){
     if(pagos.length===antes) return false;
     c.pagos=pagos; persistPagos(c._uid, pagos); return true; };
 
+  // Edita un pago ya cargado (monto, fecha, medio, cuenta, nota). Lo usa Sueldos para corregir un
+  // pago que quedó mal o que canceló solo una parte.
+  // ⚠️ Parte de {...p}: los campos que vinculan el pago con otro módulo (sueEmpUid/sueEsAdelanto de un
+  // adelanto, endosoChequeUid/endosoDe de un endoso) NO están en el formulario, así que rearmar el
+  // pago desde cero los borraría EN SILENCIO. Es el mismo bug que ya se arregló en el editor de
+  // Compras — replicar el patrón, no el atajo.
+  const CAMPOS_PAGO=['fecha','monto','medio','cuenta','sueNota'];
+  window.__editarPagoCompra = (compraUid, pagoId, campos)=>{
+    if(!compraUid||!pagoId||!campos) return false;
+    const c=DB.compras.find(x=>x._uid===compraUid); if(!c) return false;
+    const pagos=(c.pagos||[]).slice();
+    const i=pagos.findIndex(p=>p&&p.id===pagoId); if(i<0) return false;
+    const p={ ...pagos[i] };
+    CAMPOS_PAGO.forEach(k=>{ if(campos[k]!==undefined) p[k]= (k==='monto') ? round2(num(campos[k])) : campos[k]; });
+    if(esCheque(p.medio)||esAdministrativo(p.medio)) delete p.cuenta;
+    pagos[i]=p; c.pagos=pagos; persistPagos(c._uid, pagos); return true; };
+
   // Corrección de datos viejos: un pago que se cargó como "Cheque" propio pero que en realidad era el
   // ENDOSO de un cheque de un cliente. Cambia el medio para que no vuelva a generar un cheque propio.
   window.__convertirPagoAEndoso = (compraUid, pagoId, o)=>{
@@ -12053,13 +12070,73 @@ function buildFilterTable(cfg){
         '<td>'+(p.sueEsAdelanto?'<span style="color:var(--amber);font-weight:600">Adelanto</span>':'Pago')+'</td>'+
         '<td class="n">'+money0(p.monto)+'</td><td>'+esc(p.medio||'—')+'</td><td>'+esc(p.cuenta||'—')+'</td>'+
         '<td>'+esc(p.sueNota||'')+'</td>'+
-        '<td style="text-align:center"><button class="cmp-rowbtn" data-adelx="'+esc(p.id)+'">✕ Anular</button></td></tr>';
+        '<td style="text-align:center;white-space:nowrap">'+
+          '<button class="cmp-rowbtn" data-adele="'+esc(p.id)+'">✎ Editar</button> '+
+          '<button class="cmp-rowbtn" data-adelx="'+esc(p.id)+'">✕ Anular</button></td></tr>';
     });
     const tot=round2(todos.reduce((a,p)=>a+num(p.monto),0));
     html+='<tr class="total"><td><b>TOTAL</b></td><td></td><td></td><td class="n"><b>'+money0(tot)+'</b></td><td colspan="4"></td></tr>';
     $('sue-tabla-adel').innerHTML=html;
     $('sue-tabla-adel').querySelectorAll('button[data-adelx]').forEach(b=> b.onclick=()=>anularAdelanto(L, b.dataset.adelx));
+    $('sue-tabla-adel').querySelectorAll('button[data-adele]').forEach(b=> b.onclick=()=>abrirEditarPago(b.dataset.adele));
     if(window.__ordenable) window.__ordenable('sue-tabla-adel');
+  }
+  // Corregir un pago ya cargado: el caso típico es que se pagó de menos y quedó un saldo, o que se
+  // tipeó mal el importe o la fecha. Se edita el pago en vez de anularlo y volver a cargarlo, así no
+  // se pierden los campos que lo vinculan con el empleado (ni, si fuera un endoso, con su cheque).
+  function abrirEditarPago(pagoId){
+    const p=pagosDe(sel).find(x=>x.id===pagoId);
+    if(!p){ alert('No encontré ese pago (¿se borró?).'); return; }
+    const c=window.__compraPorUid?window.__compraPorUid(p.compraUid):null;
+    // El saldo SIN este pago: es el techo razonable, y lo que hay que mostrar para decidir el importe.
+    const saldoSin = c ? round2(num(c.saldo)+num(p.monto)) : 0;
+    const cuentas=(window.__cajaCuentas?window.__cajaCuentas():[]);
+    const medios=['Transferencia','Efectivo'];
+    // Mismo patrón que `medioOpts` de Compras: el medio guardado SIEMPRE tiene que estar en la lista.
+    // Si no, el navegador muestra la primera opción y guardar convierte el pago en otra cosa EN
+    // SILENCIO (ya pasó con los cheques y los endosos, ver §3 del CLAUDE.md).
+    const opts=(lista,actual)=>{ const l=lista.slice(); if(actual && l.indexOf(actual)<0) l.push(actual);
+      return l.map(m=>'<option'+(m===actual?' selected':'')+'>'+esc(m)+'</option>').join(''); };
+    $('sue-adel-title').textContent = (p.sueEsAdelanto?'Editar el adelanto':'Editar el pago')+' de '+(p.empNombre||'');
+    $('sue-adel-form').innerHTML=
+      '<p style="margin:0 0 12px;font-size:13px;color:var(--muted)">'+
+        (p.sueEsAdelanto?'Adelanto':'Pago')+' de <b>'+esc(p.empNombre||'')+'</b>'+
+        (c?' · su compra es de '+money(c.total)+' y, sin este '+(p.sueEsAdelanto?'adelanto':'pago')+
+            ', le quedarían <b>'+money(saldoSin)+'</b> por cobrar':'')+'.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        '<div class="cmp-field"><label>Fecha</label><input type="date" id="sue-e-fecha" value="'+esc(String(p.fecha||'').slice(0,10))+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+        '<div class="cmp-field"><label>Monto ($)</label><input type="number" id="sue-e-monto" step="0.01" min="0" value="'+esc(round2(num(p.monto)))+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+        '<div class="cmp-field"><label>Medio</label><select id="sue-e-medio" class="cmp-select" style="width:100%">'+opts(medios,p.medio||'')+'</select></div>'+
+        '<div class="cmp-field"><label>¿De qué cuenta sale?</label><select id="sue-e-cuenta" class="cmp-select" style="width:100%">'+
+          opts(cuentas.length?cuentas:[''], p.cuenta||'')+'</select></div>'+
+        '<div class="cmp-field" style="grid-column:1/-1"><label>Nota</label><input id="sue-e-nota" value="'+esc(p.sueNota||'')+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+      '</div>'+
+      (c?'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Si le pagás menos de '+money(saldoSin)+
+        ', la diferencia le queda como saldo y va a seguir figurando en <b>Falta</b> y en la deuda de Finanzas.</div>':'')+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="sue-e-cancel">Cancelar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="sue-e-save">Guardar el cambio</button></div>';
+    if(window.__tarjetas){ window.__tarjetas('sue-e-medio'); window.__tarjetas('sue-e-cuenta'); }
+    $('sue-e-cancel').onclick=()=>{ $('sue-modal-adel').classList.remove('open'); $('sue-adel-title').textContent='Registrar adelanto'; };
+    $('sue-e-save').onclick=()=>guardarEdicionPago(p, saldoSin);
+    $('sue-modal-adel').classList.add('open');
+  }
+  function guardarEdicionPago(p, saldoSin){
+    const fecha=$('sue-e-fecha').value, monto=round2(num($('sue-e-monto').value));
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))){ alert('Cargá la fecha del pago.'); return; }
+    if(!(monto>0)){ alert('El monto tiene que ser mayor que cero. Si el pago no existió, usá "✕ Anular".'); return; }
+    if(!window.__editarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
+    let msg='';
+    if(monto>saldoSin+0.5) msg+='⚠️ Le estarías pagando '+money(monto)+', que es MÁS de los '+money(saldoSin)+
+      ' que le quedaban. Revisalo si no es un ajuste a propósito.\n\n';
+    else if(monto<saldoSin-0.5) msg+='Le van a quedar '+money(round2(saldoSin-monto))+' por cobrar.\n\n';
+    if(fecha>hoyISO) msg+='⚠️ La fecha es futura: la caja va a mostrar esa salida recién ese día.\n\n';
+    if(msg && !confirm(msg+'¿Guardo el cambio?')) return;
+    const ok=window.__editarPagoCompra(p.compraUid, p.id, { fecha, monto,
+      medio:$('sue-e-medio').value, cuenta:$('sue-e-cuenta').value, sueNota:String($('sue-e-nota').value||'').trim() });
+    if(!ok){ alert('No se pudo guardar el cambio.'); return; }
+    $('sue-modal-adel').classList.remove('open');
+    $('sue-adel-title').textContent='Registrar adelanto';
+    render();
   }
   function anularAdelanto(L, pagoId){
     const p=pagosDe(sel).find(x=>x.id===pagoId); if(!p) return;
@@ -12077,6 +12154,8 @@ function buildFilterTable(cfg){
     const emps=liquidanEn(sel);
     if(!emps.length){ alert(EMP.length ? 'En esta quincena no se liquida a nadie, así que no hay a quién imputarle un adelanto.' : 'Primero cargá los legajos en la solapa 👤 Empleados.'); return; }
     adelEdit={ empUid:emps[0]._uid, fecha:hoyISO, monto:0, medio:'Efectivo', cuenta:'', nota:'' };
+    // El modal se comparte con la edición de un pago, que le cambia el título.
+    $('sue-adel-title').textContent='Registrar adelanto';
     const cuentas=(window.__cajaCuentas?window.__cajaCuentas():[]);
     const medios=['Efectivo','Transferencia'];
     $('sue-adel-form').innerHTML=
@@ -12137,21 +12216,24 @@ function buildFilterTable(cfg){
     if(!emps.length){ alert('En esta quincena no hay ninguna liquidación con importe.'); return; }
     const cuentas=(window.__cajaCuentas?window.__cajaCuentas():[]);
     const medios=['Transferencia','Efectivo'];
-    const fSug=L.fechaPago||hoyISO;
+    const opsMedio=medios.map(m=>'<option>'+esc(m)+'</option>').join('');
+    const opsCuenta=(cuentas.length?cuentas.map(c=>'<option>'+esc(c)+'</option>').join(''):'<option value="">—</option>');
+    // ⚠️ Los QUINCENALES y los MENSUALES no cobran el mismo día (los mensuales van a mes vencido), así
+    // que no pueden compartir la fecha del pago: cada grupo lleva la suya, con su propio medio, cuenta
+    // y subtotal. Con un solo grupo (la 1ª quincena) no se encabeza nada — mismo criterio que la grilla.
+    const grupos=[
+      { k:'q', emps:emps.filter(e=>!esMensual(e)), titulo:'Quincenales — de la fábrica',
+        fecha:L.fechaPago||hoyISO, sub:'Cobran el '+fmtFecha(L.fechaPago||hoyISO) },
+      { k:'m', emps:emps.filter(esMensual), titulo:'Mensuales — mes completo',
+        fecha:L.fechaPagoMensual||pagoSugeridoMensual(sel),
+        sub:'A mes vencido: cobran el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel)) }
+    ].filter(g=>g.emps.length);
+    const separar=grupos.length>1;
     let html='<p style="margin:0 0 12px;font-size:13px;color:var(--muted)">Pago de la <b>'+esc(etiquetaQ(sel))+
       '</b>. Se registra en la compra de cada persona (Compras → '+esc(String(P('sueCategoria','Mano de Obra')))+
-      '), así sale de la caja el día que elijas y no se cuenta dos veces.</p>'+
-      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
-        '<div class="cmp-field"><label>Fecha del pago</label><input type="date" id="sue-p-fecha" value="'+esc(fSug)+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
-        '<div class="cmp-field"><label>Medio</label><select id="sue-p-medio" class="cmp-select" style="width:100%">'+medios.map(m=>'<option>'+esc(m)+'</option>').join('')+'</select></div>'+
-        '<div class="cmp-field"><label>¿De qué cuenta sale?</label><select id="sue-p-cuenta" class="cmp-select" style="width:100%">'+
-          (cuentas.length?cuentas.map(c=>'<option>'+esc(c)+'</option>').join(''):'<option value="">—</option>')+'</select></div>'+
-      '</div>'+
-      '<table class="cmp-items-tbl" style="width:100%;margin-top:12px"><tr>'+
-        '<th style="width:34px;text-align:center"></th><th style="text-align:left">Empleado</th>'+
-        '<th class="n">Devengado</th><th class="n">Ya pagado</th><th class="n">Le pagás</th></tr>';
+      '), así sale de la caja el día que elijas y no se cuenta dos veces.</p>';
     let porVincular=0;
-    emps.forEach(e=>{
+    const filaDeEmp = (e,g)=>{
       const k=liquidarFila(filaDe(L,e),e,L.quincena);
       let c=compraDeEmp(sel,e._uid), falta=faltaDeEmp(sel,e,k.devengado);
       const cand=c?[]:candidatasDe(sel,e);
@@ -12161,8 +12243,8 @@ function buildFilterTable(cfg){
       const seguras=cand.filter(x=>x.seguro);
       const pre = seguras.length===1 ? seguras[0] : null;
       if(pre){ falta=round2(num(pre.saldo)); porVincular++; }
-      html+='<tr data-pfila="'+esc(e._uid)+'">'+
-        '<td style="text-align:center"><input type="checkbox" class="sue-p-chk" data-euid="'+esc(e._uid)+'"'+
+      return '<tr data-pfila="'+esc(e._uid)+'">'+
+        '<td style="text-align:center"><input type="checkbox" class="sue-p-chk" data-euid="'+esc(e._uid)+'" data-grupo="'+g.k+'"'+
           (falta>0.5?' checked':'')+(falta>0.5?'':' disabled')+'></td>'+
         '<td style="text-align:left"><b>'+esc(e.nombre||'')+'</b>'+
           (cand.length?'<div style="margin-top:3px"><select class="cmp-select sue-p-vinc" data-euid="'+esc(e._uid)+'" style="width:100%;font-size:11px">'+
@@ -12177,28 +12259,49 @@ function buildFilterTable(cfg){
           (c?'<div style="font-size:10px;color:var(--muted);margin-top:2px">Compra: '+esc(c.proveedor)+' · total '+money0(c.total)+'</div>':'')+'</td>'+
         '<td class="n">'+money0(k.devengado)+'</td>'+
         '<td class="n">'+(pre?money0(pre.total-pre.saldo):(c&&num(c.pagado)>0?money0(c.pagado):'—'))+'</td>'+
-        '<td class="n"><input type="number" step="0.01" min="0" class="sue-p-monto" data-euid="'+esc(e._uid)+'"'+
+        '<td class="n"><input type="number" step="0.01" min="0" class="sue-p-monto" data-euid="'+esc(e._uid)+'" data-grupo="'+g.k+'"'+
           ' value="'+esc(falta>0.5?round2(falta):'')+'" style="width:100%;box-sizing:border-box;padding:4px 6px;border:1px solid var(--border);border-radius:6px;text-align:right"></td></tr>';
+    };
+    grupos.forEach(g=>{
+      html+= (separar?'<div style="margin-top:14px;padding:7px 10px;background:var(--bg,#f1f5f9);border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:0">'+
+          '<b>'+esc(g.titulo)+'</b> <span style="color:var(--muted)">('+g.emps.length+')</span>'+
+          '<div style="font-size:10.5px;color:var(--muted)">'+esc(g.sub)+'</div></div>':'')+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr'+(separar?';border:1px solid var(--border);border-top:0;border-bottom:0;padding:10px':'')+'">'+
+          '<div class="cmp-field"><label>Fecha del pago</label><input type="date" id="sue-p-fecha-'+g.k+'" value="'+esc(g.fecha)+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+          '<div class="cmp-field"><label>Medio</label><select id="sue-p-medio-'+g.k+'" class="cmp-select" style="width:100%">'+opsMedio+'</select></div>'+
+          '<div class="cmp-field"><label>¿De qué cuenta sale?</label><select id="sue-p-cuenta-'+g.k+'" class="cmp-select" style="width:100%">'+opsCuenta+'</select></div>'+
+        '</div>'+
+        '<table class="cmp-items-tbl" style="width:100%;margin-top:'+(separar?'0':'12px')+'"><tr>'+
+          '<th style="width:34px;text-align:center"></th><th style="text-align:left">Empleado</th>'+
+          '<th class="n">Devengado</th><th class="n">Ya pagado</th><th class="n">Le pagás</th></tr>'+
+        g.emps.map(e=>filaDeEmp(e,g)).join('')+
+        '<tr class="total"><td colspan="4" style="text-align:right"><b>'+(separar?'Subtotal '+esc(g.titulo.split(' —')[0].toLowerCase()):'TOTAL A PAGAR')+'</b></td>'+
+          '<td class="n"><b id="sue-p-sub-'+g.k+'">—</b></td></tr></table>';
     });
-    html+='<tr class="total"><td colspan="4" style="text-align:right"><b>TOTAL A PAGAR</b></td>'+
-      '<td class="n"><b id="sue-p-total">—</b></td></tr></table>'+
+    html+= (separar?'<div style="display:flex;justify-content:space-between;padding:8px 10px;margin-top:10px;border-top:2px solid var(--border);font-weight:800">'+
+        '<span>TOTAL A PAGAR</span><span id="sue-p-total">—</span></div>':'')+
       (porVincular?'<div style="border:1px solid var(--border);background:var(--bg,#f1f5f9);border-radius:8px;padding:8px 10px;font-size:11.5px;margin-top:10px">'+
         '↔ <b>'+porVincular+'</b> de estos sueldos ya están cargados como compra a mano. Quedan vinculados al pagar, '+
         'así que desde ahora la grilla te va a mostrar el saldo real de cada uno y el Tablero no les va a crear una compra aparte.</div>':'')+
       '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Podés destildar a quien no le pagues hoy, o cambiarle el importe para pagarle una parte. '+
-      'Lo que quede sin pagar sigue figurando como deuda.</div>'+
+      'Lo que quede sin pagar sigue figurando como deuda, y el pago se puede corregir después desde <b>💵 Pagos y adelantos</b>.</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="sue-p-cancel">Cancelar</button>'+
       '<button class="cmp-btn cmp-btn-primary" id="sue-p-save">Registrar el pago</button></div>';
     $('sue-pago-form').innerHTML=html;
-    if(window.__tarjetas){ window.__tarjetas('sue-p-medio'); window.__tarjetas('sue-p-cuenta'); }
+    if(window.__tarjetas) grupos.forEach(g=>{ window.__tarjetas('sue-p-medio-'+g.k); window.__tarjetas('sue-p-cuenta-'+g.k); });
     const recalc=()=>{
       let tot=0;
-      $('sue-pago-form').querySelectorAll('.sue-p-chk').forEach(ch=>{
-        if(!ch.checked) return;
-        const inp=$('sue-pago-form').querySelector('.sue-p-monto[data-euid="'+CSS.escape(ch.dataset.euid)+'"]');
-        tot+=num(inp&&inp.value);
+      grupos.forEach(g=>{
+        let s2=0;
+        $('sue-pago-form').querySelectorAll('.sue-p-chk[data-grupo="'+g.k+'"]').forEach(ch=>{
+          if(!ch.checked) return;
+          const inp=$('sue-pago-form').querySelector('.sue-p-monto[data-euid="'+CSS.escape(ch.dataset.euid)+'"]');
+          s2+=num(inp&&inp.value);
+        });
+        const el=$('sue-p-sub-'+g.k); if(el) el.textContent = s2>0 ? money0(round2(s2)) : '—';
+        tot+=s2;
       });
-      $('sue-p-total').textContent = tot>0 ? money0(round2(tot)) : '—';
+      const t2=$('sue-p-total'); if(t2) t2.textContent = tot>0 ? money0(round2(tot)) : '—';
     };
     $('sue-pago-form').querySelectorAll('.sue-p-chk,.sue-p-monto').forEach(x=>{ x.oninput=recalc; x.onchange=recalc; });
     // Al cambiar de compra cambia lo que se le debe: el importe sigue al SALDO de la elegida. Si no,
@@ -12215,18 +12318,23 @@ function buildFilterTable(cfg){
     $('sue-modal-pago').classList.add('open');
   }
   function guardarPagoQuincena(L){
-    const fecha=$('sue-p-fecha').value, medio=$('sue-p-medio').value, cuenta=$('sue-p-cuenta').value;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))){ alert('Cargá la fecha del pago.'); return; }
     if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
-    const items=[];
+    const items=[]; let faltaFecha=false;
     $('sue-pago-form').querySelectorAll('.sue-p-chk').forEach(ch=>{
       if(!ch.checked) return;
       const uid=ch.dataset.euid, emp=EMP.find(x=>x._uid===uid); if(!emp) return;
       const inp=$('sue-pago-form').querySelector('.sue-p-monto[data-euid="'+CSS.escape(uid)+'"]');
       const monto=round2(num(inp&&inp.value)); if(!(monto>0)) return;
       const vin=$('sue-pago-form').querySelector('.sue-p-vinc[data-euid="'+CSS.escape(uid)+'"]');
-      items.push({ emp, monto, vincular:(vin&&vin.value)||'' });
+      // Cada grupo tiene SU fecha, medio y cuenta: los mensuales cobran a mes vencido, así que un
+      // pago con la fecha de los quincenales le pondría a la caja una salida el día equivocado.
+      const g=ch.dataset.grupo||'q';
+      const fe=($('sue-p-fecha-'+g)||{}).value||'';
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fe))){ faltaFecha=true; return; }
+      items.push({ emp, monto, vincular:(vin&&vin.value)||'', grupo:g, fecha:fe,
+        medio:($('sue-p-medio-'+g)||{}).value||'', cuenta:($('sue-p-cuenta-'+g)||{}).value||'' });
     });
+    if(faltaFecha){ alert('Falta la fecha del pago en uno de los grupos.'); return; }
     if(!items.length){ alert('No hay a quién pagarle: tildá al menos uno y cargale el importe.'); return; }
     // 🔴 Dos personas no pueden cobrar de la MISMA compra: sería pagarle dos veces a una y nada a la
     // otra, y encima dejaría un sueldo sin registrar. Se corta antes de escribir nada.
@@ -12251,13 +12359,21 @@ function buildFilterTable(cfg){
       const k=liquidarFila(filaDe(L,x.emp), x.emp, L.quincena);
       return x.monto > faltaDeEmp(sel, x.emp, k.devengado)+0.5;
     });
-    let msg='Registrar el pago de '+etiquetaQ(sel)+':\n\n'+
-      items.map(x=>'· '+(x.emp.nombre||'')+': '+money(x.monto)).join('\n')+
-      '\n\nTOTAL: '+money(tot)+'\nFecha: '+fmtFecha(fecha)+' · '+medio+(cuenta?' · '+cuenta:'')+'\n\n'+
-      'Sale de la caja el '+fmtFecha(fecha)+' y se descuenta de la deuda con cada uno.';
+    // El resumen va POR GRUPO, porque cada uno sale de la caja un día distinto.
+    const rotulo={ q:'Quincenales', m:'Mensuales' };
+    let msg='Registrar el pago de '+etiquetaQ(sel)+':\n';
+    ['q','m'].forEach(g=>{
+      const ig=items.filter(x=>x.grupo===g); if(!ig.length) return;
+      const sg=round2(ig.reduce((a,x)=>a+x.monto,0));
+      msg+='\n'+rotulo[g]+' — '+fmtFecha(ig[0].fecha)+' · '+ig[0].medio+(ig[0].cuenta?' · '+ig[0].cuenta:'')+'\n'+
+        ig.map(x=>'   · '+(x.emp.nombre||'')+': '+money(x.monto)).join('\n')+
+        '\n   Subtotal: '+money(sg)+'\n';
+    });
+    msg+='\nTOTAL: '+money(tot)+'\n\nSale de la caja el día de cada grupo y se descuenta de la deuda con cada uno.';
     if(excedidos.length) msg+='\n\n⚠️ A '+excedidos.map(x=>x.emp.nombre||'').join(', ')+
       ' le estás pagando MÁS de lo que falta. Revisá el importe si no es un ajuste a propósito.';
-    if(fecha>hoyISO) msg+='\n\n⚠️ La fecha es futura: la caja va a mostrar esa salida recién ese día.';
+    const futuras=items.filter(x=>x.fecha>hoyISO);
+    if(futuras.length) msg+='\n\n⚠️ Hay pagos con fecha futura ('+fmtFecha(futuras[0].fecha)+'): la caja va a mostrar esa salida recién ese día.';
     if(!confirm(msg)) return;
     let hechos=0; const fallaron=[];
     items.forEach(x=>{
@@ -12275,7 +12391,7 @@ function buildFilterTable(cfg){
             detalle: esMensual(x.emp) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
             nota:'Generado por el módulo Sueldos.' });
         }
-        const id=window.__registrarPagoCompra(uid, { fecha, monto:x.monto, medio, cuenta,
+        const id=window.__registrarPagoCompra(uid, { fecha:x.fecha, monto:x.monto, medio:x.medio, cuenta:x.cuenta,
           sueEmpUid:x.emp._uid, sueEmpNombre:x.emp.nombre||'', sueNota:'Pago de '+etiquetaQ(sel) });
         if(id) hechos++; else fallaron.push(x.emp.nombre||'');
       }catch(err){ fallaron.push(x.emp.nombre||''); }
