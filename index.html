@@ -11128,10 +11128,17 @@ function buildFilterTable(cfg){
 
   function totalesDe(s){
     const L=liqDe(s); if(!L) return { devengado:0, adelantos:0, aPagar:0, cant:0 };
+    // Se recorre la UNIÓN de los que se liquidan en esa quincena y los que ya tienen fila cargada.
+    // ⚠️ No alcanza con recorrer L.filas: las filas las materializa renderLiq(), que corre DESPUÉS de
+    // pintar los KPI, así que un empleado nuevo no entraba en el total hasta el render siguiente y el
+    // encabezado mostraba MENOS plata que la tabla de abajo. Y no alcanza con recorrer solo los
+    // activos: alguien que se fue a mitad de la quincena tiene que seguir sumando lo que se le liquidó.
+    const uids=new Set(Object.keys(L.filas||{}));
+    activosEn(L.hasta).forEach(e=>uids.add(e._uid));
     let dev=0, cant=0;
-    Object.keys(L.filas||{}).forEach(uid=>{
+    uids.forEach(uid=>{
       const emp=EMP.find(e=>e._uid===uid); if(!emp) return;
-      const k=liquidarFila(L.filas[uid], emp); if(k.devengado>0) cant++;
+      const k=liquidarFila(filaDe(L,emp), emp); if(k.devengado>0) cant++;
       dev+=k.devengado;
     });
     const ade=round2(adelantosDe(s).reduce((a,p)=>a+num(p.monto),0));
