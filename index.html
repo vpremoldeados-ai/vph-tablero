@@ -11278,6 +11278,11 @@ function buildFilterTable(cfg){
 
     const nIn=(v,cls,uid,campo,step)=>'<input type="number" step="'+(step||'1')+'" min="0" value="'+esc(v===0?'':v)+'"'+dis+
       ' data-euid="'+esc(uid)+'" data-campo="'+esc(campo)+'" class="'+cls+'" style="width:100%;max-width:78px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;font-size:12px;text-align:right">';
+    // Concepto libre del bono / del descuento: es lo que sale IMPRESO en el recibo. Sin esto, un bono
+    // aparece como "Bono" a secas y el empleado no sabe de qué le están pagando (o descontando).
+    const tIn=(v,uid,campo,ph)=>'<input type="text" value="'+esc(v==null?'':v)+'" placeholder="'+esc(ph)+'"'+dis+
+      ' data-euid="'+esc(uid)+'" data-campo="'+esc(campo)+'" class="sue-t" title="Sale impreso en el recibo"'+
+      ' style="width:100%;max-width:78px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;font-size:10px;margin-top:2px">';
 
     const hayComision = emps.some(e=>num(e.comisionPct)>0);
     let html='<tr><th>Empleado</th><th class="n">Básico mes</th><th class="n">A liquidar</th>'+
@@ -11313,11 +11318,13 @@ function buildFilterTable(cfg){
            : '<span style="color:var(--muted)">—</span>')+'</td>' : '')+
         '<td class="n">'+nIn(round2(num(f.plusVacacional)),'sue-i',e._uid,'plusVacacional','0.01')+'</td>'+
         '<td class="n">'+nIn(round2(num(f.sac)),'sue-i',e._uid,'sac','0.01')+'</td>'+
-        '<td class="n">'+nIn(round2(num(f.bonos)),'sue-i',e._uid,'bonos','0.01')+'</td>'+
+        '<td class="n">'+nIn(round2(num(f.bonos)),'sue-i',e._uid,'bonos','0.01')+
+          tIn(f.bonosDesc,e._uid,'bonosDesc','Concepto')+'</td>'+
         '<td style="text-align:center"><input type="checkbox"'+(f.presentismo?' checked':'')+dis+' data-euid="'+esc(e._uid)+'" data-campo="presentismo" class="sue-chk"></td>'+
         '<td class="n">'+nIn(num(f.horasAusencia),'sue-i',e._uid,'horasAusencia','0.5')+'</td>'+
         '<td class="n">'+nIn(num(f.diasFalta),'sue-i',e._uid,'diasFalta','0.5')+'</td>'+
-        '<td class="n">'+nIn(round2(num(f.otrosDesc)),'sue-i',e._uid,'otrosDesc','0.01')+'</td>'+
+        '<td class="n">'+nIn(round2(num(f.otrosDesc)),'sue-i',e._uid,'otrosDesc','0.01')+
+          tIn(f.otrosDescDesc,e._uid,'otrosDescDesc','Concepto')+'</td>'+
         '<td class="n sue-c-dev"><b>'+money0(k.devengado)+'</b></td>'+
         '<td class="n sue-c-ade">'+(ade>0?money0(ade):'—')+'</td>'+
         '<td class="n sue-c-pag"><b>'+money0(k.devengado-ade)+'</b></td>'+
@@ -11341,6 +11348,11 @@ function buildFilterTable(cfg){
       const e=EMP.find(x=>x._uid===inp.dataset.euid); if(!e) return;
       const f=filaDe(L,e); f[inp.dataset.campo]=num(inp.value);
       refrescarFila(L,e); persistLiq(L);
+    }));
+    // Los conceptos son texto libre y no cambian ningún importe: se guardan, sin repintar la fila.
+    t.querySelectorAll('input.sue-t').forEach(inp=> inp.addEventListener('input',()=>{
+      const e=EMP.find(x=>x._uid===inp.dataset.euid); if(!e) return;
+      filaDe(L,e)[inp.dataset.campo]=inp.value; persistLiq(L);
     }));
     t.querySelectorAll('input.sue-chk').forEach(inp=> inp.addEventListener('change',()=>{
       const e=EMP.find(x=>x._uid===inp.dataset.euid); if(!e) return;
