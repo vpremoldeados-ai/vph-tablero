@@ -2406,33 +2406,51 @@ function buildFilterTable(cfg){
   // Así los sueldos entran una sola vez en Caja, en Finanzas ("A pagar"), en Costos Fijos y en el
   // Punto de Equilibrio, y un adelanto sale de la caja el día que se dio (fecha propia del pago),
   // sin que haya que tocar movimientosReales() ni sumar una fuente de plata nueva.
-  const SUE_CAT='Mano de Obra';
-  const uidSueldos = (periodo, quincena)=> 'sue_'+String(periodo||'').slice(0,7)+'_Q'+(num(quincena)===2?2:1);
-  window.__compraSueldosUid = uidSueldos;
+  // UNA COMPRA POR PERSONA y por quincena (decisión de Marcelo, 30/07: así ve en Compras cuánto le
+  // debe a cada uno, que es como las venía cargando a mano). Id DETERMINÍSTICO
+  // sue_<AAAA-MM>_Q<n>_<empUid>: reconfirmar una quincena ACTUALIZA las mismas compras en vez de
+  // duplicarlas, y cada adelanto se cuelga de la compra de SU empleado.
+  // La categoría es un parámetro: 'Mano de Obra' separa los sueldos del resto de los costos fijos en
+  // el resumen de Costos; quien prefiera 'COSTO FIJO' (como estaban cargados a mano) lo cambia ahí.
+  const SUE_CAT_DEF='Mano de Obra';
+  const catSueldos = ()=> String((window.__param?window.__param('sueCategoria',SUE_CAT_DEF):SUE_CAT_DEF)||SUE_CAT_DEF);
+  const SUE_CAT=SUE_CAT_DEF;   // lo sigue usando __comprasManoObraDe
+  const uidSueldo = (periodo, quincena, empUid)=>
+    'sue_'+String(periodo||'').slice(0,7)+'_Q'+(num(quincena)===2?2:1)+'_'+String(empUid||'').replace(/[^A-Za-z0-9_-]/g,'');
+  window.__compraSueldoUid = uidSueldo;
+  const esCompraDelTablero = c => /^sue_/.test(String((c&&c._uid)||''));
 
-  // La compra de esa quincena, si ya existe (con sus pagos y su saldo).
-  window.__compraSueldos = (periodo, quincena)=>{
-    const c=DB.compras.find(x=>x._uid===uidSueldos(periodo,quincena)); if(!c) return null;
-    const k=calc(c);
-    return { uid:c._uid, total:k.total, pagado:k.pagado, saldo:k.saldo, estado:k.estado,
-             fecha:c.fecha||'', vencimiento:c.vencimiento||'', pagos:(c.pagos||[]).map(p=>({...p})) };
+  const fichaCompra = c => { const k=calc(c);
+    return { uid:c._uid, proveedor:c.proveedor||'', total:k.total, pagado:k.pagado, saldo:k.saldo, estado:k.estado,
+             fecha:c.fecha||'', vencimiento:c.vencimiento||'', empUid:c.sueEmpUid||'',
+             pagos:(c.pagos||[]).map(p=>({...p})) }; };
+
+  // La compra de UN empleado en esa quincena (con sus pagos y su saldo).
+  window.__compraSueldo = (periodo, quincena, empUid)=>{
+    const c=DB.compras.find(x=>x._uid===uidSueldo(periodo,quincena,empUid));
+    return c ? fichaCompra(c) : null;
+  };
+  // Todas las compras de sueldo que el Tablero generó para esa quincena.
+  window.__comprasSueldoDeQuincena = (periodo, quincena)=>{
+    const pref=uidSueldo(periodo,quincena,'');
+    return DB.compras.filter(c=>String(c._uid||'').indexOf(pref)===0).map(fichaCompra);
   };
 
-  // Crea o actualiza la compra de la quincena. Id DETERMINÍSTICO (sue_2026-07_Q2): reconfirmar una
-  // quincena ACTUALIZA la misma compra en vez de duplicarla. Conserva los pagos ya cargados (los
-  // adelantos), porque son plata que ya salió y no dependen de cuánto se recalculó el devengado.
-  window.__upsertCompraSueldos = o=>{
-    o=o||{}; const uid=uidSueldos(o.periodo,o.quincena);
+  // Crea o actualiza la compra de UN empleado. Conserva los pagos ya cargados (los adelantos): son
+  // plata que ya salió y no dependen de cuánto se recalculó el devengado.
+  window.__upsertCompraSueldo = o=>{
+    o=o||{}; const uid=uidSueldo(o.periodo,o.quincena,o.empUid);
     const prev=DB.compras.find(x=>x._uid===uid);
     const c = prev ? {...prev} : blankCompra();
-    c._uid=uid; c.categoria=SUE_CAT; c.tipoComprobante='Compra'; c.condIva='X';
-    c.proveedor=o.proveedor||'Sueldos y jornales'; c.cuit=''; c.puntoVenta=''; c.nroFactura='';
+    c._uid=uid; c.categoria=catSueldos(); c.tipoComprobante='Compra'; c.condIva='X';
+    c.proveedor=o.empNombre||'Sueldos'; c.cuit=o.cuil||''; c.puntoVenta=''; c.nroFactura='';
     c.fecha=o.fecha||hoyISO; c.periodo=String(c.fecha).slice(0,7); c.vencimiento=o.vencimiento||c.fecha;
     // Un sueldo no lleva IVA: va como NO GRAVADO para no ensuciar el IVA crédito del Libro IVA.
-    c.items=[{ desc:o.detalle||'Sueldos', codigo:'', cant:1, precioUnit:round2(num(o.monto)), descPct:0, iva:'nogravado' }];
+    c.items=[{ desc:o.detalle||'Sueldo', codigo:'', cant:1, precioUnit:round2(num(o.monto)), descPct:0, iva:'nogravado' }];
     c.descGeneral=0; c.percepIva=0; c.percepIibb=0; c.impInternos=0; c.intereses=0;
     c.nota=o.nota||''; c.pagos=(prev&&prev.pagos)?prev.pagos.slice():[];
     c.sueldosPeriodo=String(o.periodo||'').slice(0,7); c.sueldosQuincena=num(o.quincena)===2?2:1;
+    c.sueEmpUid=o.empUid||'';
     persistCompra(c);
     return uid;
   };
@@ -2465,6 +2483,7 @@ function buildFilterTable(cfg){
     const out=[];
     DB.compras.forEach(c=>{
       if(c._uid===exceptUid) return;
+      if(esCompraDelTablero(c)) return;   // las que genera Sueldos no son un duplicado de sí mismas
       if(String(c.fecha||'').slice(0,7)!==per) return;
       const p=normProv(c.proveedor);
       if(!p) return;
@@ -7665,7 +7684,7 @@ function buildFilterTable(cfg){
     {g:'Sueldos', k:'sueFactorHE',   l:'Hora extra (× valor de la hora)',              def:1.5, t:'num', hint:'En tu planilla la hora extra se paga al 150%.'},
     {g:'Sueldos', k:'sueFactorFer',  l:'Feriado trabajado (× valor del día)',          def:2,  t:'num', hint:'En tu planilla el feriado se paga al 200% del día.'},
     {g:'Sueldos', k:'suePresentismo',l:'Presentismo por quincena ($)',                 def:10000, t:'num', hint:'Monto fijo que se suma si el empleado tiene el presentismo del período. Se puede cambiar por empleado en su legajo.'},
-    {g:'Sueldos', k:'sueProveedor',  l:'Nombre con el que se carga en Compras',        def:'Sueldos y jornales', t:'txt', hint:'Al confirmar una quincena, el Tablero crea la compra en la categoría "Mano de Obra" a nombre de este proveedor. Así los sueldos entran UNA sola vez en Caja, Finanzas y el Punto de Equilibrio.'},
+    {g:'Sueldos', k:'sueCategoria',  l:'Categoría de compra de los sueldos',           def:'Mano de Obra', t:'txt', hint:'Al confirmar una quincena, el Tablero crea UNA COMPRA POR PERSONA (proveedor = el nombre del empleado) en esta categoría. "Mano de Obra" los separa del resto de los costos fijos en el resumen de Costos; si los venías cargando como "COSTO FIJO" y querés que queden todos juntos, poné eso. Tiene que ser una categoría con la tilde "cuenta como costo fijo".'},
     {g:'Sueldos', k:'sueDiaPago1',   l:'Día de pago de la 1ª quincena',                def:20, t:'num', hint:'Se propone como fecha de pago (vencimiento de la compra). Se puede cambiar en cada quincena.'},
     {g:'Sueldos', k:'sueDiaPago2',   l:'Día de pago de la 2ª quincena',                def:5,  t:'num', hint:'Del mes SIGUIENTE al que se liquida (la 2ª quincena de julio se paga el 5 de agosto).'}
   ];
@@ -11212,14 +11231,19 @@ function buildFilterTable(cfg){
     }
     return L.filas[emp._uid];
   }
-  // Los adelantos de una quincena SON los pagos de su compra marcados como tales — no hay una copia
+  // Los adelantos SON los pagos de la compra de CADA empleado, marcados como tales — no hay una copia
   // aparte que se pueda desincronizar (una sola fuente de verdad, ver el encabezado del módulo).
   function adelantosDe(s){
-    const c=window.__compraSueldos?window.__compraSueldos(perDe(s), s.quincena):null;
-    if(!c) return [];
-    return (c.pagos||[]).filter(p=>p&&p.sueEsAdelanto).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+    const cs=window.__comprasSueldoDeQuincena?window.__comprasSueldoDeQuincena(perDe(s), s.quincena):[];
+    const out=[];
+    cs.forEach(c=>(c.pagos||[]).forEach(p=>{ if(p&&p.sueEsAdelanto) out.push({...p, compraUid:c.uid}); }));
+    return out.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
   }
-  const adelantoDeEmp=(s,empUid)=> round2(adelantosDe(s).filter(p=>p.sueEmpUid===empUid).reduce((a,p)=>a+num(p.monto),0));
+  const adelantoDeEmp=(s,empUid)=>{
+    const c=window.__compraSueldo?window.__compraSueldo(perDe(s), s.quincena, empUid):null;
+    if(!c) return 0;
+    return round2((c.pagos||[]).filter(p=>p&&p.sueEsAdelanto).reduce((a,p)=>a+num(p.monto),0));
+  };
 
   function totalesDe(s){
     const L=liqDe(s); if(!L) return { devengado:0, adelantos:0, aPagar:0, cant:0 };
@@ -11448,12 +11472,14 @@ function buildFilterTable(cfg){
   function pintarPieLiq(L){
     const el=$('sue-liq-pie'); if(!el) return;
     const t=totalesDe(sel), cerrada=L.estado==='confirmada';
-    const c=window.__compraSueldos?window.__compraSueldos(L.periodo,L.quincena):null;
+    const cs=window.__comprasSueldoDeQuincena?window.__comprasSueldoDeQuincena(L.periodo,L.quincena):[];
     let estado='';
-    if(c){ estado='<div style="font-size:12.5px;margin-bottom:8px">En Compras: <b>'+money(c.total)+'</b> en Mano de Obra'+
-        ' · pagado '+money(c.pagado)+' · saldo <b>'+money(c.saldo)+'</b>'+
-        ' <button class="cmp-rowbtn" id="sue-ver-compra">Ver la compra</button></div>'; }
-    else estado='<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Todavía no se cargó en Compras. Se carga sola al confirmar la quincena (o al registrar el primer adelanto).</div>';
+    if(cs.length){
+      const tot=round2(cs.reduce((a,x)=>a+num(x.total),0)), pag=round2(cs.reduce((a,x)=>a+num(x.pagado),0));
+      estado='<div style="font-size:12.5px;margin-bottom:8px">En Compras: <b>'+cs.length+'</b> compra'+(cs.length>1?'s':'')+
+        ' (una por persona) por <b>'+money(tot)+'</b> · pagado '+money(pag)+' · saldo <b>'+money(round2(tot-pag))+'</b></div>';
+    }
+    else estado='<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Todavía no se cargó en Compras. Al confirmar se crea <b>una compra por persona</b> (o al registrar el primer adelanto, solo la de esa persona).</div>';
     el.innerHTML=estado+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
       (cerrada
@@ -11466,13 +11492,13 @@ function buildFilterTable(cfg){
             : '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar">✓ Confirmar quincena e imputar en Compras</button>'))+
       '<button class="cmp-btn" id="sue-recibos-todos">🖨️ Recibos de todos</button>'+
       '</div>'+
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Confirmar crea (o actualiza) UNA compra de '+money0(t.devengado)+
-      ' en la categoría <b>Mano de Obra</b>, con fecha '+fmtFecha(L.hasta)+' y vencimiento '+fmtFecha(L.fechaPago)+
-      '. Desde ahí sale en Caja, Finanzas, Costos Fijos y el Punto de Equilibrio — <b>no la cargues también a mano en Compras</b>.</div>';
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Confirmar crea (o actualiza) <b>una compra por persona</b> — '+
+      t.cant+' en total por '+money0(t.devengado)+' — en la categoría <b>'+esc(String(P('sueCategoria','Mano de Obra')))+
+      '</b>, con fecha '+fmtFecha(L.hasta)+' y vencimiento '+fmtFecha(L.fechaPago)+
+      '. Desde ahí salen en Caja, Finanzas, Costos Fijos y el Punto de Equilibrio — <b>no las cargues también a mano</b>.</div>';
     if($('sue-confirmar')) $('sue-confirmar').onclick=()=>confirmarQuincena(L, true);
     if($('sue-confirmar-sin')) $('sue-confirmar-sin').onclick=()=>confirmarQuincena(L, false);
     if($('sue-reabrir'))   $('sue-reabrir').onclick=()=>reabrirQuincena(L);
-    if($('sue-ver-compra'))$('sue-ver-compra').onclick=()=>{ if(window.__abrirCompra) window.__abrirCompra(c.uid); };
     if($('sue-recibos-todos')) $('sue-recibos-todos').onclick=()=>{
       const emps=liquidanEn(sel).filter(e=>liquidarFila(filaDe(L,e),e).devengado>0);
       if(!emps.length){ alert('No hay ninguna liquidación con importe en esta quincena.'); return; }
@@ -11492,8 +11518,9 @@ function buildFilterTable(cfg){
       '· Adelantos ya pagados: '+money(t.adelantos)+'\n'+
       '· Queda por pagar: '+money(t.aPagar)+'\n\n';
     if(crearCompra){
-      msg+='Se crea/actualiza la compra "'+String(P('sueProveedor','Sueldos y jornales'))+'" en Mano de Obra por '+
-        money(t.devengado)+', con vencimiento el '+fmtFecha(L.fechaPago)+'.';
+      msg+='Se crea/actualiza UNA COMPRA POR PERSONA ('+t.cant+' en total) en la categoría "'+
+        String(P('sueCategoria','Mano de Obra'))+'", por '+money(t.devengado)+' en conjunto, con vencimiento el '+
+        fmtFecha(L.fechaPago)+'.';
       if(ya.length) msg+='\n\n🔴 ATENCIÓN: ese mes YA tiene '+ya.length+' compra(s) de sueldo cargadas ('+
         money(ya.reduce((a,o)=>a+num(o.total),0))+'). Si son estos mismos sueldos van a quedar contados DOS VECES.\n'+
         'Si es así, cancelá y usá "Confirmar sin crear la compra".';
@@ -11504,14 +11531,19 @@ function buildFilterTable(cfg){
         'Finanzas no es la real.';
     }
     if(!confirm(msg+'\n\n¿Confirmás?')) return;
-    let uid='';
+    let hechas=0;
     if(crearCompra){
-      if(!window.__upsertCompraSueldos){ alert('El módulo Compras no está disponible.'); return; }
-      uid=window.__upsertCompraSueldos({ periodo:L.periodo, quincena:L.quincena, monto:t.devengado,
-        proveedor:String(P('sueProveedor','Sueldos y jornales')), fecha:L.hasta, vencimiento:L.fechaPago,
-        detalle:'Sueldos — '+etiquetaQ(sel), nota:'Generado por el módulo Sueldos ('+t.cant+' empleados). Editalo desde ahí, no acá.' });
+      if(!window.__upsertCompraSueldo){ alert('El módulo Compras no está disponible.'); return; }
+      liquidanEn(sel).forEach(e=>{
+        const k=liquidarFila(filaDe(L,e), e);
+        if(!(k.devengado>0)) return;
+        window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:e._uid, empNombre:e.nombre,
+          cuil:e.cuil||'', monto:k.devengado, fecha:L.hasta, vencimiento:L.fechaPago,
+          detalle:'Sueldo '+etiquetaQ(sel), nota:'Generado por el módulo Sueldos. Editalo desde ahí, no acá.' });
+        hechas++;
+      });
     }
-    L.estado='confirmada'; L.compraUid=uid; L.sinCompra=!crearCompra;
+    L.estado='confirmada'; L.compraUid=''; L.sinCompra=!crearCompra; L.comprasGeneradas=hechas;
     const c=fb(); L.confirmadaPor=(c&&c.auth&&c.auth.currentUser)?c.auth.currentUser.email:'';
     L.confirmadaTs=new Date().toISOString();
     persistLiq(L,true); render();
@@ -11715,10 +11747,9 @@ function buildFilterTable(cfg){
     $('sue-tabla-adel').querySelectorAll('button[data-adelx]').forEach(b=> b.onclick=()=>anularAdelanto(L, b.dataset.adelx));
   }
   function anularAdelanto(L, pagoId){
-    const c=window.__compraSueldos?window.__compraSueldos(L.periodo,L.quincena):null; if(!c) return;
-    const p=(c.pagos||[]).find(x=>x.id===pagoId); if(!p) return;
+    const p=adelantosDe(sel).find(x=>x.id===pagoId); if(!p) return;
     if(!confirm('¿Anular el adelanto de '+money(p.monto)+' del '+fmtFecha(p.fecha)+'?\n\nEsa plata vuelve a figurar como disponible en la caja de ese día y deja de descontarse del recibo.')) return;
-    if(window.__anularPagoCompra && window.__anularPagoCompra(c.uid, pagoId)) render();
+    if(window.__anularPagoCompra && window.__anularPagoCompra(p.compraUid, pagoId)) render();
     else alert('No se pudo anular el adelanto.');
   }
   function abrirAdelanto(){
@@ -11757,16 +11788,15 @@ function buildFilterTable(cfg){
     if(!(monto>0)){ alert('Cargá el monto del adelanto.'); return; }
     if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))){ alert('Cargá la fecha en que le diste el adelanto.'); return; }
     if(fecha>hoyISO && !confirm('La fecha del adelanto ('+fmtFecha(fecha)+') es futura. La caja va a mostrar esa salida recién ese día.\n\n¿Es correcto?')) return;
-    if(!window.__upsertCompraSueldos || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
-    // La compra de la quincena tiene que existir para colgarle el pago. Si todavía no se confirmó, se
-    // crea con el devengado que haya hasta ahora y se actualiza sola al confirmar.
-    const t=totalesDe(sel);
-    const uid=window.__upsertCompraSueldos({ periodo:L.periodo, quincena:L.quincena, monto:Math.max(t.devengado, monto),
-      proveedor:String(P('sueProveedor','Sueldos y jornales')), fecha:L.hasta, vencimiento:L.fechaPago,
-      detalle:'Sueldos — '+etiquetaQ(sel), nota:'Generado por el módulo Sueldos.' });
+    if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
+    // La compra de ESE empleado tiene que existir para colgarle el pago. Si la quincena todavía no se
+    // confirmó, se crea con su devengado de ahora y se actualiza sola al confirmar.
+    const dev=liquidarFila(filaDe(L,emp), emp).devengado;
+    const uid=window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
+      empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:L.hasta, vencimiento:L.fechaPago,
+      detalle:'Sueldo '+etiquetaQ(sel), nota:'Generado por el módulo Sueldos.' });
     window.__registrarPagoCompra(uid, { fecha, monto, medio:$('sue-a-medio').value, cuenta:$('sue-a-cuenta').value,
       sueEsAdelanto:true, sueEmpUid:empUid, sueEmpNombre:emp.nombre||'', sueNota:String($('sue-a-nota').value||'').trim() });
-    if(!L.compraUid){ L.compraUid=uid; persistLiq(L,true); }
     $('sue-modal-adel').classList.remove('open');
     render();
   }
