@@ -2568,8 +2568,9 @@ function buildFilterTable(cfg){
   const SUE_CAT_DEF='Mano de Obra';
   const catSueldos = ()=> String((window.__param?window.__param('sueCategoria',SUE_CAT_DEF):SUE_CAT_DEF)||SUE_CAT_DEF);
   const SUE_CAT=SUE_CAT_DEF;   // lo sigue usando __comprasManoObraDe
+  // quincena: 1 · 2 · 3 = el período MES de los mensuales, que liquida el mes anterior (ver Sueldos).
   const uidSueldo = (periodo, quincena, empUid)=>
-    'sue_'+String(periodo||'').slice(0,7)+'_Q'+(num(quincena)===2?2:1)+'_'+String(empUid||'').replace(/[^A-Za-z0-9_-]/g,'');
+    'sue_'+String(periodo||'').slice(0,7)+'_Q'+(num(quincena)===3?3:(num(quincena)===2?2:1))+'_'+String(empUid||'').replace(/[^A-Za-z0-9_-]/g,'');
   window.__compraSueldoUid = uidSueldo;
   const esCompraDelTablero = c => /^sue_/.test(String((c&&c._uid)||''));
 
@@ -11368,7 +11369,20 @@ function buildFilterTable(cfg){
   // ==================== Períodos y quincenas ====================
   const perDe=s=>String(s.anio)+'-'+p2(s.mes);
   const ultDia=(a,m)=>new Date(a,m,0).getDate();
+  /* El MES de los mensuales (Marcelo y Sofía) es un período propio, aparte de las dos quincenas
+     (pedido de Marcelo, 03/08): cobran a MES VENCIDO, así que lo que se liquida en agosto es el
+     sueldo de JULIO, en septiembre el de agosto, y así. `quincena:3` identifica ese período.
+     Con eso el mes de agosto tiene tres liquidaciones: 1ª quincena, 2ª quincena (los 6 de la
+     fábrica) y "Mes" (los mensuales, liquidando el mes anterior). */
+  const esPeriodoMes = s => num(s&&s.quincena)===3;
+  const mesAnt = s => ({ anio: s.mes===1?s.anio-1:s.anio, mes: s.mes===1?12:s.mes-1 });
+  // El mes que se TRABAJA en ese período. Para las quincenas es el mismo; para el período mensual es
+  // el ANTERIOR (se liquida a mes vencido). Es el mes del recibo y el de la base de la comisión.
+  const mesLiquidado = s => esPeriodoMes(s) ? mesAnt(s) : { anio:s.anio, mes:s.mes };
+  const perLiquidado = s => perDe(mesLiquidado(s));
   function rangoQuincena(s){
+    if(esPeriodoMes(s)){ const m=mesAnt(s), per=perDe(m);
+      return { desde:per+'-01', hasta:per+'-'+p2(ultDia(m.anio,m.mes)) }; }
     const per=perDe(s);
     if(num(s.quincena)===2) return { desde:per+'-16', hasta:per+'-'+p2(ultDia(s.anio,s.mes)) };
     return { desde:per+'-01', hasta:per+'-15' };
@@ -11394,11 +11408,15 @@ function buildFilterTable(cfg){
      30/31— y cobran el mes SIGUIENTE, del 1 al 10. O sea: en agosto se paga lo de julio. */
   function pagoSugeridoMensual(s){
     const dia=Math.min(28, Math.max(1, Math.round(num(P('sueDiaPagoMensual',5)))));
-    const n=mesSig(s);
+    // En el período MES la plata sale dentro de ESE mes (agosto paga el sueldo de julio, del 1 al 10),
+    // así que no hay que correrse un mes más: el período ya ES el mes en que se cobra.
+    const n = esPeriodoMes(s) ? { anio:s.anio, mes:s.mes } : mesSig(s);
     return n.anio+'-'+p2(n.mes)+'-'+p2(dia);
   }
-  const etiquetaQ = s => (num(s.quincena)===2?'2ª quincena':'1ª quincena')+' de '+MESES[s.mes-1]+' '+s.anio;
-  const uidLiq = s => 'liq_'+perDe(s)+'_Q'+(num(s.quincena)===2?2:1);
+  const etiquetaQ = s => esPeriodoMes(s)
+    ? ('Mes de '+MESES[mesAnt(s).mes-1]+' '+mesAnt(s).anio+' — se paga en '+MESES[s.mes-1]+' '+s.anio)
+    : ((num(s.quincena)===2?'2ª quincena':'1ª quincena')+' de '+MESES[s.mes-1]+' '+s.anio);
+  const uidLiq = s => 'liq_'+perDe(s)+'_Q'+(esPeriodoMes(s)?3:(num(s.quincena)===2?2:1));
   window.__sueQuincena = { rango:rangoQuincena, pago:pagoSugerido, pagoMensual:pagoSugeridoMensual,
                            uid:uidLiq, etiqueta:etiquetaQ };
 
@@ -11468,7 +11486,7 @@ function buildFilterTable(cfg){
   function liqOCrear(s){
     let L=liqDe(s); if(L) return L;
     const r=rangoQuincena(s);
-    L={ _uid:uidLiq(s), periodo:perDe(s), quincena:num(s.quincena)===2?2:1, desde:r.desde, hasta:r.hasta,
+    L={ _uid:uidLiq(s), periodo:perDe(s), quincena:esPeriodoMes(s)?3:(num(s.quincena)===2?2:1), desde:r.desde, hasta:r.hasta,
         fechaPago:pagoSugerido(s), fechaPagoMensual:pagoSugeridoMensual(s),
         estado:'abierta', compraUid:'', filas:{}, _borrador:true };
     LIQ.push(L); return L;
@@ -11491,9 +11509,12 @@ function buildFilterTable(cfg){
      con ellos el Punto de Equilibrio). El `vencimiento` sigue siendo la fecha de pago real, así que
      la CAJA proyecta la salida el día que sale — las dos cosas pueden caer en meses distintos. */
   const fechaCostoDe = (L, emp) => esMensual(emp) ? fechaPagoDe(L, emp) : L.hasta;
-  // Quiénes se liquidan en esa quincena. Los quincenales, siempre; los MENSUALES solo en la 2ª (se
-  // liquidan a mes vencido y cobran a principios del mes siguiente), y ahí van con el mes completo.
-  const liquidanEn = s => activosEn(rangoQuincena(s).hasta).filter(e => num(s.quincena)===2 || !esMensual(e));
+  // Quiénes se liquidan en cada período: las dos QUINCENAS son de los quincenales de la fábrica, y el
+  // período MES es solo de los mensuales (que ahí liquidan el mes anterior). Antes los mensuales iban
+  // dentro de la 2ª quincena del mes trabajado; se separaron el 03/08 a pedido de Marcelo.
+  const liquidanEn = s => esPeriodoMes(s)
+    ? activosEn(rangoQuincena(s).hasta).filter(esMensual)
+    : activosEn(rangoQuincena(s).hasta).filter(e=>!esMensual(e));
 
   // Comisión sobre las ventas del mes (Sofía: 1,5% de lo vendido sin flete, ver __ventasComisionables).
   // ⚠️ Se calcula UNA vez, al crear la fila, y queda GUARDADA como el básico. Si se recalculara en cada
@@ -11510,7 +11531,9 @@ function buildFilterTable(cfg){
   function filaDe(L, emp){
     L.filas=L.filas||{};
     if(!L.filas[emp._uid]){
-      const c=comisionCalculada(emp, L.periodo);
+      // ⚠️ La comisión es del mes TRABAJADO, no del período: en el período MES de agosto se liquida
+      // julio, así que la base son las ventas de JULIO.
+      const c=comisionCalculada(emp, perLiquidado(sDe(L)));
       L.filas[emp._uid]={ basicoMes:num(emp.basicoMes), basicoAnterior:0, sabados:0, horasExtras:0, feriados:0,
         plusVacacional:0, sac:0, bonos:0, bonosDesc:'', presentismo: emp.cobraPresentismo===false?0:1,
         comision:c.monto, comisionPct:c.pct, comisionBase:c.base,
@@ -11615,8 +11638,8 @@ function buildFilterTable(cfg){
       kpi(String(activosEn(hoyISO).length),'Empleados activos')+
       kpi(money0(t.devengado), etiquetaQ(sel)+' — devengado')+
       kpi(money0(t.pagado),'Ya pagado'+(t.adelantos>0?' (incluye '+money0(t.adelantos)+' de adelantos)':''), t.pagado>0?'var(--amber)':'')+
-      kpi(money0(t.aPagar),'Falta pagar de esta quincena', t.aPagar>0?'var(--red)':'var(--green)')+
-      kpi(L&&L.estado==='confirmada'?'✓ Confirmada':'Abierta','Estado de la quincena', L&&L.estado==='confirmada'?'var(--green)':'var(--muted)');
+      kpi(money0(t.aPagar),'Falta pagar de este período', t.aPagar>0?'var(--red)':'var(--green)')+
+      kpi(L&&L.estado==='confirmada'?'✓ Confirmada':'Abierta','Estado del período', L&&L.estado==='confirmada'?'var(--green)':'var(--muted)');
   }
 
   // ---------- Barra de selección del período ----------
@@ -11628,10 +11651,14 @@ function buildFilterTable(cfg){
       '<div><label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Año</label>'+
       '<select id="'+idPrefix+'-anio" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px">'+
       anios.map(a=>'<option value="'+a+'"'+(sel.anio===a?' selected':'')+'>'+a+'</option>').join('')+'</select></div>'+
-      '<div><label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Quincena</label>'+
+      '<div><label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Período</label>'+
       '<select id="'+idPrefix+'-q" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px">'+
-      '<option value="1"'+(num(sel.quincena)===1?' selected':'')+'>1ª (del 1 al 15)</option>'+
-      '<option value="2"'+(num(sel.quincena)===2?' selected':'')+'>2ª (del 16 a fin de mes)</option></select></div>';
+      '<option value="1"'+(num(sel.quincena)===1?' selected':'')+'>1ª quincena (del 1 al 15)</option>'+
+      '<option value="2"'+(num(sel.quincena)===2?' selected':'')+'>2ª quincena (del 16 a fin de mes)</option>'+
+      // Los mensuales cobran a MES VENCIDO, así que su liquidación es un período aparte: la de agosto
+      // liquida julio. Se rotula con el mes que liquida, para que no haya confusión posible.
+      '<option value="3"'+(num(sel.quincena)===3?' selected':'')+'>Mes (mensuales) — liquida '+
+        esc(MESES[mesAnt(sel).mes-1]+' '+mesAnt(sel).anio)+'</option></select></div>';
   }
   function wireBarraPeriodo(idPrefix){
     ['mes','anio','q'].forEach(k=>{ const el=$(idPrefix+'-'+k); if(!el) return;
@@ -11712,8 +11739,12 @@ function buildFilterTable(cfg){
         sub:'Cobran el '+fmtFecha(L.fechaPago)+' · el costo se imputa a '+MESES[sel.mes-1]+' '+sel.anio },
       { k:'m', emps:emps.filter(esMensual),
         titulo:'Mensuales — mes completo',
-        sub:'A mes vencido: cobran el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+
-            ' · el costo se imputa a '+MESES[sel.mes%12]+' '+(sel.mes===12?sel.anio+1:sel.anio) }
+        // En el período MES, lo que se liquida es el mes ANTERIOR y el costo se imputa a ESTE mes
+        // (es el mes en que se cobra). Fuera de él, el costo cae al mes siguiente.
+        sub:'A mes vencido: se liquida '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+
+            ' · cobran el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+
+            ' · el costo se imputa a '+(esPeriodoMes(sel)? MESES[sel.mes-1]+' '+sel.anio
+                                                        : MESES[sel.mes%12]+' '+(sel.mes===12?sel.anio+1:sel.anio)) }
     ].filter(g=>g.emps.length);
     const nCols=hayComision?17:16, colMedio=hayComision?13:12;
     const separar=grupos.length>1;   // con un solo grupo no hace falta encabezarlo
@@ -11731,7 +11762,7 @@ function buildFilterTable(cfg){
       tDev+=k.devengado; tAde+=pag; tFalta+=falta;
       const distinto = num(f.basicoMes)!==num(e.basicoMes) && num(e.basicoMes)>0;
       // Comisión: se muestra cuánto daría HOY para poder refrescarla, pero manda lo guardado en la fila.
-      const cHoy = num(e.comisionPct)>0 ? comisionCalculada(e, L.periodo) : null;
+      const cHoy = num(e.comisionPct)>0 ? comisionCalculada(e, perLiquidado(sDe(L))) : null;
       const comDif = cHoy && Math.abs(cHoy.monto-num(f.comision))>0.5;
       // El nombre SÍ envuelve: "VASSALLO MARCELO ALEJANDRO" pide 219px y la columna tiene 170. Antes
       // con nowrap+overflow:hidden se cortaba a la mitad. En dos renglones se lee entero y la tabla
@@ -11849,7 +11880,7 @@ function buildFilterTable(cfg){
     // ↻ de la comisión: recalcula con las ventas que hay AHORA (por si se cargaron después de abrir la quincena)
     t.querySelectorAll('button[data-com]').forEach(b=> b.onclick=()=>{
       const e=EMP.find(x=>x._uid===b.dataset.com); if(!e) return;
-      const c=comisionCalculada(e, L.periodo), f=filaDe(L,e);
+      const c=comisionCalculada(e, perLiquidado(sDe(L))), f=filaDe(L,e);
       if(!confirm('Actualizar la comisión de '+(e.nombre||'')+'\n\nGuardada: '+money(f.comision)+
         '\nCon las ventas de hoy: '+money(c.monto)+' ('+nPct(c.pct)+'% de '+money(c.base)+')\n\n¿La actualizo?')) return;
       f.comision=c.monto; f.comisionPct=c.pct; f.comisionBase=c.base;
@@ -11925,22 +11956,23 @@ function buildFilterTable(cfg){
     el.innerHTML=estado+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
       (cerrada
-        ? '<span style="color:var(--green);font-weight:600">✓ Quincena confirmada'+(L.confirmadaPor?' por '+esc(L.confirmadaPor):'')+
+        ? '<span style="color:var(--green);font-weight:600">✓ '+(esPeriodoMes(sel)?'Mes':'Quincena')+' confirmada'+(L.confirmadaPor?' por '+esc(L.confirmadaPor):'')+
             (L.sinCompra?' <span style="font-weight:400;color:var(--muted)">(sin compra propia: los sueldos ya estaban cargados en Compras)</span>':'')+'</span>'+
           '<button class="cmp-btn" id="sue-reabrir">↩ Reabrir para corregir</button>'
         : (sueldosYaEnCompras(L).length
             ? '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar-sin">✓ Confirmar sin crear la compra</button>'+
               '<button class="cmp-btn" id="sue-confirmar">Confirmar y crear la compra igual</button>'
-            : '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar">✓ Confirmar quincena e imputar en Compras</button>'))+
-      (t.aPagar>0.5?'<button class="cmp-btn'+(cerrada?' cmp-btn-primary':'')+'" id="sue-pagar">💵 Pagar la quincena · '+money0(t.aPagar)+'</button>':'')+
+            : '<button class="cmp-btn cmp-btn-primary" id="sue-confirmar">✓ Confirmar '+(esPeriodoMes(sel)?'el mes':'la quincena')+' e imputar en Compras</button>'))+
+      (t.aPagar>0.5?'<button class="cmp-btn'+(cerrada?' cmp-btn-primary':'')+'" id="sue-pagar">💵 Pagar '+(esPeriodoMes(sel)?'el mes':'la quincena')+' · '+money0(t.aPagar)+'</button>':'')+
       '<button class="cmp-btn" id="sue-recibos-todos">🖨️ Recibos de todos</button>'+
       '</div>'+
       '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Confirmar crea (o actualiza) <b>una compra por persona</b> — '+
       t.cant+' en total por '+money0(t.devengado)+' — en la categoría <b>'+esc(String(P('sueCategoria','Mano de Obra')))+
-      '</b>. Se pagan el '+fmtFecha(L.fechaPago)+
-      (liquidanEn(sel).some(esMensual)?' (los mensuales, el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+')':'')+
-      ' y el costo se imputa a <b>'+MESES[sel.mes-1]+'</b>'+
-      (liquidanEn(sel).some(esMensual)?' (los mensuales a <b>'+MESES[(sel.mes%12)]+'</b>, porque cobran a mes vencido)':'')+
+      '</b>. '+(esPeriodoMes(sel)
+        ? 'Se paga el <b>'+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+'</b> y el costo se imputa a <b>'+
+          MESES[sel.mes-1]+' '+sel.anio+'</b> (es el mes en que se cobra)'
+        : 'Se pagan el <b>'+fmtFecha(L.fechaPago)+'</b> y el costo se imputa a <b>'+MESES[sel.mes-1]+' '+sel.anio+
+          '</b> (el mes trabajado)')+
       '. Desde ahí salen en Caja, Finanzas, Costos Fijos y el Punto de Equilibrio — <b>no las cargues también a mano</b>.</div>';
     if($('sue-confirmar')) $('sue-confirmar').onclick=()=>confirmarQuincena(L, true);
     if($('sue-confirmar-sin')) $('sue-confirmar-sin').onclick=()=>confirmarQuincena(L, false);
@@ -11967,10 +11999,13 @@ function buildFilterTable(cfg){
     if(crearCompra){
       msg+='Se crea/actualiza UNA COMPRA POR PERSONA ('+t.cant+' en total) en la categoría "'+
         String(P('sueCategoria','Mano de Obra'))+'", por '+money(t.devengado)+' en conjunto.\n'+
-        'Se pagan: los quincenales el '+fmtFecha(L.fechaPago)+
-        (liquidanEn(sel).some(esMensual)?' · los mensuales el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel)):'')+
-        '.\nCosto: los quincenales se imputan a '+MESES[sel.mes-1]+' (el mes trabajado)'+
-        (liquidanEn(sel).some(esMensual)?'; los mensuales, a '+MESES[(sel.mes%12)]+' (cobran a mes vencido)':'')+'.';
+        // En el período MES solo hay mensuales, y su costo se imputa a ESE mes (es cuando se paga).
+        // Fuera de él solo hay quincenales, y el costo cae al mes trabajado.
+        (esPeriodoMes(sel)
+          ? 'Se paga el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel))+
+            ' y el costo se imputa a '+MESES[sel.mes-1]+' '+sel.anio+' (es el mes en que se cobra).'
+          : 'Se pagan el '+fmtFecha(L.fechaPago)+
+            ' y el costo se imputa a '+MESES[sel.mes-1]+' '+sel.anio+' (el mes trabajado).');
       if(ya.length) msg+='\n\n🔴 ATENCIÓN: ese mes YA tiene '+ya.length+' compra(s) de sueldo cargadas ('+
         money(ya.reduce((a,o)=>a+num(o.total),0))+'). Si son estos mismos sueldos van a quedar contados DOS VECES.\n'+
         'Si es así, cancelá y usá "Confirmar sin crear la compra".';
@@ -12000,7 +12035,7 @@ function buildFilterTable(cfg){
         // va a julio y la caja lo proyecta en agosto. Ver fechaCostoDe().
         window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:e._uid, empNombre:e.nombre,
           cuil:e.cuil||'', monto:k.devengado, fecha:fechaCostoDe(L,e), vencimiento:fechaPagoDe(L,e),
-          detalle: esMensual(e) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
+          detalle: esMensual(e) ? ('Sueldo de '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
           nota:'Generado por el módulo Sueldos. Editalo desde ahí, no acá.' });
         hechas++;
       });
@@ -12036,8 +12071,9 @@ function buildFilterTable(cfg){
     const mes=remuneracionDelMes(L,emp);
     return { empleado:{ nombre:emp.nombre||'', dni:emp.dni||'', cuil:emp.cuil||'', legajo:emp.legajo||'',
                         fechaIngreso:emp.fechaIngreso||'', puesto:emp.puesto||'' },
-      periodo: esMensual(emp) ? (MESES[+String(L.periodo).slice(5,7)-1]+' '+String(L.periodo).slice(0,4)+' — mes completo')
-                              : etiquetaQ({anio:+String(L.periodo).slice(0,4), mes:+String(L.periodo).slice(5,7), quincena:L.quincena}),
+      // El recibo dice el mes TRABAJADO: en el período mensual de agosto, "Julio 2026 — mes completo".
+      periodo: esMensual(emp) ? (MESES[mesLiquidado(sDe(L)).mes-1]+' '+mesLiquidado(sDe(L)).anio+' — mes completo')
+                              : etiquetaQ(sDe(L)),
       fechaPago:fechaPagoDe(L,emp), haberes:k.haberes, descuentos:desc,
       totalHaberes:k.totalHaberes, totalDescuentos:totalDesc, neto:round2(k.totalHaberes-totalDesc),
       totalMes:mes.monto, totalMesEstimado:!mes.real, valorDia:k.V.dia, valorHora:k.V.hora };
@@ -12363,7 +12399,8 @@ function buildFilterTable(cfg){
         fecha:L.fechaPago||hoyISO, sub:'Cobran el '+fmtFecha(L.fechaPago||hoyISO) },
       { k:'m', emps:emps.filter(esMensual), titulo:'Mensuales — mes completo',
         fecha:L.fechaPagoMensual||pagoSugeridoMensual(sel),
-        sub:'A mes vencido: cobran el '+fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel)) }
+        sub:'A mes vencido ('+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+'): cobran el '+
+            fmtFecha(L.fechaPagoMensual||pagoSugeridoMensual(sel)) }
     ].filter(g=>g.emps.length);
     const separar=grupos.length>1;
     let html='<p style="margin:0 0 12px;font-size:13px;color:var(--muted)">Pago de la <b>'+esc(etiquetaQ(sel))+
@@ -12525,7 +12562,7 @@ function buildFilterTable(cfg){
           uid=window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:x.emp._uid,
             empNombre:x.emp.nombre, cuil:x.emp.cuil||'', monto:Math.max(dev, x.monto), fecha:fechaCostoDe(L,x.emp),
             vencimiento:fechaPagoDe(L,x.emp),
-            detalle: esMensual(x.emp) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
+            detalle: esMensual(x.emp) ? ('Sueldo de '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
             nota:'Generado por el módulo Sueldos.' });
         }
         const id=window.__registrarPagoCompra(uid, { fecha:x.fecha, monto:x.monto, medio:x.medio, cuenta:x.cuenta,
@@ -12557,7 +12594,7 @@ function buildFilterTable(cfg){
     const uid=fEmp.compraUid || window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
       empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:fechaCostoDe(L,emp),
       vencimiento:fechaPagoDe(L,emp),
-      detalle: esMensual(emp) ? ('Sueldo de '+MESES[sel.mes-1]+' '+sel.anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
+      detalle: esMensual(emp) ? ('Sueldo de '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
       nota:'Generado por el módulo Sueldos.' });
     window.__registrarPagoCompra(uid, { fecha, monto, medio:$('sue-a-medio').value, cuenta:$('sue-a-cuenta').value,
       sueEsAdelanto:true, sueEmpUid:empUid, sueEmpNombre:emp.nombre||'', sueNota:String($('sue-a-nota').value||'').trim() });
@@ -12624,13 +12661,25 @@ function buildFilterTable(cfg){
     let mejor=0;
     for(let m=desde;m<=hasta;m++){
       const per=anioSac+'-'+p2(m); let mes=0, quincenas=0;
-      [1,2].forEach(q=>{ const L=LIQ.find(x=>x._uid==='liq_'+per+'_Q'+q);
-        if(!esReal(L)||!L.filas||!L.filas[emp._uid]) return;
-        const f={...L.filas[emp._uid], sac:0};   // el SAC no integra la base del propio SAC
-        mes+=liquidarFila(f,emp,q).totalHaberes; quincenas++; });
-      // Con una sola quincena cargada, el mes se estima duplicándola: si no, un mes a medio liquidar
-      // parecería la MITAD del sueldo y bajaría el aguinaldo sugerido sin motivo.
-      if(quincenas===1) mes*=2;
+      if(esMensual(emp)){
+        // ⚠️ Un mensual NO se liquida en las quincenas de su mes: su liquidación vive en el período
+        // MES del mes SIGUIENTE (cobra a mes vencido). Buscarla en liq_<mes>_Q1/Q2 no encuentra nada
+        // y el aguinaldo sugerido le daría 0.
+        const sig = m===12 ? { a:anioSac+1, m:1 } : { a:anioSac, m:m+1 };
+        const L=LIQ.find(x=>x._uid==='liq_'+sig.a+'-'+p2(sig.m)+'_Q3');
+        if(esReal(L)&&L.filas&&L.filas[emp._uid]){
+          const f={...L.filas[emp._uid], sac:0};    // el SAC no integra la base del propio SAC
+          mes=liquidarFila(f,emp,3).totalHaberes;   // ya es el mes entero: NO se duplica
+        }
+      } else {
+        [1,2].forEach(q=>{ const L=LIQ.find(x=>x._uid==='liq_'+per+'_Q'+q);
+          if(!esReal(L)||!L.filas||!L.filas[emp._uid]) return;
+          const f={...L.filas[emp._uid], sac:0};   // el SAC no integra la base del propio SAC
+          mes+=liquidarFila(f,emp,q).totalHaberes; quincenas++; });
+        // Con una sola quincena cargada, el mes se estima duplicándola: si no, un mes a medio liquidar
+        // parecería la MITAD del sueldo y bajaría el aguinaldo sugerido sin motivo.
+        if(quincenas===1) mes*=2;
+      }
       if(mes>mejor) mejor=mes;
     }
     return round2(mejor);
@@ -12722,6 +12771,20 @@ function buildFilterTable(cfg){
       const t=totalesDe(s); if(!(t.devengado>0)) continue;
       A.push({ sev:'warn', area:'Sueldos', t:'La '+etiquetaQ(s)+' está liquidada ('+money0(t.devengado)+') pero sin confirmar',
         act:'Confirmala para que entre como deuda en Finanzas y en la proyección de caja — hasta entonces la plata aparece de más.',
+        go:{page:'Sueldos'} });
+    }
+    // El período MES de los mensuales (liquida el mes anterior) es otro documento y también puede
+    // quedar sin confirmar. Se revisan los 2 últimos.
+    for(let i=0;i<2;i++){
+      const d=new Date(HOY.getFullYear(), HOY.getMonth(), 1); d.setMonth(d.getMonth()-i);
+      const s={ anio:d.getFullYear(), mes:d.getMonth()+1, quincena:3 };
+      if(rangoQuincena(s).hasta>=hoyISO) continue;
+      const L=LIQ.find(x=>x._uid===uidLiq(s));
+      if(!esReal(L) || L.estado==='confirmada') continue;
+      const t=totalesDe(s); if(!(t.devengado>0)) continue;
+      A.push({ sev:'warn', area:'Sueldos', t:'El sueldo de '+MESES[mesAnt(s).mes-1]+' '+mesAnt(s).anio+
+          ' de los mensuales está liquidado ('+money0(t.devengado)+') pero sin confirmar',
+        act:'Confirmalo para que entre como deuda en Finanzas y en la proyección de caja — hasta entonces la plata aparece de más.',
         go:{page:'Sueldos'} });
     }
     return A;
