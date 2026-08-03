@@ -2314,7 +2314,13 @@ function buildFilterTable(cfg){
   // por eso hay UNA sola opción en vez de dos, para que nadie elija la equivocada. Lo ya cargado
   // conserva su texto original ("Cheque", "E-Cheq", "E-Cheque") — esCheque() los reconoce a todos.
   const MEDIO_CHEQUE = 'Cheque / E-Cheq';
-  const MEDIOS_PAGO = ['Transferencia','Efectivo',MEDIO_CHEQUE,MEDIO_ENDOSO,'VISA / Tarjeta','Débito automático','Retención',MEDIO_ADMIN];
+  // La tarjeta corporativa (VISA Business Macro) se usa sobre todo para GNC y gasoil. NO es un medio
+  // "diferido" como el cheque: la compra se deja SIN pagar hasta que se paga el resumen, y recién ahí
+  // se registra el pago con la fecha real y la cuenta de la que sale. Por eso acá se comporta como
+  // cualquier medio común (pide cuenta, la Caja lo cuenta ese día) — lo que difiere es la fecha.
+  const MEDIO_TARJETA = 'VISA / Tarjeta';
+  const MEDIO_DEBITO = 'Débito automático';
+  const MEDIOS_PAGO = ['Transferencia','Efectivo',MEDIO_CHEQUE,MEDIO_ENDOSO,MEDIO_TARJETA,MEDIO_DEBITO,'Retención',MEDIO_ADMIN];
   const esCheque = m => /cheq/i.test(String(m||''));   // cualquier variante → se sincroniza con el módulo Cheques
   // ⚠️ El <select> tiene que INCLUIR el medio que el pago ya tiene, aunque no esté en la lista (pagos
   // viejos con "E-Cheque", o el medio del endoso). Si no, al abrir el editor no queda ninguna opción
@@ -4009,7 +4015,9 @@ function buildFilterTable(cfg){
           '<datalist id="pp-prov-list">'+provs.map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>')+
         field('Monto del pago','','<input id="pp-monto" value="0" type="number" step="0.01">') +
         field('Fecha','','<input type="date" id="pp-fecha" value="'+hoyISO+'">') +
-        field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
+        // MEDIO_TARJETA está acá porque el caso típico es justo este: llega el resumen de la VISA con
+        // 15 cargas de GNC del mismo proveedor y se pagan todas juntas, repartiendo un solo importe.
+        field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia',MEDIO_TARJETA,MEDIO_DEBITO,'Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
         '<div class="cmp-field" id="pp-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="pp-cuenta">'+cuentasOpt('')+'</select></div>' +
       '</div>'+
       '<div id="pp-cuit" class="asof" style="margin:-8px 0 10px"></div>'+
