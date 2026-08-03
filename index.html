@@ -10371,6 +10371,17 @@ function buildFilterTable(cfg){
   const dm = s => { if(!s) return p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate()); const m=String(s).slice(0,10);
     if(/^\d{4}-\d{2}-\d{2}/.test(m)){ const [,me,d]=m.split('-'); return d+'-'+me; } return p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate()); };
   const sanitizeArchivo = s => String(s||'').replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,' ').trim();
+  // Número con el que se identifica una venta, para el nombre del archivo PDF.
+  // Facturada → "0010-00000123"; sin factura → su correlativo INTERNO (2316), que es como la nombra
+  // Marcelo en el listado. ⚠️ NUNCA el _uid: es el identificador técnico de la base y no le dice nada
+  // a nadie — salía "31-07 Venta N° vms9a1tsn ONIX REVESTIMIENTOS" en el nombre del archivo.
+  function numeroVenta(v){
+    if(!v) return '';
+    if(v.cae) return (v.puntoVenta?v.puntoVenta+'-':'')+(v.nroFactura||'');
+    if(v.nroFactura) return (v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura;
+    const n=Math.round(num(v.nroInterno));
+    return n>0 ? String(n) : '';
+  }
   function nombreArchivo(tipo, numero, cliente, fechaISO){
     let n = dm(fechaISO)+' '+tipo; if(numero) n+=' N° '+numero; if(cliente) n+=' '+cliente;
     return sanitizeArchivo(n);
@@ -10881,7 +10892,7 @@ function buildFilterTable(cfg){
   }
 
   window.__imprimir = {
-    detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):(v._uid||''), v.cliente, v.fecha)),
+    detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
     remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha)),
