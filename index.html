@@ -4701,7 +4701,8 @@ function buildFilterTable(cfg){
     const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
     const cu=String(v.cuit||'').replace(/\D/g,'');
     const cli=(cu&&cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu))||cs.find(c=>(c.nombre||'').trim().toUpperCase()===(v.cliente||'').trim().toUpperCase())||{};
-    const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ');
+    // Manda la dirección de ENTREGA cargada en la venta; si no hay, la de la ficha del cliente.
+    const dom=String(v.domicilioEntrega||'').trim() || [cli.direccion, cli.localidad].filter(Boolean).join(' - ');
     const items=(v.items||[]).filter(it=>it&&(it.desc||it.codigo)).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant)}));
     // ⚠️ La fecha del remito es la de la ENTREGA, no la de la venta (pueden ser días distintos): se
     // propone HOY y se confirma en el formulario de datos de entrega. Lo mismo el transporte, que la
@@ -4763,7 +4764,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, domicilioEntrega:'', arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
   function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); editing.listaPrecios=normLista(editing.listaPrecios); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
   function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; _onSaved=null; }
 
@@ -4803,6 +4804,9 @@ function buildFilterTable(cfg){
         field('Cond. IVA','','<select id="vf-cond">'+opt(COND_IVA,v.condIva)+'</select>') +
         field('Categoría','col2','<select id="vf-cat">'+opt(CATEGORIAS,v.categoria)+'</select>') +
         field('Vendedor','','<input id="vf-vend" list="vf-vend-list" value="'+esc(v.vendedor)+'" placeholder="Vendedor">'+datalistVend()) +
+        // Dónde se entrega la mercadería: es lo que sale como domicilio en los documentos. Vacío =
+        // se usa la dirección de la ficha del cliente (que puede ser la fiscal, no la de la obra).
+        field('Dirección de entrega','col2','<input id="vf-doment" value="'+esc(v.domicilioEntrega||'')+'" placeholder="Calle, número, localidad — vacío usa la dirección del cliente">') +
         field('Lista de precios','','<select id="vf-lista">'+opt(window.__listaOpts(v.listaPrecios),v.listaPrecios)+'</select>') +
         field('Tipo comprobante','','<select id="vf-tipo">'+opt(TIPOS_COMPROB,v.tipoComprobante)+'</select>') +
         '<div class="cmp-field col2" id="vf-asoc-wrap"'+(esNotaCD(v.tipoComprobante)?'':' style="display:none"')+
@@ -4835,7 +4839,7 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="vf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="vf-save">Guardar venta</button></div>';
     drawItems();
-    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-nroint:nroInterno','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
+    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-doment:domicilioEntrega','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-nroint:nroInterno','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
       const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
       el.addEventListener('input',()=>{ editing[key]=el.value; if(['vf-descg','vf-piva','vf-piibb','vf-impint','vf-int'].includes(id)) drawTotals(); });
     });
@@ -5233,6 +5237,7 @@ function buildFilterTable(cfg){
     const v=blankVenta();
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=normLista(lead.listaPrecios);
+    v.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     v.notaCliente = lead.notaCliente || notas.join(' · ');
@@ -5246,6 +5251,7 @@ function buildFilterTable(cfg){
     const v=blankVenta();
     v.cliente=p.cliente||''; v.cuit=p.cuit||''; if(p.condIva)v.condIva=p.condIva;
     if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
+    v.domicilioEntrega = p.domicilioEntrega||'';   // la dirección de entrega viaja del presupuesto a la venta
     v.descGeneral=p.descGeneral||0; v.notaCliente=p.notaCliente||''; v.nota=(p.nota?p.nota+' · ':'')+'Desde presupuesto '+(p.numero||'');
     const items=(p.items||[]).filter(it=>it&&(it.desc||num(it.precioUnit)));
     v.items = items.length ? items.map(it=>({desc:it.desc||'',codigo:it.codigo||'',cant:num(it.cant)||1,precioUnit:num(it.precioUnit),descPct:num(it.descPct),iva:it.iva||'21'})) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
@@ -7108,7 +7114,7 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, zona:'', palletsFlete:0, items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
+  function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, domicilioEntrega:'', zona:'', palletsFlete:0, items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
   let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
   function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
   function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
@@ -7127,6 +7133,8 @@ function buildFilterTable(cfg){
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
         field('Lista de precios','','<select id="pf-lista">'+opt(window.__listaOpts(p.listaPrecios),p.listaPrecios)+'</select>') +
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
+        // Ídem Ventas: es lo que sale como domicilio en el PDF. Vacío = dirección de la ficha del cliente.
+        field('Dirección de entrega','col2','<input id="pf-doment" value="'+esc(p.domicilioEntrega||'')+'" placeholder="Calle, número, localidad — vacío usa la dirección del cliente">') +
         field('Forma de entrega (flete)','col2','<div class="pf-picker" id="pf-zona-picker" style="margin:2px 0 0"></div>') +
       '</div>'+
       '<h4 style="margin:6px 0 4px;font-size:13px">Ítems</h4>'+
@@ -7145,7 +7153,7 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pf-save">Guardar presupuesto</button></div>';
     drawItems();
-    ['pf-num:numero','pf-fecha:fecha','pf-val:validezDias','pf-estado:estado','pf-cli:cliente','pf-cuit:cuit','pf-cond:condIva','pf-cat:categoria','pf-lista:listaPrecios','pf-vend:vendedor','pf-notacli:notaCliente','pf-nota:nota','pf-descg:descGeneral'].forEach(pair=>{
+    ['pf-num:numero','pf-fecha:fecha','pf-val:validezDias','pf-estado:estado','pf-cli:cliente','pf-cuit:cuit','pf-cond:condIva','pf-cat:categoria','pf-lista:listaPrecios','pf-vend:vendedor','pf-doment:domicilioEntrega','pf-notacli:notaCliente','pf-nota:nota','pf-descg:descGeneral'].forEach(pair=>{
       const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); }); });
     $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } });
     $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); } });
@@ -7298,6 +7306,7 @@ function buildFilterTable(cfg){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
     if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
     p.zona = lead.zona||'';
+    p.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
     p.leadUid = lead._uid||'';   // vínculo con el lead que lo originó: el CRM lo usa para mostrar el monto cotizado
     p.palletsFlete = Math.round(num(lead.palletsFlete))||0;   // pallets armados a mano en el lead (0 = automático)
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
@@ -10463,9 +10472,14 @@ function buildFilterTable(cfg){
     if(esNota && v.compAsocDesc) extrasDer='<div style="margin-top:4px"><b>Corrige:</b> '+esc(v.compAsocDesc)+'</div>';
     if(esPresupuesto){ extrasDer='<div style="margin-top:4px"><b>Vto. del Presupuesto:</b> '+dmy(v.vencimiento)+'</div>'; }
     else if(v.vencimiento){ extrasDer='<div style="margin-top:4px"><b>Vto. para el pago:</b> '+dmy(v.vencimiento)+'</div>'; }
+    // En el papel manda la dirección de ENTREGA (donde va la mercadería), no la fiscal de la ficha
+    // del cliente. El rótulo dice cuál de las dos se está mostrando: si la venta/presupuesto no tiene
+    // dirección de entrega cargada, se cae a la de la ficha y el rótulo vuelve a ser "Domicilio", para
+    // que el documento no afirme que se entrega en una dirección que nadie confirmó.
+    const ent=String(v.domicilioEntrega||'').trim();
     const izq='<b>'+esc(v.cliente||'—')+'</b>'+
       (cli.telefono?'<br>Teléfono: '+esc(cli.telefono):'')+
-      '<br>Domicilio: '+esc(dom);
+      '<br>'+(ent?'Dirección de entrega: '+esc(ent):'Domicilio: '+esc(dom));
     const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—')+
       '<br>Categoría: '+esc(v.categoria||'—')+'<br>Vendedor: '+esc(v.vendedor||'—');
     // Al consumidor final no hace falta discriminarle el IVA (no lo usa para nada, y desdoblar
@@ -10539,7 +10553,8 @@ function buildFilterTable(cfg){
   function recibo(v){
     const cli=buscarCliente(v.cliente,v.cuit)||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
-    const izq='<b>'+esc(v.cliente||'—')+'</b><br>Domicilio: '+esc(dom);
+    const ent=String(v.domicilioEntrega||'').trim();   // ídem detalle: manda la dirección de entrega
+    const izq='<b>'+esc(v.cliente||'—')+'</b><br>'+(ent?'Dirección de entrega: '+esc(ent):'Domicilio: '+esc(dom));
     const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—');
     const cobros=(v.cobros||[]).filter(c=>c&&num(c.monto)>0);
     let filas=cobros.map(c=>'<tr><td>'+dmy(c.fecha)+'</td><td>'+esc(c.medio||'')+'</td><td>'+esc(c.obs||'')+'</td><td class="n">'+money(c.monto)+'</td></tr>').join('');
