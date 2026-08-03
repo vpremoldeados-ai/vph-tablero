@@ -10267,6 +10267,10 @@ function buildFilterTable(cfg){
   const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const money = n => '$'+ (Math.round(num(n)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const nf = n => Math.round(num(n)).toLocaleString('es-AR');
+  // Porcentaje TAL CUAL se cargó: nf() redondea al entero y un descuento del 10,5% salía impreso
+  // como 11% — el papel decía algo distinto de lo que se cobró. Hasta 2 decimales, sin ceros de más
+  // (10,5 → "10,5" · 11 → "11" · 0 → "0").
+  const pct = n => (Math.round(num(n)*100)/100).toLocaleString('es-AR',{maximumFractionDigits:2});
   const dmy = s => { if(!s) return '—'; const m=String(s).slice(0,10); if(/^\d{4}-\d{2}-\d{2}/.test(m)){ const [a,me,d]=m.split('-'); return d+'/'+me+'/'+a; } return String(s); };
   const ALIC = { '21':'21%','10.5':'10,5%','27':'27%','5':'5%','2.5':'2,5%','0':'0%','exento':'Exento','nogravado':'No Gravado' };
   const alicLbl = v => ALIC[String(v)] || (num(v)?num(v)+'%':'—');
@@ -10465,11 +10469,11 @@ function buildFilterTable(cfg){
         const precioFinal = num(it.precioUnit)*(1+al/100);
         return '<tr><td>'+celdaCodigo(it.codigo)+'</td><td>'+esc(it.desc||'')+'</td>'+
           '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(precioFinal)+'</td>'+
-          '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(cIva)+'</td></tr>';
+          '<td class="n">'+pct(it.descPct||0)+'%</td><td class="n">'+money(cIva)+'</td></tr>';
       }
       return '<tr><td>'+celdaCodigo(it.codigo)+'</td><td>'+esc(it.desc||'')+'</td>'+
         '<td class="n">'+nf(it.cant)+'</td><td class="n">'+money(it.precioUnit)+'</td>'+
-        '<td class="n">'+nf(it.descPct||0)+'%</td><td class="n">'+money(base)+'</td>'+
+        '<td class="n">'+pct(it.descPct||0)+'%</td><td class="n">'+money(base)+'</td>'+
         '<td class="n">'+alicLbl(it.iva)+'</td><td class="n">'+money(cIva)+'</td></tr>';
     }).join('');
     const tabla = esConsumidorFinal
