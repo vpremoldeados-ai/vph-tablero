@@ -6818,14 +6818,15 @@ function buildFilterTable(cfg){
   function renderTarjeta(){
     const sec=$('caj-sec-tarjeta'); if(!sec) return;
     const pend = window.__tarjetaPendientes ? window.__tarjetaPendientes() : [];
-    // La sección se muestra si hay débitos pendientes O un resumen subido (para poder cotejar
-    // incluso cuando ya se marcó todo — p. ej. cargar los impuestos después de marcar los débitos).
-    if(!pend.length && !ultimoResumen){ sec.style.display='none'; return; }
+    // La sección se muestra SIEMPRE que la Caja esté andando: el botón de cotejar el resumen vive
+    // acá y tiene que estar aunque todavía no haya ningún débito cargado — el cotejo sirve justamente
+    // para descubrir qué falta. (Antes se ocultaba sin pendientes y el botón no aparecía nunca la
+    // primera vez — lo reportó Marcelo el 04/08.)
     sec.style.display='';
     renderCotejo(pend);
     if(!pend.length){
       $('caj-tarjeta-asof').textContent='Sin débitos pendientes de la tarjeta.';
-      $('caj-tabla-tarjeta').innerHTML='';
+      $('caj-tabla-tarjeta').innerHTML='<tr><td style="color:var(--muted);padding:12px 8px;font-size:13px">Cuando pagues una compra con «VISA / Tarjeta» (desde Compras), sus débitos van a aparecer acá, proyectados al día del resumen. También podés subir el resumen del banco con el botón de abajo, para cotejar y cargar lo que falte.</td></tr>';
       return;
     }
     const tot=pend.reduce((s,x)=>s+x.monto,0);
