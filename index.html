@@ -7441,7 +7441,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
-      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'¿Qué es? (tipo)',t:'select',opts:TIPOS_PROD,cards:1},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'¿Qué es? (tipo)',t:'select',opts:TIPOS_PROD,cards:1},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'refuerzoDesde',l:'Refuerzo de base — solo si el pallet supera estas unidades (ej: 40 → un pallet de 40 o menos va sin base; vacío = siempre)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'codigo',h:'Código'},{k:'nombre',h:'Nombre',b:1},{k:'tipo',h:'Tipo'},{k:'unidad',h:'Un.'},{k:'costo',h:'Costo',money:1},{k:'precioMinorista',h:'Minorista',money:1},{k:'precioMayorista',h:'Mayorista',money:1},{k:'stock',h:'Stock',num:1},{k:'stockMinimo',h:'Mín',num:1},{k:'activo',h:'Activo',bool:1} ],
       search:['nombre','codigo','tipo'] },
     // Materia prima e Insumos comparten la MISMA colección (vph_insumos) pero se muestran en pestañas
@@ -8955,14 +8955,22 @@ function buildFilterTable(cfg){
     if(kP===kR) return null;                                         // auto-referencia
     const ud=num(pr.udPorPallet);
     if(ud<=0 || porPallet>=ud) return null;                          // sin u/pallet o config absurda
-    return { pr2, key:kR, porPallet, ud };
+    // Mínimo de unidades para que el pallet lleve base reforzada: el pallet la lleva si SUPERA este
+    // número (>, no >=). Vacío = el propio tamaño de la base, que es el comportamiento histórico
+    // (un pallet la lleva salvo que sea un pedido suelto más chico que la base).
+    const desdeCfg=Math.round(num(pr.refuerzoDesde));
+    const desde = desdeCfg>0 ? desdeCfg : porPallet;
+    if(desde>=ud) return null;                                       // ni un pallet lleno lo supera => nunca lleva base
+    return { pr2, key:kR, porPallet, ud, desde };
   }
   // ÚNICA función del split. `pallets` = array de unidades por pallet (del plan real).
-  // Un pallet lleva base reforzada solo si tiene MÁS unidades que la propia base: así un pedido suelto
-  // (ej. 3 losetas que el cliente retira) no consume refuerzo, y un pallet parcial de 25 sí lleva sus 5.
+  // Un pallet lleva base reforzada solo si SUPERA el umbral `desde` (refuerzoDesde de la ficha).
+  // En LC60 el umbral es 40: un pallet de 75 lleva sus 5 de doble hierro, uno de 40 o menos va todo
+  // LC60 normal (no vale la pena reforzar una base tan chica). Sin `refuerzoDesde` cargado el umbral
+  // es el tamaño de la base, o sea el comportamiento de siempre.
   function splitRefuerzo(pr, pallets, cant){
     const r=cfgRefuerzo(pr); if(!r || !pallets || !pallets.length) return null;
-    const bruto=pallets.reduce((a,u)=>{ const n=Math.max(0,Math.round(num(u))); return a+(n>r.porPallet?r.porPallet:0); },0);
+    const bruto=pallets.reduce((a,u)=>{ const n=Math.max(0,Math.round(num(u))); return a+(n>r.desde?r.porPallet:0); },0);
     const total=Math.round(num(cant));
     const refCant=Math.min(bruto,total); if(refCant<=0) return null;
     return { key:r.key, codigo:r.pr2.codigo||'', nombre:r.pr2.nombre||'', pr2:r.pr2, cant:refCant, neto:total-refCant, porPallet:r.porPallet };
@@ -9774,13 +9782,24 @@ function buildFilterTable(cfg){
       // Requerimiento de base reforzada: sale del MISMO plan de pallets que va a usar la entrega, con
       // semáforo de stock, para que Gustavo sepa antes de armar si le alcanzan las bases.
       let refTxt='';
+      const cfgR = cfgRefuerzo(resolverProd(r.nombre, r.codigo));
+      // Qué pallets superan el umbral y cuáles no: Gustavo tiene que saber en cuáles poner la base y
+      // en cuáles NO, si no arma de más y el descuento de stock deja de coincidir con lo que cargó.
+      const sinBase = cfgR ? r.pallets.filter(u=>Math.round(num(u))<=cfgR.desde) : [];
       if(r.ref){
         const disp=stockDe(r.ref.pr2).disponible;
         const falta=r.ref.cant-disp;
         refTxt='<div style="margin-top:3px">⚙️ Base reforzada: <b>'+nf(r.ref.cant)+'</b> '+esc(r.ref.nombre)+' + '+nf(r.ref.neto)+' '+esc(r.nombre)+
           ' · '+(falta>0
             ? '<b style="color:var(--red)">faltan '+nf(falta)+' (hay '+nf(Math.max(0,disp))+')</b>'
-            : '<b style="color:var(--green)">hay '+nf(disp)+' ✓</b>')+'</div>';
+            : '<b style="color:var(--green)">hay '+nf(disp)+' ✓</b>')+
+          (sinBase.length ? '<div style="color:var(--amber)">⚠️ SIN base '+(sinBase.length===1?'el pallet':'los pallets')+' de '+sinBase.map(nf).join(' y ')+' u ('+cfgR.desde+' u o menos): '+(sinBase.length===1?'va':'van')+' todo '+esc(r.nombre)+'.</div>' : '')+
+          '</div>';
+      } else if(cfgR && r.pallets.length){
+        // Ningún pallet supera el umbral: sin este aviso Gustavo pondría la base por costumbre.
+        refTxt='<div style="margin-top:3px;color:var(--amber)">⚙️ <b>SIN base reforzada</b>: '+
+          (r.pallets.length===1?'el pallet tiene':'los pallets tienen')+' '+cfgR.desde+' u o menos → '+
+          (r.pallets.length===1?'va':'van')+' todo '+esc(r.nombre)+', sin '+esc(cfgR.pr2.nombre||cfgR.pr2.codigo||'refuerzo')+'.</div>';
       }
       out.innerHTML = '<b>'+r.pallets.length+'</b> pallet'+(r.pallets.length!==1?'s':'')+' ('+r.pallets.map(nf).join(' + ')+')'+pesoTxt+
         (ok?'':' <span style="color:var(--red)">⚠ suma '+nf(suma)+' ≠ '+nf(r.cant)+' u</span>')+refTxt;
