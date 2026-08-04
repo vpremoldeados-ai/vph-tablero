@@ -544,8 +544,11 @@
   <div class="page" id="page-metas">
     <div class="kpis" id="kpis-metas"></div>
     <section>
-      <h2><span class="dot" style="background:var(--accent)"></span>Metas del mes por área</h2>
-      <div class="asof">Los objetivos se definen en el bloque METAS del archivo — ajustalos cuando cambie la estrategia. El avance y lo que falta se calculan solos.</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="margin:0"><span class="dot" style="background:var(--accent)"></span>Metas del mes por área</h2>
+        <button class="cmp-btn" id="mt-editar" style="margin-left:auto;display:none">⚙️ Editar objetivos</button>
+      </div>
+      <div class="asof">Los objetivos se ajustan con <b>⚙️ Editar objetivos</b> — cambialos cuando cambie la estrategia. El avance y lo que falta se calculan solos.</div>
       <div class="tbl-wrap"><table id="tabla-metas"></table></div>
       <p class="note">Criterio de estado: <span class="badge green">CUMPLIDA</span> alcanzó el objetivo · <span class="badge blue">EN CAMINO</span> avance ≥ al % de mes transcurrido · <span class="badge amber">ATRASADA</span> avance menor al esperado · <span class="badge red">CRÍTICA</span> por debajo de la mitad de lo esperado. Para metas de "reducir" (deuda vencida, concentración) se compara contra el tope.</p>
     </section>
@@ -1262,6 +1265,17 @@
     </section>
   </div>
 
+  <!-- ================= EDITAR OBJETIVOS DE METAS (overlay) — prefijo de ids: mt- ================= -->
+  <div class="cmp-overlay" id="mt-modal">
+    <div class="cmp-dialog" style="max-width:620px">
+      <div class="cmp-dialog-head">
+        <h3>⚙️ Editar objetivos de las metas</h3>
+        <button class="cmp-x" id="mt-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="mt-form"></div>
+    </div>
+  </div>
+
   <!-- ================= FORMULARIOS CAJA (overlay) ================= -->
   <div class="cmp-overlay" id="caj-modal">
     <div class="cmp-dialog" style="max-width:520px">
@@ -1902,8 +1916,81 @@ window.__pintarMetas = function(){
   });
   document.getElementById('tabla-metas').innerHTML = html;
   window.__ordenable('tabla-metas');
+  const btnEd=document.getElementById('mt-editar');
+  if(btnEd) btnEd.style.display = (window.__rol==='admin') ? '' : 'none';   // los objetivos los fija Marcelo
 };
 window.__pintarMetas();
+
+/* ---------- EDITOR DE OBJETIVOS (prefijo de ids: mt-) ----------
+   Antes los objetivos SOLO se podían tocar editando el documento vph_reportes/dashboard a mano desde
+   la consola de Firebase: cada cambio de estrategia dependía de alguien con acceso técnico. Acá se
+   edita únicamente el campo `objetivo` de cada meta; el `actual` NO se toca — sale en vivo de los
+   módulos (Ventas, Producción, Finanzas) y el que está guardado es solo el respaldo del cierre. */
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const num=v=>{ const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.')); return isFinite(n)?n:NaN; };
+  const UNI={'$':'pesos','%':'por ciento','kg':'kilos','x':'veces','u':'unidades'};
+
+  function abrir(){
+    if(!Array.isArray(METAS) || !METAS.length){ alert('Todavía no cargaron las metas. Esperá unos segundos y probá de nuevo.'); return; }
+    $('mt-form').innerHTML =
+      '<p class="note" style="margin:0 0 12px">Cambiá el objetivo de cada indicador. Los que dicen <b>(tope)</b> son metas de <i>no superar</i>: el objetivo es el máximo aceptable. El valor actual y el avance se siguen calculando solos.</p>'+
+      '<div style="display:flex;flex-direction:column;gap:10px">'+
+      METAS.map((m,i)=>{
+        const tope = m.sentido==='<=';
+        return '<div class="cmp-field" style="display:grid;grid-template-columns:1fr 150px;gap:10px;align-items:center">'+
+          '<label style="margin:0"><b>'+esc(m.nombre)+'</b>'+(tope?' <span style="color:var(--muted);font-size:11px">(tope · no superar)</span>':'')+
+            '<div style="color:var(--muted);font-size:11px;font-weight:400">'+esc(m.area||'')+' · en '+(UNI[m.unidad]||esc(m.unidad||''))+'</div></label>'+
+          '<input id="mt-obj-'+i+'" type="number" step="any" min="0" value="'+esc(m.objetivo)+'">'+
+        '</div>';
+      }).join('')+
+      '</div>'+
+      '<div class="cmp-form-foot">'+
+        '<button class="cmp-btn" id="mt-cancel">Cancelar</button>'+
+        '<button class="cmp-btn cmp-btn-primary" id="mt-save">Guardar objetivos</button>'+
+      '</div>';
+    $('mt-cancel').onclick=cerrar;
+    $('mt-save').onclick=guardar;
+    $('mt-modal').classList.add('open');
+  }
+  function cerrar(){ $('mt-modal').classList.remove('open'); }
+
+  async function guardar(){
+    // Se parte de una COPIA de cada meta y se pisa solo `objetivo`: así no se pierden `area`,
+    // `sentido`, `proRata` ni el `actual` del cierre (el bug clásico de rearmar el objeto de cero).
+    const nuevas=[]; const cambios=[];
+    for(let i=0;i<METAS.length;i++){
+      const v=num($('mt-obj-'+i).value);
+      if(!isFinite(v) || v<0){ alert('Revisá el objetivo de «'+METAS[i].nombre+'»: tiene que ser un número de 0 para arriba.'); return; }
+      if(v!==METAS[i].objetivo) cambios.push(METAS[i].nombre+': '+METAS[i].objetivo+' → '+v);
+      nuevas.push(Object.assign({}, METAS[i], {objetivo:v}));
+    }
+    if(!cambios.length){ cerrar(); return; }
+    if(!confirm('Se van a guardar '+cambios.length+' cambio(s):\n\n'+cambios.join('\n'))) return;
+    const btn=$('mt-save'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+    try{
+      const c=window.__fbctx;
+      if(c && c.db){
+        // updateDoc de SOLO el campo METAS: un setDoc del documento entero pisaría el resto del cierre.
+        await c.FS.updateDoc(c.FS.doc(c.db,'vph_reportes','dashboard'), {METAS:nuevas});
+      }
+      METAS.length=0; nuevas.forEach(m=>METAS.push(m));
+      cerrar();
+      if(window.__pintarMetas) window.__pintarMetas();
+      if(window.__pintarPE) window.__pintarPE();
+      if(window.__refreshAlertas) window.__refreshAlertas();
+    }catch(e){
+      alert('No se pudieron guardar los objetivos: '+e.message);
+      console.error('[metas]', e);
+    }finally{ if(btn){ btn.disabled=false; btn.textContent='Guardar objetivos'; } }
+  }
+
+  const b=$('mt-editar'); if(b) b.onclick=abrir;
+  const x=$('mt-cerrar'); if(x) x.onclick=cerrar;
+  const ov=$('mt-modal'); if(ov) ov.addEventListener('click',e=>{ if(e.target===ov) cerrar(); });
+})();
 
 /* ---------- CHARTS GLOBAL CONFIG ---------- */
 Chart.defaults.font.family = "'Segoe UI',system-ui,Arial";
