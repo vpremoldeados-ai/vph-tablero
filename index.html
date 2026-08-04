@@ -10353,6 +10353,9 @@ function buildFilterTable(cfg){
 
   // ---------- Coordinar entregas (pedidos) ----------
   function resumenPed(pe){ return (pe.items||[]).filter(Boolean).filter(i=>i.producto).map(i=>(num(i.cantidad)||'')+' '+(i.codigo||i.producto)).join(' · ') || '—'; }
+  // Dónde hay que descargar. Un solo lugar: lo usan la tabla, el planificador de viajes, el programa
+  // que se le manda al transportista y el remito del pedido.
+  const dirPed = pe => [pe.direccion, pe.ciudad].filter(Boolean).join(' - ');
   function cargaMini(pe){ const t=totCarga(pe); if(!t.pallets) return ''; return '<div style="font-size:11px;color:var(--muted);margin-top:2px">📦 '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')+'</div>'; }
   // ---------- Planificador de viajes: agrupa por transportista + día y compara con la capacidad ----------
   // Sofía junta clientes para que salgan en el mismo camión el mismo día, aprovechando al máximo la carga
@@ -10388,8 +10391,8 @@ function buildFilterTable(cfg){
         '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)">'+estado+
           (v.peso>0?'<span>· '+(Math.round(v.peso/100)/10)+' t</span>':'')+
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
-        '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p);
-          return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(p.ciudad?' <span style="color:var(--muted)">· '+esc(p.ciudad)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'; }).join('')+'</div>'+
+        '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p);
+          return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'; }).join('')+'</div>'+
       '</div>'; }).join('');
   }
   function renderCoord(){
@@ -10401,16 +10404,18 @@ function buildFilterTable(cfg){
     let rows=pedidos.slice();
     if(filtroPed==='activos') rows=rows.filter(p=>p.estado!=='entregado');
     else if(filtroPed==='entregado') rows=rows.filter(p=>p.estado==='entregado');
-    if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.transporte+' '+resumenPed(p)).toLowerCase().includes(s)); }
+    if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+resumenPed(p)).toLowerCase().includes(s)); }
     rows.sort((a,b)=> (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0) || String(a.fechaRequerida||'9999').localeCompare(String(b.fechaRequerida||'9999')) || String(a.diaEntrega||'zzz').localeCompare(String(b.diaEntrega||'zzz')) || String(b.fecha||'').localeCompare(String(a.fecha||'')));
     const badge={ pendiente:'<span class="cmp-estado apagar">Pendiente</span>', programado:'<span class="cmp-estado parcial">Programado</span>', entregado:'<span class="cmp-estado pagado">Entregado</span>' };
-    let html='<tr><th>Cliente</th><th>Entrega</th><th>Transporte</th><th>Pedido</th><th>Ciudad</th><th>Estado</th><th></th></tr>';
+    let html='<tr><th>Cliente</th><th>Entrega</th><th>Transporte</th><th>Pedido</th><th>Entregar en</th><th>Estado</th><th></th></tr>';
     if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">Sin pedidos. Creá con "→ Entrega" desde una Venta o "+ Nuevo pedido".</td></tr>';
     rows.forEach(pe=>{ const entregaCell = esc(pe.diaEntrega||'—')
         + (pe.fechaRequerida?'<div style="font-size:10.5px;color:var(--red);font-weight:700">🎯 requerida '+fmtFecha(pe.fechaRequerida)+'</div>':'')
         + (pe.puedeEsperar?'<div style="font-size:10.5px;color:var(--muted)">🕐 puede esperar</div>':'');
       html+='<tr><td data-label="Cliente"><b>'+esc(pe.cliente||'—')+'</b></td><td data-label="Entrega">'+entregaCell+'</td><td data-label="Transporte">'+esc(pe.transporte||'—')+'</td>'+
-      '<td data-label="Pedido">'+esc(resumenPed(pe))+cargaMini(pe)+'</td><td data-label="Ciudad">'+esc(pe.ciudad||'')+'</td><td data-label="Estado">'+(badge[pe.estado]||badge.pendiente)+'</td>'+
+      '<td data-label="Pedido">'+esc(resumenPed(pe))+cargaMini(pe)+'</td>'+
+      '<td data-label="Entregar en">'+(dirPed(pe)?esc(dirPed(pe)):'<span style="color:var(--red)">falta la dirección</span>')+'</td>'+
+      '<td data-label="Estado">'+(badge[pe.estado]||badge.pendiente)+'</td>'+
       '<td data-label="" style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
         '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
         '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
@@ -10459,7 +10464,7 @@ function buildFilterTable(cfg){
     Object.keys(grupos).forEach(dia=>{
       let totPal=0; grupos[dia].forEach(p=>{ totPal+=totCarga(p).pallets; });
       out+='\n'+dia.toUpperCase()+(totPal?' ('+totPal+' pallet'+(totPal!==1?'s':'')+')':'')+'\n';
-      grupos[dia].forEach(p=>{ const dir=[p.direccion, p.ciudad].filter(Boolean).join(' - '); out+='• '+(p.cliente||'—')+(dir?' — '+dir:'')+'\n'; });
+      grupos[dia].forEach(p=>{ const dir=dirPed(p); out+='• '+(p.cliente||'—')+(dir?' — '+dir:'')+'\n'; });
     });
     window.__wa.modal({ titulo:'Programa del transportista', destino:'Copiá y pegá en el chat del transportista', texto:out.trim() });
   }
@@ -10469,7 +10474,7 @@ function buildFilterTable(cfg){
   window.__remitoPedidoObj = function(pe, fecha){
     const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
     const cli=cs.find(c=>(c.nombre||'').trim().toUpperCase()===String(pe.cliente||'').trim().toUpperCase())||{};
-    const dom=[pe.direccion, pe.ciudad].filter(Boolean).join(' - ') || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
+    const dom=dirPed(pe) || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
     const rows=cargaRows(pe);
     const items=(pe.items||[]).filter(it=>it&&(it.producto||it.codigo)&&num(it.cantidad)>0).map(it=>{
       const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
@@ -10527,8 +10532,8 @@ function buildFilterTable(cfg){
         '<div class="cmp-field"><label>Fecha requerida (cliente)</label><input type="date" id="pp-freq" value="'+esc(pe.fechaRequerida||'')+'"></div>'+
         '<div class="cmp-field"><label>Prioridad</label><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:9px 0;cursor:pointer"><input type="checkbox" id="pp-espera"'+(pe.puedeEsperar?' checked':'')+'> 🕐 El cliente puede esperar</label></div>'+
         '<div class="cmp-field"><label>Transporte</label><select id="pp-transp">'+opt(TRANSPORTES,pe.transporte)+'</select></div>'+
-        '<div class="cmp-field"><label>Ciudad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
-        '<div class="cmp-field col2"><label>Dirección</label><input id="pp-dir" value="'+esc(pe.direccion)+'"></div>'+
+        '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
+        '<div class="cmp-field col2"><label>Dirección de entrega</label><input id="pp-dir" value="'+esc(pe.direccion)+'" placeholder="Dónde hay que descargar"></div>'+
         '<div class="cmp-field"><label>Estado</label><select id="pp-estado">'+EST_PED.map(e=>'<option value="'+e.k+'"'+(pe.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select></div>'+
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Productos del pedido</h4><div id="pp-items"></div>'+prodOpts+
@@ -10627,7 +10632,16 @@ function buildFilterTable(cfg){
 
   // API: crear un pedido a partir de una venta (botón "→ Entrega" en Ventas)
   window.__pedidoDesdeVenta = function(v){
-    const pe=blankPed(); pe.cliente=v.cliente||''; pe.ventaUid=v._uid||''; pe.ciudad=''; pe.nota='Desde venta '+(v.nroFactura||v._uid||'');
+    const pe=blankPed(); pe.cliente=v.cliente||''; pe.ventaUid=v._uid||''; pe.nota='Desde venta '+(v.nroFactura||v._uid||'');
+    // La dirección de ENTREGA viaja con la venta (que la trae del lead o del presupuesto). Sin esto el
+    // pedido nacía vacío y había que volver a tipear la dirección acá, en el remito y en el programa
+    // del camión — con el riesgo de que el camión saliera con la dirección de otro lado.
+    // Si la venta no la tiene, se cae a la ficha del cliente (lo mismo que ya hacía el remito). Queda
+    // editable en el formulario, así que Gustavo la corrige para ESE viaje sin tocar la ficha.
+    const cli=(window.__catalogoClientes?window.__catalogoClientes():[]).find(c=>norm(c.nombre)===norm(v.cliente))||{};
+    const ent=String(v.domicilioEntrega||'').trim();
+    pe.direccion = ent || cli.direccion || '';
+    pe.ciudad    = ent ? '' : (cli.localidad||'');   // con dirección de entrega propia no se inventa la localidad de la ficha
     pe.items=(v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
     if(!pe.items.length) pe.items=[{producto:'',codigo:'',cantidad:1}];
     tab='coord'; render(); openPed(pe);
