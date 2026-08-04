@@ -1247,6 +1247,12 @@
       <div class="asof" id="caj-tarjeta-asof"></div>
       <div class="tbl-wrap"><table id="caj-tabla-tarjeta"></table></div>
       <p class="note">Compras que ya pagaste con la tarjeta: la factura está saldada, pero la plata sale de la cuenta el día que el banco debita el <b>resumen</b>. Cada débito ya está proyectado arriba, en «¿Alcanza en cada cuenta?». Cuando veas el débito en el banco, marcalo acá — recién ahí cuenta como plata que salió. Si no lo marcás, la caja te muestra plata de más y la Vista Diaria te lo avisa.</p>
+      <div style="display:flex;gap:12px;margin:10px 0;flex-wrap:wrap;align-items:center">
+        <button class="cmp-btn" id="caj-tj-res-btn">📎 Cotejar el resumen de la tarjeta (PDF)</button>
+        <input type="file" id="caj-tj-res-file" accept=".pdf,.txt" style="display:none">
+        <span id="caj-tj-res-nombre" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <div id="caj-tj-res-out"></div>
     </section>
 
     <section>
@@ -2875,7 +2881,7 @@ function buildFilterTable(cfg){
   // solo: se abre el form, la persona completa la categoría, revisa y confirma.
   window.__nuevaCompraPrecargada = function(d){
     const c=blankCompra();
-    ['proveedor','cuit','condIva','tipoComprobante','fecha','vencimiento','puntoVenta','nroFactura','nota'].forEach(k=>{ if(d && d[k]!=null && d[k]!=='') c[k]=d[k]; });
+    ['proveedor','cuit','condIva','tipoComprobante','fecha','vencimiento','puntoVenta','nroFactura','nota','percepIva','percepIibb'].forEach(k=>{ if(d && d[k]!=null && d[k]!=='') c[k]=d[k]; });
     if(d && d.fecha){ c.periodo=String(d.fecha).slice(0,7); if(!d.vencimiento) c.vencimiento=d.fecha; }
     if(d && Array.isArray(d.items) && d.items.length) c.items=d.items;
     try{   // proveedor recurrente: nombre canónico + categoría habitual (mismo criterio que el lector de tickets)
@@ -2883,7 +2889,9 @@ function buildFilterTable(cfg){
       if(con){ if(con.nombre) c.proveedor=con.nombre; if(con.categoria) c.categoria=con.categoria; }
     }catch(e){}
     openForm(c);
-    const t=$('cmp-form-title'); if(t) t.textContent='Nueva Compra (desde ARCA)';
+    // _titulo: rótulo opcional del form (no se guarda en la compra — no está en la lista de campos).
+    // Sin él queda el histórico "desde ARCA", que es el llamador original.
+    const t=$('cmp-form-title'); if(t) t.textContent=(d&&d._titulo)||'Nueva Compra (desde ARCA)';
   };
   // --- Débitos de la tarjeta VISA (los consume Caja para el panel del resumen y Finanzas para el KPI) ---
   // Lista de débitos PENDIENTES (todavía no marcados como debitados), ordenados por fecha.
@@ -2894,6 +2902,7 @@ function buildFilterTable(cfg){
       p.debitos.forEach((dd,i)=>{ if(dd.debitado) return;
         out.push({compraUid:c._uid, pagoId:p.id, idx:i, proveedor:c.proveedor||'—',
           nroFactura:c.nroFactura||c.numero||'', fecha:String(dd.fecha||'').slice(0,10),
+          fechaCompra:String(c.fecha||'').slice(0,10),   // para cotejar contra la fecha del consumo en el resumen
           monto:num(dd.monto), cuenta:dd.cuenta||p.cuenta||'',
           cuotaN:i+1, cuotas:p.debitos.length}); }); }));
     return out.sort((a,b)=> String(a.fecha).localeCompare(String(b.fecha)) || String(a.proveedor).localeCompare(String(b.proveedor)));
@@ -3414,6 +3423,35 @@ function buildFilterTable(cfg){
     await page.render({canvasContext:canvas.getContext('2d'), viewport}).promise;
     return canvas;
   }
+  // Texto de un PDF CON capa de texto (el resumen de la tarjeta bajado del home banking): pdf.js
+  // entrega pedacitos sueltos, así que se reconstruyen los RENGLONES agrupando por coordenada
+  // vertical y ordenando de izquierda a derecha. Lo usa Caja para cotejar el resumen de la VISA.
+  // Un PDF escaneado (foto) devuelve casi nada de texto — el llamador avisa en vez de adivinar.
+  async function leerPdfTextoInterno(file, maxPag){
+    const pdfjs = await cargarPdfjs();
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({data:buf}).promise;
+    const paginas = Math.min(pdf.numPages, maxPag||8);
+    const out=[];
+    for(let p=1;p<=paginas;p++){
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      const filas={};
+      for(const it of tc.items){
+        if(!it.str || !it.str.trim()) continue;
+        const y = Math.round(it.transform[5]/3)*3;   // ±3px = mismo renglón
+        (filas[y]=filas[y]||[]).push({x:it.transform[4], s:it.str});
+      }
+      Object.keys(filas).map(Number).sort((a,b)=>b-a)   // en PDF la Y crece hacia ARRIBA
+        .forEach(y=> out.push(filas[y].sort((a,b)=>a.x-b.x).map(f=>f.s).join(' ')));
+      out.push('');
+    }
+    return out.join('\n');
+  }
+  window.__leerPdfTexto = (file, maxPag)=> Promise.race([
+    leerPdfTextoInterno(file, maxPag),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('No se pudo leer el PDF en este navegador (tardó demasiado).')), 25000))
+  ]);
   // ---------- QR de ARCA: los datos EXACTOS del comprobante, sin depender del OCR ----------
   // Es lo que hacen los software comerciales de lectura de comprobantes (Veryfi/Klippa/etc.): primero
   // el dato ESTRUCTURADO, el OCR de respaldo. Toda factura electrónica argentina (RG 4892) lleva un QR
@@ -6780,8 +6818,16 @@ function buildFilterTable(cfg){
   function renderTarjeta(){
     const sec=$('caj-sec-tarjeta'); if(!sec) return;
     const pend = window.__tarjetaPendientes ? window.__tarjetaPendientes() : [];
-    if(!pend.length){ sec.style.display='none'; return; }
+    // La sección se muestra si hay débitos pendientes O un resumen subido (para poder cotejar
+    // incluso cuando ya se marcó todo — p. ej. cargar los impuestos después de marcar los débitos).
+    if(!pend.length && !ultimoResumen){ sec.style.display='none'; return; }
     sec.style.display='';
+    renderCotejo(pend);
+    if(!pend.length){
+      $('caj-tarjeta-asof').textContent='Sin débitos pendientes de la tarjeta.';
+      $('caj-tabla-tarjeta').innerHTML='';
+      return;
+    }
     const tot=pend.reduce((s,x)=>s+x.monto,0);
     $('caj-tarjeta-asof').textContent = pend.length+' débito'+(pend.length>1?'s':'')+' pendiente'+(pend.length>1?'s':'')+' por '+money(tot)+' · en vivo desde los pagos con VISA / Tarjeta de Compras';
     // Agrupar por mes del débito: cada grupo ES el resumen de ese mes.
@@ -6832,6 +6878,211 @@ function buildFilterTable(cfg){
       const sub=arr.reduce((s,x)=>s+x.monto,0);
       const f=pedirFecha('Marcar TODO el resumen de '+mesLbl(b.dataset.tjmes)+' como debitado: '+arr.length+' débito'+(arr.length>1?'s':'')+' por '+money(sub)+'.');
       if(f) marcar(arr, f); });
+  }
+
+  // ---------- Cotejo del RESUMEN de la tarjeta (PDF del home banking → cruce con los débitos) ----------
+  // El resumen es la verdad del banco: acá se controla que cada consumo esté cargado como compra con
+  // su pago con tarjeta, que las cuotas y fechas coincidan, y se cargan los IMPUESTOS del resumen
+  // como gasto. Nada se guarda solo (patrón onSaved): cada acción abre el formulario o pide confirmar.
+  let ultimoResumen=null;   // {nombre, r} — el cotejo se recalcula en cada render, como la conciliación ARCA
+  const round2c=n=>Math.round(n*100)/100;
+  // Monto formato resumen: "1.234,56" y también "1.234,56-" (el signo pegado ATRÁS, estilo bancario)
+  const montoAR=t=>{ let s=String(t||'').trim(); const neg=/^-/.test(s)||/-\s*$/.test(s);
+    s=s.replace(/[^0-9.,]/g,''); if(!s||s.indexOf(',')<0&&!/\d/.test(s)) return null;
+    if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.');
+    const n=parseFloat(s); return isFinite(n)?(neg?-n:n):null; };
+  const fechaResAR=t=>{ const m=String(t||'').match(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/);
+    if(!m) return null; if(+m[2]<1||+m[2]>12||+m[1]<1||+m[1]>31) return null;
+    let a=m[3]; if(a.length===2)a='20'+a;
+    return a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); };
+  const RES_IMP=/\bIVA\b|SELLO|PERCEP|IMPUESTO|INTERES|FINANCIAC|COMISION|CARGO|MANTENIM|SEGURO|DB\.?\s*CR|LEY\s*25/i;
+  const RES_PAGO=/SU PAGO|PAGO RECIBIDO|PAGO EN PESOS|GRACIAS/i;
+  const RES_IGNORAR=/SALDO ANTERIOR|PAGO MINIMO|PAGO MÍNIMO|TOTAL CONSUMOS|SUBTOTAL|LIMITE|LÍMITE|TASA|C\.?F\.?T|T\.?N\.?A|T\.?E\.?A|DISPONIBLE/i;
+
+  // Del texto del resumen a datos: consumos (con cuota si dice "C.01/03"), impuestos/cargos, pagos
+  // del mes anterior (se excluyen), cierre, vencimiento y saldo. Conservador: el renglón que no se
+  // entiende se ignora — y el control de abajo avisa si lo leído no cierra con el SALDO ACTUAL.
+  function parseResumenVisa(texto){
+    const r={consumos:[], impuestos:[], creditos:[], pagos:0, vencimiento:null, cierre:null, saldo:null};
+    for(let l of String(texto||'').split(/\r?\n/)){
+      l=l.trim(); if(!l) continue;
+      const L=l.toUpperCase();
+      if(!r.cierre && /CIERRE/.test(L)){ const f=fechaResAR(l); if(f){ r.cierre=f; continue; } }
+      if(!r.vencimiento && /VENCIM|VTO\.?/.test(L)){ const f=fechaResAR(l); if(f){ r.vencimiento=f; continue; } }
+      const mM=l.match(/(-?\s*[\d.]{1,13},\d{2})(\s*-)?\s*$/);
+      if(!mM) continue;
+      let monto=montoAR(mM[1]); if(monto==null) continue;
+      if(mM[2]) monto=-Math.abs(monto);
+      const cuerpo=l.slice(0, l.length-mM[0].length).trim();
+      const CU=cuerpo.toUpperCase();
+      if(/SALDO ACTUAL/.test(CU)){ r.saldo=Math.abs(monto); continue; }
+      if(RES_IGNORAR.test(CU)) continue;
+      if(RES_PAGO.test(CU)){ r.pagos+=Math.abs(monto); continue; }
+      const fecha=fechaResAR(cuerpo);
+      if(!fecha && RES_IMP.test(CU) && monto>0){ r.impuestos.push({concepto:cuerpo.replace(/\s+/g,' ').slice(0,60)||'Cargo', monto:round2c(monto)}); continue; }
+      if(fecha){
+        const mCuo=cuerpo.match(/\bC(?:UOTA|UO)?\.?\s*0?(\d{1,2})\s*\/\s*0?(\d{1,2})\b/i);
+        const detalle=cuerpo.replace(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/,'').replace(/\s+/g,' ').trim().slice(0,60);
+        if(monto<0){ r.creditos.push({fecha, detalle, monto:round2c(monto)}); continue; }
+        r.consumos.push({fecha, detalle, monto:round2c(monto), cuotaN:mCuo?+mCuo[1]:null, cuotas:mCuo?+mCuo[2]:null});
+      }
+      // sin fecha y sin pinta de impuesto → encabezado o total: se ignora
+    }
+    r.totalConsumos=round2c(r.consumos.reduce((s,x)=>s+x.monto,0));
+    r.totalImpuestos=round2c(r.impuestos.reduce((s,x)=>s+x.monto,0));
+    return r;
+  }
+
+  // Cruce contra los débitos PENDIENTES del Tablero. Match por MONTO de la cuota (±2 centavos);
+  // con más de un candidato desempatan la cuota N/M y la fecha de compra. Solo clasifica — las
+  // acciones (cargar lo que falta, corregir fechas) son botones aparte con confirmación.
+  function cotejarResumen(res, pend){
+    const usadas=new Set(), key=p=>p.pagoId+'|'+p.idx;
+    const ok=[], difs=[], faltan=[];
+    res.consumos.forEach(cn=>{
+      let cand=pend.filter(p=>!usadas.has(key(p)) && Math.abs(p.monto-cn.monto)<=0.02);
+      if(cand.length>1 && cn.cuotaN){ const c2=cand.filter(p=>p.cuotaN===cn.cuotaN&&p.cuotas===cn.cuotas); if(c2.length) cand=c2; }
+      if(cand.length>1){ const c3=cand.filter(p=>p.fechaCompra===cn.fecha); if(c3.length) cand=c3; }
+      const p=cand[0]||null;
+      if(!p){ faltan.push(cn); return; }
+      usadas.add(key(p));
+      const avisos=[];
+      if(cn.fecha && p.fechaCompra && cn.fecha!==p.fechaCompra) avisos.push('fecha de compra distinta: Tablero '+fmtFecha(p.fechaCompra)+' vs resumen '+fmtFecha(cn.fecha));
+      if(cn.cuotaN && (p.cuotaN!==cn.cuotaN || p.cuotas!==cn.cuotas)) avisos.push('cuota distinta: Tablero '+p.cuotaN+'/'+p.cuotas+' vs resumen '+cn.cuotaN+'/'+cn.cuotas);
+      (avisos.length?difs:ok).push({cn, p, avisos});
+    });
+    const mesRes=String(res.vencimiento||res.cierre||'').slice(0,7);
+    const sobran=pend.filter(p=>!usadas.has(key(p)) && (!mesRes || String(p.fecha).slice(0,7)<=mesRes));
+    const fechasMal=res.vencimiento ? ok.concat(difs).map(x=>x.p).filter(p=>p.fecha!==res.vencimiento) : [];
+    return {ok, difs, faltan, sobran, fechasMal};
+  }
+
+  // Los IMPUESTOS del resumen como compra del banco. El IVA solo se discrimina si cierra la cuenta
+  // (IVA ≈ 21% de intereses+comisiones): así entra al Libro IVA como crédito. Si no cierra, todo va
+  // no gravado — conservador, no se inventa crédito fiscal. Las percepciones van a SUS campos.
+  function compraImpuestosDesdeResumen(res){
+    const items=[]; let percepIva=0, percepIibb=0; const netos=[], ivas=[];
+    res.impuestos.forEach(x=>{
+      const C=x.concepto.toUpperCase();
+      if(/PERCEP/.test(C) && /IVA/.test(C)){ percepIva+=x.monto; return; }
+      if(/PERCEP/.test(C)){ percepIibb+=x.monto; return; }
+      if(/\bIVA\b/.test(C) && !/SELLO|PERCEP/.test(C)){ ivas.push(x); return; }
+      if(/INTERES|FINANCIAC|COMISION|CARGO|MANTENIM/.test(C)){ netos.push(x); return; }
+      items.push({desc:x.concepto, codigo:'', cant:1, precioUnit:x.monto, descPct:0, iva:'nogravado'});
+    });
+    const totIva=round2c(ivas.reduce((s,x)=>s+x.monto,0)), totNeto=round2c(netos.reduce((s,x)=>s+x.monto,0));
+    if(totIva>0 && totNeto>0 && Math.abs(totIva-round2c(totNeto*0.21))<=1){
+      netos.forEach(x=>items.unshift({desc:x.concepto, codigo:'', cant:1, precioUnit:x.monto, descPct:0, iva:'21'}));
+      // los renglones "IVA" del resumen no se cargan aparte: ya están dentro de la alícuota de arriba
+    } else {
+      netos.concat(ivas).forEach(x=>items.unshift({desc:x.concepto, codigo:'', cant:1, precioUnit:x.monto, descPct:0, iva:'nogravado'}));
+    }
+    return { _titulo:'Nueva Compra (impuestos del resumen VISA)',
+      proveedor:'VISA Banco Macro', condIva:'A', tipoComprobante:'Compra',
+      fecha:res.cierre||hoyISO, vencimiento:res.vencimiento||res.cierre||hoyISO,
+      percepIva:round2c(percepIva)||'', percepIibb:round2c(percepIibb)||'',
+      nota:'Impuestos y cargos del resumen VISA'+(res.cierre?' (cierre '+fmtFecha(res.cierre)+')':'')+'. Registrale el pago con «VISA / Tarjeta» en 1 cuota, primer débito el '+(res.vencimiento?fmtFecha(res.vencimiento):'día del vencimiento del resumen')+': así entra al mismo resumen en el panel de Caja y el total coincide con el papel.',
+      items };
+  }
+
+  function renderCotejo(pend){
+    const out=$('caj-tj-res-out'); if(!out) return;
+    if(!ultimoResumen){ out.innerHTML=''; return; }
+    const res=ultimoResumen.r;
+    const c=cotejarResumen(res, pend);
+    const leido=round2c(res.totalConsumos+res.totalImpuestos);
+    let h='<div class="asof" style="margin:4px 0 8px"><b>Resumen leído:</b> '+res.consumos.length+' consumo'+(res.consumos.length===1?'':'s')+' por '+money(res.totalConsumos)+' · '+res.impuestos.length+' impuesto'+(res.impuestos.length===1?'':'s')+'/cargo'+(res.impuestos.length===1?'':'s')+' por '+money(res.totalImpuestos)+
+      (res.cierre?' · cierre '+fmtFecha(res.cierre):'')+(res.vencimiento?' · <b>vence '+fmtFecha(res.vencimiento)+'</b>':'')+
+      (res.pagos?' · (su pago anterior por '+money(res.pagos)+' excluido)':'')+'</div>';
+    // Control de lectura: si lo leído no cierra con el saldo del resumen, puede haber renglones sin leer
+    if(res.saldo!=null && Math.abs(leido-res.saldo)>1){
+      h+='<div class="alert warn" style="margin:6px 0"><span class="aico">⚠️</span><div>Lo leído ('+money(leido)+') no cierra con el SALDO ACTUAL del resumen ('+money(res.saldo)+'). Puede haber renglones que no pude leer (o un saldo anterior impago) — cotejá igual, pero revisá el papel antes de confiar en los totales.</div></div>';
+    }
+    h+='<div class="kpis" style="margin:6px 0">'+
+      '<div class="kpi '+((c.difs.length||c.faltan.length)?'':'good')+'"><div class="label">✓ Coinciden</div><div class="value" style="font-size:20px">'+c.ok.length+'</div></div>'+
+      '<div class="kpi '+(c.difs.length?'warn':'good')+'"><div class="label">⚠️ Con avisos</div><div class="value" style="font-size:20px">'+c.difs.length+'</div></div>'+
+      '<div class="kpi '+(c.faltan.length?'bad':'good')+'"><div class="label">❌ Sin cargar</div><div class="value" style="font-size:20px">'+c.faltan.length+'</div></div>'+
+      '<div class="kpi '+(c.sobran.length?'warn':'good')+'"><div class="label">🔎 Acá y no en el resumen</div><div class="value" style="font-size:20px">'+c.sobran.length+'</div></div>'+
+      '</div>';
+    if(c.fechasMal.length && res.vencimiento){
+      h+='<div class="alert" style="margin:6px 0"><span class="aico">📅</span><div>'+c.fechasMal.length+' débito'+(c.fechasMal.length>1?'s':'')+' del Tablero '+(c.fechasMal.length>1?'tienen':'tiene')+' otra fecha proyectada — el resumen vence el <b>'+fmtFecha(res.vencimiento)+'</b>. '+
+        '<button class="cmp-rowbtn" id="caj-tjr-fechas">✎ Poner la fecha real a los '+c.fechasMal.length+'</button></div></div>';
+    }
+    if(c.difs.length){
+      h+='<div class="tbl-wrap"><table><thead><tr><th>Consumo (resumen)</th><th class="num">Monto</th><th>Cargado como</th><th>Aviso</th></tr></thead><tbody>';
+      c.difs.forEach(x=>{ h+='<tr><td>'+esc(fmtFecha(x.cn.fecha)+' '+x.cn.detalle)+'</td><td class="num">'+money(x.cn.monto)+'</td><td><b>'+esc(x.p.proveedor)+'</b> cuota '+x.p.cuotaN+'/'+x.p.cuotas+'</td><td style="color:var(--amber)">'+x.avisos.map(esc).join('<br>')+'</td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(c.faltan.length){
+      h+='<div style="font-size:13px;color:var(--muted);margin:8px 0 4px">Consumos del resumen que no encontré entre los débitos cargados. "➕ Cargar" abre el formulario de Compras precargado — revisá, elegí la categoría y guardá; después registrale el pago con «VISA / Tarjeta» (la nota te lo recuerda).</div>'+
+        '<div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Detalle</th><th>Cuota</th><th class="num">Monto</th><th></th></tr></thead><tbody>';
+      c.faltan.forEach((cn,i)=>{ h+='<tr><td>'+esc(fmtFecha(cn.fecha))+'</td><td><b>'+esc(cn.detalle||'—')+'</b></td><td>'+(cn.cuotaN?esc(cn.cuotaN+'/'+cn.cuotas):'—')+'</td><td class="num">'+money(cn.monto)+'</td>'+
+        '<td><button class="cmp-rowbtn" data-tjr-cargar="'+i+'">➕ Cargar</button></td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(c.sobran.length){
+      h+='<div style="font-size:13px;color:var(--muted);margin:8px 0 4px">Débitos cargados acá que el resumen no trae: o entran en el resumen que viene (fijate la fecha), o el monto/cuotas no coinciden con lo que liquidó el banco.</div>'+
+        '<div class="tbl-wrap"><table><thead><tr><th>Débito</th><th>Proveedor</th><th class="num">Monto</th></tr></thead><tbody>';
+      c.sobran.forEach(p=>{ h+='<tr><td>'+esc(fmtFecha(p.fecha))+(p.cuotas>1?' <span style="font-size:11px;color:var(--muted)">cuota '+p.cuotaN+'/'+p.cuotas+'</span>':'')+'</td><td><b>'+esc(p.proveedor)+'</b></td><td class="num">'+money(p.monto)+'</td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    if(res.impuestos.length){
+      h+='<div style="font-size:13px;color:var(--muted);margin:8px 0 4px"><b>Impuestos y cargos del resumen</b> — se cargan UNA vez como compra del banco (el IVA de los intereses entra al Libro IVA como crédito; las percepciones van a sus campos):</div>'+
+        '<div class="tbl-wrap"><table><thead><tr><th>Concepto</th><th class="num">Monto</th></tr></thead><tbody>';
+      res.impuestos.forEach(x=>{ h+='<tr><td>'+esc(x.concepto)+'</td><td class="num">'+money(x.monto)+'</td></tr>'; });
+      h+='<tr class="total"><td><b>Total</b></td><td class="num"><b>'+money(res.totalImpuestos)+'</b></td></tr></tbody></table></div>'+
+        '<button class="cmp-btn" id="caj-tjr-imp" style="margin:6px 0">➕ Cargar los impuestos como gasto ('+money(res.totalImpuestos)+')</button>';
+    }
+    if(res.creditos.length){
+      h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">Además leí '+res.creditos.length+' crédito'+(res.creditos.length>1?'s':'')+'/devolución'+(res.creditos.length>1?'es':'')+' que no se cotejan solos: '+res.creditos.map(x=>esc(x.detalle+' '+money(x.monto))).join(' · ')+'.</div>';
+    }
+    out.innerHTML=h;
+
+    const fb2=$('caj-tjr-fechas');
+    if(fb2) fb2.onclick=()=>{
+      if(!window.__marcarDebitoTarjeta){ alert('El módulo Compras no está disponible.'); return; }
+      if(!confirm('Cambiar la fecha proyectada de '+c.fechasMal.length+' débito'+(c.fechasMal.length>1?'s':'')+' al vencimiento real del resumen ('+fmtFecha(res.vencimiento)+').\n\nSolo mueve la FECHA de la proyección — no marca nada como debitado. ¿Confirmás?')) return;
+      let hechos=0; c.fechasMal.forEach(p=>{ if(window.__marcarDebitoTarjeta(p.compraUid,p.pagoId,p.idx,{fecha:res.vencimiento})) hechos++; });
+      if(!hechos) alert('No se pudo corregir. Probá de nuevo.');
+      if(window.__cajaRefresh) window.__cajaRefresh();
+    };
+    const ib=$('caj-tjr-imp');
+    if(ib) ib.onclick=()=>{
+      if(!window.__nuevaCompraPrecargada){ alert('El módulo Compras no está disponible.'); return; }
+      window.__nuevaCompraPrecargada(compraImpuestosDesdeResumen(res));
+    };
+    out.querySelectorAll('button[data-tjr-cargar]').forEach(b=> b.onclick=()=>{
+      const cn=c.faltan[+b.dataset.tjrCargar]; if(!cn) return;
+      if(!window.__nuevaCompraPrecargada){ alert('El módulo Compras no está disponible.'); return; }
+      const total=cn.cuotas ? round2c(cn.monto*cn.cuotas) : cn.monto;
+      window.__nuevaCompraPrecargada({ _titulo:'Nueva Compra (desde el resumen VISA)',
+        proveedor:cn.detalle||'Consumo VISA', fecha:cn.fecha, vencimiento:cn.fecha,
+        nota:'Del resumen VISA ('+fmtFecha(cn.fecha)+'). Si tenés la factura del comercio, completala con sus datos reales. Después registrale el pago con «VISA / Tarjeta»'+(cn.cuotas?' en '+cn.cuotas+' cuotas':'')+' — ahí se arman los débitos y este consumo pasa a cotejar bien.',
+        items:[{desc:'Según resumen VISA'+(cn.cuotas?' — '+cn.cuotas+' cuotas de '+money(cn.monto):''), codigo:'', cant:1, precioUnit:total, descPct:0, iva:'nogravado'}] });
+    });
+  }
+
+  async function procesarResumen(file){
+    const nom=$('caj-tj-res-nombre');
+    try{
+      if(nom) nom.textContent='Leyendo '+file.name+'…';
+      let texto='';
+      if(/\.txt$/i.test(file.name||'') || file.type==='text/plain') texto=await file.text();
+      else if(window.__leerPdfTexto) texto=await window.__leerPdfTexto(file);
+      else throw new Error('el lector de PDF no está disponible');
+      const r=parseResumenVisa(texto);
+      if(!r.consumos.length && !r.impuestos.length){
+        ultimoResumen=null; if(nom) nom.textContent='';
+        alert('No pude leer renglones del resumen.\n\nSi el PDF es una foto o un escaneo, no tiene texto adentro: bajá el PDF original desde el home banking del Macro. Como alternativa, copiá el texto del resumen a un archivo .txt y subí ese.');
+        return;
+      }
+      ultimoResumen={nombre:file.name, r};
+      if(nom) nom.textContent=file.name;
+      render();
+    }catch(e){
+      if(nom) nom.textContent='';
+      alert('No pude leer el resumen: '+e.message);
+    }
   }
 
   function persist(doc){ if(!doc._uid)doc._uid=newUid();
@@ -6952,6 +7203,10 @@ function buildFilterTable(cfg){
   $('caj-mov').onclick=abrirMov;
   $('caj-cerrar').onclick=cerrar;
   $('caj-modal').addEventListener('click',e=>{ if(e.target===$('caj-modal')) cerrar(); });
+  // Cotejo del resumen de la tarjeta (acepta el PDF del home banking o un .txt con el texto pegado)
+  (function(){ const b=$('caj-tj-res-btn'), f=$('caj-tj-res-file');
+    if(b&&f){ b.onclick=()=>f.click();
+      f.onchange=()=>{ const x=f.files&&f.files[0]; if(x) procesarResumen(x); f.value=''; }; } })();
   boot();
 })();
 </script>
