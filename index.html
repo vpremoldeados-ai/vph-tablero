@@ -1237,6 +1237,15 @@
       <p class="note" id="caj-cuentas-nota"></p>
     </section>
 
+    <!-- Débitos del resumen de la tarjeta VISA: compras ya pagadas con tarjeta cuya plata sale
+         recién cuando el banco debita el resumen. Acá se marcan cuando el débito pasa de verdad. -->
+    <section id="caj-sec-tarjeta" style="display:none">
+      <h2 style="margin:0 0 6px"><span class="dot" style="background:#8b5cf6"></span>💳 Débitos de la tarjeta VISA</h2>
+      <div class="asof" id="caj-tarjeta-asof"></div>
+      <div class="tbl-wrap"><table id="caj-tabla-tarjeta"></table></div>
+      <p class="note">Compras que ya pagaste con la tarjeta: la factura está saldada, pero la plata sale de la cuenta el día que el banco debita el <b>resumen</b>. Cada débito ya está proyectado arriba, en «¿Alcanza en cada cuenta?». Cuando veas el débito en el banco, marcalo acá — recién ahí cuenta como plata que salió. Si no lo marcás, la caja te muestra plata de más y la Vista Diaria te lo avisa.</p>
+    </section>
+
     <section>
       <h2><span class="dot" style="background:var(--amber)"></span>Proyección de caja</h2>
       <div class="asof" id="caj-proy-asof"></div>
@@ -1626,8 +1635,10 @@ function calcularAlertas(){
   // con su propia fuente en window.__alertSources. Antes se calculaban acá desde la foto del cierre.
   // FINANZAS: la deuda vencida y la liquidez las calcula AHORA el módulo "Finanzas en vivo"
   // desde Ventas/Compras/Cheques/Caja reales (antes salían de la foto del cierre y quedaban viejas).
-  // El débito de VISA sigue saliendo del cierre porque no hay fuente en vivo — va marcado como tal.
-  if (finanzas.visa) A.push({sev:'info', area:'Finanzas', t:'Débito automático VISA Business: ~' + fmt$(finanzas.visa.estimado) + ' el ' + finanzas.visa.debito + ' (cierre ' + finanzas.visa.cierre + ')', act:'Dato del último cierre, no en vivo. Asegurar ese saldo en la CC Macro para la fecha del débito — si la cuenta queda corta, el rojo cuesta TNA ~70%.', go:{page:'Finanzas'}});
+  // El débito de VISA del CIERRE solo se avisa si no hay débitos EN VIVO cargados (pagos con tarjeta
+  // con sus débitos, desde el 03/08): cuando los hay, avisan solos por la fuente de Compras
+  // ("débitos atrasados") y por "¿Alcanza en cada cuenta?" de Caja — este estimado viejo confundiría.
+  if (finanzas.visa && !(window.__tarjetaPendientes && window.__tarjetaPendientes().length)) A.push({sev:'info', area:'Finanzas', t:'Débito automático VISA Business: ~' + fmt$(finanzas.visa.estimado) + ' el ' + finanzas.visa.debito + ' (cierre ' + finanzas.visa.cierre + ')', act:'Dato del último cierre, no en vivo. Asegurar ese saldo en la CC Macro para la fecha del débito — si la cuenta queda corta, el rojo cuesta TNA ~70%.', go:{page:'Finanzas'}});
   // COMERCIAL
   const _rm = (window.__resumenMes?window.__resumenMes():null);
   const _cTop = _rm?_rm.clienteTop:mesEnCurso.clienteTop, _cPct = _rm?_rm.clienteTopPct:mesEnCurso.clienteTopPct;
@@ -2314,11 +2325,17 @@ function buildFilterTable(cfg){
   // por eso hay UNA sola opción en vez de dos, para que nadie elija la equivocada. Lo ya cargado
   // conserva su texto original ("Cheque", "E-Cheq", "E-Cheque") — esCheque() los reconoce a todos.
   const MEDIO_CHEQUE = 'Cheque / E-Cheq';
-  // La tarjeta corporativa (VISA Business Macro) se usa sobre todo para GNC y gasoil. NO es un medio
-  // "diferido" como el cheque: la compra se deja SIN pagar hasta que se paga el resumen, y recién ahí
-  // se registra el pago con la fecha real y la cuenta de la que sale. Por eso acá se comporta como
-  // cualquier medio común (pide cuenta, la Caja lo cuenta ese día) — lo que difiere es la fecha.
+  // La tarjeta corporativa (VISA Business Macro) se usa sobre todo para GNC y gasoil. Desde el 03/08
+  // es un medio DIFERIDO, como el cheque (pedido de Marcelo: pagaba con tarjeta y la salida real es
+  // recién cuando se abona el resumen, desde la cuenta corriente Macro VPH): la factura queda SALDADA
+  // frente al proveedor hoy, y el pago guarda sus DÉBITOS (una cuota o varias) con fecha y cuenta.
+  // La Caja no cuenta nada hasta que cada débito se marca "ya se debitó" (Caja → Débitos de la
+  // tarjeta), y mientras tanto lo PROYECTA en su fecha → "¿Alcanza en cada cuenta?" avisa si ese día
+  // falta plata en la cuenta. Así la salida entra UNA sola vez, el día real.
+  // ⚠️ Compat: un pago con tarjeta SIN débitos (cargado antes de este cambio, con la convención vieja
+  // de registrarlo al pagar el resumen) se comporta como siempre — la Caja lo cuenta en su fecha.
   const MEDIO_TARJETA = 'VISA / Tarjeta';
+  const esTarjeta = m => /tarjeta|visa/i.test(String(m||''));
   const MEDIO_DEBITO = 'Débito automático';
   const MEDIOS_PAGO = ['Transferencia','Efectivo',MEDIO_CHEQUE,MEDIO_ENDOSO,MEDIO_TARJETA,MEDIO_DEBITO,'Retención',MEDIO_ADMIN];
   const esCheque = m => /cheq/i.test(String(m||''));   // cualquier variante → se sincroniza con el módulo Cheques
@@ -2332,6 +2349,50 @@ function buildFilterTable(cfg){
   // Cuentas (Efectivo / Banco Macro MAV / Banco Macro VPH...): las define Caja al declarar el saldo.
   const cuentasOpt = sel => { const cs=(window.__cajaCuentas?window.__cajaCuentas():[]); if(!cs.length) return '<option value="">—</option>';
     return cs.map(c=>'<option value="'+esc(c)+'"'+(String(sel||'')===c?' selected':'')+'>'+esc(c)+'</option>').join(''); };
+
+  // ---- Débitos de la tarjeta (VISA Business Macro) ----
+  // Primer día hábil del mes siguiente: el resumen se debita "los primeros días hábiles del mes,
+  // entre el 1 y el 5" (Marcelo, 03/08). Para "¿me alcanza la plata?" conviene suponer que sale al
+  // ARRANQUE de la ventana, no al final — mismo criterio que las fechas de pago de Sueldos.
+  // Sábados, domingos y los feriados cargados en Producción no cuentan. Queda editable en el pago.
+  function proxDebitoISO(desdeISO){
+    const p=String(desdeISO||hoyISO).slice(0,10).split('-');
+    const d=new Date(+p[0], +p[1], 1);   // día 1 del mes SIGUIENTE al de la fecha dada
+    for(let i=0;i<14;i++){
+      const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if(d.getDay()!==0 && d.getDay()!==6 && !(window.__esFeriado && window.__esFeriado(iso))) return iso;
+      d.setDate(d.getDate()+1);
+    }
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  // Débitos de un pago con tarjeta: N cuotas mensuales desde la primera fecha. Los centavos que no
+  // dividen exacto van a la ÚLTIMA cuota, así la suma cierra SIEMPRE con el monto del pago (es plata
+  // real: un débito de más o de menos descuadra la proyección). La 1ª cuota respeta la fecha elegida
+  // tal cual; las siguientes van al mismo día de cada mes (tope 28, para que exista en todos).
+  function armarDebitos(monto, cuotas, primeraISO, cuenta){
+    // Tope 36: la tarjeta real no pasa de 24 cuotas — un typo ("112") generaría débitos hasta 2035.
+    // Los formularios avisan antes de llegar acá; el clamp es el respaldo para cualquier llamador.
+    const n=Math.min(36, Math.max(1, Math.round(num(cuotas))||1)), total=round2(num(monto));
+    // En CENTAVOS ENTEROS: floor sobre el flotante comía un centavo aun cuando la división exacta
+    // existía ($41.000,20 en 4 daba 10.250,04×3 + 10.250,08 en vez de los 10.250,05×4 del banco —
+    // y al conciliar el resumen los montos no matcheaban el papel).
+    const cts=Math.round(total*100), cuotaCts=Math.floor(cts/n);
+    const p=String(primeraISO||hoyISO).slice(0,10).split('-');
+    const arr=[];
+    for(let i=0;i<n;i++){
+      let iso;
+      if(i===0) iso=String(primeraISO||hoyISO).slice(0,10);
+      else { const d=new Date(+p[0], +p[1]-1+i, Math.min(+p[2],28));
+        iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+      arr.push({fecha:iso, monto: (i===n-1 ? cts-cuotaCts*(n-1) : cuotaCts)/100, cuenta:cuenta||''});
+    }
+    return arr;
+  }
+  // Cuenta de la que se debita la VISA (Parámetros → Finanzas). Solo si está declarada en Caja:
+  // si el nombre no matchea ninguna cuenta, se devuelve '' para no inventar una que no existe.
+  const tarjCuentaDef = ()=>{ const q=String(window.__param?window.__param('tarjetaCuenta','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
+    if(!q) return '';
+    return (window.__cajaCuentas?window.__cajaCuentas():[]).find(n=>String(n||'').trim().toLowerCase()===q) || ''; };
 
   // ---- Semilla: compras reales de julio 2026 (carga inicial del sistema anterior) ----
   const SEED = [];  // datos en Firestore (vph_compras); el archivo público no lleva datos
@@ -2532,8 +2593,26 @@ function buildFilterTable(cfg){
     const pagos=(c.pagos||[]).slice();
     const i=pagos.findIndex(p=>p&&p.id===pagoId); if(i<0) return false;
     const p={ ...pagos[i] };
+    // Débitos de la TARJETA ya marcados como debitados = plata que ya salió. Cambiar el monto o el
+    // medio por esta vía dejaría los débitos descolgados del pago (mismo criterio que el editor de
+    // Compras). Los pendientes se rearman solos si cambia el monto, para que la suma siga cerrando.
+    const debs=Array.isArray(p.debitos)?p.debitos:[];
+    if(debs.some(d=>d.debitado) &&
+       ((campos.monto!==undefined && round2(num(campos.monto))!==round2(num(p.monto))) ||
+        (campos.medio!==undefined && !esTarjeta(campos.medio)))){
+      alert('Ese pago tiene débitos de la tarjeta ya debitados: el monto y el medio no se pueden cambiar desde acá. Anulalo y volvé a cargarlo.'); return false; }
     CAMPOS_PAGO.forEach(k=>{ if(campos[k]!==undefined) p[k]= (k==='monto') ? round2(num(campos[k])) : campos[k]; });
     if(esCheque(p.medio)||esAdministrativo(p.medio)) delete p.cuenta;
+    if(debs.length){
+      if(!esTarjeta(p.medio)) delete p.debitos;   // dejó de ser un pago con tarjeta → sin débitos
+      else if(round2(num(p.monto))!==round2(num(pagos[i].monto)))
+        p.debitos=armarDebitos(p.monto, debs.length, debs[0].fecha, p.cuenta||debs[0].cuenta||'');
+      else if(campos.cuenta!==undefined)
+        // cambió SOLO la cuenta: los débitos PENDIENTES se van con ella (dd.cuenta le gana a p.cuenta
+        // en la proyección, así que dejarlos con la vieja seguiría imputando allá). Los ya debitados
+        // no se tocan: esa plata ya salió de la cuenta vieja.
+        p.debitos=debs.map(dd=> dd.debitado ? dd : {...dd, cuenta:p.cuenta||''});
+    }
     pagos[i]=p; c.pagos=pagos; persistPagos(c._uid, pagos); return true; };
 
   // Corrección de datos viejos: un pago que se cargó como "Cheque" propio pero que en realidad era el
@@ -2620,6 +2699,13 @@ function buildFilterTable(cfg){
     const c=DB.compras.find(x=>x._uid===compraUid); if(!c||!pago) return null;
     const p={ ...pago, id:pago.id||('pag_'+newUid()), fecha:pago.fecha||hoyISO, monto:round2(num(pago.monto)) };
     if(esCheque(p.medio)||esAdministrativo(p.medio)) delete p.cuenta;
+    // Tarjeta por la API: si el llamador no manda los débitos, se arman con el default (1 cuota, el
+    // primer día hábil del mes siguiente, la cuenta del parámetro). Sin esto, un pago con tarjeta
+    // creado por acá nacía en la convención VIEJA (la Caja lo contaba como salida HOY) sin aviso.
+    else if(esTarjeta(p.medio) && !Array.isArray(p.debitos)){
+      if(!p.cuenta) p.cuenta=tarjCuentaDef();
+      p.debitos=armarDebitos(p.monto, 1, proxDebitoISO(p.fecha), p.cuenta);
+    }
     const pagos=(c.pagos||[]).slice(); pagos.push(p); c.pagos=pagos; persistPagos(c._uid, pagos);
     return p.id;
   };
@@ -2712,6 +2798,44 @@ function buildFilterTable(cfg){
     openForm(c);
     const t=$('cmp-form-title'); if(t) t.textContent='Nueva Compra (desde ARCA)';
   };
+  // --- Débitos de la tarjeta VISA (los consume Caja para el panel del resumen y Finanzas para el KPI) ---
+  // Lista de débitos PENDIENTES (todavía no marcados como debitados), ordenados por fecha.
+  window.__tarjetaPendientes = ()=>{
+    const out=[];
+    (DB.compras||[]).forEach(c=> (c.pagos||[]).forEach(p=>{
+      if(!esTarjeta(p.medio) || !Array.isArray(p.debitos)) return;
+      p.debitos.forEach((dd,i)=>{ if(dd.debitado) return;
+        out.push({compraUid:c._uid, pagoId:p.id, idx:i, proveedor:c.proveedor||'—',
+          nroFactura:c.nroFactura||c.numero||'', fecha:String(dd.fecha||'').slice(0,10),
+          monto:num(dd.monto), cuenta:dd.cuenta||p.cuenta||'',
+          cuotaN:i+1, cuotas:p.debitos.length}); }); }));
+    return out.sort((a,b)=> String(a.fecha).localeCompare(String(b.fecha)) || String(a.proveedor).localeCompare(String(b.proveedor)));
+  };
+  // Marca (o corrige) UN débito puntual: {debitado:true, fechaDebitado:'...'} el día que el banco lo
+  // debita de verdad. Escribe SOLO el array de pagos (persistPagos), como todo lo demás del módulo.
+  window.__marcarDebitoTarjeta = (compraUid, pagoId, idx, campos)=>{
+    const c=DB.compras.find(x=>x._uid===compraUid); if(!c) return false;
+    const p=(c.pagos||[]).find(x=>x.id===pagoId);
+    if(!p || !Array.isArray(p.debitos) || !p.debitos[idx]) return false;
+    const pagos=(c.pagos||[]).map(x=> x.id!==pagoId ? x :
+      {...x, debitos:x.debitos.map((dd,i)=> i===idx ? {...dd, ...campos} : dd)});
+    c.pagos=pagos; persistPagos(c._uid, pagos); return true;
+  };
+  // Débitos ATRASADOS: el resumen ya venció y nadie lo marcó como debitado. Hasta que no se marque,
+  // esa salida no entra en la caja y el disponible muestra plata de más (espejo de la alerta de
+  // acreditaciones de plataforma atrasadas de Ventas).
+  window.__alertSources = window.__alertSources || [];
+  window.__alertSources.push(()=>{ const A=[];
+    let nTj=0, totTj=0;
+    (DB.compras||[]).forEach(c=> (c.pagos||[]).forEach(p=>{
+      if(!esTarjeta(p.medio) || !Array.isArray(p.debitos)) return;
+      p.debitos.forEach(dd=>{ if(!dd.debitado && String(dd.fecha||'').slice(0,10)<hoyISO){ nTj++; totTj+=num(dd.monto); } }); }));
+    if(nTj) A.push({sev:'warn', area:'Finanzas',
+      t:nTj+' débito'+(nTj>1?'s':'')+' de la tarjeta VISA atrasado'+(nTj>1?'s':'')+' por '+money(totTj),
+      act:'Fijate en el banco si el resumen ya se debitó y marcalo en Caja → «Débitos de la tarjeta». Hasta que no lo marques, la caja muestra esa plata como disponible.',
+      go:{page:'Caja / Liquidez'}});
+    return A; });
+
   window.__resumenCompras = ()=>{
     if(!DB.compras || !DB.compras.length) return null;
     const meses={};
@@ -3050,19 +3174,26 @@ function buildFilterTable(cfg){
     el.parentElement.parentElement.style.display='';
     el.innerHTML = editing.pagos.map((p,i)=>{
       const medio=p.medio||'—', cuenta=p.cuenta?'('+p.cuenta+')':'';
-      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
+      const debs=Array.isArray(p.debitos)?p.debitos:[];
+      const tjPend=debs.find(d=>!d.debitado);
+      const tjInfo = debs.length
+        ? ' <span style="color:var(--blue);font-size:11px">💳 '+debs.filter(d=>d.debitado).length+'/'+debs.length+' debitado'+(debs.length>1?'s':'')+(tjPend?' · próx. '+fmtFecha(tjPend.fecha):'')+'</span>'
+        : '';
+      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+tjInfo+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
     }).join('');
     el.querySelectorAll('button[data-ep]').forEach(b=> b.onclick=()=>{ openEditPago(+b.dataset.ep); });
     el.querySelectorAll('button[data-dp]').forEach(b=> b.onclick=()=>{ if(confirm('¿Eliminar este pago de '+money(editing.pagos[+b.dataset.dp].monto)+'?')) deletePago(+b.dataset.dp); });
   }
   function openEditPago(idx){
     const p=editing.pagos[idx];
+    const debs=Array.isArray(p.debitos)?p.debitos:[];
+    const yaDebitados=debs.filter(d=>d.debitado);
     $('cmp-form-pago').innerHTML=
       '<p style="margin:0 0 12px;font-size:13px">Editando pago #'+(idx+1)+'</p>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="p-monto" value="'+p.monto+'">') +
         field('Fecha','','<input type="date" id="p-fecha" value="'+p.fecha+'">') +
-        field('Medio','','<select id="p-medio">'+medioOpts(['Efectivo',MEDIO_CHEQUE,'Transferencia','Cuenta Corriente',MEDIO_ADMIN], p.medio)+'</select>') +
+        field('Medio','','<select id="p-medio">'+medioOpts(['Efectivo',MEDIO_CHEQUE,'Transferencia',MEDIO_TARJETA,'Cuenta Corriente',MEDIO_ADMIN], p.medio)+'</select>') +
         '<div class="cmp-field" id="p-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="p-cuenta">'+cuentasOpt(p.cuenta||'')+'</select></div>' +
       '</div>'+
       '<div id="p-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
@@ -3072,6 +3203,15 @@ function buildFilterTable(cfg){
           field('Banco','','<input id="p-ch-banco" value="'+(p.chBanco||'')+'">') +
           field('Vencimiento','col2','<input type="date" id="p-ch-venc" value="'+(p.chVenc||p.fecha)+'">') +
         '</div></div>'+
+      '<div id="p-tarj-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Débito del resumen de la tarjeta</div>'+
+        (yaDebitados.length
+          ? '<p style="font-size:12px;color:var(--amber);margin:0">Este pago ya tiene '+yaDebitados.length+' de '+debs.length+' débito'+(debs.length>1?'s':'')+' marcado'+(yaDebitados.length>1?'s':'')+' como debitado'+(yaDebitados.length>1?'s':'')+'. El monto y el medio no se pueden cambiar desde acá — si está mal, anulá el pago y volvé a cargarlo.</p>'
+          : '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+              field('Cuotas','','<input id="p-tj-cuotas" type="number" min="1" max="36" step="1" value="'+(debs.length||1)+'">') +
+              field('Primer débito (vence el resumen)','','<input type="date" id="p-tj-fecha" value="'+((debs[0]&&debs[0].fecha)||proxDebitoISO(p.fecha||hoyISO))+'">') +
+            '</div>')+
+      '</div>'+
       '<div class="cmp-form-foot">'+
         '<button class="cmp-btn" id="p-cancel">Cancelar</button>'+
         '<button class="cmp-btn cmp-btn-primary" id="p-save">Guardar cambios</button>'+
@@ -3079,11 +3219,16 @@ function buildFilterTable(cfg){
 
     // esCheque() en vez de comparar contra textos exactos: así sigue andando con los medios viejos
     // ("Cheque", "E-Cheq", "E-Cheque") y con el del endoso, sin depender de cómo se llame la opción.
-    $('p-medio').addEventListener('change',()=>{ const v=$('p-medio').value, ch=esCheque(v), admin=esAdministrativo(v);
+    const pintarExtras=()=>{ const v=$('p-medio').value, ch=esCheque(v), admin=esAdministrativo(v), tj=esTarjeta(v)&&!ch;
       $('p-cheque-extra').style.display=ch?'block':'none';
-      $('p-cuenta-wrap').style.display=(ch||admin||v==='Cuenta Corriente')?'none':''; });
+      $('p-cuenta-wrap').style.display=(ch||admin||v==='Cuenta Corriente')?'none':'';
+      // La caja de la tarjeta solo aparece si el pago YA es de tarjeta con débitos, o si se lo pasa
+      // a tarjeta ahora. Un pago con tarjeta VIEJO (sin débitos, convención anterior) no la muestra:
+      // se sigue comportando como siempre y no hay que inventarle débitos al editarlo.
+      $('p-tarj-extra').style.display=(tj && (debs.length || p.medio!==v))?'block':'none'; };
+    $('p-medio').addEventListener('change',pintarExtras);
     if(window.__tarjetas){ window.__tarjetas('p-medio'); window.__tarjetas('p-cuenta'); }
-    const ch=esCheque(p.medio); $('p-cheque-extra').style.display=ch?'block':'none';
+    pintarExtras();
     $('p-cancel').onclick=()=>$('cmp-modal-pago').classList.remove('open');
     $('p-save').onclick=()=>{
       // ⚠️ Se PARTE del pago que ya existía ({...p}) en vez de armar uno nuevo: un pago puede llevar
@@ -3091,8 +3236,27 @@ function buildFilterTable(cfg){
       // ENDOSO (endosoChequeUid/endosoDe) o el empleado de un ADELANTO de sueldo (sueEmpUid). Armarlo
       // desde cero los borraba EN SILENCIO al editar el monto o la fecha, y el vínculo se perdía.
       const nuevo={ ...p, fecha:$('p-fecha').value, monto:num($('p-monto').value), medio:$('p-medio').value };
-      if(esCheque(nuevo.medio)){ nuevo.chNumero=$('p-ch-num').value.trim(); nuevo.chBanco=$('p-ch-banco').value.trim(); nuevo.chVenc=$('p-ch-venc').value; delete nuevo.cuenta; }
-      else { nuevo.cuenta=$('p-cuenta')?$('p-cuenta').value:''; }
+      // Débitos de tarjeta YA MARCADOS como debitados = plata que ya salió de la cuenta. Cambiarle el
+      // monto o el medio a ese pago dejaría los débitos descolgados de lo que dice el pago.
+      if(yaDebitados.length && (num(nuevo.monto)!==num(p.monto) || !esTarjeta(nuevo.medio))){
+        alert('Este pago tiene débitos de la tarjeta ya marcados como debitados: el monto y el medio no se pueden cambiar desde acá.\n\nSi el pago está mal, anulalo y volvé a cargarlo.'); return; }
+      if(esCheque(nuevo.medio)){ nuevo.chNumero=$('p-ch-num').value.trim(); nuevo.chBanco=$('p-ch-banco').value.trim(); nuevo.chVenc=$('p-ch-venc').value; delete nuevo.cuenta; delete nuevo.debitos; }
+      else if(esTarjeta(nuevo.medio)){
+        nuevo.cuenta=$('p-cuenta')?$('p-cuenta').value:'';
+        if(yaDebitados.length){
+          // Monto y medio intactos (guarda de arriba). Si cambió la CUENTA, los débitos pendientes
+          // se van con ella; los ya debitados no se tocan (esa plata ya salió de la cuenta vieja).
+          if(nuevo.cuenta!==(p.cuenta||'')) nuevo.debitos=debs.map(dd=> dd.debitado ? dd : {...dd, cuenta:nuevo.cuenta||''});
+        }
+        else if($('p-tj-cuotas') && (debs.length || p.medio!==nuevo.medio)){
+          const cuotas=Math.max(1, Math.round(num($('p-tj-cuotas').value))||1);
+          if(cuotas>36){ alert('¿'+cuotas+' cuotas? El máximo es 36 — revisá el número.'); return; }
+          const prim=($('p-tj-fecha')&&$('p-tj-fecha').value) || proxDebitoISO(nuevo.fecha||hoyISO);
+          nuevo.debitos=armarDebitos(nuevo.monto, cuotas, prim, nuevo.cuenta);
+        }
+        // Pago con tarjeta viejo (sin débitos) editado sin cambiar el medio: sigue sin débitos, como antes.
+      }
+      else { nuevo.cuenta=$('p-cuenta')?$('p-cuenta').value:''; delete nuevo.debitos; }
       editing.pagos[idx]=nuevo;
       drawPagos(); drawTotals(); $('cmp-modal-pago').classList.remove('open');
     };
@@ -3855,6 +4019,21 @@ function buildFilterTable(cfg){
     if(!editing.proveedor.trim()){ alert('Ingresá el proveedor.'); return; }
     if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
     if(!editing._uid){ editing._uid = newUid(); if(!editing.id) editing.id = editing._uid; }
+    // ⚠️ El form se abrió con una COPIA de la compra y guarda con setDoc del documento ENTERO. Si
+    // mientras estuvo abierto alguien marcó un débito de la tarjeta en Caja (escribe solo `pagos`),
+    // guardar la copia vieja desmarcaría ese débito EN SILENCIO: la salida desaparecería de la caja
+    // y el disponible quedaría inflado. Antes de persistir se re-aplican los tildes del doc VIVO,
+    // por id de pago + índice de cuota (lo demás del pago respeta lo editado en el form).
+    const vivo=DB.compras.find(x=>x._uid===editing._uid);
+    if(vivo && Array.isArray(vivo.pagos) && Array.isArray(editing.pagos)){
+      editing.pagos=editing.pagos.map(p=>{
+        if(!Array.isArray(p.debitos)) return p;
+        const pv=vivo.pagos.find(x=>x.id===p.id);
+        if(!pv || !Array.isArray(pv.debitos)) return p;
+        return {...p, debitos:p.debitos.map((dd,i)=>{ const dv=pv.debitos[i];
+          return (dv && dv.debitado && !dd.debitado) ? {...dd, debitado:true, fechaDebitado:dv.fechaDebitado||dv.fecha} : dd; })};
+      });
+    }
     persistCompra(editing); closeForm();
   }
 
@@ -3892,6 +4071,13 @@ function buildFilterTable(cfg){
       '<div id="p-cartera-aviso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
       '<div id="p-admin-aviso" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:12.5px;background:var(--bg,#f8fafc)">'+
         'La factura queda saldada <b>sin que salga plata de ninguna cuenta</b>: no toca el efectivo ni los bancos, y no aparece en los movimientos de Caja. Usalo para notas de crédito, compensaciones o ajustes con el proveedor.</div>'+
+      '<div id="p-tarj-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Débito del resumen de la tarjeta</div>'+
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 8px">La factura queda <b>pagada hoy</b>, pero la plata sale de la cuenta recién cuando el banco debita el resumen. La Caja proyecta cada débito en su fecha (y avisa si ese día no alcanza en la cuenta); cuando el banco lo debite de verdad, marcalo en <b>Caja → Débitos de la tarjeta</b>.</p>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('Cuotas','','<input id="p-tj-cuotas" type="number" min="1" max="36" step="1" value="1">') +
+          field('Primer débito (vence el resumen)','','<input type="date" id="p-tj-fecha" value="'+proxDebitoISO(hoyISO)+'">') +
+        '</div></div>'+
       '<div id="p-endoso-extra" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Cheques de clientes que le entregás</div>'+
         '<div id="p-endoso-lista"></div>'+
@@ -3906,14 +4092,18 @@ function buildFilterTable(cfg){
     // Si se paga con cheque, la plata no sale de ninguna cuenta hasta que el cheque se haga efectivo.
     // Si es un ENDOSO, además no hay datos de cheque que tipear: se elige de la cartera, y el monto
     // lo definen los cheques elegidos (no se puede endosar "una parte" de un papel).
-    $('p-medio').addEventListener('change',()=>{ const v=$('p-medio').value, ch=esCheque(v), end=esEndoso(v), admin=esAdministrativo(v);
+    $('p-medio').addEventListener('change',()=>{ const v=$('p-medio').value, ch=esCheque(v), end=esEndoso(v), admin=esAdministrativo(v), tj=esTarjeta(v)&&!ch;
       $('p-cheque-extra').style.display = (ch&&!end)?'block':'none';
       $('p-cartera-aviso').style.display = (ch&&!end)?'block':'none';
       $('p-endoso-extra').style.display = end?'block':'none';
       // "Cancelado administrativamente" no sale de ninguna cuenta (una nota de crédito, un ajuste,
       // una compensación): preguntar "¿de qué cuenta sale?" ahí confunde y ensucia el saldo por cuenta.
+      // Con TARJETA la cuenta sí se pregunta, pero significa "de dónde se va a debitar el resumen".
       $('p-cuenta-wrap').style.display = (ch||admin||v==='Cuenta Corriente')?'none':'';
       $('p-admin-aviso').style.display = admin?'block':'none';
+      $('p-tarj-extra').style.display = tj?'block':'none';
+      if(tj){ const def=tarjCuentaDef(), sel=$('p-cuenta');
+        if(def && sel){ sel.value=def; if(sel.__repintar) sel.__repintar(); } }
       $('p-monto').readOnly = end;
       if(end) drawEndosoPicker(); else { endosoSel=[]; $('p-monto').value=kk.saldo; drawCarteraAviso(); } });
 
@@ -3976,6 +4166,16 @@ function buildFilterTable(cfg){
         return; }
       const pago={ id:'pag_'+newUid(), fecha:$('p-fecha').value, monto:num($('p-monto').value), medio };
       if(esCheque(medio)){ pago.chNumero=$('p-ch-num')?$('p-ch-num').value.trim():''; pago.chBanco=$('p-ch-banco')?$('p-ch-banco').value.trim():''; pago.chVenc=$('p-ch-venc')?$('p-ch-venc').value:''; }
+      else if(esTarjeta(medio)){
+        // Tarjeta: la factura queda saldada, pero la salida de plata son los DÉBITOS del resumen
+        // (una cuota o varias), cada uno con su fecha y su cuenta. La Caja los proyecta y los cuenta
+        // recién cuando se marcan debitados — nunca hoy, que la plata todavía está en la cuenta.
+        pago.cuenta=$('p-cuenta')?$('p-cuenta').value:'';
+        const cuotas=Math.max(1, Math.round(num($('p-tj-cuotas')?$('p-tj-cuotas').value:1))||1);
+        if(cuotas>36){ alert('¿'+cuotas+' cuotas? El máximo es 36 — revisá el número.'); return; }
+        const prim=($('p-tj-fecha')&&$('p-tj-fecha').value) || proxDebitoISO($('p-fecha').value||hoyISO);
+        pago.debitos=armarDebitos(pago.monto, cuotas, prim, pago.cuenta);
+      }
       else if(!esAdministrativo(medio)) pago.cuenta=$('p-cuenta')?$('p-cuenta').value:'';   // de qué cuenta salió la plata
       // Un pago administrativo NO lleva cuenta: no salió plata de ningún lado. Guardarle una cuenta
       // (la que quedara elegida en el selector oculto) ensuciaría el detalle por cuenta de Caja.
@@ -4016,11 +4216,19 @@ function buildFilterTable(cfg){
           '<datalist id="pp-prov-list">'+provs.map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>')+
         field('Monto del pago','','<input id="pp-monto" value="0" type="number" step="0.01">') +
         field('Fecha','','<input type="date" id="pp-fecha" value="'+hoyISO+'">') +
-        // MEDIO_TARJETA está acá porque el caso típico es justo este: llega el resumen de la VISA con
-        // 15 cargas de GNC del mismo proveedor y se pagan todas juntas, repartiendo un solo importe.
+        // MEDIO_TARJETA está acá porque el caso típico es justo este: 15 cargas de GNC del mismo
+        // proveedor pagadas con la VISA de una. Desde el 03/08 la tarjeta es un medio DIFERIDO:
+        // cada factura queda saldada y su parte del importe genera los débitos del resumen.
         field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia',MEDIO_TARJETA,MEDIO_DEBITO,'Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
         '<div class="cmp-field" id="pp-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="pp-cuenta">'+cuentasOpt('')+'</select></div>' +
       '</div>'+
+      '<div id="pp-tarj-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Débito del resumen de la tarjeta</div>'+
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Las facturas quedan <b>pagadas hoy</b>; la plata sale recién cuando el banco debita el resumen. Cada factura genera su parte del débito (misma fecha y cuenta para todas).</p>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('Cuotas','','<input id="pp-tj-cuotas" type="number" min="1" max="36" step="1" value="1">') +
+          field('Primer débito (vence el resumen)','','<input type="date" id="pp-tj-fecha" value="'+proxDebitoISO(hoyISO)+'">') +
+        '</div></div>'+
       '<div id="pp-cuit" class="asof" style="margin:-8px 0 10px"></div>'+
       // Este modal reparte UN importe entre varias facturas, así que no ofrece el endoso: un cheque no
       // se parte en dos. Pero igual conviene ver qué hay en cartera al decidir cómo pagar.
@@ -4062,10 +4270,14 @@ function buildFilterTable(cfg){
     ppMedio.addEventListener('change',()=>{
       const ch=esCheque(ppMedio.value);
       const admin=esAdministrativo(ppMedio.value);
+      const tj=esTarjeta(ppMedio.value)&&!ch;
       $('pp-cheque-extra').style.display=ch?'block':'none';
       $('pp-cartera-aviso').style.display=ch?'block':'none';
       if(ch) drawCarteraProv();
       $('pp-cuenta-wrap').style.display=(ch||admin||ppMedio.value==='Cuenta Corriente')?'none':'block';
+      $('pp-tarj-extra').style.display=tj?'block':'none';
+      if(tj){ const def=tarjCuentaDef(), sel=$('pp-cuenta');
+        if(def && sel){ sel.value=def; pagoProv.cuenta=def; if(sel.__repintar) sel.__repintar(); } }
       pagoProv.medio=ppMedio.value;
     });
 
@@ -4102,12 +4314,19 @@ function buildFilterTable(cfg){
       const esChequepay = esCheque(medio) && !esEndoso(medio);
       const esCC=(medio==='Cuenta Corriente');
 
+      // Tarjeta: misma cantidad de cuotas y primera fecha para todas las facturas del pago
+      const esTj = esTarjeta(medio) && !esChequepay;
+      const tjCuotas = esTj ? Math.max(1, Math.round(num($('pp-tj-cuotas')?$('pp-tj-cuotas').value:1))||1) : 1;
+      if(esTj && tjCuotas>36){ alert('¿'+tjCuotas+' cuotas? El máximo es 36 — revisá el número.'); return; }
+      const tjPrim = esTj ? (($('pp-tj-fecha')&&$('pp-tj-fecha').value) || proxDebitoISO(pagoProv.fecha||hoyISO)) : '';
+
       // Guardar pago en cada factura
       pagoProv.distribucion.forEach(d=>{
         const comp=DB.compras.find(c=>c._uid===d.compraUid);
         if(!comp) return;
         const pago={ id:'pag_'+newUid(), fecha:pagoProv.fecha, monto:d.monto, medio };
         if(esChequepay){ pago.chNumero=$('pp-ch-num')?$('pp-ch-num').value.trim():''; pago.chBanco=$('pp-ch-banco')?$('pp-ch-banco').value.trim():''; pago.chVenc=$('pp-ch-venc')?$('pp-ch-venc').value:''; }
+        else if(esTj){ pago.cuenta=pagoProv.cuenta; pago.debitos=armarDebitos(d.monto, tjCuotas, tjPrim, pagoProv.cuenta); }
         else { pago.cuenta=pagoProv.cuenta; }
         const pagos=(comp.pagos||[]).slice(); pagos.push(pago); comp.pagos=pagos; persistPagos(comp._uid, pagos);
 
@@ -6185,6 +6404,7 @@ function buildFilterTable(cfg){
   const fmtFecha=s=>{ if(!s) return '—'; const a=String(s).slice(0,10).split('-'); return a[2]+'/'+a[1]+'/'+a[0].slice(2); };
   const fb=()=>window.__fbctx;
   const esCheque=m=>/cheq/i.test(String(m||''));
+  const esTarjeta=m=>/tarjeta|visa/i.test(String(m||''));   // misma regla que Compras (débitos del resumen)
   const calcV=v=> window.__ventaCalc? window.__ventaCalc(v) : {total:num(v.total),saldo:num(v.total),cobrado:0,estado:'acobrar'};
 
   const COL='vph_caja';
@@ -6221,7 +6441,18 @@ function buildFilterTable(cfg){
         return; }
       const f=String(c.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
-    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio))) return; const f=String(p.fecha||'').slice(0,10);
+    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio))) return;
+      // Pago con TARJETA (con débitos): la factura quedó saldada, pero la plata sale recién cuando el
+      // banco debita el resumen — cuota por cuota, el día real y de la cuenta real. Contar el pago en
+      // su fecha además de los débitos sería la misma plata dos veces (por eso el return).
+      // Un pago con tarjeta VIEJO (sin débitos) cae al bloque de abajo y se cuenta como siempre.
+      // Los débitos solo valen si el medio SIGUE siendo tarjeta: si alguien le cambió el medio al
+      // pago, manda el medio (y los editores ya borran los débitos al sacarlo de tarjeta).
+      if(esTarjeta(p.medio) && Array.isArray(p.debitos) && p.debitos.length){
+        p.debitos.forEach(dd=>{ if(!dd.debitado) return; const fd=String(dd.fechaDebitado||dd.fecha||'').slice(0,10);
+          if(fd && fd>desde && fd<=hoyISO && num(dd.monto)>0) M.push({fecha:fd, signo:-1, monto:num(dd.monto), concepto:'Débito VISA · '+(c.proveedor||'—'), tipo:'pago', cuenta:dd.cuenta||p.cuenta||''}); });
+        return; }
+      const f=String(p.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
       // Un cheque propio sale SIEMPRE de la chequera: los viejos se cargaron antes de que existiera
@@ -6319,7 +6550,14 @@ function buildFilterTable(cfg){
           tipo:'plataforma', cuenta:c.cuenta||'',
           concepto:'A acreditar '+(c.medio||'plataforma')+' · '+(v.cliente||'—')}); }); });
     compras.forEach(c=>{ const total=calcCompra(c); const pagado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-pagado;
-      if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); } });
+      if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); }
+      // Débitos de la TARJETA pendientes: la factura ya está saldada (no entra por el saldo de arriba),
+      // pero la plata va a salir el día que el banco debite el resumen. Van SEPARADOS del saldo, igual
+      // que un cheque emitido, y con cuenta → "¿Alcanza en cada cuenta?" avisa si ese día falta ahí.
+      (c.pagos||[]).forEach(p=>{ if(!esTarjeta(p.medio) || !Array.isArray(p.debitos)) return;
+        p.debitos.forEach(dd=>{ if(dd.debitado) return; const m=num(dd.monto); if(m<=0.5) return;
+          E.push({fecha:String(dd.fecha||'').slice(0,10)||hoyISO, signo:-1, monto:m, tipo:'tarjeta',
+            cuenta:dd.cuenta||p.cuenta||'', concepto:'Débito VISA · '+(c.proveedor||'—')}); }); }); });
     // Los costos fijos pendientes YA están en el bloque de compras de arriba (se cargan en Compras con
     // categoría "COSTO FIJO" / "Mano de Obra"). Proyectarlos aparte los contaría DOS VECES y hundiría
     // el saldo proyectado sin motivo.
@@ -6341,6 +6579,7 @@ function buildFilterTable(cfg){
       $('caj-explica').innerHTML='Para empezar, tocá <b>💰 Declarar saldo real</b> y cargá cuánta plata tenés hoy en cada cuenta (efectivo, Banco Macro MAV, Banco Macro VPH, o las que uses). A partir de ahí, el tablero suma los cobros y resta los pagos que vayas registrando, y te muestra el disponible al día.';
       $('caj-proy-asof').textContent=''; $('caj-tabla-proy').innerHTML=''; $('caj-mov-asof').textContent=''; $('caj-tabla-mov').innerHTML='';
       $('caj-sec-cuentas').style.display='none';
+      $('caj-sec-tarjeta').style.display='none';
       return;
     }
     // Proyección
@@ -6386,6 +6625,7 @@ function buildFilterTable(cfg){
       (hayS?' <b style="color:var(--amber)">⚠️ Hay movimientos «Sin asignar»</b>: son cobros/pagos cargados antes de que existiera el campo de cuenta, o cheques sin cuenta de depósito. El total es correcto igual; para que el detalle por cuenta cierre, editalos e indicá la cuenta.':'');
 
     renderCuentas(d, limite);
+    renderTarjeta();
 
     // Filtros de horizonte
     const defs=[['15','15 días'],['30','30 días'],['60','60 días'],['todos','Todo']];
@@ -6442,9 +6682,69 @@ function buildFilterTable(cfg){
     $('caj-tabla-cuentas').innerHTML=h;
     const chq=chequera();
     $('caj-cuentas-nota').innerHTML =
-      'Acá se imputan solo <b>los cheques y las acreditaciones de plataformas</b> (VIUMI): son lo único que ya tiene cuenta y fecha ciertas. Una venta a cobrar o una compra a pagar no se reparten, porque hasta que se concretan no se sabe por qué cuenta van a pasar. Por eso es a propósito conservador — responde <i>¿me alcanza en esta cuenta para lo que ya está comprometido?</i>, no <i>cuánto voy a tener</i>. El total general está en la proyección de abajo.'+
+      'Acá se imputan solo <b>los cheques, las acreditaciones de plataformas</b> (VIUMI) <b>y los débitos de la tarjeta VISA</b>: son lo único que ya tiene cuenta y fecha ciertas. Una venta a cobrar o una compra a pagar no se reparten, porque hasta que se concretan no se sabe por qué cuenta van a pasar. Por eso es a propósito conservador — responde <i>¿me alcanza en esta cuenta para lo que ya está comprometido?</i>, no <i>cuánto voy a tener</i>. El total general está en la proyección de abajo.'+
       (chq ? ' Los cheques propios sin cuenta cargada se asumen de <b>'+esc(chq)+'</b> (se cambia en Parámetros → Finanzas).'
            : ' <b style="color:var(--amber)">⚠️ El parámetro «Cuenta de la que salen los cheques propios» no coincide con ninguna cuenta declarada</b>, así que los cheques propios sin cuenta no se están imputando a ninguna. Revisalo en Parámetros → Finanzas.');
+  }
+
+  // 💳 Débitos del resumen de la tarjeta VISA, agrupados por mes (= el resumen proyectado de cada mes).
+  // Los datos viven en los pagos de Compras (window.__tarjetaPendientes); el tilde escribe por la API
+  // de Compras, que es la dueña de los pagos — esta pantalla solo muestra y dispara.
+  function renderTarjeta(){
+    const sec=$('caj-sec-tarjeta'); if(!sec) return;
+    const pend = window.__tarjetaPendientes ? window.__tarjetaPendientes() : [];
+    if(!pend.length){ sec.style.display='none'; return; }
+    sec.style.display='';
+    const tot=pend.reduce((s,x)=>s+x.monto,0);
+    $('caj-tarjeta-asof').textContent = pend.length+' débito'+(pend.length>1?'s':'')+' pendiente'+(pend.length>1?'s':'')+' por '+money(tot)+' · en vivo desde los pagos con VISA / Tarjeta de Compras';
+    // Agrupar por mes del débito: cada grupo ES el resumen de ese mes.
+    const meses={}; const orden=[];
+    pend.forEach(x=>{ const m=String(x.fecha||'').slice(0,7)||'—';
+      if(!meses[m]){ meses[m]=[]; orden.push(m); } meses[m].push(x); });
+    const MES_N=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const mesLbl=m=>{ const p=String(m).split('-'); return (MES_N[+p[1]-1]||m)+' '+p[0]; };
+    let h='<tr><th>Débito</th><th>Proveedor / factura</th><th class="num">Monto</th><th>Cuenta</th><th></th></tr>';
+    orden.forEach(m=>{ const arr=meses[m]; const sub=arr.reduce((s,x)=>s+x.monto,0);
+      const atras=arr.some(x=>x.fecha<hoyISO);
+      h+='<tr style="background:var(--bg,#f8fafc)"><td colspan="3"><b>Resumen de '+esc(mesLbl(m))+'</b> · '+arr.length+' débito'+(arr.length>1?'s':'')+' · <b>'+money(sub)+'</b>'+(atras?' <span style="color:var(--amber)">⚠️ vencido sin marcar</span>':'')+'</td>'+
+        '<td colspan="2" style="text-align:right"><button class="cmp-rowbtn" data-tjmes="'+esc(m)+'">✓ Se debitó todo el resumen</button></td></tr>';
+      arr.forEach(x=>{ h+='<tr'+(x.fecha<hoyISO?' style="color:var(--amber)"':'')+'>'+
+        '<td data-label="Débito">'+fmtFecha(x.fecha)+(x.cuotas>1?' <span style="font-size:11px;color:var(--muted)">cuota '+x.cuotaN+'/'+x.cuotas+'</span>':'')+'</td>'+
+        '<td data-label="Proveedor"><b>'+esc(x.proveedor)+'</b>'+(x.nroFactura?' <span style="font-size:11px;color:var(--muted)">'+esc(x.nroFactura)+'</span>':'')+'</td>'+
+        '<td class="num" data-label="Monto">'+money(x.monto)+'</td>'+
+        '<td data-label="Cuenta">'+esc(x.cuenta||'—')+'</td>'+
+        '<td><button class="cmp-rowbtn" data-tjdeb="'+esc(x.compraUid)+'|'+esc(x.pagoId)+'|'+x.idx+'">✓ Ya se debitó</button></td></tr>'; }); });
+    $('caj-tabla-tarjeta').innerHTML=h;
+
+    const marcar=(items,fecha)=>{ if(!window.__marcarDebitoTarjeta){ alert('El módulo Compras no está disponible.'); return; }
+      let hechos=0; items.forEach(x=>{ if(window.__marcarDebitoTarjeta(x.compraUid, x.pagoId, x.idx, {debitado:true, fechaDebitado:fecha})) hechos++; });
+      if(!hechos) alert('No se pudo marcar. Probá de nuevo.');
+      if(window.__cajaRefresh) window.__cajaRefresh(); };
+    const pedirFecha=(msg)=>{ const f=prompt(msg+'\n\n¿Qué día se debitó? (AAAA-MM-DD)', hoyISO);
+      if(f==null) return null;
+      const iso=String(f).trim().slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(iso)){ alert('La fecha tiene que ser AAAA-MM-DD (ej. '+hoyISO+').'); return null; }
+      // Fecha de calendario REAL: '2026-02-31' pasa la regex, pero el Date la corre a marzo y acá se caza.
+      const pf=iso.split('-'), df=new Date(+pf[0], +pf[1]-1, +pf[2]);
+      if(df.getFullYear()!==+pf[0] || df.getMonth()!==+pf[1]-1 || df.getDate()!==+pf[2]){ alert('Esa fecha no existe en el calendario ('+iso+'). Revisala.'); return null; }
+      if(iso>hoyISO){ alert('La fecha del débito no puede ser futura: se marca cuando el banco YA lo debitó.'); return null; }
+      // Anterior al último saldo declarado: un typo de año dejaría la salida FUERA de la caja (los
+      // movimientos arrancan del ancla) y el disponible quedaría inflado EN SILENCIO. Si es de verdad
+      // anterior al saldo declarado, está bien: esa plata ya está descontada en el saldo que se contó.
+      const a=ancla();
+      if(a && iso<String(a.fecha||'').slice(0,10) &&
+         !confirm('OJO: esa fecha ('+fmtFecha(iso)+') es ANTERIOR al último saldo declarado ('+fmtFecha(a.fecha)+').\n\n· Si es un error de tipeo (el año, por ejemplo), tocá Cancelar y cargala de nuevo.\n· Si el banco debitó de verdad antes de que declararas el saldo, dale Aceptar: esa salida ya está descontada en el saldo que contaste y NO se vuelve a restar.')) return null;
+      return iso; };
+    $('caj-tabla-tarjeta').querySelectorAll('button[data-tjdeb]').forEach(b=> b.onclick=()=>{
+      const [cu,pid,ix]=b.dataset.tjdeb.split('|');
+      const x=pend.find(z=>z.compraUid===cu && z.pagoId===pid && z.idx===+ix); if(!x) return;
+      const f=pedirFecha('Marcar como debitado: '+money(x.monto)+' de '+x.proveedor+' ('+(x.cuenta||'sin cuenta')+').');
+      if(f) marcar([x], f); });
+    $('caj-tabla-tarjeta').querySelectorAll('button[data-tjmes]').forEach(b=> b.onclick=()=>{
+      const arr=meses[b.dataset.tjmes]; if(!arr||!arr.length) return;
+      const sub=arr.reduce((s,x)=>s+x.monto,0);
+      const f=pedirFecha('Marcar TODO el resumen de '+mesLbl(b.dataset.tjmes)+' como debitado: '+arr.length+' débito'+(arr.length>1?'s':'')+' por '+money(sub)+'.');
+      if(f) marcar(arr, f); });
   }
 
   function persist(doc){ if(!doc._uid)doc._uid=newUid();
@@ -6627,11 +6927,19 @@ function buildFilterTable(cfg){
     cheques.forEach(c=>{ if(c.tipo!=='recibido'||!chqPend(c)) return;
       R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
     return R; }
+  const esTarjeta=m=>/tarjeta|visa/i.test(String(m||''));   // misma regla que Compras y Caja (débitos del resumen)
   function porPagar(){ const R=[];
     compras.forEach(c=>{ const t=calcC(c).total; const pag=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const s=t-pag;
       if(s>0.5) R.push({quien:c.proveedor||'—', monto:s, venc:String(c.vencimiento||'').slice(0,10)||hoyISO, tipo:'compra'}); });
     cheques.forEach(c=>{ if(c.tipo!=='emitido'||!chqPend(c)) return;
       R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
+    // Débitos de la tarjeta VISA pendientes: la factura ya quedó saldada (salió del bloque de compras
+    // de arriba), pero esa plata está comprometida igual — misma clase que un cheque emitido pendiente.
+    // Sin esto, pagar una factura con VISA "mejoraba" A pagar y la brecha al instante, con la salida
+    // del resumen intacta (la Caja sí la proyectaba; este tablero no la mostraba).
+    compras.forEach(c=> (c.pagos||[]).forEach(p=>{ if(!esTarjeta(p.medio) || !Array.isArray(p.debitos)) return;
+      p.debitos.forEach(dd=>{ if(dd.debitado) return; const m=num(dd.monto); if(m<=0.5) return;
+        R.push({quien:c.proveedor||'—', monto:m, venc:String(dd.fecha||'').slice(0,10)||hoyISO, tipo:'tarjeta'}); }); }));
     return R; }
   const costosPend=()=> (window.__costosFijos?window.__costosFijos():[]).filter(c=>c.estado!=='pagado');
 
@@ -6675,13 +6983,20 @@ function buildFilterTable(cfg){
       kpi('A pagar', m$(aPagar), (pagVenc?mM(pagVenc)+' vencido · ':'')+'incluye costos fijos'+(aPagarCF?' ('+mM(aPagarCF)+')':''), pagVenc?'bad':'good') +
       kpi('Brecha cobrar - pagar', (brecha>0?'+':'')+m$(brecha), brecha>0?'Alcanza para cubrir la deuda':'La deuda supera la cartera', brecha>0?'good':'bad') +
       kpi('Liquidez corriente', liq==null?'—':liq.toFixed(2), 'Referencia sana: > 1,5', liq==null?'info':(liq>=1.5?'good':'warn')) +
-      kpi('Próximo débito VISA', visa()?'~'+m$(visa().estimado):'—', visa()?('Del último cierre · se debita el '+visa().debito):'Sin dato del cierre', 'warn');
+      // Débito VISA: EN VIVO si hay pagos con tarjeta cargados con sus débitos (el "resumen" = los
+      // débitos del mes más próximo). Si no hay ninguno, cae al estimado del último cierre, como antes.
+      (function(){ const tj=window.__tarjetaPendientes?window.__tarjetaPendientes():[];
+        if(tj.length){ const mes=String(tj[0].fecha||'').slice(0,7);
+          const delMes=tj.filter(x=>String(x.fecha||'').slice(0,7)===mes);
+          const sub=delMes.reduce((s,x)=>s+x.monto,0);
+          return kpi('Próximo débito VISA', m$(sub), 'En vivo · '+delMes.length+' débito'+(delMes.length>1?'s':'')+' · desde el '+fmtFecha(tj[0].fecha)+' · detalle en Caja', 'warn'); }
+        return kpi('Próximo débito VISA', visa()?'~'+m$(visa().estimado):'—', visa()?('Del último cierre · se debita el '+visa().debito):'Sin dato del cierre', 'warn'); })();
 
     // Gráficos de antigüedad (calculados, ya no hardcodeados).
     // Los costos fijos NO se concatenan: ya vienen dentro de `pag` (son compras). Sumarlos = doble conteo.
     const ap=aging(pag);
     const ac=aging(cob);
-    $('asof-pagar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye compras (con los costos fijos) y cheques emitidos';
+    $('asof-pagar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye compras (con los costos fijos), cheques emitidos y débitos de la VISA pendientes';
     $('asof-cobrar-chart').textContent='Antigüedad al '+fmtFecha(hoyISO)+' · incluye ventas y cheques a cobrar';
     dibujarDona('chAgingPagar', ['A vencer','Vencido 0-30','Vencido 31-60','Vencido 61-90','Vencido +90'],
       [ap.avencer,ap.d030,ap.d3160,ap.d6190,ap.d90], ['#38b26a','#e0a63a','#e07b3a','#d64541','#8e1f1c']);
@@ -6696,7 +7011,7 @@ function buildFilterTable(cfg){
       [['Todos',()=>true],['Al día',r=>r.vencido<=0.5],['Vencidos',r=>r.vencido>0.5]]);
     const top5=gp.slice(0,5).reduce((s,r)=>s+r.total,0);
     $('note-pagar').innerHTML = gp.length
-      ? 'Los '+Math.min(5,gp.length)+' proveedores más grandes concentran el '+(aPagarProv?Math.round(top5/aPagarProv*100):0)+'% de la deuda comercial. Incluye los cheques emitidos que todavía no se hicieron efectivos y los <b>costos fijos</b> ('+m$(aPagarCF)+'), que se cargan en Compras y se ven en detalle más abajo.'
+      ? 'Los '+Math.min(5,gp.length)+' proveedores más grandes concentran el '+(aPagarProv?Math.round(top5/aPagarProv*100):0)+'% de la deuda comercial. Incluye los cheques emitidos que todavía no se hicieron efectivos, los <b>débitos pendientes de la tarjeta VISA</b> y los <b>costos fijos</b> ('+m$(aPagarCF)+'), que se cargan en Compras y se ven en detalle más abajo.'
       : 'Sin deuda con proveedores 👍';
 
     // Tabla por cobrar (clientes: ventas + cheques recibidos)
@@ -7845,6 +8160,7 @@ function buildFilterTable(cfg){
     {g:'Finanzas', k:'viumiCom9',  l:'VIUMI: comisión 9 cuotas (%)',  def:18.49, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas', k:'viumiCom12', l:'VIUMI: comisión 12 cuotas (%)', def:22.59, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas',   k:'cuentaChequera', l:'Cuenta de la que salen los cheques propios', def:'Banco Macro VPH', t:'txt', hint:'Un cheque propio se debita SIEMPRE de esta cuenta, así que el Tablero puede avisarte si ese día no va a haber fondos ahí. Se propone sola al cargar un cheque propio; si usás más de una chequera, cambiala a mano en cada cheque.'},
+    {g:'Finanzas',   k:'tarjetaCuenta', l:'Cuenta de la que se debita la tarjeta VISA', def:'Banco Macro VPH', t:'txt', hint:'El resumen de la tarjeta se debita de esta cuenta. Al pagar una compra con «VISA / Tarjeta» se propone sola, junto con la fecha del débito (primer día hábil del mes siguiente) — las dos quedan editables en cada pago.'},
     // SUELDOS — los mismos divisores y factores que usa la planilla de liquidación. Están acá y no en
     // el código porque son la convención de VPH (no la ley): si algún día cambian, se tocan una vez.
     {g:'Sueldos', k:'sueDiasMes',    l:'Días laborales del mes (divisor del básico)', def:20, t:'num', hint:'Valor del día = básico mensual ÷ este número. En tu planilla es 20 (lunes a viernes).'},
