@@ -11319,11 +11319,13 @@ function buildFilterTable(cfg){
   function detalle(v, esPresupuesto){
     const cli=buscarCliente(v.cliente,v.cuit)||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
-    // Comprobante ya facturado: "puntoVenta-nroFactura" (ej 0001-00000002); si no, lo de siempre.
-    // Sin factura: se imprime el número INTERNO de la venta (su correlativo propio), no el uid interno
-    // de la base, que al cliente no le dice nada y no coincide con lo que ve Marcelo en el listado.
-    const numero = esc(v.cae ? ((v.puntoVenta||'')+'-'+(v.nroFactura||''))
-      : (v.nroFactura || (num(v.nroInterno)>0 ? ('N° '+v.nroInterno) : (v._uid||''))));
+    // El número del encabezado, con LA MISMA regla que el remito y el nombre del archivo:
+    // facturada (con o sin CAE) → "N° 0003-00000012" COMPLETO, con el punto de venta — antes una
+    // facturada a mano salía "00000012" pelado (reportado por Marcelo 04/08); sin factura → su
+    // correlativo interno "N° 2320"; sin nada → vacío (nunca el _uid de la base, que no dice nada).
+    const numero = esc((v.cae || v.nroFactura)
+      ? ('N° '+(v.puntoVenta?v.puntoVenta+'-':'')+(v.nroFactura||''))
+      : (num(v.nroInterno)>0 ? ('N° '+Math.round(num(v.nroInterno))) : ''));
     // Una nota de crédito/débito NO puede salir impresa como "detalle de venta": el papel tiene
     // que decir qué comprobante es y a cuál corrige (v.compAsocDesc lo sella al emitirse).
     const esNota = v.tipoComprobante==='Nota de Crédito' || v.tipoComprobante==='Nota de Débito';
@@ -11597,8 +11599,15 @@ function buildFilterTable(cfg){
     const ventasCli=(()=>{
       const todas=(window.__ventasTodas?window.__ventasTodas():[]);
       const cu=String(obj.clienteCuit||'').replace(/\D/g,''), nom=normc(obj.clienteNombre);
-      return todas.filter(v=>{ const vc=String(v.cuit||'').replace(/\D/g,''); return (cu&&vc===cu) || (nom&&normc(v.cliente)===nom); })
+      const lista=todas.filter(v=>{ const vc=String(v.cuit||'').replace(/\D/g,''); return (cu&&vc===cu) || (nom&&normc(v.cliente)===nom); })
         .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).slice(0,25);
+      // ⚠️ La venta que ORIGINÓ el remito/pedido entra SIEMPRE, aunque el cliente no matchee por
+      // nombre ni CUIT (un typo o una ficha renombrada dejaban la referencia "sin comprobante
+      // asociado" y el selector la perdía EN SILENCIO al guardar — reportado por Marcelo 04/08).
+      if(obj.ventaUid && !lista.some(v=>v._uid===obj.ventaUid)){
+        const v=todas.find(x=>x._uid===obj.ventaUid); if(v) lista.unshift(v);
+      }
+      return lista;
     })();
     const labelVenta=v=> refComprobante(v)+' · '+dmy(v.fecha);
     if(obj.ventaUid && !obj.comprobanteAsoc){ const v=ventasCli.find(x=>x._uid===obj.ventaUid); if(v) obj.comprobanteAsoc=labelVenta(v); }
