@@ -3452,6 +3452,86 @@ function buildFilterTable(cfg){
     leerPdfTextoInterno(file, maxPag),
     new Promise((_,rej)=>setTimeout(()=>rej(new Error('No se pudo leer el PDF en este navegador (tardó demasiado).')), 25000))
   ]);
+  // OCR de un resumen ESCANEADO (sin capa de texto adentro): renderiza cada página con pdf.js,
+  // NORMALIZA el contraste y lee con Tesseract (mismas librerías que el lector de tickets).
+  // La normalización importa: el escáner de la oficina guarda el texto gris-oscuro-sobre-negro
+  // (calibrado con el resumen real de julio 2026) — sin estirar contraste e invertir, el OCR
+  // devuelve texto VACÍO. Lento (≈1 min/página): el llamador avisa y muestra el progreso.
+  function normalizarCanvasOCR(cv, cx){
+    const im=cx.getImageData(0,0,cv.width,cv.height), d=im.data;
+    const hist=new Array(256).fill(0); const n=d.length/4;
+    for(let i=0;i<d.length;i+=4){ const g=(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2])|0; d[i]=g; hist[g]++; }
+    let acc=0, lo=0, hi=255;
+    for(let i=0;i<256;i++){ acc+=hist[i]; if(acc>=n*0.02){ lo=i; break; } }
+    acc=0; for(let i=255;i>=0;i--){ acc+=hist[i]; if(acc>=n*0.02){ hi=i; break; } }
+    if(hi<=lo) hi=lo+1;
+    let claros=0;
+    for(let i=0;i<d.length;i+=4){ const v=Math.max(0,Math.min(255,Math.round((d[i]-lo)*255/(hi-lo)))); d[i]=v; if(v>128) claros++; }
+    const invertir=claros<n/2;   // el FONDO (la mayoría de los píxeles) tiene que quedar blanco
+    for(let i=0;i<d.length;i+=4){ let v=invertir?255-d[i]:d[i]; v=v<140?0:255; d[i]=d[i+1]=d[i+2]=v; }
+    cx.putImageData(im,0,0);
+  }
+  // ⚠️ NO se usa page.render() para el escaneo: con el resumen real del Macro el render de pdf.js
+  // se COLGABA para siempre (aun forzando task.onContinue). En cambio, pedirle la imagen ya
+  // decodificada por getOperatorList + page.objs.get tarda ~50 ms — un PDF de escáner es una foto
+  // por página, así que alcanza con dibujar esa foto y leerla. Si una página no trae imagen
+  // (PDF mixto), se saltea con aviso en vez de arriesgar el cuelgue.
+  async function imagenDePagina(pdfjs, page){
+    const ops=await page.getOperatorList();
+    let mejor=null;
+    for(let i=0;i<ops.fnArray.length;i++){
+      if(ops.fnArray[i]!==pdfjs.OPS.paintImageXObject) continue;
+      const nombre=ops.argsArray[i][0];
+      const obj=await new Promise(res=>{ try{ page.objs.get(nombre, res); }catch(e){ res(null); } });
+      if(!obj) continue;
+      const w=obj.width||((obj.bitmap&&obj.bitmap.width)||0), h=obj.height||((obj.bitmap&&obj.bitmap.height)||0);
+      if(!mejor || w*h>mejor.w*mejor.h) mejor={obj, w, h};   // la imagen grande ES la página escaneada
+    }
+    return mejor;
+  }
+  async function ocrPdfResumenInterno(file, onProg){
+    const pdfjs=await cargarPdfjs();
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjs.getDocument({data:buf}).promise;
+    const { createWorker } = await cargarTesseract();
+    const worker=await createWorker('spa');
+    let texto=''; let saltadas=0;
+    try{
+      const paginas=Math.min(pdf.numPages, 6);
+      for(let p=1;p<=paginas;p++){
+        if(onProg) try{ onProg('Leyendo con OCR la página '+p+' de '+paginas+'… (tarda ≈1 min por página)'); }catch(e){}
+        const page=await pdf.getPage(p);
+        const img=await imagenDePagina(pdfjs, page);
+        if(!img){ saltadas++; continue; }
+        const esc2=Math.max(1, Math.min(2, 1900/img.w));   // ~1900px de ancho: buen tamaño para el OCR
+        const cv=document.createElement('canvas');
+        cv.width=Math.round(img.w*esc2); cv.height=Math.round(img.h*esc2);
+        const cx=cv.getContext('2d');
+        cx.fillStyle='#fff'; cx.fillRect(0,0,cv.width,cv.height);
+        if(img.obj.bitmap) cx.drawImage(img.obj.bitmap, 0, 0, cv.width, cv.height);
+        else if(img.obj.data){   // build vieja de pdf.js: la imagen viene como píxeles crudos
+          const tmp=document.createElement('canvas'); tmp.width=img.w; tmp.height=img.h;
+          const td=tmp.getContext('2d'), id=td.createImageData(img.w, img.h);
+          const src=img.obj.data, px=id.data, canales=src.length/(img.w*img.h);
+          for(let i=0;i<img.w*img.h;i++){
+            if(canales>=3){ px[i*4]=src[i*canales]; px[i*4+1]=src[i*canales+1]; px[i*4+2]=src[i*canales+2]; px[i*4+3]=canales===4?src[i*4+3]:255; }
+            else { px[i*4]=px[i*4+1]=px[i*4+2]=src[i]; px[i*4+3]=255; }
+          }
+          td.putImageData(id,0,0);
+          cx.drawImage(tmp, 0, 0, cv.width, cv.height);
+        } else { saltadas++; continue; }
+        normalizarCanvasOCR(cv, cx);
+        const {data}=await worker.recognize(cv);
+        texto+=data.text+'\n';
+      }
+    } finally { try{ await worker.terminate(); }catch(e){} }
+    if(saltadas && onProg) try{ onProg(saltadas+' página(s) sin imagen legible — salteada(s)'); }catch(e){}
+    return texto;
+  }
+  window.__ocrPdfResumen = (file, onProg)=> Promise.race([
+    ocrPdfResumenInterno(file, onProg),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('el OCR tardó demasiado. Probá bajar el PDF original del home banking (ese se lee al instante y sin errores).')), 360000))
+  ]);
   // ---------- QR de ARCA: los datos EXACTOS del comprobante, sin depender del OCR ----------
   // Es lo que hacen los software comerciales de lectura de comprobantes (Veryfi/Klippa/etc.): primero
   // el dato ESTRUCTURADO, el OCR de respaldo. Toda factura electrónica argentina (RG 4892) lleva un QR
@@ -6887,47 +6967,92 @@ function buildFilterTable(cfg){
   // como gasto. Nada se guarda solo (patrón onSaved): cada acción abre el formulario o pide confirmar.
   let ultimoResumen=null;   // {nombre, r} — el cotejo se recalcula en cada render, como la conciliación ARCA
   const round2c=n=>Math.round(n*100)/100;
+  const sinTildes=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Monto formato resumen: "1.234,56" y también "1.234,56-" (el signo pegado ATRÁS, estilo bancario)
   const montoAR=t=>{ let s=String(t||'').trim(); const neg=/^-/.test(s)||/-\s*$/.test(s);
     s=s.replace(/[^0-9.,]/g,''); if(!s||s.indexOf(',')<0&&!/\d/.test(s)) return null;
     if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.');
     const n=parseFloat(s); return isFinite(n)?(neg?-n:n):null; };
-  const fechaResAR=t=>{ const m=String(t||'').match(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/);
-    if(!m) return null; if(+m[2]<1||+m[2]>12||+m[1]<1||+m[1]>31) return null;
-    let a=m[3]; if(a.length===2)a='20'+a;
-    return a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); };
-  const RES_IMP=/\bIVA\b|SELLO|PERCEP|IMPUESTO|INTERES|FINANCIAC|COMISION|CARGO|MANTENIM|SEGURO|DB\.?\s*CR|LEY\s*25/i;
-  const RES_PAGO=/SU PAGO|PAGO RECIBIDO|PAGO EN PESOS|GRACIAS/i;
-  const RES_IGNORAR=/SALDO ANTERIOR|PAGO MINIMO|PAGO MÍNIMO|TOTAL CONSUMOS|SUBTOTAL|LIMITE|LÍMITE|TASA|C\.?F\.?T|T\.?N\.?A|T\.?E\.?A|DISPONIBLE/i;
+  // Un día "93" u "83" es un 0 que el OCR leyó mal (03/08): se corrige SOLO si el resultado es válido
+  const diaOCR=d=>{ const n=+d; if(n>=1&&n<=31) return n;
+    if(String(d).length===2){ const n2=+('0'+String(d)[1]); if(n2>=1&&n2<=31) return n2; } return null; };
+  // Fechas del resumen Macro: numéricas ("05/08/26") y con el MES EN PALABRA ("30 Abril 26",
+  // "CIERRE 23 Jul 26") — calibrado con el resumen real de julio 2026. "age" = "Agosto" leído mal.
+  const MES_TXT={ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,age:8,set:9,sep:9,oct:10,nov:11,dic:12};
+  const fechaResAR=t=>{
+    const s=sinTildes(t);
+    let m=s.match(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/);
+    if(m && +m[2]>=1 && +m[2]<=12){ const dia=diaOCR(m[1]);
+      if(dia){ let a=m[3]; if(a.length===2)a='20'+a; return a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(dia).padStart(2,'0'); } }
+    m=s.match(/(\d{1,2})\s+([A-Za-z]{3,10})\.?\s+(\d{2,4})\b/);
+    if(m){ const mes=MES_TXT[m[2].slice(0,3).toLowerCase()]; const dia=diaOCR(m[1]);
+      if(mes && dia){ let a=m[3]; if(a.length===2)a='20'+a; if(+a>=2020&&+a<=2099) return a+'-'+String(mes).padStart(2,'0')+'-'+String(dia).padStart(2,'0'); } }
+    return null; };
+  const RE_FECHA_TXT=/(?:\d{1,2}\s+[A-Za-zÁÉÍÓÚáéíóúñÑ]{3,10}\.?\s+\d{2,4}|\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/;
+  // "CONIS" y "DB" son lecturas OCR reales de "COMIS." y los cargos "DB IVA"/"DB.RG 5617" del Macro
+  const RES_IMP=/\bIVA\b|SELLO|PERCEP|IMPUESTO|INTERES|FINANCIAC|COMISION|COMIS\b|CONIS|CARGO|MANTENIM|SEGURO|\bDB\b|DB\.|RG\s*\.?\s*\d{3,4}|LEY\s*25/i;
+  const RES_PAGO=/SU PAGO|PAGO RECIBIDO|GRACIAS/i;
+  const RES_IGNORAR=/SALDO ANTERIOR|PAGO MINIMO|TOTAL CONSUMOS|SUBTOTAL|LIMITE|TASA|C\.?F\.?T|T\.?N\.?A|T\.?E\.?A|DISPONIBLE|CUOTAS A VENCER/i;
 
   // Del texto del resumen a datos: consumos (con cuota si dice "C.01/03"), impuestos/cargos, pagos
-  // del mes anterior (se excluyen), cierre, vencimiento y saldo. Conservador: el renglón que no se
-  // entiende se ignora — y el control de abajo avisa si lo leído no cierra con el SALDO ACTUAL.
+  // del mes anterior (se excluyen), consumos en DÓLARES (aparte, no se cotejan), cierre, VENCIMIENTO
+  // y saldo. Calibrado con el resumen REAL del Macro (julio 2026), incluso leído por OCR: montos con
+  // espacios metidos ("19434 ,86"), el asterisco de los totales leído como "+", días 93→03, etc.
+  // Conservador: el renglón que no se entiende se ignora — y el control del saldo avisa después.
   function parseResumenVisa(texto){
-    const r={consumos:[], impuestos:[], creditos:[], pagos:0, vencimiento:null, cierre:null, saldo:null};
+    const r={consumos:[], impuestos:[], creditos:[], usd:[], pagos:0, vencimiento:null, cierre:null, saldo:null, totalTarjeta:null};
     for(let l of String(texto||'').split(/\r?\n/)){
       l=l.trim(); if(!l) continue;
-      const L=l.toUpperCase();
-      if(!r.cierre && /CIERRE/.test(L)){ const f=fechaResAR(l); if(f){ r.cierre=f; continue; } }
-      if(!r.vencimiento && /VENCIM|VTO\.?/.test(L)){ const f=fechaResAR(l); if(f){ r.vencimiento=f; continue; } }
-      const mM=l.match(/(-?\s*[\d.]{1,13},\d{2})(\s*-)?\s*$/);
+      const LU=sinTildes(l).toUpperCase();
+      // CIERRE y VENCIMIENTO pueden venir en la MISMA línea ("CIERRE 23 Jul 26  VENCIMIENTO 03 Ago 26").
+      // Ojo con "Cierre Ant.:" y "Prox.Cierre:": el del período va SIN nada en el medio.
+      if(!r.cierre){ const m=LU.match(new RegExp('(?:^|\\s)CIERRE(?:\\s+ACTUAL)?:?\\s+('+RE_FECHA_TXT.source+')')); if(m){ const f=fechaResAR(m[1]); if(f) r.cierre=f; } }
+      if(!r.vencimiento){ const m=LU.match(new RegExp('VENCIMIENTO(?:\\s+ACTUAL)?:?\\s+('+RE_FECHA_TXT.source+')')); if(m){ const f=fechaResAR(m[1]); if(f) r.vencimiento=f; } }
+      // El saldo sale de sus anclas, no del monto al final (la línea real trae más columnas después):
+      // "DEBITAREMOS DE SU C.C.… LA SUMA DE $ 1951422,44 + U$S 129,14" / "Saldo Actual $1.951.422,44 …"
+      if(r.saldo==null){ const mS=LU.match(/LA SUMA DE\s*\$?\s*([\d.\s]*\d,\d{2})/) || LU.match(/SALDO ACTUAL\s*\$?\s*([\d.\s]*\d,\d{2})/);
+        if(mS){ const v=montoAR(mS[1]); if(v!=null){ r.saldo=Math.abs(v); continue; } } }
+      // pre-limpieza de rarezas del OCR en los montos: "19434 ,86" / ", 86" → "19434,86"
+      const l2=l.replace(/(\d)\s+,/g,'$1,').replace(/,\s+(\d\d)\b/g,',$1');
+      // monto al final del renglón; tolera un dígito basura pegado y el sufijo: "-" negativo (estilo
+      // bancario), "*" o "+" (así lee el OCR el * de las líneas de TOTAL por tarjeta → no son
+      // movimientos). SIN espacios dentro de la clase: con \s adentro se comía dígitos vecinos
+      // ("C.83/86 99198,69" capturaba "86 99198,69" → un monto inventado de $8,6M — cazado por test).
+      const mM=l2.match(/(-?[\d.]{0,14}\d,\d{2})\s*\d?\s*([-*+xX])?\s*$/);
       if(!mM) continue;
-      let monto=montoAR(mM[1]); if(monto==null) continue;
-      if(mM[2]) monto=-Math.abs(monto);
-      const cuerpo=l.slice(0, l.length-mM[0].length).trim();
-      const CU=cuerpo.toUpperCase();
-      if(/SALDO ACTUAL/.test(CU)){ r.saldo=Math.abs(monto); continue; }
+      const suf=mM[2]||'';
+      if(suf==='*'||suf==='+'||suf==='x'||suf==='X'){
+        if(r.totalTarjeta==null){ const mT=sinTildes(l2).match(/TOTAL\s+CONSUMOS[\s\S]*?([\d.\s]*\d,\d{2})\s*[*+xX]/i);
+          if(mT){ const v=montoAR(mT[1]); if(v!=null) r.totalTarjeta=Math.abs(v); } }
+        continue; }
+      let monto=montoAR(mM[1]); if(monto==null || monto===0) continue;
+      if(suf==='-') monto=-Math.abs(monto);
+      const cuerpo=l2.slice(0, l2.length-mM[0].length).trim();
+      const CU=sinTildes(cuerpo).toUpperCase();
       if(RES_IGNORAR.test(CU)) continue;
       if(RES_PAGO.test(CU)){ r.pagos+=Math.abs(monto); continue; }
+      // Un IMPUESTO del Macro LLEVA fecha ("23 Julio 26 IMPUESTO DE SELLOS…") pero NO lleva número
+      // de cupón — el cupón ("002341 *") es la marca de un consumo de comercio.
+      const cupon=/\b\d{5,6}\s*[*+xX]/.test(cuerpo);
       const fecha=fechaResAR(cuerpo);
-      if(!fecha && RES_IMP.test(CU) && monto>0){ r.impuestos.push({concepto:cuerpo.replace(/\s+/g,' ').slice(0,60)||'Cargo', monto:round2c(monto)}); continue; }
-      if(fecha){
-        const mCuo=cuerpo.match(/\bC(?:UOTA|UO)?\.?\s*0?(\d{1,2})\s*\/\s*0?(\d{1,2})\b/i);
-        const detalle=cuerpo.replace(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/,'').replace(/\s+/g,' ').trim().slice(0,60);
-        if(monto<0){ r.creditos.push({fecha, detalle, monto:round2c(monto)}); continue; }
-        r.consumos.push({fecha, detalle, monto:round2c(monto), cuotaN:mCuo?+mCuo[1]:null, cuotas:mCuo?+mCuo[2]:null});
+      const limpiar=s=>s.replace(new RegExp(RE_FECHA_TXT.source),'').replace(/\b\d{5,6}\s*[*+xX]\s*/,'').replace(/\s+/g,' ').trim().slice(0,60);
+      if(RES_IMP.test(CU) && !cupon){
+        if(monto<0){ r.creditos.push({fecha, detalle:limpiar(cuerpo)||'Crédito', monto:round2c(monto)}); continue; }
+        r.impuestos.push({concepto:limpiar(cuerpo)||'Cargo', monto:round2c(monto)}); continue;
       }
-      // sin fecha y sin pinta de impuesto → encabezado o total: se ignora
+      if(fecha || cupon){
+        const mCuo=cuerpo.match(/\bC(?:UOTA|UO)?\.?\s*0?(\d{1,2})\s*\/\s*0?(\d{1,2})\b/i);
+        let cn=mCuo?+mCuo[1]:null, cd=mCuo?+mCuo[2]:null;
+        if(cn!=null && (cd>36 || cn>cd || cn<1)){ cn=null; cd=null; }   // cuota deformada por el OCR
+        const detalle=limpiar(cuerpo)||'Consumo';
+        if(monto<0){ r.creditos.push({fecha, detalle, monto:round2c(monto)}); continue; }
+        // Consumo en DÓLARES (el detalle termina en "…USD"): el monto es u$s, no pesos — va aparte
+        // y no se coteja (esa plata entra en pesos por los cargos RG del banco).
+        if(/USD/.test(cuerpo)){ r.usd.push({fecha, detalle, monto:round2c(monto)}); continue; }
+        r.consumos.push({fecha, detalle, monto:round2c(monto), cuotaN:cn, cuotas:cd});
+        continue;
+      }
+      // sin fecha, sin cupón y sin pinta de impuesto → encabezado o total: se ignora
     }
     r.totalConsumos=round2c(r.consumos.reduce((s,x)=>s+x.monto,0));
     r.totalImpuestos=round2c(r.impuestos.reduce((s,x)=>s+x.monto,0));
@@ -6940,17 +7065,28 @@ function buildFilterTable(cfg){
   function cotejarResumen(res, pend){
     const usadas=new Set(), key=p=>p.pagoId+'|'+p.idx;
     const ok=[], difs=[], faltan=[];
+    // Con OCR los dígitos se deforman (0↔8↔9, 0↔6, 1↔5, 3↔5 — visto en el resumen real): si no hay
+    // match exacto, se acepta un monto "compatible a lo OCR" (mismo largo, hasta 2 dígitos confundibles).
+    const digitos=m=>String(Math.round(Math.abs(m)*100));
+    const parOCR=(x,y)=> x===y || ('089'.indexOf(x)>=0&&'089'.indexOf(y)>=0) || ('06'.indexOf(x)>=0&&'06'.indexOf(y)>=0)
+      || ('15'.indexOf(x)>=0&&'15'.indexOf(y)>=0) || ('35'.indexOf(x)>=0&&'35'.indexOf(y)>=0);
+    const okOCR=(a,b)=>{ const A=digitos(a), B=digitos(b); if(A===B) return true; if(A.length!==B.length) return false;
+      let dif=0; for(let i=0;i<A.length;i++){ if(A[i]!==B[i]){ if(!parOCR(A[i],B[i])) return false; dif++; } } return dif<=2; };
     res.consumos.forEach(cn=>{
       let cand=pend.filter(p=>!usadas.has(key(p)) && Math.abs(p.monto-cn.monto)<=0.02);
+      let aprox=false;
+      if(!cand.length && res.ocr){ cand=pend.filter(p=>!usadas.has(key(p)) && okOCR(p.monto, cn.monto)); aprox=cand.length>0; }
       if(cand.length>1 && cn.cuotaN){ const c2=cand.filter(p=>p.cuotaN===cn.cuotaN&&p.cuotas===cn.cuotas); if(c2.length) cand=c2; }
       if(cand.length>1){ const c3=cand.filter(p=>p.fechaCompra===cn.fecha); if(c3.length) cand=c3; }
       const p=cand[0]||null;
       if(!p){ faltan.push(cn); return; }
       usadas.add(key(p));
       const avisos=[];
-      if(cn.fecha && p.fechaCompra && cn.fecha!==p.fechaCompra) avisos.push('fecha de compra distinta: Tablero '+fmtFecha(p.fechaCompra)+' vs resumen '+fmtFecha(cn.fecha));
-      if(cn.cuotaN && (p.cuotaN!==cn.cuotaN || p.cuotas!==cn.cuotas)) avisos.push('cuota distinta: Tablero '+p.cuotaN+'/'+p.cuotas+' vs resumen '+cn.cuotaN+'/'+cn.cuotas);
-      (avisos.length?difs:ok).push({cn, p, avisos});
+      // La fecha leída por OCR no es confiable ("08"→"83") — la diferencia de fecha solo se avisa
+      // con un PDF con texto de verdad; en modo OCR el banner general ya avisa que es aproximado.
+      if(!res.ocr && cn.fecha && p.fechaCompra && cn.fecha!==p.fechaCompra) avisos.push('fecha de compra distinta: Tablero '+fmtFecha(p.fechaCompra)+' vs resumen '+fmtFecha(cn.fecha));
+      if(cn.cuotaN && p.cuotas>1 && (p.cuotaN!==cn.cuotaN || p.cuotas!==cn.cuotas)) avisos.push('cuota distinta: Tablero '+p.cuotaN+'/'+p.cuotas+' vs resumen '+cn.cuotaN+'/'+cn.cuotas);
+      (avisos.length?difs:ok).push({cn, p, avisos, aprox});
     });
     const mesRes=String(res.vencimiento||res.cierre||'').slice(0,7);
     const sobran=pend.filter(p=>!usadas.has(key(p)) && (!mesRes || String(p.fecha).slice(0,7)<=mesRes));
@@ -6982,7 +7118,7 @@ function buildFilterTable(cfg){
       proveedor:'VISA Banco Macro', condIva:'A', tipoComprobante:'Compra',
       fecha:res.cierre||hoyISO, vencimiento:res.vencimiento||res.cierre||hoyISO,
       percepIva:round2c(percepIva)||'', percepIibb:round2c(percepIibb)||'',
-      nota:'Impuestos y cargos del resumen VISA'+(res.cierre?' (cierre '+fmtFecha(res.cierre)+')':'')+'. Registrale el pago con «VISA / Tarjeta» en 1 cuota, primer débito el '+(res.vencimiento?fmtFecha(res.vencimiento):'día del vencimiento del resumen')+': así entra al mismo resumen en el panel de Caja y el total coincide con el papel.',
+      nota:'Impuestos y cargos del resumen VISA'+(res.cierre?' (cierre '+fmtFecha(res.cierre)+')':'')+'.'+(res.ocr?' ⚠️ IMPORTES LEÍDOS POR OCR: verificalos contra el papel antes de guardar.':'')+' Registrale el pago con «VISA / Tarjeta» en 1 cuota, primer débito el '+(res.vencimiento?fmtFecha(res.vencimiento):'día del vencimiento del resumen')+': así entra al mismo resumen en el panel de Caja y el total coincide con el papel.',
       items };
   }
 
@@ -6995,12 +7131,18 @@ function buildFilterTable(cfg){
     let h='<div class="asof" style="margin:4px 0 8px"><b>Resumen leído:</b> '+res.consumos.length+' consumo'+(res.consumos.length===1?'':'s')+' por '+money(res.totalConsumos)+' · '+res.impuestos.length+' impuesto'+(res.impuestos.length===1?'':'s')+'/cargo'+(res.impuestos.length===1?'':'s')+' por '+money(res.totalImpuestos)+
       (res.cierre?' · cierre '+fmtFecha(res.cierre):'')+(res.vencimiento?' · <b>vence '+fmtFecha(res.vencimiento)+'</b>':'')+
       (res.pagos?' · (su pago anterior por '+money(res.pagos)+' excluido)':'')+'</div>';
+    if(res.ocr){
+      h+='<div class="alert warn" style="margin:6px 0"><span class="aico">👓</span><div><b>Leído con OCR de un escaneo:</b> los números pueden tener errores de lectura (un 0 puede salir como 8, un 3 como 5). El cotejo es <b>APROXIMADO</b> — las coincidencias marcadas ≈ difieren en algún dígito. Antes de cargar cualquier cosa, <b>verificá el importe contra el papel</b>. Para un cotejo exacto, bajá el PDF original del home banking del Macro: ese se lee al instante y sin errores.</div></div>';
+    }
     // Control de lectura: si lo leído no cierra con el saldo del resumen, puede haber renglones sin leer
     if(res.saldo!=null && Math.abs(leido-res.saldo)>1){
-      h+='<div class="alert warn" style="margin:6px 0"><span class="aico">⚠️</span><div>Lo leído ('+money(leido)+') no cierra con el SALDO ACTUAL del resumen ('+money(res.saldo)+'). Puede haber renglones que no pude leer (o un saldo anterior impago) — cotejá igual, pero revisá el papel antes de confiar en los totales.</div></div>';
+      h+= res.ocr
+        ? '<div class="asof" style="margin:6px 0;color:var(--amber)">Lo leído ('+money(leido)+') no cierra exacto con el saldo del resumen ('+money(res.saldo)+') — normal con OCR: algún renglón puede haberse perdido o deformado.</div>'
+        : '<div class="alert warn" style="margin:6px 0"><span class="aico">⚠️</span><div>Lo leído ('+money(leido)+') no cierra con el SALDO ACTUAL del resumen ('+money(res.saldo)+'). Puede haber renglones que no pude leer (o un saldo anterior impago) — cotejá igual, pero revisá el papel antes de confiar en los totales.</div></div>';
     }
+    const nAprox=c.ok.concat(c.difs).filter(x=>x.aprox).length;
     h+='<div class="kpis" style="margin:6px 0">'+
-      '<div class="kpi '+((c.difs.length||c.faltan.length)?'':'good')+'"><div class="label">✓ Coinciden</div><div class="value" style="font-size:20px">'+c.ok.length+'</div></div>'+
+      '<div class="kpi '+((c.difs.length||c.faltan.length)?'':'good')+'"><div class="label">✓ Coinciden</div><div class="value" style="font-size:20px">'+c.ok.length+'</div>'+(nAprox?'<div class="sub">'+nAprox+' ≈ a lo OCR</div>':'')+'</div>'+
       '<div class="kpi '+(c.difs.length?'warn':'good')+'"><div class="label">⚠️ Con avisos</div><div class="value" style="font-size:20px">'+c.difs.length+'</div></div>'+
       '<div class="kpi '+(c.faltan.length?'bad':'good')+'"><div class="label">❌ Sin cargar</div><div class="value" style="font-size:20px">'+c.faltan.length+'</div></div>'+
       '<div class="kpi '+(c.sobran.length?'warn':'good')+'"><div class="label">🔎 Acá y no en el resumen</div><div class="value" style="font-size:20px">'+c.sobran.length+'</div></div>'+
@@ -7034,8 +7176,11 @@ function buildFilterTable(cfg){
       h+='<tr class="total"><td><b>Total</b></td><td class="num"><b>'+money(res.totalImpuestos)+'</b></td></tr></tbody></table></div>'+
         '<button class="cmp-btn" id="caj-tjr-imp" style="margin:6px 0">➕ Cargar los impuestos como gasto ('+money(res.totalImpuestos)+')</button>';
     }
+    if(res.usd && res.usd.length){
+      h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">'+res.usd.length+' consumo'+(res.usd.length>1?'s':'')+' en DÓLARES (u$s '+res.usd.reduce((s,x)=>s+x.monto,0).toFixed(2).replace('.',',')+'): '+res.usd.map(x=>esc(x.detalle.slice(0,26))).join(' · ')+' — no se cotejan acá: esa plata entra en pesos por los cargos del banco (DB.RG) el día del débito.</div>';
+    }
     if(res.creditos.length){
-      h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">Además leí '+res.creditos.length+' crédito'+(res.creditos.length>1?'s':'')+'/devolución'+(res.creditos.length>1?'es':'')+' que no se cotejan solos: '+res.creditos.map(x=>esc(x.detalle+' '+money(x.monto))).join(' · ')+'.</div>';
+      h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">Además leí '+res.creditos.length+' crédito'+(res.creditos.length>1?'s':'')+'/devolución'+(res.creditos.length>1?'es':'')+' que no se cotejan solos: '+res.creditos.map(x=>esc(x.detalle.slice(0,30)+' '+money(x.monto))).join(' · ')+'.</div>';
     }
     out.innerHTML=h;
 
@@ -7057,8 +7202,8 @@ function buildFilterTable(cfg){
       if(!window.__nuevaCompraPrecargada){ alert('El módulo Compras no está disponible.'); return; }
       const total=cn.cuotas ? round2c(cn.monto*cn.cuotas) : cn.monto;
       window.__nuevaCompraPrecargada({ _titulo:'Nueva Compra (desde el resumen VISA)',
-        proveedor:cn.detalle||'Consumo VISA', fecha:cn.fecha, vencimiento:cn.fecha,
-        nota:'Del resumen VISA ('+fmtFecha(cn.fecha)+'). Si tenés la factura del comercio, completala con sus datos reales. Después registrale el pago con «VISA / Tarjeta»'+(cn.cuotas?' en '+cn.cuotas+' cuotas':'')+' — ahí se arman los débitos y este consumo pasa a cotejar bien.',
+        proveedor:cn.detalle||'Consumo VISA', fecha:cn.fecha||undefined, vencimiento:cn.fecha||undefined,
+        nota:'Del resumen VISA'+(cn.fecha?' ('+fmtFecha(cn.fecha)+')':'')+'.'+(res.ocr?' ⚠️ IMPORTE LEÍDO POR OCR: verificalo contra el papel antes de guardar.':'')+' Si tenés la factura del comercio, completala con sus datos reales. Después registrale el pago con «VISA / Tarjeta»'+(cn.cuotas?' en '+cn.cuotas+' cuotas':'')+' — ahí se arman los débitos y este consumo pasa a cotejar bien.',
         items:[{desc:'Según resumen VISA'+(cn.cuotas?' — '+cn.cuotas+' cuotas de '+money(cn.monto):''), codigo:'', cant:1, precioUnit:total, descPct:0, iva:'nogravado'}] });
     });
   }
@@ -7068,17 +7213,31 @@ function buildFilterTable(cfg){
     try{
       if(nom) nom.textContent='Leyendo '+file.name+'…';
       let texto='';
-      if(/\.txt$/i.test(file.name||'') || file.type==='text/plain') texto=await file.text();
+      const esPdf=!(/\.txt$/i.test(file.name||'') || file.type==='text/plain');
+      if(!esPdf) texto=await file.text();
       else if(window.__leerPdfTexto) texto=await window.__leerPdfTexto(file);
       else throw new Error('el lector de PDF no está disponible');
-      const r=parseResumenVisa(texto);
+      let r=parseResumenVisa(texto);
+      let usoOcr=false;
+      // PDF sin texto adentro = un ESCANEO (el circuito real de la oficina): se ofrece el lector
+      // óptico. Es lento y puede leer mal algún dígito — el cotejo pasa a modo aproximado y avisa.
+      if(!r.consumos.length && !r.impuestos.length && esPdf && window.__ocrPdfResumen){
+        if(!confirm('Este PDF parece un ESCANEO: no tiene texto adentro.\n\n¿Lo leo con el lector óptico (OCR)? Tarda alrededor de un minuto por página y algún número puede salir mal leído — el cotejo va a ser APROXIMADO.\n\nPara un cotejo exacto e instantáneo, bajá el PDF original desde el home banking del Macro.')){
+          ultimoResumen=null; if(nom) nom.textContent='';
+          return;
+        }
+        texto=await window.__ocrPdfResumen(file, m=>{ if(nom) nom.textContent=m; });
+        r=parseResumenVisa(texto);
+        usoOcr=true;
+      }
       if(!r.consumos.length && !r.impuestos.length){
         ultimoResumen=null; if(nom) nom.textContent='';
-        alert('No pude leer renglones del resumen.\n\nSi el PDF es una foto o un escaneo, no tiene texto adentro: bajá el PDF original desde el home banking del Macro. Como alternativa, copiá el texto del resumen a un archivo .txt y subí ese.');
+        alert('No pude leer renglones del resumen'+(usoOcr?' (ni siquiera con OCR — puede ser un escaneo muy borroso)':'')+'.\n\nBajá el PDF original desde el home banking del Macro, o copiá el texto del resumen a un archivo .txt y subí ese.');
         return;
       }
-      ultimoResumen={nombre:file.name, r};
-      if(nom) nom.textContent=file.name;
+      r.ocr=usoOcr;
+      ultimoResumen={nombre:file.name+(usoOcr?' (leído con OCR)':''), r};
+      if(nom) nom.textContent=ultimoResumen.nombre;
       render();
     }catch(e){
       if(nom) nom.textContent='';
