@@ -4969,6 +4969,28 @@ function buildFilterTable(cfg){
   let filtro={ estado:'todos', cat:'', periodo:hoyISO.slice(0,7), q:'', sortCol:'fecha', sortDir:-1 };
   let chartCat=null;
 
+  // ---- ¿Esta venta se pasó a Producción y Logística? ------------------------------------------
+  // El circuito real es: el cliente confirma → se factura → se cobra → se pasa a Producción. Ese
+  // último paso es el único que no deja rastro en Ventas, así que era el que se podía olvidar sin
+  // que nada avisara. Acá se calcula el estado para mostrarlo en la propia lista de ventas.
+  //   'nocorresponde' → no lleva mercadería (presupuesto, nota de crédito/débito, venta sin ítems)
+  //                     o el módulo de Producción todavía no cargó (no inventamos una alarma).
+  //   'hecha'         → ya tiene pedido creado.
+  //   'omitida'       → alguien marcó a mano que esta venta no necesita entrega.
+  //   'falta'         → ⚠️ tiene mercadería y NO se pasó. Este es el aviso.
+  function estadoEntrega(v){
+    const conMercaderia=(v.items||[]).some(it=>it&&it.desc&&num(it.cant)>0);
+    if(!conMercaderia || ['Presupuesto','Nota de Crédito','Nota de Débito'].includes(v.tipoComprobante)) return 'nocorresponde';
+    if(!window.__pedidoDeVenta) return 'nocorresponde';
+    const pe=window.__pedidoDeVenta(v._uid);
+    if(pe===undefined) return 'nocorresponde';   // los pedidos todavía no cargaron: no alarmar de gusto
+    if(pe) return 'hecha';
+    if((v.tareasHechas||{}).entregaOmitida) return 'omitida';
+    return 'falta';
+  }
+  // Producción avisa por acá cuando se crea o se borra un pedido, para que la lista no quede vieja.
+  window.__ventasRefrescar = function(){ try{ if($('vnt-tabla')) render(); }catch(e){} };
+
   function render(){
     // Aviso dirigido al Libro IVA (seguimiento + conciliación ARCA de Emitidos): se repinta solo si esa
     // página está a la vista — al guardar/corregir una venta desde ahí, las listas se mueven al instante.
@@ -4987,6 +5009,7 @@ function buildFilterTable(cfg){
         if(filtro.estado==='acobrar' && !(k.estado==='acobrar'||k.estado==='parcial'||k.estado==='vencido')) return false;
         if(filtro.estado==='vencido' && k.estado!=='vencido') return false;
         if(filtro.estado==='cobrado' && k.estado!=='cobrado') return false;
+        if(filtro.estado==='sinprod' && estadoEntrega(v)!=='falta') return false;
       }
       if(filtro.q){ const q=filtro.q.toLowerCase(); const hay=(v.cliente+' '+v.nroFactura+' '+v.categoria+' '+(v.items||[]).map(i=>i.desc).join(' ')).toLowerCase(); if(!hay.includes(q)) return false; }
       return true;
@@ -5035,9 +5058,13 @@ function buildFilterTable(cfg){
   function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
 
   function renderFiltros(all){
-    const counts={ todos:all.length, acobrar:all.filter(x=>x.k.estado!=='cobrado').length, vencido:all.filter(x=>x.k.estado==='vencido').length, cobrado:all.filter(x=>x.k.estado==='cobrado').length };
-    const defs=[['todos','Todas'],['acobrar','A cobrar'],['vencido','Vencidas'],['cobrado','Cobradas']];
-    $('vnt-filtros').innerHTML = defs.map(([v,l])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+counts[v]+')</button>').join('');
+    const sinProd=all.filter(x=>estadoEntrega(x.v)==='falta').length;
+    const counts={ todos:all.length, acobrar:all.filter(x=>x.k.estado!=='cobrado').length, vencido:all.filter(x=>x.k.estado==='vencido').length, cobrado:all.filter(x=>x.k.estado==='cobrado').length, sinprod:sinProd };
+    const defs=[['todos','Todas'],['acobrar','A cobrar'],['vencido','Vencidas'],['cobrado','Cobradas'],['sinprod','⚠ Sin pasar a producción']];
+    $('vnt-filtros').innerHTML = defs.map(([v,l])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+
+      // El filtro de las que faltan pasar se pinta en ámbar cuando hay alguna, para que se vea sin buscarlo.
+      (v==='sinprod'&&sinProd?'" style="border-color:var(--amber);color:var(--amber);font-weight:800':'')+
+      '" data-est="'+v+'">'+l+' ('+counts[v]+')</button>').join('');
     $('vnt-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
   }
 
@@ -5056,7 +5083,11 @@ function buildFilterTable(cfg){
     const esFactAB=/^Factura [AB]$/.test(v.tipoComprobante||'') || (esNotaCD(v.tipoComprobante) && !!v.compAsoc);
     return (((!esNC&&k.saldo>0.5)||tieneCobros)?'<button class="cmp-rowbtn" data-act="cobro" data-id="'+v._uid+'">'+((!esNC&&k.saldo>0.5)?'Cobrar':'Cobros')+'</button>':'')+
       (v.cae?'<span class="badge green" title="Factura electrónica autorizada · CAE '+esc(v.cae)+'" style="margin-right:4px">✓ CAE</span>':(esFactAB?'<button class="cmp-rowbtn" data-act="facturar" data-id="'+v._uid+'" style="border-color:var(--green);color:var(--green);font-weight:800" title="Emitir la factura electrónica en ARCA y obtener el CAE">🧾 Facturar</button>':''))+
-      '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'+
+      (function(){ const e=estadoEntrega(v);
+        if(e==='hecha') return '<span class="badge green" title="Ya tiene el pedido creado en Producción y Logística" style="margin-right:4px">✓ En producción</span>';
+        if(e==='falta') return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" style="border-color:var(--amber);color:var(--amber);font-weight:800" title="⚠️ Esta venta TODAVÍA NO se pasó a Producción y Logística. Nadie la está produciendo.">⚠ Pasar a producción</button>';
+        if(e==='omitida') return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Marcada como que no necesita entrega. Igual podés crear el pedido.">→ Entrega</button>';
+        return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'; })()+
       '<button class="cmp-rowbtn" data-act="print" data-id="'+v._uid+'" title="Imprimir documentos">🖨️</button>'+
       '<button class="cmp-rowbtn" data-act="wa" data-id="'+v._uid+'" title="Mensajes de WhatsApp">📲</button>'+
       '<button class="cmp-rowbtn" data-act="edit" data-id="'+v._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+v._uid+'">✕</button>'; }
@@ -10630,6 +10661,21 @@ function buildFilterTable(cfg){
     const tot=cont.querySelector('.pe-plan-tot'); if(tot) tot.innerHTML='Total: '+gPal+' pallet'+(gPal!==1?'s':'')+(gPeso>0?(' · '+nf(gPeso)+' kg ('+(Math.round(gPeso/100)/10)+' t)'):'');
   }
 
+  // API: ¿esta venta YA se pasó a Producción? Devuelve el pedido o null.
+  // La consume Ventas para avisar en la propia lista cuando una venta quedó sin pasar. Es el olvido
+  // que más caro sale del circuito: el cliente confirmó, se facturó y se cobró, pero nadie puso la
+  // mercadería a producir, y no se nota hasta que el cliente llama preguntando por su entrega.
+  // ⚠️ Distingue TRES respuestas, y la diferencia importa: `undefined` = "todavía no sé" (los pedidos
+  // no se cargaron aún, o este usuario no los puede leer) · `null` = "no tiene pedido" · el pedido.
+  // Sin ese "todavía no sé", en el primer pintado —antes de que Firestore devuelva los pedidos— TODAS
+  // las ventas parecerían sin pasar a producción y la pantalla se llenaría de alarmas falsas.
+  let pedidosCargados=false;
+  window.__pedidoDeVenta = function(ventaUid){
+    if(!pedidosCargados) return undefined;
+    if(!ventaUid) return null;
+    return (pedidos||[]).find(pe=>pe && pe.ventaUid===ventaUid) || null;
+  };
+
   // API: crear un pedido a partir de una venta (botón "→ Entrega" en Ventas)
   window.__pedidoDesdeVenta = function(v){
     const pe=blankPed(); pe.cliente=v.cliente||''; pe.ventaUid=v._uid||''; pe.nota='Desde venta '+(v.nroFactura||v._uid||'');
@@ -10650,7 +10696,11 @@ function buildFilterTable(cfg){
   // ---------- Sync ----------
   function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
     unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); }, err=>console.error('pe '+col+':',err)); }
-  function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a); sub('vph_pedidos',a=>pedidos=a); sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); }
+  function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a);
+    // Al crearse o borrarse un pedido, Ventas tiene que repintar: ahí se muestra si la venta ya se
+    // pasó a Producción, y sin este aviso seguiría marcando como pendiente una que ya se pasó.
+    sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar(); });
+    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[]; render(); });
