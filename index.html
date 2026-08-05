@@ -5746,6 +5746,12 @@ function buildFilterTable(cfg){
     openForm(v);
     const t=$('vnt-form-title'); if(t) t.textContent='Nueva Venta (desde ARCA)';
   };
+  // Renglón "Flete" del comprobante de origen. La cuenta (pallets consolidados, precio por zona, si se
+  // netea o no) vive en el módulo Presupuestos y NO se replica acá: se pide en tiempo de click, que es
+  // cuando ese módulo ya está cargado. Sin ítems reales devuelve null, así una venta vacía no se lleva
+  // un flete fantasma.
+  const fleteDeOrigen = (items, zona, palletsManual, lista)=>
+    (window.__fleteItemPara ? window.__fleteItemPara(items, zona, palletsManual, lista) : null);
   // Crear una venta pre-cargada desde un lead del CRM
   window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
@@ -5757,6 +5763,11 @@ function buildFilterTable(cfg){
     v.notaCliente = lead.notaCliente || notas.join(' · ');
     const items=(lead.items&&lead.items.length)? lead.items : [];
     v.items = items.length ? items.map(li=>{ const it={desc:(li.producto||li.desc||''),codigo:(li.codigo||''),cant:num(li.cantidad||li.cant||1),precioUnit:0,descPct:0,iva:'21'}; const p=matchProducto(li.codigo||it.desc)||matchProducto(it.desc); if(p){ it.desc=p.nombre; aplicarProducto(it,p,v.listaPrecios); } return it; }) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
+    // El flete que se le cotizó al lead (forma de entrega + pallets a cobrar) entra como un renglón más,
+    // igual que en el presupuesto. Antes la venta nacía SIN él: había que acordarse de agregarlo a mano,
+    // y si no, se entregaba el envío sin cobrarlo.
+    const fl = fleteDeOrigen(v.items, lead.zona, lead.palletsFlete, v.listaPrecios);
+    if(fl) v.items.push(fl);
     openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "confirmado" si la venta se guarda de verdad
   };
 
@@ -5769,6 +5780,13 @@ function buildFilterTable(cfg){
     v.descGeneral=p.descGeneral||0; v.notaCliente=p.notaCliente||''; v.nota=(p.nota?p.nota+' · ':'')+'Desde presupuesto '+(p.numero||'');
     const items=(p.items||[]).filter(it=>it&&(it.desc||num(it.precioUnit)));
     v.items = items.length ? items.map(it=>({desc:it.desc||'',codigo:it.codigo||'',cant:num(it.cant)||1,precioUnit:num(it.precioUnit),descPct:num(it.descPct),iva:it.iva||'21'})) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
+    // El renglón "Flete" ya viene entre los ítems del presupuesto y se copia TAL CUAL (precio incluido):
+    // lo que se factura es lo que se cotizó, no una cuenta nueva. Esta red solo actúa si el presupuesto
+    // tiene una zona con costo y le falta el renglón (presupuesto viejo, importado o editado a mano).
+    if(!v.items.some(esItemFleteVta)){
+      const fl = fleteDeOrigen(v.items, p.zona, p.palletsFlete, v.listaPrecios);
+      if(fl) v.items.push(fl);
+    }
     openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // se marca convertido SOLO al guardar la venta
   };
 
@@ -7867,22 +7885,28 @@ function buildFilterTable(cfg){
   // ⚠️ El manual SOLO se aplica si el automático dio al menos 1 pallet: si se borraron todos los
   // productos no se cobra un flete fantasma con un número que quedó pegado de antes.
   const palletsFleteDe=(p,f)=>{ const man=Math.round(num(p&&p.palletsFlete)); return (man>0 && f.pallets>0) ? man : f.pallets; };
+  // El renglón "Flete" tal como va en el comprobante. UN SOLO lugar arma este renglón: lo usan el
+  // presupuesto (acá) y las dos conversiones a Venta (desde presupuesto y desde lead), así el flete
+  // que se cobra no puede quedar distinto según por dónde se entró. null = esa zona no cobra flete
+  // (sin definir, retira en fábrica, transporte particular) o no hay pallets que cobrar.
+  function fleteItem(zona, pallets, listaPrecios){
+    if(!(zonaCosto(zona)*pallets>0)) return null;
+    const sf=/sin facturar|sin factura/i.test(listaPrecios||'');
+    // El precio de zona es FINAL (con IVA) por pallet, igual que en el cotizador → se netea para el renglón,
+    // como hace aplicarProducto con los productos. Descripción simple: "Flete", cantidad = pallets,
+    // precio unitario = costo por pallet — sin repetir el nombre de la zona ni el conteo entre paréntesis.
+    return { desc:'Flete', codigo:'FLETE', cant:pallets, descPct:0,
+             precioUnit: sf ? round2(zonaCosto(zona)) : round2(zonaCosto(zona)/1.21),
+             iva: sf ? 'nogravado' : '21' };
+  }
   // Reemplaza el renglón "Flete" del presupuesto según la zona y los ítems actuales.
   function aplicarFlete(p){
     p.items=(p.items||[]).filter(it=>!esItemFlete(it));
     const f=calcFlete(p.items, p.zona);
     const pallets=palletsFleteDe(p,f);
-    const costo=zonaCosto(p.zona)*pallets;
-    if(costo>0){
-      const sf=/sin facturar|sin factura/i.test(p.listaPrecios||'');
-      const iva= sf?'nogravado':'21';
-      // El precio de zona es FINAL (con IVA) por pallet, igual que en el cotizador → se netea para el renglón,
-      // como hace aplicarProducto con los productos. Descripción simple: "Flete", cantidad = pallets,
-      // precio unitario = costo por pallet — sin repetir el nombre de la zona ni el conteo entre paréntesis.
-      const precioUnit = sf ? round2(zonaCosto(p.zona)) : round2(zonaCosto(p.zona)/1.21);
-      p.items.push({desc:'Flete', codigo:'FLETE', cant:pallets, precioUnit, descPct:0, iva});
-    }
-    return Object.assign({}, f, {pallets, costo, palletsAuto:f.pallets, manual:pallets!==f.pallets});
+    const it=fleteItem(p.zona, pallets, p.listaPrecios);
+    if(it) p.items.push(it);
+    return Object.assign({}, f, {pallets, costo:zonaCosto(p.zona)*pallets, palletsAuto:f.pallets, manual:pallets!==f.pallets});
   }
   window.__fleteZonas = ()=> ZONAS.map(z=>({k:z.k,l:z.l}));
   // Cotiza el flete desde otro módulo (lo usa el CRM para el detalle en vivo del lead).
@@ -7892,6 +7916,13 @@ function buildFilterTable(cfg){
     const pallets=palletsFleteDe({palletsFlete:palletsManual}, f);
     return Object.assign({}, f, {pallets, costo:zonaCosto(zona)*pallets, palletsAuto:f.pallets,
       manual:pallets!==f.pallets, label:zonaLabel(zona), precioPallet:zonaCosto(zona)}); };
+  // Renglón "Flete" listo para insertar en OTRO comprobante (lo usa Ventas al convertir un presupuesto
+  // o un lead en venta: hasta el 05/08 la venta nacía sin el flete que se le había presupuestado).
+  // `items` son los renglones SIN el flete. null si esa zona no cobra flete.
+  window.__fleteItemPara = (items, zona, palletsManual, listaPrecios)=>{
+    const f=calcFlete(items, zona);
+    return fleteItem(zona, palletsFleteDe({palletsFlete:palletsManual}, f), listaPrecios);
+  };
   // Abre la vista previa/PDF de un presupuesto ya guardado (la usa el CRM para el PDF de un toque)
   window.__presupuestoImprimir = p=>{ if(window.__imprimir&&window.__imprimir.presupuesto) window.__imprimir.presupuesto(paraDoc(p)); else alert('Módulo de Documentos no disponible.'); };
   const estadoLbl=k=>{ const e=ESTADOS.find(x=>x.k===k); return e?e.l:k; };
