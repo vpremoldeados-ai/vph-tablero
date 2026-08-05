@@ -5012,8 +5012,9 @@ function buildFilterTable(cfg){
                   ['🏭', estadoEntrega(r.v), 'Pasar a Producción'] ];
     return '<div class="circ">'+pasos.map(([ico,e,que])=>{
       const cls = e==='hecha'?'ok' : (e==='falta'?'falta':'na');
-      const sig = e==='hecha'?'✓' : (e==='falta'?'!':'–');
-      const txt = e==='hecha'?'hecho' : (e==='falta'?'FALTA' : 'no corresponde');
+      const sig = (e==='hecha'||e==='omitida')?'✓' : (e==='falta'?'!':'–');
+      const txt = e==='hecha'?'hecho' : e==='falta'?'FALTA'
+                : e==='omitida'?'ya se entregó sin cargar el pedido' : 'no corresponde';
       return '<i class="'+cls+'" title="'+que+': '+txt+'">'+ico+sig+'</i>';
     }).join('')+'</div>';
   }
@@ -5118,7 +5119,9 @@ function buildFilterTable(cfg){
       (v.cae?'<span class="badge green" title="Factura electrónica autorizada · CAE '+esc(v.cae)+'" style="margin-right:4px">✓ CAE</span>':(esFactAB?'<button class="cmp-rowbtn" data-act="facturar" data-id="'+v._uid+'" style="border-color:var(--green);color:var(--green);font-weight:800" title="Emitir la factura electrónica en ARCA y obtener el CAE">🧾 Facturar</button>':''))+
       (function(){ const e=estadoEntrega(v);
         if(e==='hecha') return '<span class="badge green" title="Ya tiene el pedido creado en Producción y Logística" style="margin-right:4px">✓ En producción</span>';
-        if(e==='falta') return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" style="border-color:var(--amber);color:var(--amber);font-weight:800" title="⚠️ Esta venta TODAVÍA NO se pasó a Producción y Logística. Nadie la está produciendo.">⚠ Pasar a producción</button>';
+        if(e==='falta') return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" style="border-color:var(--amber);color:var(--amber);font-weight:800" title="⚠️ Esta venta TODAVÍA NO se pasó a Producción y Logística. Nadie la está produciendo.">⚠ Pasar a producción</button>'+
+          // Escape para las que ya salieron sin pedido cargado: si no, el aviso quedaría para siempre.
+          '<button class="cmp-rowbtn" data-act="entregaya" data-id="'+v._uid+'" style="color:var(--muted)" title="Ya se produjo y entregó sin cargar el pedido: dejar de avisar">✓ ya entregada</button>';
         if(e==='omitida') return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Marcada como que no necesita entrega. Igual podés crear el pedido.">→ Entrega</button>';
         return '<button class="cmp-rowbtn" data-act="entrega" data-id="'+v._uid+'" title="Crear pedido de entrega">→ Entrega</button>'; })()+
       '<button class="cmp-rowbtn" data-act="print" data-id="'+v._uid+'" title="Imprimir documentos">🖨️</button>'+
@@ -5159,6 +5162,15 @@ function buildFilterTable(cfg){
     t.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const v=DB.ventas.find(x=>x._uid==b.dataset.id); if(!v)return;
       if(b.dataset.act==='edit') openForm(v); else if(b.dataset.act==='cobro') openCobro(v);
       else if(b.dataset.act==='facturar') facturarVenta(v);
+      // "Ya se entregó": la venta salió sin cargar el pedido (típico de las anteriores al Tablero,
+      // o de una entrega que se resolvió a mano). No se inventa un pedido falso —eso ensuciaría el
+      // stock y la producción—: se deja registrado que no hace falta y el aviso se apaga. Usa la
+      // misma marca que el aviso de la Vista Diaria, así se callan los dos juntos.
+      else if(b.dataset.act==='entregaya'){
+        if(!confirm('¿Esta venta a '+(v.cliente||'—')+' ya se produjo y entregó, sin cargar el pedido?\n\n'+
+          'Se deja de avisar por ella. No se crea ningún pedido ni se toca el stock.')) return;
+        v.tareasHechas=Object.assign({},v.tareasHechas||{},{entregaOmitida:hoyISO}); persistVenta(v); render();
+      }
       else if(b.dataset.act==='entrega'){ if(window.__pedidoDesdeVenta){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Producción y Logística')); if(nav)nav.click(); window.__pedidoDesdeVenta(v); } else alert('Módulo de Producción/Entregas no disponible.'); }
       else if(b.dataset.act==='print') menuImprimir(v);
       else if(b.dataset.act==='wa') menuWhatsapp(v);
