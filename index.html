@@ -133,6 +133,14 @@
      scroll horizontal por vertical, que no sirve de nada. Con 360 quedan 2 filas (85px) y la tabla
      igual entra sin desbordar. */
   .cel-acciones{white-space:normal;max-width:360px}
+  /* Estado del CIRCUITO de una venta: los 3 pasos que vienen DESPUÉS de que el cliente confirma
+     (facturar · cobrar · pasar a Producción). Verde = hecho · ámbar = falta · gris = no corresponde.
+     Van juntos y chiquitos para poder barrer la lista con la vista y que salte lo que quedó a medias. */
+  .circ{display:inline-flex;gap:3px;margin-top:4px}
+  .circ i{font-style:normal;font-size:10px;font-weight:800;border-radius:6px;padding:1px 4px;white-space:nowrap;cursor:default}
+  .circ i.ok{background:rgba(22,163,74,.13);color:var(--green)}
+  .circ i.falta{background:rgba(245,158,11,.18);color:var(--amber)}
+  .circ i.na{background:var(--border);color:var(--muted)}
   th{background:#f7f9fc;color:#54637a;font-size:11px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none;position:sticky;top:0}
   th:hover{background:#eef2f8}
   th .arrow{font-size:9px;opacity:.6}
@@ -4991,6 +4999,25 @@ function buildFilterTable(cfg){
   // Producción avisa por acá cuando se crea o se borra un pedido, para que la lista no quede vieja.
   window.__ventasRefrescar = function(){ try{ if($('vnt-tabla')) render(); }catch(e){} };
 
+  // ¿Está facturada? Una venta "Sin factura" no lleva comprobante a propósito, así que no falta nada.
+  // Se cuenta como facturada tanto la electrónica (con CAE) como la cargada a mano con su número.
+  function estadoFactura(v){
+    if(['Sin factura','Presupuesto','Remito'].includes(v.tipoComprobante||'')) return 'nocorresponde';
+    return (v.cae || String(v.nroFactura||'').trim()) ? 'hecha' : 'falta';
+  }
+  // Los 3 pasos que siguen a que el cliente confirma, juntos: facturar · cobrar · pasar a Producción.
+  function chipsCircuito(r){
+    const pasos=[ ['🧾', estadoFactura(r.v), 'Facturar'],
+                  ['💵', r.k.estado==='cobrado'?'hecha':'falta', 'Cobrar'],
+                  ['🏭', estadoEntrega(r.v), 'Pasar a Producción'] ];
+    return '<div class="circ">'+pasos.map(([ico,e,que])=>{
+      const cls = e==='hecha'?'ok' : (e==='falta'?'falta':'na');
+      const sig = e==='hecha'?'✓' : (e==='falta'?'!':'–');
+      const txt = e==='hecha'?'hecho' : (e==='falta'?'FALTA' : 'no corresponde');
+      return '<i class="'+cls+'" title="'+que+': '+txt+'">'+ico+sig+'</i>';
+    }).join('')+'</div>';
+  }
+
   function render(){
     // Aviso dirigido al Libro IVA (seguimiento + conciliación ARCA de Emitidos): se repinta solo si esa
     // página está a la vista — al guardar/corregir una venta desde ahí, las listas se mueven al instante.
@@ -5098,7 +5125,10 @@ function buildFilterTable(cfg){
       '<button class="cmp-rowbtn" data-act="wa" data-id="'+v._uid+'" title="Mensajes de WhatsApp">📲</button>'+
       '<button class="cmp-rowbtn" data-act="edit" data-id="'+v._uid+'">Editar</button><button class="cmp-rowbtn" data-act="del" data-id="'+v._uid+'">✕</button>'; }
   const COLS=[
-    {k:'estado', h:'Estado', opt:true, cell:r=>badgeEstado[r.k.estado]||''},
+    // El estado de cobro va arriba (es el que más se mira) y debajo los 3 pasos del circuito.
+    // Van en esta misma columna y no en una nueva: la tabla recién entra en pantalla sin scroll
+    // horizontal y una columna más la volvía a desbordar.
+    {k:'estado', h:'Estado', opt:true, cell:r=>(badgeEstado[r.k.estado]||'')+chipsCircuito(r)},
     {k:'arca', h:'ARCA', opt:true, off:true, cell:r=>arcaBadge(r.v.arca)},
     {k:'fecha', h:'Emisión', sort:'fecha', opt:true, cell:r=>fmtFecha(r.v.fecha)},
     {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<div class="cel-nombre" title="'+esc(r.v.cliente||'')+'"><b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')+'</div>'},
