@@ -9300,6 +9300,16 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
     [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona') drawFleteBox(); }); });
+    // ⚠️ Cambiar la lista de precios TIENE que re-preciar lo que ya está cargado, igual que en Ventas
+    // y en Presupuestos. Este módulo era el único que no lo hacía: el lead quedaba con la lista NUEVA
+    // y el precio de la VIEJA, y como el presupuesto respeta el precio del lead tal cual, el número
+    // equivocado viajaba hasta la venta. Caso real: P-0070 (29/07) salió a un MAYORISTA con el precio
+    // minorista de la LC60 ($5.714 en vez de $4.110), $145.964 de más en 91 losetas.
+    if($('cf-lista')) $('cf-lista').addEventListener('change',()=>{
+      editing.listaPrecios=$('cf-lista').value;
+      editing.items.forEach(it=>{ const p=matchProd(it.producto); if(p) aplicarProducto(it,p,editing.listaPrecios); });
+      drawItems();   // repinta renglones, subtotales, el selector de productos y la caja del flete
+    });
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
