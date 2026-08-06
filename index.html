@@ -8854,7 +8854,8 @@ function buildFilterTable(cfg){
     {g:'Logística', k:'capSanchez', l:'Capacidad camión Sánchez (pallets)',              def:8,  t:'num', hint:'Cuántos pallets entran por viaje. Se usa en Producción y Logística → Coordinar entregas para saber cuánto lugar queda en cada camión.'},
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
-    {g:'Logística', k:'transportePropio', l:'Transporte propio (flete de VPH)',          def:'Sánchez', t:'txt', hint:'El remito le agrega la leyenda "Pago del envío: EN ORIGEN, facturar a VPH SAS" a TODO envío que no sea con este transporte (Brío, Expreso Biletta, una agencia del cliente). Si tenés más de un fletero propio, separalos con coma.'},
+    {g:'Logística', k:'capVassallo',  l:'Capacidad Marcelo Vassallo (pallets)',           def:0,  t:'num', hint:'En 0 no se controla la capacidad (no avisa cuánto falta para llenar el viaje).'},
+    {g:'Logística', k:'transportePropio', l:'Transporte propio (flete de VPH)',          def:'Sánchez, Marcelo Vassallo', t:'txt', hint:'El remito le agrega la leyenda "Pago del envío: EN ORIGEN, facturar a VPH SAS" a TODO envío que no sea con este transporte (Brío, Expreso Biletta, una agencia del cliente). Si tenés más de un fletero propio, separalos con coma.'},
     // Defaults tomados del talonario REAL de VPH: el último remito emitido antes del Tablero fue el
     // R 0002-00002758 (dato de Marcelo, 30/07), así que el primero que numere el sistema es el 2759.
     {g:'Logística', k:'remitoPtoVenta', l:'Punto de venta de los remitos',                def:'0002', t:'txt', hint:'Va adelante del número: 0002-00002759. Solo números.'},
@@ -9960,7 +9961,9 @@ function buildFilterTable(cfg){
   const puede=()=> window.__rol==='admin'||window.__rol==='produccion';
   const esAdmin=()=> window.__rol==='admin';
 
-  const TRANSPORTES=['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro'];
+  // 'Marcelo Vassallo' es transporte PROPIO (lo lleva él): el remito sale igual que con Sánchez, sin
+  // la leyenda de pago en origen. Quién es propio se define en el parámetro `transportePropio`.
+  const TRANSPORTES=['Sánchez','Marcelo Vassallo','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro'];
   // Los consume Ventas al imprimir un remito (la venta no guarda transporte: se elige en el momento).
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
@@ -10589,7 +10592,7 @@ function buildFilterTable(cfg){
   // ---------- Planificador de viajes: agrupa por transportista + día y compara con la capacidad ----------
   // Sofía junta clientes para que salgan en el mismo camión el mismo día, aprovechando al máximo la carga
   // (ej: el camión de Matías Sánchez lleva 8 pallets). Acá ve cuánto lleva cada viaje y cuánto le queda.
-  const CAP_PARAM={ 'Sánchez':'capSanchez', 'Brío':'capBrio', 'Expreso Biletta':'capBiletta' };
+  const CAP_PARAM={ 'Sánchez':'capSanchez', 'Marcelo Vassallo':'capVassallo', 'Brío':'capBrio', 'Expreso Biletta':'capBiletta' };
   const capacidadDe=t=>{ const k=CAP_PARAM[String(t||'').trim()]; return k?Math.max(0,num(window.__param(k,0))):0; };
   function renderViajes(){
     const cont=$('pe-viajes'); if(!cont) return;
@@ -11753,7 +11756,7 @@ function buildFilterTable(cfg){
   const SIN_LEYENDA=['SIN ASIGNAR','RETIRA CLIENTE','RETIRO','RETIRA EN FABRICA','RETIRO EN FABRICA','A COORDINAR'];
   function esTransportePropio(t){
     const n=normc(t); if(!n) return true;
-    return String(window.__param?window.__param('transportePropio','Sánchez'):'Sánchez')
+    return String(window.__param?window.__param('transportePropio','Sánchez, Marcelo Vassallo'):'Sánchez, Marcelo Vassallo')
       .split(',').map(s=>normc(s)).filter(Boolean).some(p=>n.indexOf(p)>=0);
   }
   function leyendaEnvio(obj){
