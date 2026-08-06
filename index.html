@@ -1818,9 +1818,16 @@ window.__pintarPE = function(){
   const margenVivoPE = (rm && rm.margenContribucion!=null && rm.coberturaCosto>=0.70) ? rm.margenContribucion : null;
   const margenMesPct = margenVivoPE!=null ? margenVivoPE
     : (mesEnCurso.ventas > 0 && kgVendMes > 0 ? (1 - costoMPest/mesEnCurso.ventas) : rentabilidad.margenPct/100);
-  const pe = rentabilidad.costosFijos / margenMesPct;                    // PE ajustado al mix del mes
+  // Costos fijos EN VIVO (antes: los congelados del último cierre, que nunca se actualizaban y hacían
+  // que este widget y la página Costos mostraran dos PE distintos). Cae al cierre si aún no hay datos.
+  const fijosRef = (window.__peFijosRef ? window.__peFijosRef() : null);
+  const fijosPE  = fijosRef ? fijosRef.ref : rentabilidad.costosFijos;
+  const pe = fijosPE / margenMesPct;                                     // PE ajustado al mix del mes
   const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
-  const v = rm ? rm.ventas : mesEnCurso.ventas;                          // facturado EN VIVO
+  // Se compara contra el NETO (sin IVA), que es la misma base sobre la que se calcula el margen de
+  // contribución. Antes se comparaba el total CON IVA contra un PE derivado del neto: la barra
+  // mostraba más avance del real (en julio, $3,7 M de más).
+  const v = rm ? (rm.netoVendido || rm.ventas) : mesEnCurso.ventas;      // facturado NETO, EN VIVO
   // Días hábiles (lun-vie) del mes, calculados a la fecha de HOY (antes venían congelados del cierre).
   const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
   let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
@@ -1833,10 +1840,15 @@ window.__pintarPE = function(){
   const cubierto = v >= pe;
   const colBar = cubierto ? 'var(--green)' : (pct >= (dTrans/dTot*100) ? 'var(--accent)' : 'var(--amber)');
 
-  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ') · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
+  const notaFijos = fijosRef
+    ? (fijosRef.usaPromedio
+        ? 'costos fijos de referencia ' + fmt$(fijosRef.ref) + ' (promedio de los últimos ' + fijosRef.mesesPromedio + ' meses, porque este mes todavía se cargaron ' + fmt$(fijosRef.real) + ')'
+        : 'costos fijos del mes ' + fmt$(fijosRef.ref) + ' EN VIVO')
+    : 'costos fijos del último cierre ' + fmt$(fijosPE);
+  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ' · ' + notaFijos + ') · todo SIN IVA · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
   document.getElementById('pe-widget').innerHTML =
     '<div class="progress-wrap"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:5px">' +
-      '<span>Facturado: ' + fmt$(v) + ' (' + (v/pe*100).toFixed(0) + '% del punto de equilibrio)</span>' +
+      '<span>Facturado neto: ' + fmt$(v) + ' (' + (v/pe*100).toFixed(0) + '% del punto de equilibrio)</span>' +
       '<span style="color:var(--muted)">Meta: ' + fmt$(pe) + '</span></div>' +
       '<div class="progress" style="height:16px"><i style="width:' + pct + '%;background:' + colBar + '"></i></div>' +
       '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px">' +
@@ -2025,6 +2037,8 @@ window.__pintarGraficosInicio = function(){
     const vivo = !!(vpm && vpm.length);
     const labels = vivo ? vpm.map(m=>m.mes) : ventasMensuales.map(m=>m.mes);
     const ing = vivo ? vpm.map(m=>m.ventas) : ventasMensuales.map(m=>m.ventas);
+    // c.total = compras OPERATIVAS (fijas + variables). Las no operativas quedan afuera: no son de la
+    // fábrica y contarlas acá daba vuelta el signo del resultado de meses que en realidad fueron buenos.
     const egr = vivo ? vpm.map(m=>{ const c=(cpm||[]).find(x=>x.mes===m.mes); return c?c.total:0; })
                      : ventasMensuales.map(m=>{ const c=comprasMensuales.find(x=>x.mes===m.mes); return c?c.total:0; });
     const res = ing.map((v,i)=> v-(egr[i]||0));
@@ -2192,15 +2206,24 @@ window.__pintarCostos = function(){
 
   if(vivo){
     const ult = rc[rc.length-1];
-    const pe = margenPct>0 ? ult.fijos/margenPct : 0;
-    const fact = rm ? rm.ventas : 0;
+    // MISMO cálculo que el widget de la Vista Diaria (window.__peFijosRef): antes esta página dividía
+    // por los fijos del mes en curso —incompletos los primeros días— y la Vista Diaria por los del
+    // último cierre congelado, así que la app mostraba dos PE que se contradecían por millones.
+    const fr = window.__peFijosRef ? window.__peFijosRef(ult.mes) : null;
+    const fijosPE = fr ? fr.ref : ult.fijos;
+    const pe = margenPct>0 ? fijosPE/margenPct : 0;
+    const fact = rm ? (rm.netoVendido || rm.ventas) : 0;   // neto, misma base que el margen
     const seg = fact - pe;
+    const notaFijos = fr && fr.usaPromedio
+      ? 'promedio de los últimos '+fr.mesesPromedio+' meses (este mes va '+fmt$(fr.real)+')'
+      : 'en vivo, sin IVA';
     document.getElementById('kpis-costos').innerHTML =
-      kpi('Compras '+ult.mes, fmt$(ult.total), 'En vivo desde el módulo Compras', 'info') +
-      kpi('Costos fijos del mes', fmt$(ult.fijos), 'COSTO FIJO + Mano de Obra · en vivo', 'info') +
-      kpi('Punto de equilibrio', pe?fmt$(pe):'—', 'Fijos ÷ margen '+(margenPct*100).toFixed(1)+'% ('+margenNota+')', 'warn') +
+      kpi('Compras '+ult.mes, fmt$(ult.total), 'Operativas (fijas + variables) · en vivo', 'info') +
+      kpi('Costos fijos del mes', fmt$(ult.fijos), 'Categorías marcadas "costo fijo" · en vivo', 'info') +
+      kpi('Punto de equilibrio', pe?fmt$(pe):'—', 'Fijos '+notaFijos+' ÷ margen '+(margenPct*100).toFixed(1)+'% ('+margenNota+')', 'warn') +
       kpi('Variables / total', ult.total?(ult.variables/ult.total*100).toFixed(0)+'%':'—', 'Materia prima e insumos · en vivo', 'info') +
-      kpi('Resultado del mes', rm?fmt$(rm.resultado):'—', rm?'Ventas − compras · en vivo':'Esperando datos', (rm&&rm.resultado>0)?'good':'warn');
+      kpi('Resultado del mes', rm?fmt$(rm.resultado):'—', rm?'Ventas − compras operativas · en vivo':'Esperando datos', (rm&&rm.resultado>0)?'good':'warn') +
+      ((rm && rm.comprasNoOper>0) ? kpi('Compras no operativas', fmt$(rm.comprasNoOper), 'Fuera de los indicadores del negocio', 'info') : '');
 
     if(_chCompras) _chCompras.destroy();
     _chCompras = new Chart(document.getElementById('chCompras'), {
@@ -2209,7 +2232,7 @@ window.__pintarCostos = function(){
         datasets:[
           { label:'Costos fijos', data: rc.map(m=>m.fijos), backgroundColor:'#2f6fb2', stack:'s', borderRadius:4 },
           { label:'Variables (MP e insumos)', data: rc.map(m=>m.variables), backgroundColor:'#38b26a', stack:'s', borderRadius:4 },
-          { label:'Otros', data: rc.map(m=>m.otros), backgroundColor:'#95a5b8', stack:'s', borderRadius:4 }
+          { label:'No operativas (fuera de los indicadores)', data: rc.map(m=>m.noOper), backgroundColor:'#95a5b8', stack:'s', borderRadius:4 }
         ] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}}},
         scales:{x:{stacked:true}, y:{stacked:true, ticks:{callback:v=>fmtM(v)}}} }
@@ -2226,19 +2249,20 @@ window.__pintarCostos = function(){
     });
 
     document.getElementById('tabla-compras').innerHTML =
-      '<tr><th>Mes</th><th class="num">Costos fijos</th><th class="num">Variables</th><th class="num">Otros</th><th class="num">Total</th></tr>' +
-      rc.map(m=>'<tr><td><b>'+m.mes+'</b></td><td class="num">'+fmt$(m.fijos)+'</td><td class="num">'+fmt$(m.variables)+'</td><td class="num">'+fmt$(m.otros)+'</td><td class="num"><b>'+fmt$(m.total)+'</b></td></tr>').join('');
+      '<tr><th>Mes</th><th class="num">Costos fijos</th><th class="num">Variables</th><th class="num">Operativas</th><th class="num">No operativas</th><th class="num">Total cargado</th></tr>' +
+      rc.map(m=>'<tr><td><b>'+m.mes+'</b></td><td class="num">'+fmt$(m.fijos)+'</td><td class="num">'+fmt$(m.variables)+'</td><td class="num"><b>'+fmt$(m.total)+'</b></td><td class="num" style="color:var(--muted)">'+fmt$(m.noOper)+'</td><td class="num" style="color:var(--muted)">'+fmt$(m.totalTodo)+'</td></tr>').join('');
     window.__ordenable('tabla-compras');
 
     document.getElementById('tabla-equilibrio').innerHTML =
-      '<tr><td>Costos fijos del mes (COSTO FIJO + Mano de Obra) — en vivo</td><td class="num">'+fmt$(ult.fijos)+'</td></tr>' +
+      '<tr><td>Costos fijos usados para el cálculo <i style="color:var(--muted)">('+notaFijos+')</i></td><td class="num">'+fmt$(fijosPE)+'</td></tr>' +
+      (fr && fr.usaPromedio ? '<tr><td style="color:var(--muted);font-size:12px">— cargado hasta hoy en el mes en curso</td><td class="num" style="color:var(--muted)">'+fmt$(fr.real)+'</td></tr>' : '') +
       '<tr><td>Margen de contribución'+(margenVivo!=null?' del mes':' estimado')+' <i style="color:var(--muted)">('+margenNota+')</i></td><td class="num">'+(margenPct*100).toFixed(1)+'%</td></tr>' +
       (margenVivo!=null
         ? '<tr><td style="color:var(--muted);font-size:12px">— costo variable de lo vendido (según el costo por unidad del catálogo)</td><td class="num" style="color:var(--muted)">'+fmt$(rm.costoVariable)+'</td></tr>'
           +(rm.coberturaCosto<0.999?'<tr><td style="color:var(--muted);font-size:12px">— sin costo cargado (queda FUERA del cálculo, no se cuenta como ganancia)</td><td class="num" style="color:var(--muted)">'+fmt$(rm.netoVendido-(rm.netoVendido*rm.coberturaCosto))+'</td></tr>':'')
         : '') +
-      '<tr class="total"><td>Punto de equilibrio (facturación mínima)</td><td class="num"><b>'+(pe?fmt$(pe):'—')+'</b></td></tr>' +
-      '<tr><td>Facturación del mes — en vivo</td><td class="num">'+(rm?fmt$(fact):'—')+'</td></tr>' +
+      '<tr class="total"><td>Punto de equilibrio (facturación mínima, SIN IVA)</td><td class="num"><b>'+(pe?fmt$(pe):'—')+'</b></td></tr>' +
+      '<tr><td>Facturación neta del mes (sin IVA) — en vivo</td><td class="num">'+(rm?fmt$(fact):'—')+'</td></tr>' +
       '<tr><td>Margen de seguridad</td><td class="num" style="color:'+(seg>=0?'var(--green)':'var(--red)')+'"><b>'+(rm&&pe?((seg>=0?'+':'')+fmt$(seg)):'—')+'</b></td></tr>';
     return;
   }
@@ -2387,19 +2411,36 @@ function buildFilterTable(cfg){
   // ⚠️ El flag "fijo" es el que decide si la categoría entra en Costos Fijos y en el Punto de Equilibrio.
   // Antes eso estaba hardcodeado ('COSTO FIJO' / 'Mano de Obra') en 2 lugares distintos, así que
   // renombrar una categoría rompía esos cálculos en silencio. Ahora la marca viaja con la categoría.
+  // ⚠️ Cada categoría lleva DOS marcas, y entre las dos definen si la compra cuenta para los indicadores:
+  //   · fijo → es un costo fijo de estructura (entra a Costos Fijos y al Punto de Equilibrio)
+  //   · varb → es un costo VARIABLE de la operación (materia prima, insumos, producto terminado)
+  // Una categoría SIN ninguna de las dos es NO OPERATIVA: la compra existe, se ve y se paga como
+  // cualquier otra, pero NO entra en el Punto de Equilibrio, ni en el Resultado del mes, ni en
+  // "Compras del mes", ni en el gráfico de Ingresos vs Egresos. Sirve para lo que no es de la
+  // operación de la fábrica (bienes de uso, gastos que no son del negocio).
+  // Antes "varb" estaba HARDCODEADO acá abajo en una lista de nombres, así que renombrar una categoría
+  // desde ⚙️ Categorías la sacaba del cálculo EN SILENCIO. Ahora la marca viaja con la categoría.
   const CAT_DEFAULT = [
-    {n:'MATERIAS PRIMAS',      fijo:false},
-    {n:'INSUMOS',              fijo:false},
-    {n:'COSTO FIJO',           fijo:true},
-    {n:'Mano de Obra',         fijo:true},
-    {n:'Productos Terminados', fijo:false},
-    {n:'BIENES DE USO',        fijo:false},
-    {n:'gastos varios',        fijo:false}
+    {n:'MATERIAS PRIMAS',      fijo:false, varb:true },
+    {n:'INSUMOS',              fijo:false, varb:true },
+    {n:'COSTO FIJO',           fijo:true,  varb:false},
+    {n:'Mano de Obra',         fijo:true,  varb:false},
+    {n:'Productos Terminados', fijo:false, varb:true },
+    {n:'BIENES DE USO',        fijo:false, varb:false},
+    {n:'gastos varios',        fijo:false, varb:false}
   ];
+  // Config vieja (guardada antes de que existiera "varb"): se infiere de los nombres de siempre, así
+  // una config ya guardada en la nube no deja el bloque de variables en cero al actualizar la app.
+  const VARB_LEGACY = ['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
+  const normCat = c => ({ n:c.n, fijo:!!c.fijo, varb: (c.varb==null ? VARB_LEGACY.indexOf(c.n)>=0 : !!c.varb) });
   let CATS = CAT_DEFAULT.map(c=>({...c}));   // se reemplaza con lo guardado en la nube al sincronizar
   const CATEGORIAS = ()=> CATS.map(c=>c.n);  // FUNCIÓN (no constante): se lee en tiempo de uso
   // Las categorías que cuentan como costo fijo — lo consumen Costos Fijos y el resumen de compras.
   window.__catComprasFijas = ()=> CATS.filter(c=>c.fijo).map(c=>c.n);
+  // Las que cuentan como costo variable de la operación.
+  window.__catComprasVar   = ()=> CATS.filter(c=>c.varb).map(c=>c.n);
+  // Las que cuentan para los indicadores del negocio (fijas + variables). Todo lo demás queda afuera.
+  window.__catComprasOper  = ()=> CATS.filter(c=>c.fijo||c.varb).map(c=>c.n);
   window.__catCompras = ()=> CATS.map(c=>({...c}));
   // Categorías realmente EN USO por las compras cargadas (aunque ya no estén en la lista): sirve para
   // no "esconder" compras históricas en el filtro y para saber si una categoría se puede borrar.
@@ -2544,7 +2585,7 @@ function buildFilterTable(cfg){
   //  · La tilde "cuenta como costo fijo" es la que alimenta Costos Fijos / PE — ya no está hardcodeada.
   let catsEdit=[];
   function persistCats(lista){
-    CATS = lista.map(c=>({n:c.n, fijo:!!c.fijo}));
+    CATS = lista.map(c=>normCat(c));
     if(USA_NUBE && fbDb){ return FS.setDoc(FS.doc(fbDb,'vph_config','categoriasCompra'), {cats:CATS, ts:new Date().toISOString()})
       .catch(e=>{ alert('Error al guardar las categorías: '+e.message); }); }
     render();
@@ -2556,13 +2597,20 @@ function buildFilterTable(cfg){
   function closeCats(){ $('cmp-cats-modal').classList.remove('open'); }
   function drawCats(){
     let h='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Estas son las categorías que aparecen al cargar una compra. '+
-      'La tilde <b>"Costo fijo"</b> define si esa categoría entra en la página <b>Costos Fijos</b> y en el <b>Punto de Equilibrio</b>. '+
+      'La tilde <b>"Costo fijo"</b> define si entra en la página <b>Costos Fijos</b> y en el <b>Punto de Equilibrio</b>. '+
+      'La tilde <b>"Costo variable"</b> es para lo que se consume al producir (materia prima, insumos).<br>'+
+      '⚠️ Una categoría <b>sin ninguna de las dos tildes NO cuenta para los indicadores</b>: la compra se carga, se ve y se paga '+
+      'igual que cualquier otra, pero queda fuera del Punto de Equilibrio, del Resultado del mes y de "Compras del mes". '+
+      'Usalo para lo que no es de la operación de la fábrica.<br>'+
       'Una categoría <b>con compras cargadas no se puede eliminar</b> (si la renombrás, se actualizan también esas compras).</p>'+
-      '<div class="tbl-wrap"><table><tr><th>Categoría</th><th style="text-align:center">Costo fijo</th><th class="num">Compras</th><th></th></tr>';
+      '<div class="tbl-wrap"><table><tr><th>Categoría</th><th style="text-align:center">Costo fijo</th><th style="text-align:center">Costo variable</th><th style="text-align:center">Cuenta</th><th class="num">Compras</th><th></th></tr>';
     catsEdit.forEach((c,i)=>{
       const n=usoDe(c.orig||c.n);
+      const oper=!!(c.fijo||c.varb);
       h+='<tr><td><input type="text" data-cn="'+i+'" value="'+esc(c.n)+'" style="width:100%;padding:6px 9px;border:1px solid var(--border);border-radius:8px"></td>'+
          '<td style="text-align:center"><input type="checkbox" data-cf="'+i+'"'+(c.fijo?' checked':'')+' style="width:18px;height:18px"></td>'+
+         '<td style="text-align:center"><input type="checkbox" data-cv="'+i+'"'+(c.varb?' checked':'')+' style="width:18px;height:18px"></td>'+
+         '<td style="text-align:center;font-size:11px;font-weight:700;color:'+(oper?'var(--green)':'var(--muted)')+'" title="'+(oper?'Entra en los indicadores del negocio':'NO entra en los indicadores del negocio')+'">'+(oper?'sí':'no')+'</td>'+
          '<td class="num" style="color:var(--muted)">'+(n||'—')+'</td>'+
          '<td>'+(n>0
             ? '<span style="font-size:11px;color:var(--muted)" title="No se puede eliminar: tiene '+n+' compra(s) cargada(s)">🔒 en uso</span>'
@@ -2575,9 +2623,13 @@ function buildFilterTable(cfg){
       '<button class="cmp-btn cmp-btn-primary" id="cmp-cats-save">Guardar</button></div>';
     $('cmp-cats-body').innerHTML=h;
     $('cmp-cats-body').querySelectorAll('input[data-cn]').forEach(el=> el.addEventListener('input',()=>{ catsEdit[+el.dataset.cn].n=el.value; }));
-    $('cmp-cats-body').querySelectorAll('input[data-cf]').forEach(el=> el.addEventListener('change',()=>{ catsEdit[+el.dataset.cf].fijo=el.checked; }));
+    // Fijo y variable son EXCLUYENTES: una compra no puede ser las dos cosas (se contaría dos veces).
+    $('cmp-cats-body').querySelectorAll('input[data-cf]').forEach(el=> el.addEventListener('change',()=>{
+      const c=catsEdit[+el.dataset.cf]; c.fijo=el.checked; if(el.checked) c.varb=false; drawCats(); }));
+    $('cmp-cats-body').querySelectorAll('input[data-cv]').forEach(el=> el.addEventListener('change',()=>{
+      const c=catsEdit[+el.dataset.cv]; c.varb=el.checked; if(el.checked) c.fijo=false; drawCats(); }));
     $('cmp-cats-body').querySelectorAll('button[data-cdel]').forEach(b=> b.onclick=()=>{ catsEdit.splice(+b.dataset.cdel,1); drawCats(); });
-    $('cmp-cats-add').onclick=()=>{ catsEdit.push({n:'', fijo:false, orig:''}); drawCats(); };
+    $('cmp-cats-add').onclick=()=>{ catsEdit.push({n:'', fijo:false, varb:false, orig:''}); drawCats(); };
     $('cmp-cats-cancel').onclick=closeCats;
     $('cmp-cats-save').onclick=guardarCats;
   }
@@ -2861,7 +2913,7 @@ function buildFilterTable(cfg){
   // Las marca el usuario con la tilde "cuenta como costo fijo" (⚙️ Categorías) — antes estaban fijas acá
   // y en Costos Fijos por separado, así que renombrar una categoría descuadraba los dos números.
   const CAT_FIJOS=()=> window.__catComprasFijas();
-  const CAT_VARIABLES=['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
+  const CAT_VARIABLES=()=> window.__catComprasVar();
   window.__comprasTodas = ()=> (DB.compras||[]).slice();   // lectura para el Libro IVA
 
   // --- API para la conciliación con ARCA (la usa el módulo Libro IVA) ---
@@ -2940,20 +2992,54 @@ function buildFilterTable(cfg){
       go:{page:'Caja / Liquidez'}});
     return A; });
 
+  // ⚠️ `total` es el total OPERATIVO (fijos + variables) — es el que consumen los indicadores del
+  // negocio (Resultado del mes, "Compras del mes", gráfico de Ingresos vs Egresos). Lo que no está
+  // marcado ni fijo ni variable va a `noOper` y se muestra aparte, pero NO se suma a `total`: son
+  // compras que no pertenecen a la operación de la fábrica y contarlas distorsionaba el resultado.
+  // `totalTodo` sigue siendo la suma de TODO lo cargado, para cuando hace falta la foto completa.
+  // `fijosNeto` es el fijo SIN IVA: el Punto de Equilibrio lo compara contra ventas netas, así los dos
+  // lados de la cuenta están en la misma moneda (antes mezclaba fijos con IVA contra margen sobre neto).
   window.__resumenCompras = ()=>{
     if(!DB.compras || !DB.compras.length) return null;
     const meses={};
+    const FIJ=CAT_FIJOS(), VAR=CAT_VARIABLES();
     DB.compras.forEach(c=>{
       const mes=String(c.fecha||'').slice(0,7); if(!mes) return;
-      const t=calc(c).total;
-      const m=meses[mes]=meses[mes]||{mes, total:0, fijos:0, variables:0, otros:0, porCat:{}};
+      const k=calc(c), t=k.total;
+      const m=meses[mes]=meses[mes]||{mes, total:0, totalTodo:0, fijos:0, fijosNeto:0, variables:0, noOper:0, porCat:{}};
       const cat=c.categoria||'(sin categoría)';
-      m.total+=t; m.porCat[cat]=(m.porCat[cat]||0)+t;
-      if(CAT_FIJOS().includes(cat)) m.fijos+=t;
-      else if(CAT_VARIABLES.includes(cat)) m.variables+=t;
-      else m.otros+=t;
+      m.totalTodo+=t; m.porCat[cat]=(m.porCat[cat]||0)+t;
+      if(FIJ.includes(cat)){ m.fijos+=t; m.fijosNeto+=k.neto; m.total+=t; }
+      else if(VAR.includes(cat)){ m.variables+=t; m.total+=t; }
+      else m.noOper+=t;
     });
     return Object.values(meses).sort((a,b)=>String(a.mes).localeCompare(String(b.mes)));
+  };
+  // ---------- Punto de Equilibrio: UN solo cálculo para toda la app ----------
+  // Antes había DOS: la Vista Diaria dividía por los costos fijos CONGELADOS del último cierre y la
+  // página Costos por los del mes en curso — daban números que se contradecían por millones.
+  // Además el mes en curso arranca con casi nada de fijos cargados, así que los primeros días el PE
+  // daba ridículamente bajo y la app cantaba "EQUILIBRIO ALCANZADO" cuando no era cierto. Por eso el
+  // fijo de referencia es el MAYOR entre lo que ya se cargó este mes y el promedio de los últimos
+  // meses cerrados: al principio manda el promedio (realista) y sobre el final manda lo real.
+  // ⚠️ No alcanza con promediar "los últimos 3 meses": en VPH los sueldos se empezaron a cargar en
+  // julio/26, así que los meses anteriores tienen los fijos casi en cero. Promediarlos hundía la
+  // referencia y devolvía el mismo PE irreal que queríamos arreglar. Por eso solo entran al promedio
+  // los meses cerrados cuyos fijos llegan al menos al 20% del mes más alto: eso descarta los meses
+  // donde el dato simplemente no se cargó, sin hardcodear ningún importe.
+  window.__peFijosRef = (mesISO)=>{
+    const rc=window.__resumenCompras(); if(!rc || !rc.length) return null;
+    const mes = mesISO || hoyISO.slice(0,7);
+    const cur = rc.find(m=>m.mes===mes);
+    const cerrados = rc.filter(m=>m.mes<mes);
+    const maxF = cerrados.reduce((a,m)=>Math.max(a,m.fijosNeto),0);
+    const previos = cerrados.filter(m=>m.fijosNeto>0 && m.fijosNeto>=maxF*0.2).slice(-3);
+    const prom = previos.length ? previos.reduce((a,m)=>a+m.fijosNeto,0)/previos.length : 0;
+    const real = cur ? cur.fijosNeto : 0;
+    const ref = Math.max(real, prom);
+    if(!(ref>0)) return null;
+    return { ref, real, prom, mesesPromedio:previos.length, meses:previos.map(m=>m.mes),
+             usaPromedio: prom>real };
   };
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const round2 = n => Math.round(n*100)/100;
@@ -4711,7 +4797,7 @@ function buildFilterTable(cfg){
     if(unsubCats) unsubCats();
     unsubCats = FS.onSnapshot(FS.doc(fbDb,'vph_config','categoriasCompra'),
       snap=>{ const d=snap.exists()?snap.data():null;
-        if(d && Array.isArray(d.cats) && d.cats.length) CATS = d.cats.map(c=>({n:String(c.n||''), fijo:!!c.fijo})).filter(c=>c.n);
+        if(d && Array.isArray(d.cats) && d.cats.length) CATS = d.cats.map(c=>normCat({...c, n:String(c.n||'')})).filter(c=>c.n);
         render();
         if(window.__costosFijosRefresh) window.__costosFijosRefresh();   // el flag "fijo" cambia qué entra en Costos Fijos
         if(window.__refreshAlertas) window.__refreshAlertas();
@@ -7897,12 +7983,21 @@ function buildFilterTable(cfg){
         const cu=costoItem(it);
         if(cu>0){ netoCon+=base; costoVar+=num(it.cant)*cu*fd; }
       }); });
-    compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return; cTot+=num(calcC(c).total); });
+    // Solo las compras OPERATIVAS (categorías marcadas como costo fijo o costo variable) entran en el
+    // resultado del mes. Lo que no pertenece a la operación de la fábrica se suma aparte en
+    // `comprasNoOper`: se puede mirar, pero no da vuelta el resultado del negocio.
+    const OPER = window.__catComprasOper ? window.__catComprasOper() : null;
+    let cNoOper=0;
+    compras.forEach(c=>{ const f=String(c.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
+      const t=num(calcC(c).total);
+      if(OPER && OPER.indexOf(String(c.categoria||''))<0){ cNoOper+=t; return; }
+      cTot+=t; });
     let topCli='—', topPct=0; const arr=Object.entries(porCli).sort((a,b)=>b[1]-a[1]);
     if(arr.length && vTot>0){ topCli=arr[0][0]; topPct=Math.round(arr[0][1]/vTot*100); }
     const cobertura = netoTot>0 ? netoCon/netoTot : 0;
     const margenContrib = netoCon>0 ? (1-costoVar/netoCon) : null;   // null = sin costos cargados, no se puede
-    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV,
+    return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, comprasNoOper:cNoOper,
+      resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV,
       netoVendido:netoTot, costoVariable:costoVar, coberturaCosto:cobertura, margenContribucion:margenContrib };
   };
   // Ventas mes a mes EN VIVO — lo consume el gráfico "Ingresos vs Egresos" de la Vista Diaria, que antes
