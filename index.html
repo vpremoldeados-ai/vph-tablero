@@ -3283,8 +3283,9 @@ function buildFilterTable(cfg){
       const tjInfo = debs.length
         ? ' <span style="color:var(--blue);font-size:11px">💳 '+debs.filter(d=>d.debitado).length+'/'+debs.length+' debitado'+(debs.length>1?'s':'')+(tjPend?' · próx. '+fmtFecha(tjPend.fecha):'')+'</span>'
         : '';
-      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+tjInfo+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
+      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+tjInfo+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-op="'+i+'" title="Reimprimir la orden de pago">🖨️</button> <button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
     }).join('');
+    el.querySelectorAll('button[data-op]').forEach(b=> b.onclick=()=>{ imprimirOrdenPago(editing, editing.pagos[+b.dataset.op]); });
     el.querySelectorAll('button[data-ep]').forEach(b=> b.onclick=()=>{ openEditPago(+b.dataset.ep); });
     el.querySelectorAll('button[data-dp]').forEach(b=> b.onclick=()=>{ if(confirm('¿Eliminar este pago de '+money(editing.pagos[+b.dataset.dp].monto)+'?')) deletePago(+b.dataset.dp); });
   }
@@ -4258,6 +4259,35 @@ function buildFilterTable(cfg){
   function cuitDeProveedor(nombre, propio){ if(propio) return propio;
     const p=proveedoresConocidos().find(x=>x.nombre===nombre); return (p&&p.cuit)||''; }
 
+  // ---------- Orden de Pago (PDF al registrar un pago — pedido de Marcelo, 04/08) ----------
+  // Cómo se describe cada medio en el papel: el cheque con su número y vencimiento, el endoso con
+  // de quién era el cheque, la tarjeta con sus cuotas y primer débito, y el resto con su cuenta.
+  function detalleMedioPago(p){
+    if(esEndoso(p.medio)) return 'Endoso de cheque de tercero'+(p.chNumero?' N° '+p.chNumero:'')+(p.endosoDe?' (de '+p.endosoDe+')':'');
+    if(esCheque(p.medio)) return (p.medio||'Cheque')+(p.chNumero?' N° '+p.chNumero:'')+(p.chBanco?' — '+p.chBanco:'')+(p.chVenc?' (vence '+fmtFecha(p.chVenc)+')':'');
+    if(esTarjeta(p.medio) && Array.isArray(p.debitos) && p.debitos.length)
+      return (p.medio||'Tarjeta')+' — '+p.debitos.length+' cuota'+(p.debitos.length>1?'s':'')+', 1er débito '+fmtFecha(p.debitos[0].fecha)+(p.cuenta?' ('+p.cuenta+')':'');
+    return (p.medio||'—')+(p.cuenta?' — '+p.cuenta:'');
+  }
+  // "Factura A N° 0016-00101856" (en Compras la letra del comprobante vive en condIva)
+  function refCompraDoc(c){
+    const nro=(c.puntoVenta?String(c.puntoVenta)+'-':'')+(c.nroFactura||c.numero||'');
+    const tipo=(c.tipoComprobante && c.tipoComprobante!=='Compra') ? c.tipoComprobante : ('Factura'+(c.condIva?' '+c.condIva:''));
+    return tipo+(nro?' N° '+nro:' (sin número)');
+  }
+  // Orden de pago de UN pago sobre UNA factura. El saldo restante se calcula con el pago ya
+  // aplicado (se llama después de persistir) — y en una reimpresión es el saldo ACTUAL.
+  function imprimirOrdenPago(c, pago){
+    if(!window.__imprimir || !window.__imprimir.ordenPago){ alert('El módulo de Documentos no está disponible.'); return; }
+    const k=calc(c);
+    window.__imprimir.ordenPago({
+      proveedor:c.proveedor||'—', cuit:cuitDeProveedor(c.proveedor, c.cuit), condIva:c.condIva||'',
+      fecha:pago.fecha||hoyISO,
+      valores:[{fecha:pago.fecha, detalle:detalleMedioPago(pago), monto:num(pago.monto)}],
+      facturas:[{comprobante:refCompraDoc(c), fecha:c.fecha, monto:num(pago.monto), saldo:k.saldo}]
+    });
+  }
+
   function openPago(c){
     payingUid=c._uid; const kk=calc(c);
     const cuitProv=cuitDeProveedor(c.proveedor, c.cuit);
@@ -4375,7 +4405,17 @@ function buildFilterTable(cfg){
           if(pagoId && window.__endosarCheque){ window.__endosarCheque(q.uid, {proveedor:c2.proveedor||'', compraUid:c2._uid, compraNro, pagoId, fecha}); hechos++; } });
         $('cmp-modal-pago').classList.remove('open');
         if(!hechos) alert('No se pudo registrar el endoso. Probá de nuevo.');
-        else alert('Endosaste '+hechos+' cheque'+(hechos>1?'s':'')+' por '+money(elegidos.reduce((s,q)=>s+q.monto,0))+' a '+(c2.proveedor||'—')+'.\n\nEsos cheques salen de tu cartera. No sale plata de ninguna cuenta tuya.\n\nAcordate de hacer el endoso también en el home banking: acá solo queda registrado.');
+        else {
+          alert('Endosaste '+hechos+' cheque'+(hechos>1?'s':'')+' por '+money(elegidos.reduce((s,q)=>s+q.monto,0))+' a '+(c2.proveedor||'—')+'.\n\nEsos cheques salen de tu cartera. No sale plata de ninguna cuenta tuya.\n\nAcordate de hacer el endoso también en el home banking: acá solo queda registrado.');
+          // Orden de pago del endoso: el papel que acompaña la entrega de los cheques al proveedor
+          // (un renglón por cheque, con de quién era cada uno).
+          if(window.__imprimir && window.__imprimir.ordenPago) window.__imprimir.ordenPago({
+            proveedor:c2.proveedor||'—', cuit:cuitDeProveedor(c2.proveedor, c2.cuit), condIva:c2.condIva||'',
+            fecha,
+            valores:elegidos.map(q=>({fecha, detalle:'Endoso de cheque de tercero N° '+(q.numero||'—')+(q.banco?' — '+q.banco:'')+(q.entidad?' (de '+q.entidad+')':''), monto:q.monto})),
+            facturas:[{comprobante:refCompraDoc(c2), fecha:c2.fecha, monto:elegidos.reduce((s,q)=>s+q.monto,0), saldo:calc(c2).saldo}]
+          });
+        }
         return; }
       const pago={ id:'pag_'+newUid(), fecha:$('p-fecha').value, monto:num($('p-monto').value), medio };
       if(esCheque(medio)){ pago.chNumero=$('p-ch-num')?$('p-ch-num').value.trim():''; pago.chBanco=$('p-ch-banco')?$('p-ch-banco').value.trim():''; pago.chVenc=$('p-ch-venc')?$('p-ch-venc').value:''; }
@@ -4394,7 +4434,10 @@ function buildFilterTable(cfg){
       // (la que quedara elegida en el selector oculto) ensuciaría el detalle por cuenta de Caja.
       const pagos=(c2.pagos||[]).slice(); pagos.push(pago); c2.pagos=pagos; persistPagos(c2._uid, pagos);
       if(esCheque(medio) && window.__upsertChequePago){ window.__upsertChequePago({ pagoId:pago.id, compraUid:c2._uid, compraNro:c2.nroFactura||c2.numero||'', entidad:c2.proveedor||'', numero:pago.chNumero, banco:pago.chBanco, monto:pago.monto, fechaEmision:pago.fecha, fechaVencimiento:pago.chVenc||pago.fecha }); }
-      $('cmp-modal-pago').classList.remove('open'); };
+      $('cmp-modal-pago').classList.remove('open');
+      // La orden de pago sale SOLA al registrar el pago (pedido de Marcelo): queda en pantalla para
+      // descargar/imprimir, y si no hace falta se cierra y ya. Se reimprime desde la lista de pagos.
+      imprimirOrdenPago(c2, pago); };
     $('cmp-modal-pago').classList.add('open');
   }
 
@@ -4534,6 +4577,7 @@ function buildFilterTable(cfg){
       const tjPrim = esTj ? (($('pp-tj-fecha')&&$('pp-tj-fecha').value) || proxDebitoISO(pagoProv.fecha||hoyISO)) : '';
 
       // Guardar pago en cada factura
+      const aplicadas=[];   // para la orden de pago consolidada (una fila por factura cancelada)
       pagoProv.distribucion.forEach(d=>{
         const comp=DB.compras.find(c=>c._uid===d.compraUid);
         if(!comp) return;
@@ -4542,6 +4586,7 @@ function buildFilterTable(cfg){
         else if(esTj){ pago.cuenta=pagoProv.cuenta; pago.debitos=armarDebitos(d.monto, tjCuotas, tjPrim, pagoProv.cuenta); }
         else { pago.cuenta=pagoProv.cuenta; }
         const pagos=(comp.pagos||[]).slice(); pagos.push(pago); comp.pagos=pagos; persistPagos(comp._uid, pagos);
+        aplicadas.push({comp, monto:d.monto, pago});
 
         // Crear cheque si es aplicable
         if(esChequepay && window.__upsertChequePago){
@@ -4556,6 +4601,17 @@ function buildFilterTable(cfg){
       alert('Pago registrado en '+pagoProv.distribucion.length+' factura(s)');
       $('cmp-modal-pago-prov').classList.remove('open');
       render();
+      // Orden de pago consolidada: UN valor entregado (el total, con el detalle del medio) y una
+      // fila por factura cancelada, con el saldo que le queda a cada una después del pago.
+      if(aplicadas.length && window.__imprimir && window.__imprimir.ordenPago){
+        const totalAplicado=aplicadas.reduce((s,x)=>s+num(x.monto),0);
+        window.__imprimir.ordenPago({
+          proveedor:pagoProv.proveedor, cuit:cuitDeProveedor(pagoProv.proveedor,''), condIva:aplicadas[0].comp.condIva||'',
+          fecha:pagoProv.fecha,
+          valores:[{fecha:pagoProv.fecha, detalle:detalleMedioPago(aplicadas[0].pago), monto:totalAplicado}],
+          facturas:aplicadas.map(x=>({comprobante:refCompraDoc(x.comp), fecha:x.comp.fecha, monto:num(x.monto), saldo:calc(x.comp).saldo}))
+        });
+      }
     };
 
     if(window.__tarjetas){ window.__tarjetas('pp-medio'); }
@@ -11632,6 +11688,33 @@ function buildFilterTable(cfg){
       bloqueCliente(izq,der)+valores+concepto+firma()+pie();
   }
 
+  // ---------- Orden de Pago (el espejo del Recibo de Cobranza, para PAGOS a proveedores) ----------
+  // Recibe un objeto normalizado que arma Compras: { proveedor, cuit, condIva, fecha,
+  //   valores:[{fecha, detalle, monto}], facturas:[{comprobante, fecha, monto, saldo}] }.
+  // Sin numeración propia (igual que el recibo): se identifica por fecha + proveedor. La firma dice
+  // RECIBIDO — la firma el proveedor al recibir los valores — y el pie aclara que no es factura.
+  function ordenPago(o){
+    o=o||{};
+    const izq='<b>'+esc(o.proveedor||'—')+'</b>';
+    const der='CUIT: '+esc(o.cuit||'—')+'<br>Cond. IVA: '+esc(o.condIva||'—');
+    const vals=(o.valores||[]).filter(x=>x&&num(x.monto)>0);
+    let filas=vals.map(x=>'<tr><td>'+dmy(x.fecha)+'</td><td>'+esc(x.detalle||'—')+'</td><td class="n">'+money(x.monto)+'</td></tr>').join('');
+    if(!filas) filas='<tr><td colspan="3" style="text-align:center;color:#888">Sin valores.</td></tr>';
+    const tot=vals.reduce((a,x)=>a+num(x.monto),0);
+    const valores='<h4 style="margin:6px 0 4px;font-size:12px">Valores Entregados</h4>'+
+      '<table class="doc-tab"><tr><th>Fecha</th><th>Forma de Pago</th><th class="n">Monto</th></tr>'+filas+
+      '<tr><td colspan="2" class="n"><b>Total</b></td><td class="n"><b>'+money(tot)+'</b></td></tr></table>';
+    const fs=(o.facturas||[]);
+    const concepto='<h4 style="margin:10px 0 4px;font-size:12px">Comprobantes que cancela</h4>'+
+      '<table class="doc-tab"><tr><th>Comprobante</th><th>Fecha</th><th class="n">Importe aplicado</th><th class="n">Saldo restante</th></tr>'+
+      (fs.length ? fs.map(f=>'<tr><td>'+esc(f.comprobante||'—')+'</td><td>'+dmy(f.fecha)+'</td><td class="n">'+money(f.monto)+'</td>'+
+        '<td class="n">'+(num(f.saldo)>0.5?money(f.saldo):'—')+'</td></tr>').join('')
+        : '<tr><td colspan="4" style="text-align:center;color:#888">Pago a cuenta.</td></tr>')+
+      '</table>'+
+      (fs.some(f=>num(f.saldo)>0.5)?'<div style="font-size:10px;color:#666;margin:-6px 0 8px">Saldo restante: lo que queda debiendo de ese comprobante DESPUÉS de este pago, al día de la impresión.</div>':'');
+    return encabezado('X','ORDEN DE PAGO','', dmy(o.fecha))+bloqueCliente(izq,der)+valores+concepto+firma()+pie();
+  }
+
   // ---------- Remito (recibe objeto normalizado) ----------
   // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva,
   //        domicilioEntrega, items:[{codigo,desc,obs,cant,pallets}], palletResumen }
@@ -11977,6 +12060,7 @@ function buildFilterTable(cfg){
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
+    ordenPago:    o => mostrar(ordenPago(o), nombreArchivo('Orden de Pago', '', o.proveedor, o.fecha)),
     remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha)),
     // Recibo INTERNO de sueldo (sin aportes) — lo arma el módulo Sueldos con la quincena liquidada.
     // Acepta un recibo suelto o {lote:[...]} con todos los de la quincena (uno por hoja).
