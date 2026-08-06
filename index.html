@@ -2420,9 +2420,15 @@ function buildFilterTable(cfg){
   // operación de la fábrica (bienes de uso, gastos que no son del negocio).
   // Antes "varb" estaba HARDCODEADO acá abajo en una lista de nombres, así que renombrar una categoría
   // desde ⚙️ Categorías la sacaba del cálculo EN SILENCIO. Ahora la marca viaja con la categoría.
+  // ⚠️ INSUMOS es el cajón de los DURABLES (moldes, herramientas): cosas que se compran una vez y
+  // duran años. Va SIN tilde a propósito (decisión de Marcelo, 06/08): cargar un molde entero en el
+  // mes que se compra hunde ese mes e infla los siguientes, así que queda fuera de los indicadores y
+  // se mira por separado en su propia columna. Lo que se consume produciendo (diesel, ferretería,
+  // aceites, pallets) va a COSTO FIJO, y el flete que TRAE materiales va a MATERIAS PRIMAS, porque
+  // es parte del costo de esos materiales.
   const CAT_DEFAULT = [
     {n:'MATERIAS PRIMAS',      fijo:false, varb:true },
-    {n:'INSUMOS',              fijo:false, varb:true },
+    {n:'INSUMOS',              fijo:false, varb:false},
     {n:'COSTO FIJO',           fijo:true,  varb:false},
     {n:'Mano de Obra',         fijo:true,  varb:false},
     {n:'Productos Terminados', fijo:false, varb:true },
@@ -2431,7 +2437,10 @@ function buildFilterTable(cfg){
   ];
   // Config vieja (guardada antes de que existiera "varb"): se infiere de los nombres de siempre, así
   // una config ya guardada en la nube no deja el bloque de variables en cero al actualizar la app.
-  const VARB_LEGACY = ['MATERIAS PRIMAS','INSUMOS','Productos Terminados'];
+  // ⚠️ INSUMOS quedó FUERA de esta lista a propósito: desde el 06/08 es el cajón de durables y no
+  // cuenta para los indicadores (ver CAT_DEFAULT). Si estuviera acá, una config guardada antes del
+  // cambio lo revivería como variable y los moldes volverían a hundir el mes en que se compran.
+  const VARB_LEGACY = ['MATERIAS PRIMAS','Productos Terminados'];
   const normCat = c => ({ n:c.n, fijo:!!c.fijo, varb: (c.varb==null ? VARB_LEGACY.indexOf(c.n)>=0 : !!c.varb) });
   let CATS = CAT_DEFAULT.map(c=>({...c}));   // se reemplaza con lo guardado en la nube al sincronizar
   const CATEGORIAS = ()=> CATS.map(c=>c.n);  // FUNCIÓN (no constante): se lee en tiempo de uso
