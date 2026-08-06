@@ -5279,6 +5279,34 @@ function buildFilterTable(cfg){
   // ---------- Formulario ----------
   let editing=null;
   function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, domicilioEntrega:'', arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  // ---------- Cliente / venta SIN FACTURAR ----------
+  // Si la operación va sin factura, el comprobante tiene que ser "Sin factura" y la condición de IVA
+  // X (no se identifica al comprador). Pedido de Marcelo (05/08); vale igual para mayoristas y
+  // minoristas. Dos señales, cualquiera alcanza: la LISTA DE PRECIOS ("2 Minorista Sin Facturar",
+  // "6 Mayorista Sin Facturar" y los nombres viejos) o la CATEGORÍA con la que está fichado el
+  // cliente ("MAYORISTA Desc 10.5%" / "Minorista Descuento 10.5%").
+  const esSinFacturar = (lista, categoria) =>
+    /sin factura/i.test(String(lista||'')) || /desc(uento)?\s*10[.,]5/i.test(String(categoria||''));
+  // Ficha del cliente en Base de Datos — NO `clientesConocidos()`, que se arma con las ventas
+  // anteriores y no tiene la categoría. Se consulta en tiempo de click, no al cargar el módulo.
+  const fichaCliente = nombre => { const n=String(nombre||'').trim().toUpperCase(); if(!n) return null;
+    return (window.__catalogoClientes?window.__catalogoClientes():[]).find(c=>String(c.nombre||'').trim().toUpperCase()===n) || null; };
+  // Deja el comprobante y la condición de IVA acordes. Devuelve true si cambió algo (hay que redibujar).
+  function sincronizarSinFacturar(v){
+    if(!v) return false;
+    if(esSinFacturar(v.listaPrecios, v.categoria)){
+      if(v.tipoComprobante==='Sin factura' && v.condIva==='X') return false;
+      v.tipoComprobante='Sin factura'; v.condIva='X'; return true;
+    }
+    // Al volver a una lista facturada se deshace SOLO el par exacto que puso esta regla: si el tipo o
+    // la condición se eligieron a mano, no se pisan.
+    if(v.tipoComprobante!=='Sin factura' || v.condIva!=='X') return false;
+    const f=fichaCliente(v.cliente) || clientesConocidos().find(c=>c.nombre===v.cliente);
+    const cond=f ? String(f.condIva||f.cond||'') : '';
+    v.condIva = (cond && cond!=='X') ? cond : 'A';
+    v.tipoComprobante = v.condIva==='A' ? 'Factura A' : 'Factura B';
+    return true;
+  }
   function openForm(v){ _onSaved=null; editing = v ? JSON.parse(JSON.stringify(v)) : blankVenta(); editing.listaPrecios=normLista(editing.listaPrecios); $('vnt-form-title').textContent = v?'Editar Venta':'Nueva Venta'; drawForm(); $('vnt-modal').classList.add('open'); }
   function closeForm(){ $('vnt-modal').classList.remove('open'); editing=null; _onSaved=null; }
 
@@ -5368,8 +5396,20 @@ function buildFilterTable(cfg){
       w.style.display = esNota?'':'none';
       if(!esNota && editing){ editing.compAsoc=''; const s=$('vf-asoc'); if(s) s.value=''; }
     });
-    $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond;} } });
+    $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond;} }
+      // La CATEGORÍA sale de la ficha de Base de Datos: es donde se marca a un cliente como "sin
+      // facturar" (las categorías con el 10,5%). Solo se copia si la ficha la tiene cargada.
+      const fx=fichaCliente($('vf-cli').value);
+      if(fx && fx.categoria){ editing.categoria=fx.categoria; const s=$('vf-cat'); if(s) s.value=fx.categoria; }
+      if(sincronizarSinFacturar(editing)) drawForm();
+    });
     $('vf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('vf-lista').value; let ch=false; editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p){ aplicarProducto(it,p,editing.listaPrecios); ch=true; } }); if(ch){ drawItems(); drawTotals(); } });
+    // Pasar la venta a una lista "sin facturar" (o a una categoría con el 10,5%) deja el comprobante en
+    // "Sin factura" y la condición de IVA en X. Se redibuja el form porque "Sin factura" cambia los
+    // campos del encabezado (aparece el N° interno en vez del punto de venta / N° de factura).
+    const alCambiarSinFactura = ()=>{ if(sincronizarSinFacturar(editing)) drawForm(); };
+    $('vf-lista').addEventListener('change', alCambiarSinFactura);
+    if($('vf-cat')) $('vf-cat').addEventListener('change', alCambiarSinFactura);
     $('vf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     // Tarjetas para la lista de precios: cambiarla RE-PRECIA todos los ítems, así que verla activa de un
     // vistazo evita facturar con la lista equivocada. (El select queda oculto y sincronizado.)
@@ -5768,6 +5808,7 @@ function buildFilterTable(cfg){
     // y si no, se entregaba el envío sin cobrarlo.
     const fl = fleteDeOrigen(v.items, lead.zona, lead.palletsFlete, v.listaPrecios);
     if(fl) v.items.push(fl);
+    sincronizarSinFacturar(v);   // sin facturar → "Sin factura" + IVA X, aunque el lead traiga otra condición
     openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "confirmado" si la venta se guarda de verdad
   };
 
@@ -5787,6 +5828,7 @@ function buildFilterTable(cfg){
       const fl = fleteDeOrigen(v.items, p.zona, p.palletsFlete, v.listaPrecios);
       if(fl) v.items.push(fl);
     }
+    sincronizarSinFacturar(v);   // sin facturar → "Sin factura" + IVA X, aunque el presupuesto traiga otra condición
     openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // se marca convertido SOLO al guardar la venta
   };
 
@@ -7860,6 +7902,10 @@ function buildFilterTable(cfg){
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
   const zonaCosto=k=>{ const z=ZONAS.find(x=>x.k===k); return (z&&z.par)?num(window.__param(z.par,z.def)):0; };
   const esItemFlete=it=> /^flete/i.test(String((it&&it.desc)||''));
+  // Misma regla que en Ventas (`esSinFacturar`): la operación va sin factura si la lista es una "sin
+  // facturar" o si el cliente está fichado con el 10,5%. Acá solo define la condición de IVA (X).
+  const esSinFacturarPre = (lista, categoria) =>
+    /sin factura/i.test(String(lista||'')) || /desc(uento)?\s*10[.,]5/i.test(String(categoria||''));
   const ncp=s=>String(s||'').trim().toUpperCase();
   // Flete CONSOLIDADO: junta las fracciones de pallet de todos los ítems, con tope de kg por pallet.
   // Dos productos que ocupan pallets parciales viajan en el mismo pallet y no se cobra de más.
@@ -8094,7 +8140,11 @@ function buildFilterTable(cfg){
     ['pf-num:numero','pf-fecha:fecha','pf-val:validezDias','pf-estado:estado','pf-cli:cliente','pf-cuit:cuit','pf-cond:condIva','pf-cat:categoria','pf-lista:listaPrecios','pf-vend:vendedor','pf-doment:domicilioEntrega','pf-notacli:notaCliente','pf-nota:nota','pf-descg:descGeneral'].forEach(pair=>{
       const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); }); });
     $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } });
-    $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); } });
+    $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); }
+      // Una cotización SIN FACTURAR va con condición de IVA X: no se identifica al comprador. El
+      // presupuesto no tiene "tipo de comprobante" (siempre es un presupuesto), pero esta condición
+      // es la que después viaja a la venta, donde sí se convierte en "Sin factura".
+      if(esSinFacturarPre(editing.listaPrecios, editing.categoria)){ editing.condIva='X'; const s=$('pf-cond'); if(s) s.value='X'; } });
     // La zona ahora se elige con tarjetas (drawZonas), no con un desplegable: un clic recalcula el
     // renglón "Flete". Si el presupuesto vino de un Lead, la zona del lead ya llega marcada.
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
@@ -8243,6 +8293,7 @@ function buildFilterTable(cfg){
   function armarDesdeLead(lead){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
     if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
+    if(esSinFacturarPre(p.listaPrecios, p.categoria)) p.condIva='X';   // cotización sin factura: no se identifica al comprador
     p.zona = lead.zona||'';
     p.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
     p.leadUid = lead._uid||'';   // vínculo con el lead que lo originó: el CRM lo usa para mostrar el monto cotizado
