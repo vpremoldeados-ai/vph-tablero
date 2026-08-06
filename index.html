@@ -3141,11 +3141,11 @@ function buildFilterTable(cfg){
     DB.compras.forEach(c=>{
       const mes=String(c.fecha||'').slice(0,7); if(!mes) return;
       const k=calc(c), t=k.total;
-      const m=meses[mes]=meses[mes]||{mes, total:0, totalTodo:0, fijos:0, fijosNeto:0, variables:0, noOper:0, porCat:{}};
+      const m=meses[mes]=meses[mes]||{mes, total:0, totalTodo:0, fijos:0, fijosNeto:0, variables:0, variablesNeto:0, noOper:0, porCat:{}};
       const cat=c.categoria||'(sin categoría)';
       m.totalTodo+=t; m.porCat[cat]=(m.porCat[cat]||0)+t;
       if(FIJ.includes(cat)){ m.fijos+=t; m.fijosNeto+=k.neto; m.total+=t; }
-      else if(VAR.includes(cat)){ m.variables+=t; m.total+=t; }
+      else if(VAR.includes(cat)){ m.variables+=t; m.variablesNeto+=k.neto; m.total+=t; }
       else m.noOper+=t;
     });
     return Object.values(meses).sort((a,b)=>String(a.mes).localeCompare(String(b.mes)));
@@ -8159,17 +8159,18 @@ function buildFilterTable(cfg){
       ventas.map(v=>String(v.fecha||'').slice(0,7))
         .concat(compras.map(c=>String(c.fecha||'').slice(0,7)))
         .filter(m=>/^\d{4}-\d{2}$/.test(m)))].sort();
-    const VARC = window.__catComprasVar ? window.__catComprasVar() : [];
     return meses.map(mes=>{
       const r = window.__resumenMes(mes) || {};
-      const c = rc.find(x=>x.mes===mes) || {fijos:0, fijosNeto:0, variables:0, noOper:0, porCat:{}};
+      const c = rc.find(x=>x.mes===mes) || {fijos:0, fijosNeto:0, variables:0, variablesNeto:0, noOper:0, porCat:{}};
       const netoVta = r.netoVendido || 0;
       const costoVar = r.costoVariable || 0;
       const contrib = netoVta - costoVar;
       const fijos = c.fijosNeto || 0;
-      // Compras de las categorías variables (lo que entró de materia prima) vs lo que se consumió:
+      // Compras de las categorías variables (lo que ENTRÓ de materia prima) vs lo que se CONSUMIÓ:
       // la diferencia dice si el mes construyó stock o lo consumió.
-      const compradoVar = VARC.reduce((s,n)=>s+(c.porCat[n]||0), 0);
+      // ⚠️ NETO contra NETO. Antes se comparaba la compra CON IVA contra el consumo sin IVA, y el
+      // "movimiento de stock" salía inflado por el IVA (en julio, $1,1 M de más que no existían).
+      const compradoVar = c.variablesNeto || 0;
       const margenPct = netoVta>0 ? contrib/netoVta : null;
       // ⚠️ Guarda contra un renglón mal cargado: una contribución fuera de ±100% del neto no es un
       // problema del negocio, es un dato roto (caso real: 330 losetas facturadas a $1 c/u en marzo/26,
