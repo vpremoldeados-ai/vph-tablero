@@ -680,6 +680,30 @@
   </div>
 
   <!-- ================= COSTOS Y COMPRAS ================= -->
+  <div class="page" id="page-resultado">
+    <div class="kpis" id="kpis-resultado"></div>
+    <section>
+      <h2><span class="dot"></span>Estado de Resultados</h2>
+      <div class="asof" id="asof-resultado"></div>
+      <div style="margin:0 0 12px"><label style="font-size:12.5px;color:var(--muted);font-weight:700;margin-right:8px">Mes:</label>
+        <select id="res-mes" style="padding:7px 11px;border:1px solid var(--border);border-radius:9px;font-size:13.5px"></select></div>
+      <div class="tbl-wrap"><table id="tabla-resultado"></table></div>
+      <div id="res-notas" style="margin-top:14px"></div>
+    </section>
+    <div class="grid2">
+      <section>
+        <h2><span class="dot" style="background:var(--green)"></span>Resultado operativo mes a mes</h2>
+        <div class="asof">Contribución marginal menos costos fijos · en vivo</div>
+        <div class="chart-box"><canvas id="chResultado"></canvas></div>
+      </section>
+      <section>
+        <h2><span class="dot" style="background:var(--blue)"></span>Comparativo mensual</h2>
+        <div class="asof">Todo neto, sin IVA</div>
+        <div class="tbl-wrap"><table id="tabla-resultado-meses"></table></div>
+      </section>
+    </div>
+  </div>
+
   <div class="page" id="page-costos">
     <div class="kpis" id="kpis-costos"></div>
     <div class="grid2">
@@ -1618,6 +1642,7 @@ const PAGES = [
   { id:'costosfijos', nombre:'Costos Fijos', ico:'📌' },
   { id:'sueldos', nombre:'Sueldos', ico:'👥' },
   { id:'basedatos', nombre:'Base de Datos', ico:'📇' },
+  { id:'resultado', nombre:'Estado de Resultados', ico:'📊' },
   { id:'costos', nombre:'Costos (resumen)', ico:'▤' },
   { id:'fiscal', nombre:'Fiscal', ico:'✓' },
   { id:'libroiva', nombre:'Libro IVA', ico:'📚' }
@@ -1791,7 +1816,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -2310,6 +2335,107 @@ window.__pintarCostos = function(){
     '<tr><td>Facturación junio → margen de seguridad</td><td class="num" style="color:var(--green)"><b>+'+fmt$(rentabilidad.margenSeguridad)+'</b></td></tr>';
 };
 window.__pintarCostos();
+
+/* ================= ESTADO DE RESULTADOS — EN VIVO ================= */
+// La pregunta que esta página contesta es una sola: ¿ganó plata la empresa este mes?
+// Sale de __resultadoPorMes(), que a su vez reusa __resumenMes() y __resumenCompras(): NO recalcula
+// nada por su cuenta, así no puede contradecir al Punto de Equilibrio (que fue justo el bug de agosto).
+//
+// ⚠️ Lo que se resta como costo variable es el costo de lo VENDIDO (costo por unidad del catálogo),
+// no las compras del mes. Comprar materia prima no es un gasto: es cambiar plata por stock. Restar
+// las compras haría que un mes que repone stock parezca malo y el siguiente parezca buenísimo.
+// La diferencia entre lo comprado y lo consumido se informa aparte como "movimiento de stock".
+let _chResultado=null, _resMesSel=null;
+window.__pintarResultado = function(){
+  const cont=document.getElementById('tabla-resultado'); if(!cont) return;
+  const R = window.__resultadoPorMes ? window.__resultadoPorMes() : null;
+  const kp=document.getElementById('kpis-resultado');
+  if(!R || !R.length){
+    if(kp) kp.innerHTML='';
+    document.getElementById('asof-resultado').textContent='Esperando los datos de ventas y compras…';
+    cont.innerHTML='<tr><td style="color:var(--muted)">Todavía no hay datos cargados.</td></tr>';
+    return;
+  }
+  // Selector de mes (por defecto, el último con movimiento)
+  const sel=document.getElementById('res-mes');
+  if(_resMesSel==null || !R.some(x=>x.mes===_resMesSel)) _resMesSel = R[R.length-1].mes;
+  if(sel){
+    sel.innerHTML = R.map(x=>'<option value="'+x.mes+'"'+(x.mes===_resMesSel?' selected':'')+'>'+x.mes+'</option>').slice().reverse().join('');
+    sel.onchange = ()=>{ _resMesSel=sel.value; window.__pintarResultado(); };
+  }
+  const m = R.find(x=>x.mes===_resMesSel) || R[R.length-1];
+  const gana = m.resultado>0;
+  const pct = m.netoVendido>0 ? m.resultado/m.netoVendido*100 : 0;
+  const esMesEnCurso = m.mes === (new Date().toISOString().slice(0,7));
+
+  document.getElementById('asof-resultado').textContent =
+    'Todo NETO, sin IVA · en vivo desde Ventas y Compras' + (esMesEnCurso ? ' · ⚠️ mes EN CURSO: todavía faltan cargar costos, el resultado no es definitivo' : '');
+
+  if(kp) kp.innerHTML =
+    kpi('Ventas netas', fmt$(m.netoVendido), m.cantVentas+' ventas · sin IVA', 'info') +
+    kpi('Contribución marginal', (m.margenPct!=null&&!m.revisar)?(m.margenPct*100).toFixed(1)+'%':'⚠️', m.revisar?'Hay datos para revisar en este mes':(fmt$(m.contribucion)+' después del costo variable'), m.revisar?'warn':'info') +
+    kpi('Costos fijos', fmt$(m.fijos), 'Estructura del mes · sin IVA', 'info') +
+    kpi('RESULTADO OPERATIVO', (gana?'+':'')+fmt$(m.resultado), gana?('Ganancia · '+pct.toFixed(1)+'% de la venta'):'Pérdida del mes', gana?'good':'bad') +
+    kpi('Punto de equilibrio', m.pe?fmt$(m.pe):'—', m.pe?('Colchón: '+(m.netoVendido>=m.pe?'+':'')+fmt$(m.netoVendido-m.pe)):'—', (m.pe&&m.netoVendido>=m.pe)?'good':'warn');
+
+  const fila=(t,v,cls,ind)=>'<tr'+(cls?' class="'+cls+'"':'')+'><td'+(ind?' style="color:var(--muted);font-size:12px;padding-left:18px"':'')+'>'+t+'</td><td class="num"'+(ind?' style="color:var(--muted)"':'')+'>'+v+'</td></tr>';
+  let h='';
+  h+=fila('<b>Ventas netas (sin IVA)</b>', '<b>'+fmt$(m.netoVendido)+'</b>');
+  h+=fila('facturado con IVA', fmt$(m.ventas), '', 1);
+  h+=fila('Costo variable de lo vendido', '−'+fmt$(m.costoVariable));
+  h+=fila('materia prima según el costo del catálogo · '+Math.round(m.cobertura*100)+'% de lo vendido tiene costo cargado', '', '', 1);
+  h+=fila('<b>= Contribución marginal</b>', '<b>'+fmt$(m.contribucion)+((m.margenPct!=null&&!m.revisar)?'  ('+(m.margenPct*100).toFixed(1)+'%)':'')+'</b>', 'total');
+  h+=fila('Costos fijos del mes', '−'+fmt$(m.fijos));
+  h+=fila('<b>= RESULTADO OPERATIVO</b>', '<b style="color:'+(gana?'var(--green)':'var(--red)')+'">'+(gana?'+':'')+fmt$(m.resultado)+(m.netoVendido>0?'  ('+pct.toFixed(1)+'%)':'')+'</b>', 'total');
+  cont.innerHTML=h;
+
+  // Notas: lo que NO entra en el resultado, y el movimiento de stock.
+  const durables = m.porCat['INSUMOS']||0;
+  const noOperResto = (m.noOper||0) - durables;
+  let n='';
+  if(m.revisar){
+    n+='<div class="alert bad" style="margin:0 0 10px"><span class="aico">⚠️</span><div><b>Este mes tiene datos para revisar</b>'+
+       '<div class="act">El costo de lo vendido ('+fmt$(m.costoVariable)+') no guarda relación con lo facturado ('+fmt$(m.netoVendido)+'). '+
+       'Casi siempre es un renglón con el precio o la cantidad mal cargados. Revisá las ventas del mes antes de tomar este resultado como bueno.</div></div></div>';
+  }
+  if(m.noOper>0){
+    n+='<div class="alert info" style="margin:0 0 10px"><span class="aico">ℹ️</span><div><b>Fuera del resultado: '+fmt$(m.noOper)+'</b>'+
+       '<div class="act">'+(durables>0?('Durables (INSUMOS) '+fmt$(durables)+' — se compran una vez y duran años. '):'')+
+       (noOperResto>0?('No operativas '+fmt$(noOperResto)+' — no son de la operación de la fábrica.'):'')+'</div></div></div>';
+  }
+  if(Math.abs(m.movStock)>1){
+    const construyo = m.movStock>0;
+    n+='<div class="alert '+(construyo?'info':'warn')+'"><span class="aico">📦</span><div><b>Movimiento de stock: '+(construyo?'+':'')+fmt$(m.movStock)+'</b>'+
+       '<div class="act">Compraste '+fmt$(m.compradoVariable)+' de materia prima y consumiste '+fmt$(m.costoVariable)+'. '+
+       (construyo ? 'Ese excedente NO es gasto del mes: quedó en stock, y por eso salió más plata de la caja que lo que muestra el resultado.'
+                  : 'Consumiste más de lo que compraste: el mes se apoyó en stock que ya tenías, así que salió menos plata de la que dice el resultado.')+
+       '</div></div></div>';
+  }
+  document.getElementById('res-notas').innerHTML=n;
+
+  // Comparativo mensual
+  document.getElementById('tabla-resultado-meses').innerHTML =
+    '<tr><th>Mes</th><th class="num">Ventas netas</th><th class="num">Contrib.</th><th class="num">%</th><th class="num">Fijos</th><th class="num">Resultado</th></tr>' +
+    R.map(x=>'<tr><td><b>'+x.mes+'</b></td><td class="num">'+fmt$(x.netoVendido)+'</td><td class="num">'+fmt$(x.contribucion)+'</td>'+
+      '<td class="num">'+(x.revisar?'<span title="Datos para revisar" style="color:var(--amber)">⚠️</span>':(x.margenPct!=null?(x.margenPct*100).toFixed(0)+'%':'—'))+'</td><td class="num">'+fmt$(x.fijos)+'</td>'+
+      '<td class="num" style="color:'+(x.resultado>0?'var(--green)':'var(--red)')+'"><b>'+(x.resultado>0?'+':'')+fmt$(x.resultado)+'</b></td></tr>').join('');
+  window.__ordenable('tabla-resultado-meses');
+
+  const el=document.getElementById('chResultado');
+  if(el && typeof Chart!=='undefined'){
+    if(_chResultado) _chResultado.destroy();
+    _chResultado = new Chart(el, {
+      data:{ labels:R.map(x=>x.mes), datasets:[
+        { type:'bar', label:'Contribución marginal', data:R.map(x=>x.contribucion), backgroundColor:'#38b26a', borderRadius:5 },
+        { type:'bar', label:'Costos fijos', data:R.map(x=>x.fijos), backgroundColor:'#2f6fb2', borderRadius:5 },
+        { type:'line', label:'Resultado operativo', data:R.map(x=>x.resultado), borderColor:'#d64541', backgroundColor:'#d64541', tension:.3, pointRadius:5 } ] },
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt$(c.raw)}} },
+        scales:{ y:{ ticks:{callback:v=>fmtM(v)} } } }
+    });
+  }
+};
+window.__pintarResultado();
 
 /* ================= FISCAL ================= */
 (function(){
@@ -7959,9 +8085,11 @@ function buildFilterTable(cfg){
   // Resumen del mes en curso EN VIVO (facturación, resultado, venta promedio, cliente top) — para que la
   // Vista Diaria y el Punto de Equilibrio NO muestren la foto congelada del cierre (mesEnCurso). Suma las
   // ventas y compras REALES del mes cargadas en el Tablero. Devuelve null si aún no llegaron los datos.
-  window.__resumenMes = ()=>{
+  // `periodo` opcional (AAAA-MM): sin él, el mes en curso. Lo usa __resultadoPorMes() para armar el
+  // Estado de Resultados mes a mes SIN duplicar la lógica del margen (que es delicada y ya tuvo bugs).
+  window.__resumenMes = (periodo)=>{
     if(!ventas.length && !compras.length) return null;
-    const per=hoyISO.slice(0,7);
+    const per=periodo || hoyISO.slice(0,7);
     // pesos por código (para kg vendidos del mes — se compara con lo producido)
     const cat = window.__catalogoProductos?window.__catalogoProductos():[];
     // Peso por código Y por nombre normalizado: si el ítem de la venta se cargó a mano sin código,
@@ -8016,6 +8144,45 @@ function buildFilterTable(cfg){
     const m={};
     ventas.forEach(v=>{ const mes=String(v.fecha||'').slice(0,7); if(!mes) return; m[mes]=(m[mes]||0)+num(calcV(v).total); });
     return Object.keys(m).sort().map(k=>({mes:k, ventas:m[k]}));
+  };
+  // ---------- Estado de Resultados mes a mes ----------
+  // Cruza las ventas (vía __resumenMes, que ya sabe calcular el neto y el costo variable de lo
+  // VENDIDO) con las compras por categoría (vía __resumenCompras). Reusa las dos: no recalcula nada
+  // por su cuenta, así el Estado de Resultados no puede contradecir al Punto de Equilibrio.
+  // ⚠️ El costo variable es el de lo VENDIDO (costo por unidad del catálogo), NO las compras del mes:
+  // comprar materia prima no es un gasto, es cambiar plata por stock. La diferencia entre lo comprado
+  // y lo consumido se informa aparte como movimiento de stock.
+  window.__resultadoPorMes = ()=>{
+    if(!ventas.length && !compras.length) return null;
+    const rc = window.__resumenCompras ? (window.__resumenCompras()||[]) : [];
+    const meses=[...new Set(
+      ventas.map(v=>String(v.fecha||'').slice(0,7))
+        .concat(compras.map(c=>String(c.fecha||'').slice(0,7)))
+        .filter(m=>/^\d{4}-\d{2}$/.test(m)))].sort();
+    const VARC = window.__catComprasVar ? window.__catComprasVar() : [];
+    return meses.map(mes=>{
+      const r = window.__resumenMes(mes) || {};
+      const c = rc.find(x=>x.mes===mes) || {fijos:0, fijosNeto:0, variables:0, noOper:0, porCat:{}};
+      const netoVta = r.netoVendido || 0;
+      const costoVar = r.costoVariable || 0;
+      const contrib = netoVta - costoVar;
+      const fijos = c.fijosNeto || 0;
+      // Compras de las categorías variables (lo que entró de materia prima) vs lo que se consumió:
+      // la diferencia dice si el mes construyó stock o lo consumió.
+      const compradoVar = VARC.reduce((s,n)=>s+(c.porCat[n]||0), 0);
+      const margenPct = netoVta>0 ? contrib/netoVta : null;
+      // ⚠️ Guarda contra un renglón mal cargado: una contribución fuera de ±100% del neto no es un
+      // problema del negocio, es un dato roto (caso real: 330 losetas facturadas a $1 c/u en marzo/26,
+      // que daban un margen de −169.321% y hacían ilegible toda la serie). Se marca para revisar en
+      // vez de mostrar un porcentaje absurdo, y no se calcula un punto de equilibrio con esa base.
+      const revisar = margenPct!=null && (margenPct < -1 || margenPct > 1);
+      return { mes, ventas:r.ventas||0, cantVentas:r.cantVentas||0, netoVendido:netoVta,
+        costoVariable:costoVar, contribucion:contrib, margenPct, revisar,
+        cobertura:r.coberturaCosto||0, fijos, resultado: contrib-fijos,
+        pe: (netoVta>0 && contrib>0 && !revisar) ? fijos/(contrib/netoVta) : null,
+        compradoVariable:compradoVar, movStock: compradoVar-costoVar,
+        noOper:c.noOper||0, porCat:c.porCat||{} };
+    });
   };
   boot();
 })();
