@@ -867,6 +867,7 @@
           <button class="cmp-btn cmp-btn-primary" id="crm-nuevo">+ Nuevo Lead</button>
           <button class="cmp-btn" id="crm-preg-edit" title="Editar las preguntas rápidas de WhatsApp">💬 Preguntas rápidas</button>
           <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
+          <button class="cmp-btn" id="crm-cartel-abrir" title="Marcelo va visitando los corralones para ver si tienen la cartelería de VPH">🪧 Cartelería</button>
           <button class="cmp-btn" id="crm-export">Exportar JSON</button>
           <button class="cmp-btn" id="crm-import">Importar JSON</button>
           <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -928,6 +929,17 @@
         <button class="cmp-x" id="crm-plant-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="crm-plant-body"></div>
+    </div>
+  </div>
+
+  <!-- ================= CARTELERÍA (visita a corralones) ================= -->
+  <div class="cmp-overlay" id="crm-cartel-modal">
+    <div class="cmp-dialog" style="max-width:720px">
+      <div class="cmp-dialog-head">
+        <h3>🪧 Visita de cartelería — corralones</h3>
+        <button class="cmp-x" id="crm-cartel-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="crm-cartel-body"></div>
     </div>
   </div>
 
@@ -10027,6 +10039,67 @@ function buildFilterTable(cfg){
   $('crm-import-file').onchange=e=>{ if(e.target.files[0])importJSON(e.target.files[0]); e.target.value=''; };
   $('crm-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('crm-modal').addEventListener('click',e=>{ if(e.target===$('crm-modal')) closeForm(); });
+
+  // ---------- 🪧 Cartelería: Marcelo visita los corralones (clientes Y leads mayoristas)
+  // para ver si tienen el cartel de VPH puesto. Vive en Firestore como el mismo campo
+  // {estado, fecha, nota} tanto en vph_clientes como en vph_leads — es un checklist físico,
+  // no una etapa del embudo de ventas, por eso no se mezcla con ESTADOS del lead.
+  const CARTEL_ESTADOS=[{k:'pendiente',l:'Falta visitar',c:'#95a5b8'},{k:'tiene',l:'Tiene cartel',c:'#1e9e5a'},{k:'notiene',l:'No tiene',c:'#d64541'}];
+  const cartelSig=k=>{ const i=CARTEL_ESTADOS.findIndex(e=>e.k===k); return CARTEL_ESTADOS[(i+1)%CARTEL_ESTADOS.length].k; };
+  const esMayCat=c=>/mayorista/i.test(String(c||''));
+  async function cargarCartel(){
+    const c=fb(); if(!c||!c.db) return [];
+    const [sc,sl]=await Promise.all([
+      c.FS.getDocs(c.FS.collection(c.db,'vph_clientes')),
+      c.FS.getDocs(c.FS.collection(c.db,'vph_leads'))
+    ]);
+    const out=[];
+    sc.forEach(d=>{ const x=d.data(); if(!esMayCat(x.categoria)) return;
+      out.push({col:'vph_clientes', uid:d.id, nombre:x.nombre||'—', origen:'Cliente', carteleria:x.carteleria||{estado:'pendiente',fecha:'',nota:''}}); });
+    sl.forEach(d=>{ const x=d.data(); if(!esMayCat(x.categoria)) return;
+      out.push({col:'vph_leads', uid:d.id, nombre:x.cliente||'—', origen:'Lead', carteleria:x.carteleria||{estado:'pendiente',fecha:'',nota:''}}); });
+    out.sort((a,b)=>{ const oa=CARTEL_ESTADOS.findIndex(e=>e.k===(a.carteleria.estado||'pendiente')), ob=CARTEL_ESTADOS.findIndex(e=>e.k===(b.carteleria.estado||'pendiente'));
+      if(oa!==ob) return oa-ob; return a.nombre.localeCompare(b.nombre,'es'); });
+    return out;
+  }
+  async function drawCartel(){
+    const body=$('crm-cartel-body'); if(!body) return;
+    body.innerHTML='<p style="color:var(--muted);font-size:13px">Cargando…</p>';
+    const filas=await cargarCartel();
+    const tiene=filas.filter(f=>f.carteleria.estado==='tiene').length;
+    const btn=$('crm-cartel-abrir'); if(btn) btn.textContent='🪧 Cartelería ('+tiene+'/'+filas.length+')';
+    let h='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>falta visitar → tiene cartel → no tiene</b>. '+
+      'Se guarda la fecha de la visita sola. La notita es para lo que veas ahí (dirección exacta, quién atendió, etc.).</p>'+
+      '<div class="tbl-wrap"><table><tr><th>Corralón</th><th>Origen</th><th style="text-align:center">Estado</th><th>Visitado</th><th>Nota</th></tr>';
+    filas.forEach((f,i)=>{ const e=CARTEL_ESTADOS.find(x=>x.k===(f.carteleria.estado||'pendiente'))||CARTEL_ESTADOS[0];
+      h+='<tr><td>'+esc(f.nombre)+'</td><td style="color:var(--muted);font-size:12px">'+f.origen+'</td>'+
+        '<td style="text-align:center"><button class="cmp-btn" data-cartel-i="'+i+'" style="padding:4px 10px;font-size:12px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(f.carteleria.fecha?fmtFecha(f.carteleria.fecha):'—')+'</td>'+
+        '<td><input type="text" data-cartel-nota="'+i+'" value="'+esc(f.carteleria.nota||'')+'" placeholder="—" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td></tr>';
+    });
+    h+='</table></div>';
+    body.innerHTML=h;
+    body.querySelectorAll('button[data-cartel-i]').forEach(b=>b.onclick=async()=>{
+      const f=filas[+b.dataset.cartelI]; const nuevo=cartelSig(f.carteleria.estado||'pendiente');
+      const val={estado:nuevo, fecha: nuevo==='pendiente' ? '' : hoyISO, nota:f.carteleria.nota||''};
+      b.disabled=true;
+      try{ await fb().FS.updateDoc(fb().FS.doc(fb().db,f.col,f.uid), {carteleria:val}); drawCartel(); }
+      catch(e){ alert('No se pudo guardar: '+e.message); b.disabled=false; }
+    });
+    body.querySelectorAll('input[data-cartel-nota]').forEach(inp=>inp.addEventListener('change',async()=>{
+      const f=filas[+inp.dataset.cartelNota];
+      const val={estado:f.carteleria.estado||'pendiente', fecha:f.carteleria.fecha||'', nota:inp.value.trim()};
+      try{ await fb().FS.updateDoc(fb().FS.doc(fb().db,f.col,f.uid), {carteleria:val}); }
+      catch(e){ alert('No se pudo guardar la nota: '+e.message); }
+    }));
+  }
+  const cartelAbrirBtn=$('crm-cartel-abrir');
+  if(cartelAbrirBtn){ cartelAbrirBtn.onclick=()=>{ $('crm-cartel-modal').classList.add('open'); drawCartel(); };
+    drawCartel(); }   // precarga el contador (N/total) en el botón sin esperar al primer click
+  const cartelCerrarBtn=$('crm-cartel-cerrar');
+  if(cartelCerrarBtn) cartelCerrarBtn.onclick=()=>$('crm-cartel-modal').classList.remove('open');
+  $('crm-cartel-modal').addEventListener('click',e=>{ if(e.target===$('crm-cartel-modal')) $('crm-cartel-modal').classList.remove('open'); });
+
   boot();
 })();
 </script>
