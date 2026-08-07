@@ -2746,10 +2746,21 @@ function buildFilterTable(cfg){
   function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){ alert('No se pudo guardar en este navegador: '+e.message); } }
 
   // Guardar/eliminar una compra en el backend activo
+  // ⚠️ En la NUBE la escritura es ASÍNCRONA y DB.compras se repuebla recién cuando vuelve el snapshot
+  // (~200-500 ms). Sin la copia local inmediata, cualquier código que cree una compra y le cuelgue
+  // algo en el mismo click NO la encontraba: es lo que hacía que un adelanto a alguien sin compra
+  // previa se perdiera EN SILENCIO (la compra se creaba, el pago no). El snapshot la reconfirma
+  // enseguida con lo mismo, así que la copia optimista solo adelanta lo que ya iba a pasar.
+  function guardarLocal(c){
+    const i=DB.compras.findIndex(x=>x._uid===c._uid);
+    if(i>=0) DB.compras[i]=c; else DB.compras.push(c);
+  }
   function persistCompra(c){
     if(!c._uid) c._uid = newUid();
-    if(USA_NUBE && fbDb){ FS.setDoc(FS.doc(fbDb, COL, c._uid), {...c}).catch(e=>alert('Error al guardar en la nube: '+e.message)); }
-    else { const i=DB.compras.findIndex(x=>x._uid===c._uid); if(i>=0) DB.compras[i]=c; else DB.compras.push(c); saveLocal(); render(); }
+    if(USA_NUBE && fbDb){ guardarLocal(c);
+      FS.setDoc(FS.doc(fbDb, COL, c._uid), {...c}).catch(e=>alert('Error al guardar en la nube: '+e.message));
+      render(); }
+    else { guardarLocal(c); saveLocal(); render(); }
   }
   function deleteCompra(uid){
     if(USA_NUBE && fbDb){ FS.deleteDoc(FS.doc(fbDb, COL, uid)).catch(e=>alert('Error al eliminar: '+e.message)); }
@@ -2856,9 +2867,16 @@ function buildFilterTable(cfg){
   }
 
   // Guarda SOLO el campo pagos (no la compra completa) — evita pisar otros campos cambiados por otro usuario a la vez
+  // Escribe SOLO el campo `pagos` (ver §3 del CLAUDE.md: un setDoc del documento entero pisaría lo que
+  // otro usuario esté editando). Va con setDoc+merge y no con updateDoc porque updateDoc FALLA si el
+  // documento todavía no existe en la nube, que es justo el caso del primer adelanto de una compra
+  // recién creada en el mismo click. Con merge, el efecto sobre los demás campos es el mismo: ninguno.
   function persistPagos(uid, pagos){
-    if(USA_NUBE && fbDb){ FS.updateDoc(FS.doc(fbDb, COL, uid), {pagos}).catch(e=>alert('Error al guardar el pago: '+e.message)); }
-    else { const i=DB.compras.findIndex(x=>x._uid===uid); if(i>=0){ DB.compras[i].pagos=pagos; saveLocal(); render(); } }
+    const i=DB.compras.findIndex(x=>x._uid===uid);
+    if(i>=0) DB.compras[i].pagos=pagos;
+    if(USA_NUBE && fbDb){ FS.setDoc(FS.doc(fbDb, COL, uid), {pagos}, {merge:true})
+      .catch(e=>alert('Error al guardar el pago: '+e.message)); render(); }
+    else if(i>=0){ saveLocal(); render(); }
   }
 
   // ---------- Cálculos ----------
@@ -14215,8 +14233,11 @@ function buildFilterTable(cfg){
       vencimiento:fechaPagoDe(L,emp),
       detalle: esMensual(emp) ? ('Sueldo de '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
       nota:'Generado por el módulo Sueldos.' });
-    window.__registrarPagoCompra(uid, { fecha, monto, medio:$('sue-a-medio').value, cuenta:$('sue-a-cuenta').value,
+    const idPago=window.__registrarPagoCompra(uid, { fecha, monto, medio:$('sue-a-medio').value, cuenta:$('sue-a-cuenta').value,
       sueEsAdelanto:true, sueEmpUid:empUid, sueEmpNombre:emp.nombre||'', sueNota:String($('sue-a-nota').value||'').trim() });
+    // 🔴 Si no se pudo registrar, NO cerrar el modal como si nada: eso es lo que hacía que un adelanto
+    // se perdiera sin que nadie se enterara. El importe queda cargado para reintentar.
+    if(!idPago){ alert('No se pudo registrar el adelanto.\n\nNo se guardó nada: volvé a intentar en unos segundos. Si sigue pasando, cargalo desde Compras.'); return; }
     $('sue-modal-adel').classList.remove('open');
     render();
   }
