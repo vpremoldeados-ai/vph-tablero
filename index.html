@@ -11994,17 +11994,23 @@ function buildFilterTable(cfg){
     const mayorista  = /mayorista/i.test(s);
     const sinFactura = /sin factura/i.test(s) || /desc(uento)?\s*10[.,]5/i.test(s);
     const retira = String((v&&v.zona)||'')==='retiro';
-    // Al mayorista se le entrega en su depósito/corralón, no en obra con hidrogrúa (pedido de Marcelo,
-    // 05/08). Si RETIRA no se le habla de la entrega, sea mayorista o minorista.
-    const entrega = retira
-      ? '<b>Retiro en fábrica:</b> Bolívar 381, Toledo. De lunes a viernes de 6:00 a 13:30 hs. '+
-        'Avisar con 24 hs de anticipación al 3517 60-5362.'
-      : mayorista
-      ? '<b>Métodos de Envíos:</b> Servicio de Entrega en su depósito o corralón para revendedores de '+
-        'Córdoba y Gran Córdoba hasta 30 km de Circunvalación.'
-      : '<b>Métodos de Envíos:</b> Servicio de Entrega en obra incluido con descarga a pie del camión con hidrogrúa '+
-        '(únicamente en la Provincia de Córdoba, para el resto de las Provincias, el cliente deberá contratar un autoelevador para realizar la descarga). '+
-        'Las fechas de entrega pueden variar en función de la logística y las condiciones climáticas.';
+    // El aviso de que la fecha no es una promesa cerrada va en los DOS textos de envío.
+    const FECHAS = 'Las fechas de entrega pueden variar en función de la logística y las condiciones climáticas.';
+    const RETIRO = '<b>Retiro en fábrica:</b> Bolívar 381, Toledo. De lunes a viernes de 6:00 a 13:30 hs. '+
+      'Avisar con 24 hs de anticipación al 3517 60-5362.';
+    // Al mayorista se le entrega en su depósito/corralón, no en obra con hidrogrúa (pedido de Marcelo).
+    const ENVIO_MAYO = '<b>Métodos de Envíos:</b> Servicio de Entrega en su depósito o corralón para revendedores de '+
+      'Córdoba y Gran Córdoba hasta 30 km de Circunvalación. '+FECHAS;
+    const ENVIO_MINO = '<b>Métodos de Envíos:</b> Servicio de Entrega en obra incluido con descarga a pie del camión con hidrogrúa '+
+      '(únicamente en la Provincia de Córdoba, para el resto de las Provincias, el cliente deberá contratar un autoelevador para realizar la descarga). '+FECHAS;
+    // ⚠️ Los dos casos de "retira" NO son iguales, y es a propósito:
+    //  · MAYORISTA que retira → se le muestran las DOS cosas (pedido de Marcelo): el servicio de
+    //    entrega que tiene disponible como revendedor y, ADEMÁS, dónde y cuándo venir a buscarla.
+    //  · MINORISTA que retira → la leyenda de retiro REEMPLAZA a la de envíos (decisión del 31/07):
+    //    no tiene sentido hablarle de la entrega en obra a alguien que la viene a buscar.
+    const entrega = mayorista
+      ? (ENVIO_MAYO + (retira ? '<div style="margin-top:3px">'+RETIRO+'</div>' : ''))
+      : (retira ? RETIRO : ENVIO_MINO);
     // Formas de pago, tres textos distintos (pedido de Marcelo, 05/08):
     //  · MAYORISTA SIN FACTURA: contado y nada más — no se le da plazo a quien no lleva factura.
     //  · MAYORISTA FACTURADO: contado, débito o valor a 30 días. Sin "Precios con IVA": va con IVA
