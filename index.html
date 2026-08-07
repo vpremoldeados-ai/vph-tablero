@@ -11987,22 +11987,35 @@ function buildFilterTable(cfg){
   // las claves las define ZONAS en el módulo Presupuestos): si el cliente RETIRA EN FÁBRICA no tiene
   // sentido hablarle de la entrega en obra con hidrogrúa — se le pone la dirección y el horario.
   function condicionesPresup(v){
+    // Qué trato comercial es. Manda la LISTA DE PRECIOS (la regex toma también los nombres viejos:
+    // "1 Mayorista Responsable Inscripto", "2 Mayorista Sin Facturar"); si el documento es viejo y no
+    // la tiene cargada, se cae a la categoría del cliente, que dice lo mismo con otras palabras.
+    const s = String((v&&v.listaPrecios)||'') || String((v&&v.categoria)||'');
+    const mayorista  = /mayorista/i.test(s);
+    const sinFactura = /sin factura/i.test(s) || /desc(uento)?\s*10[.,]5/i.test(s);
     const retira = String((v&&v.zona)||'')==='retiro';
+    // Al mayorista se le entrega en su depósito/corralón, no en obra con hidrogrúa (pedido de Marcelo,
+    // 05/08). Si RETIRA no se le habla de la entrega, sea mayorista o minorista.
     const entrega = retira
       ? '<b>Retiro en fábrica:</b> Bolívar 381, Toledo. De lunes a viernes de 6:00 a 13:30 hs. '+
         'Avisar con 24 hs de anticipación al 3517 60-5362.'
+      : mayorista
+      ? '<b>Métodos de Envíos:</b> Servicio de Entrega en su depósito o corralón para revendedores de '+
+        'Córdoba y Gran Córdoba hasta 30 km de Circunvalación.'
       : '<b>Métodos de Envíos:</b> Servicio de Entrega en obra incluido con descarga a pie del camión con hidrogrúa '+
         '(únicamente en la Provincia de Córdoba, para el resto de las Provincias, el cliente deberá contratar un autoelevador para realizar la descarga). '+
         'Las fechas de entrega pueden variar en función de la logística y las condiciones climáticas.';
-    // Las cuotas sin interés son una promo MINORISTA: en un presupuesto mayorista —facturado o no—
-    // no van (pedido de Marcelo, 05/08). Se decide por la LISTA DE PRECIOS, que es la que define el
-    // trato comercial; la regex toma también los nombres viejos de las listas ("1 Mayorista
-    // Responsable Inscripto", "2 Mayorista Sin Facturar"), que siguen guardados en documentos previos.
-    const mayorista = /mayorista/i.test(String((v&&v.listaPrecios)||''));
-    const cuotas = mayorista ? ''
-      : ' 3 y 6 cuotas sin interés con tarjetas bancarizadas y 12 cuotas sin interés para clientes del Bco. Macro.';
+    // Formas de pago, tres textos distintos (pedido de Marcelo, 05/08):
+    //  · MAYORISTA SIN FACTURA: contado y nada más — no se le da plazo a quien no lleva factura.
+    //  · MAYORISTA FACTURADO: contado, débito o valor a 30 días. Sin "Precios con IVA": va con IVA
+    //    discriminado en factura A, así que esa aclaración es de la lista minorista.
+    //  · MINORISTA: como estaba, con las cuotas sin interés (es una promo minorista).
+    const pago = mayorista
+      ? (sinFactura ? 'Pago Contado.' : 'Pago Contado, Débito o Valor a 30 días de fecha de factura.')
+      : 'Precios con IVA - Pago Contado, Débito o Valor a 30 días de fecha de factura.'+
+        ' 3 y 6 cuotas sin interés con tarjetas bancarizadas y 12 cuotas sin interés para clientes del Bco. Macro.';
     return '<div class="doc-obs" style="font-size:10px;margin-top:6px">'+
-      '<div><b>Formas de Pago:</b> Precios con IVA - Pago Contado, Débito o Valor a 30 días de fecha de factura.'+cuotas+'</div>'+
+      '<div><b>Formas de Pago:</b> '+pago+'</div>'+
       '<div style="margin-top:3px">'+entrega+'</div>'+
     '</div>';
   }
