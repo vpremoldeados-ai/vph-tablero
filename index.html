@@ -10068,9 +10068,17 @@ function buildFilterTable(cfg){
       c.FS.getDocs(c.FS.collection(c.db,'vph_leads'))
     ]);
     const out=[];
+    // ⚠️ Un corralón que ya compra suele tener ficha en vph_clientes Y un lead viejo del embudo
+    // (el que se confirmó cuando compró). Sin deduplicar aparecía DOS veces en el checklist, y
+    // peor: se podía marcar "tiene cartel" en una fila y quedar la otra en "falta visitar".
+    // Gana la FICHA del cliente (es el dato maestro); el lead viejo no se borra, solo no se lista.
+    const normNom = s => String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Z0-9]/g,'');
+    const yaEstan=new Set();
     sc.forEach(d=>{ const x=d.data(); if(!esMayCat(x.categoria)) return;
+      yaEstan.add(normNom(x.nombre));
       out.push({col:'vph_clientes', uid:d.id, nombre:x.nombre||'—', origen:'Cliente', carteleria:x.carteleria||{estado:'pendiente',fecha:'',nota:''}}); });
     sl.forEach(d=>{ const x=d.data(); if(!esMayCat(x.categoria)) return;
+      if(yaEstan.has(normNom(x.cliente))) return;   // ya está como cliente: no duplicar
       out.push({col:'vph_leads', uid:d.id, nombre:x.cliente||'—', origen:'Lead', carteleria:x.carteleria||{estado:'pendiente',fecha:'',nota:''}}); });
     out.sort((a,b)=>{ const oa=CARTEL_ESTADOS.findIndex(e=>e.k===(a.carteleria.estado||'pendiente')), ob=CARTEL_ESTADOS.findIndex(e=>e.k===(b.carteleria.estado||'pendiente'));
       if(oa!==ob) return oa-ob; return a.nombre.localeCompare(b.nombre,'es'); });
