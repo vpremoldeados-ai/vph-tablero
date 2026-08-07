@@ -10095,7 +10095,14 @@ function buildFilterTable(cfg){
   }
   const cartelAbrirBtn=$('crm-cartel-abrir');
   if(cartelAbrirBtn){ cartelAbrirBtn.onclick=()=>{ $('crm-cartel-modal').classList.add('open'); drawCartel(); };
-    drawCartel(); }   // precarga el contador (N/total) en el botón sin esperar al primer click
+    // El contador (N/total) del botón se precarga solo, pero recién cuando la sesión de Firebase
+    // esté lista — llamarlo en el boot del módulo daba "0/0" porque corría antes del login.
+    if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>drawCartelBadge()); }
+    else drawCartelBadge();
+  }
+  // Actualiza SOLO el número del botón (sin pintar la tabla) — para el estado inicial, antes de abrir el modal.
+  async function drawCartelBadge(){ const filas=await cargarCartel(); const tiene=filas.filter(f=>f.carteleria.estado==='tiene').length;
+    if(cartelAbrirBtn) cartelAbrirBtn.textContent='🪧 Cartelería ('+tiene+'/'+filas.length+')'; }
   const cartelCerrarBtn=$('crm-cartel-cerrar');
   if(cartelCerrarBtn) cartelCerrarBtn.onclick=()=>$('crm-cartel-modal').classList.remove('open');
   $('crm-cartel-modal').addEventListener('click',e=>{ if(e.target===$('crm-cartel-modal')) $('crm-cartel-modal').classList.remove('open'); });
