@@ -9393,7 +9393,10 @@ function buildFilterTable(cfg){
   // Vista Lista: alternativa al kanban horizontal, pensada para leer rápido sin scrollear a los costados
   // y con filtros por columna (Estado / Producto / Zona / Origen), como pidió Sofía.
   let VIEW = localStorage.getItem('vph_crm_view')==='lista' ? 'lista' : 'tablero';
-  let filtro = {estado:'', producto:'', zona:'', origen:''};
+  // `canal` separa MAYORISTA de MINORISTA: desde que se cargaron los ~31 corralones revendedores
+  // (06/08) el pipeline mezcla dos negocios muy distintos, y sin este filtro Sofía no puede
+  // trabajar una tanda sin tropezarse con la otra.
+  let filtro = {estado:'', producto:'', zona:'', origen:'', canal:''};
   // Los leads Confirmados (ya se convirtieron en venta) y Perdidos no "requieren seguimiento" — quedan
   // archivados y ocultos del listado/tablero por defecto, para que Sofía solo vea lo que sigue en gestión.
   // "Ver archivados" los vuelve a mostrar; elegir el estado a mano en el filtro también los muestra.
@@ -9452,6 +9455,10 @@ function buildFilterTable(cfg){
     if(filtro.producto) leads=leads.filter(l=>(l.items||[]).some(it=>it&&it.producto===filtro.producto));
     if(filtro.zona) leads=leads.filter(l=>(l.zona||'')===filtro.zona);
     if(filtro.origen) leads=leads.filter(l=>(l.origen||'')===filtro.origen);
+    // Mayorista/minorista sale de la categoría del lead, que admite variantes ("MAYORISTA Desc 10.5%",
+    // "Minorista Descuento 10.5%"): se matchea por substring para que las dos caigan en su canal.
+    if(filtro.canal) leads=leads.filter(l=>{ const c=String(l.categoria||'').toUpperCase();
+      return filtro.canal==='MAYORISTA' ? c.includes('MAYORISTA') : (c.includes('MINORISTA') || !c); });
     // KPIs
     const activos=leads.filter(l=>ACTIVOS.includes(l.estado));
     const valorPipe=activos.reduce((a,l)=>a+num(l.monto),0);
@@ -9498,15 +9505,18 @@ function buildFilterTable(cfg){
     const origenes=[...new Set(source.map(l=>l.origen).filter(Boolean))];
     const sel=(id,label,valor,opts)=> '<select id="'+id+'" title="'+label+'" style="padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;max-width:170px">'+
       '<option value="">'+label+' (todos)</option>'+ opts.map(([v,l])=>'<option value="'+esc(v)+'"'+(valor===v?' selected':'')+'>'+esc(l)+'</option>').join('') +'</select>';
+    const nMay=source.filter(l=>String(l.categoria||'').toUpperCase().includes('MAYORISTA')).length;
+    const nMin=source.length-nMay;
     $('crm-filtros').innerHTML =
+      sel('crm-f-canal','Canal',filtro.canal, [['MAYORISTA','Mayorista / corralones ('+nMay+')'],['MINORISTA','Minorista ('+nMin+')']]) +
       sel('crm-f-estado','Estado',filtro.estado, ESTADOS.map(e=>[e.k,e.l])) +
       sel('crm-f-producto','Producto',filtro.producto, productos.map(p=>[p,p])) +
       sel('crm-f-zona','Zona',filtro.zona, zonas.map(z=>[z,zLabel(z)])) +
       sel('crm-f-origen','Origen',filtro.origen, origenes.map(o=>[o,o])) +
-      (filtro.estado||filtro.producto||filtro.zona||filtro.origen ? '<button class="cmp-rowbtn" id="crm-f-limpiar">✕ Limpiar filtros</button>' : '');
-    [['crm-f-estado','estado'],['crm-f-producto','producto'],['crm-f-zona','zona'],['crm-f-origen','origen']].forEach(([id,key])=>{
+      (filtro.estado||filtro.producto||filtro.zona||filtro.origen||filtro.canal ? '<button class="cmp-rowbtn" id="crm-f-limpiar">✕ Limpiar filtros</button>' : '');
+    [['crm-f-canal','canal'],['crm-f-estado','estado'],['crm-f-producto','producto'],['crm-f-zona','zona'],['crm-f-origen','origen']].forEach(([id,key])=>{
       const el=$(id); if(el) el.onchange=()=>{ filtro[key]=el.value; render(); }; });
-    if($('crm-f-limpiar')) $('crm-f-limpiar').onclick=()=>{ filtro={estado:'',producto:'',zona:'',origen:''}; render(); };
+    if($('crm-f-limpiar')) $('crm-f-limpiar').onclick=()=>{ filtro={estado:'',producto:'',zona:'',origen:'',canal:''}; render(); };
   }
   function bindAcciones(root){
     root.querySelectorAll('[data-act]').forEach(el=> el.onclick=()=>{ const l=DB.leads.find(x=>x._uid==el.dataset.id); if(!l)return; const a=el.dataset.act;
@@ -9573,7 +9583,11 @@ function buildFilterTable(cfg){
   function setView(v){ VIEW=v; localStorage.setItem('vph_crm_view', v);
     $('crm-view-lista').classList.toggle('active', v==='lista');
     $('crm-view-tablero').classList.toggle('active', v==='tablero');
-    $('crm-filtros').style.display = v==='lista' ? 'flex' : 'none';
+    // Los filtros se muestran en las DOS vistas: render() filtra el array antes de pintar, así que
+    // funcionan igual en el tablero kanban. Antes solo aparecían en Lista, y como el kanban es la
+    // vista por defecto, el filtro de canal (mayorista/minorista) quedaba invisible justo donde más
+    // se necesita: la columna "Nuevo" con los corralones mezclados con los leads minoristas.
+    $('crm-filtros').style.display = 'flex';
     $('crm-board').style.display = v==='tablero' ? '' : 'none';
     $('crm-tabla-wrap').style.display = v==='lista' ? '' : 'none';
     render(); }
@@ -10062,15 +10076,30 @@ function buildFilterTable(cfg){
       if(oa!==ob) return oa-ob; return a.nombre.localeCompare(b.nombre,'es'); });
     return out;
   }
+  let cartelFiltro='';   // '' = todos · 'pendiente'/'tiene'/'notiene' · 'Cliente'/'Lead'
   async function drawCartel(){
     const body=$('crm-cartel-body'); if(!body) return;
     body.innerHTML='<p style="color:var(--muted);font-size:13px">Cargando…</p>';
-    const filas=await cargarCartel();
-    const tiene=filas.filter(f=>f.carteleria.estado==='tiene').length;
-    const btn=$('crm-cartel-abrir'); if(btn) btn.textContent='🪧 Cartelería ('+tiene+'/'+filas.length+')';
+    const todas=await cargarCartel();
+    const tiene=todas.filter(f=>f.carteleria.estado==='tiene').length;
+    const btn=$('crm-cartel-abrir'); if(btn) btn.textContent='🪧 Cartelería ('+tiene+'/'+todas.length+')';
+    const filas = !cartelFiltro ? todas
+      : (cartelFiltro==='Cliente'||cartelFiltro==='Lead') ? todas.filter(f=>f.origen===cartelFiltro)
+      : todas.filter(f=>(f.carteleria.estado||'pendiente')===cartelFiltro);
+    const n=k=>todas.filter(f=>(f.carteleria.estado||'pendiente')===k).length;
+    const chip=(v,l)=>'<button class="filter-btn'+(cartelFiltro===v?' active':'')+'" data-cartel-f="'+v+'">'+l+'</button>';
     let h='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>falta visitar → tiene cartel → no tiene</b>. '+
       'Se guarda la fecha de la visita sola. La notita es para lo que veas ahí (dirección exacta, quién atendió, etc.).</p>'+
+      '<div class="filter-bar" style="margin-bottom:10px">'+
+        chip('','Todos ('+todas.length+')')+
+        chip('pendiente','Falta visitar ('+n('pendiente')+')')+
+        chip('tiene','Tiene cartel ('+n('tiene')+')')+
+        chip('notiene','No tiene ('+n('notiene')+')')+
+        chip('Cliente','Ya me compran ('+todas.filter(f=>f.origen==='Cliente').length+')')+
+        chip('Lead','Todavía no ('+todas.filter(f=>f.origen==='Lead').length+')')+
+      '</div>'+
       '<div class="tbl-wrap"><table><tr><th>Corralón</th><th>Origen</th><th style="text-align:center">Estado</th><th>Visitado</th><th>Nota</th></tr>';
+    if(!filas.length) h+='<tr><td colspan="5" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach((f,i)=>{ const e=CARTEL_ESTADOS.find(x=>x.k===(f.carteleria.estado||'pendiente'))||CARTEL_ESTADOS[0];
       h+='<tr><td>'+esc(f.nombre)+'</td><td style="color:var(--muted);font-size:12px">'+f.origen+'</td>'+
         '<td style="text-align:center"><button class="cmp-btn" data-cartel-i="'+i+'" style="padding:4px 10px;font-size:12px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
@@ -10079,6 +10108,7 @@ function buildFilterTable(cfg){
     });
     h+='</table></div>';
     body.innerHTML=h;
+    body.querySelectorAll('button[data-cartel-f]').forEach(b=>b.onclick=()=>{ cartelFiltro=b.dataset.cartelF; drawCartel(); });
     body.querySelectorAll('button[data-cartel-i]').forEach(b=>b.onclick=async()=>{
       const f=filas[+b.dataset.cartelI]; const nuevo=cartelSig(f.carteleria.estado||'pendiente');
       const val={estado:nuevo, fecha: nuevo==='pendiente' ? '' : hoyISO, nota:f.carteleria.nota||''};
