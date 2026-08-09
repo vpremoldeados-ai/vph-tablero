@@ -1840,7 +1840,7 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
 // --- Widget Punto de Equilibrio del mes en curso ---
 // El PE en $ depende del MIX mayorista/minorista: PE = Costos Fijos / % contribución marginal.
 // Estimamos la contribución del mes en curso con el costo de MP por kg del último mes cerrado
-// (junio: $9.311.168 / 90.796 kg = $102,55/kg) aplicado a los kg vendidos del mes.
+// (rentabilidad.costoMP ÷ kgVendidos, del doc vph_reportes/dashboard) aplicado a los kg vendidos del mes.
 window.__pintarPE = function(){
   if(!document.getElementById('pe-widget')) return;
   // El facturado del mes se toma EN VIVO (ventas reales del Tablero).
@@ -1860,7 +1860,7 @@ window.__pintarPE = function(){
   const fijosRef = (window.__peFijosRef ? window.__peFijosRef() : null);
   const fijosPE  = fijosRef ? fijosRef.ref : rentabilidad.costosFijos;
   const pe = fijosPE / margenMesPct;                                     // PE ajustado al mix del mes
-  const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
+  const peBase = rentabilidad.puntoEquilibrio;                           // PE del último cierre (vph_reportes/dashboard)
   // Se compara contra el NETO (sin IVA), que es la misma base sobre la que se calcula el margen de
   // contribución. Antes se comparaba el total CON IVA contra un PE derivado del neto: la barra
   // mostraba más avance del real (en julio, $3,7 M de más).
@@ -1882,7 +1882,7 @@ window.__pintarPE = function(){
         ? 'costos fijos de referencia ' + fmt$(fijosRef.ref) + ' (promedio de los últimos ' + fijosRef.mesesPromedio + ' meses, porque este mes todavía se cargaron ' + fmt$(fijosRef.real) + ')'
         : 'costos fijos del mes ' + fmt$(fijosRef.ref) + ' EN VIVO')
     : 'costos fijos del último cierre ' + fmt$(fijosPE);
-  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ' · ' + notaFijos + ') · todo SIN IVA · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
+  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ' · ' + notaFijos + ') · todo SIN IVA · PE con mix de ' + ((META&&META.mesCerrado)?META.mesCerrado:'último cierre') + ': ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
   document.getElementById('pe-widget').innerHTML =
     '<div class="progress-wrap"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:5px">' +
       '<span>Facturado neto: ' + fmt$(v) + ' (' + (v/pe*100).toFixed(0) + '% del punto de equilibrio)</span>' +
@@ -2307,12 +2307,13 @@ window.__pintarCostos = function(){
   // ---- Fallback: foto del último cierre (solo hasta que lleguen los datos en vivo) ----
   const ult = comprasMensuales[comprasMensuales.length-1];
   const jun = comprasMensuales[0];
+  const cierre = (META&&META.mesCerrado) ? META.mesCerrado : 'último cierre';
   document.getElementById('kpis-costos').innerHTML =
     kpi('Compras '+ult.mes, fmt$(ult.total), 'Del último cierre', 'info') +
-    kpi('Costos fijos mensuales (base jun)', fmt$(rentabilidad.costosFijos), 'Incluye provisión de aguinaldo '+fmt$(rentabilidad.aguinaldoProvision||0), 'info') +
+    kpi('Costos fijos mensuales (base '+cierre+')', fmt$(rentabilidad.costosFijos), 'Incluye provisión de aguinaldo '+fmt$(rentabilidad.aguinaldoProvision||0), 'info') +
     kpi('Punto de equilibrio', fmt$(rentabilidad.puntoEquilibrio), 'Facturación mínima para no perder', 'warn') +
-    kpi('Variables / total (jun)', (jun.variables/jun.total*100).toFixed(0)+'%', 'Materia prima, fletes, insumos', 'info') +
-    kpi('Utilidad proyectada (jun)', fmt$(rentabilidad.utilidadProyectada), 'Después de costos fijos', 'good');
+    kpi('Variables / total ('+cierre+')', (jun.variables/jun.total*100).toFixed(0)+'%', 'Materia prima, fletes, insumos', 'info') +
+    kpi('Utilidad proyectada ('+cierre+')', fmt$(rentabilidad.utilidadProyectada), 'Después de costos fijos', 'good');
   if(_chCompras) _chCompras.destroy();
   _chCompras = new Chart(document.getElementById('chCompras'), {
     type:'bar',
@@ -2344,7 +2345,7 @@ window.__pintarCostos = function(){
     '<tr><td>Provisión mensual de aguinaldo (semestral / 6)</td><td class="num">'+fmt$(rentabilidad.aguinaldoProvision||0)+'</td></tr>' +
     '<tr class="total"><td>Total costos fijos mensuales</td><td class="num">'+fmt$(rentabilidad.costosFijos)+'</td></tr>' +
     '<tr><td>Punto de equilibrio (facturación mínima)</td><td class="num"><b>'+fmt$(rentabilidad.puntoEquilibrio)+'</b></td></tr>' +
-    '<tr><td>Facturación junio → margen de seguridad</td><td class="num" style="color:var(--green)"><b>+'+fmt$(rentabilidad.margenSeguridad)+'</b></td></tr>';
+    '<tr><td>Facturación '+cierre+' → margen de seguridad</td><td class="num" style="color:var(--green)"><b>+'+fmt$(rentabilidad.margenSeguridad)+'</b></td></tr>';
 };
 window.__pintarCostos();
 
