@@ -9038,7 +9038,8 @@ function buildFilterTable(cfg){
       (mats.length?'':'<p class="note" style="color:var(--red)">⚠️ Todavía no hay materias primas cargadas. Cargalas primero en la pestaña <b>Insumos y MP</b> con precio, unidad de compra, rinde e IVA.</p>')+
       '<div class="tbl-wrap"><table><tr><th>Materia prima (del master)</th><th>Uso</th><th class="num">Cantidad</th><th class="num">Precio uso</th><th class="num">Subtotal</th><th></th></tr>'+rows+'</table></div>'+
       '<button class="cmp-btn" id="cst-add" style="margin:6px 0">+ Ingrediente</button>'+
-      '<div class="cmp-form-grid" style="margin:10px 0"><div class="cmp-field"><label>Rinde (unidades por maquinada)</label><input id="cst-rinde" inputmode="decimal" value="'+esc(c.rinde)+'"></div><div class="cmp-field"><label>Flete por unidad (opcional)</label><input id="cst-flete" inputmode="decimal" value="'+esc(c.flete||0)+'"></div></div>'+
+      '<div class="cmp-form-grid" style="margin:10px 0"><div class="cmp-field"><label>Rinde (unidades por maquinada)</label><input id="cst-rinde" inputmode="decimal" value="'+esc(c.rinde)+'"></div><div class="cmp-field"><label>Flete por unidad — SOLO mayorista (al minorista se le cobra aparte)</label><input id="cst-flete" inputmode="decimal" value="'+esc(c.flete||0)+'"></div></div>'+
+      '<p class="note" style="margin:-2px 0 10px">El flete se resta <b>solo</b> a las listas mayoristas, porque a ellos la entrega les va incluida en el precio; al minorista se le cobra aparte y por eso no le baja el margen. Sale de dividir el precio de la zona por las unidades del pallet (ej. LC60: $28.000 ÷ 75 = $373/u a Córdoba Capital).</p>'+
       '<h4 style="margin:12px 0 4px">Resultado</h4>'+
       '<div class="kpis" id="cst-resumen" style="margin:0"></div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cst-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cst-save">Guardar costeo</button></div>';
@@ -9054,16 +9055,22 @@ function buildFilterTable(cfg){
     updateResumen();
   }
   function updateResumen(){ if(!costeando) return; const c=costeando.costeo; const r=calcCosteo(c);
-    const mMin=margenDe(costeando.precioMinorista, r.costoUnidad, costeando.ivaVenta, c.flete);
+    // El flete se resta SOLO a las listas mayoristas: al mayorista la entrega le va incluida en el
+    // precio, al minorista se le cobra aparte (decisión de Marcelo, 09/08). Antes se restaba a las dos
+    // y cargar el flete hundía el margen minorista, que en realidad no lo paga VPH.
+    const mMin=margenDe(costeando.precioMinorista, r.costoUnidad, costeando.ivaVenta, 0);
     const mMay=margenDe(costeando.precioMayorista, r.costoUnidad, costeando.ivaVenta, c.flete);
+    // "Mayorista Sin Facturar" va NO GRAVADO: no se le saca IVA, el precio es neto entero (§3 CLAUDE.md).
+    const mSF =margenDe(costeando.precioMayoristaSF, r.costoUnidad, 'nogravado', c.flete);
     const cls=m=> m.margen<0?'bad':(m.pct<30?'warn':'good');
     const K=(label,cl,value,sub)=>'<div class="kpi '+(cl||'')+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+(sub||'')+'</div></div>';
     const el=$('cst-resumen'); if(!el) return;
     el.innerHTML=
       K('Costo maquinada','info',money(r.costoMaq), r.rinde>0?('rinde '+Math.round(r.rinde)+' u → hormigón '+money(r.costoHormigon)+'/u'):'⚠️ falta cargar el rinde') +
       K('Costo por unidad','info',money(r.costoUnidad),'Hormigón '+money(r.costoHormigon)+' + directos '+money(r.costoDir)+' · IVA créd. '+money(r.ivaCredUnidad)) +
-      K('Margen Minorista', num(costeando.precioMinorista)?cls(mMin):'', num(costeando.precioMinorista)?(money(mMin.margen)+' · '+mMin.pct.toFixed(1)+'%'):'—', num(costeando.precioMinorista)?('sobre neto '+money(mMin.neto)):'Sin precio minorista en el catálogo') +
-      K('Margen Mayorista', num(costeando.precioMayorista)?cls(mMay):'', num(costeando.precioMayorista)?(money(mMay.margen)+' · '+mMay.pct.toFixed(1)+'%'):'—', num(costeando.precioMayorista)?('sobre neto '+money(mMay.neto)):'Sin precio mayorista en el catálogo');
+      K('Margen Minorista', num(costeando.precioMinorista)?cls(mMin):'', num(costeando.precioMinorista)?(money(mMin.margen)+' · '+mMin.pct.toFixed(1)+'%'):'—', num(costeando.precioMinorista)?('sobre neto '+money(mMin.neto)+' · el flete lo paga el cliente'):'Sin precio minorista en el catálogo') +
+      K('Margen Mayorista', num(costeando.precioMayorista)?cls(mMay):'', num(costeando.precioMayorista)?(money(mMay.margen)+' · '+mMay.pct.toFixed(1)+'%'):'—', num(costeando.precioMayorista)?('sobre neto '+money(mMay.neto)+(num(c.flete)?(' − flete '+money(c.flete)):' · sin flete cargado')):'Sin precio mayorista en el catálogo') +
+      K('Margen Mayorista S/Factura', num(costeando.precioMayoristaSF)?cls(mSF):'', num(costeando.precioMayoristaSF)?(money(mSF.margen)+' · '+mSF.pct.toFixed(1)+'%'):'—', num(costeando.precioMayoristaSF)?('no gravado, el precio es neto entero'+(num(c.flete)?(' − flete '+money(c.flete)):'')):'Sin precio mayorista s/factura en el catálogo');
   }
 
   // ---------- Importar desde ventas/compras ----------
