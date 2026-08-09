@@ -9025,6 +9025,10 @@ function buildFilterTable(cfg){
   function closeCosteo(){ $('bd-costeo-modal').classList.remove('open'); costeando=null; }
   function drawCosteo(){
     const c=costeando.costeo; const mats=mpList();
+    // Productos que YA tienen receta cargada, para poder copiarla. En VPH la maquinada es la MISMA
+    // para todos los productos (cemento, arena, binder, aditivo) y lo único que cambia es la cantidad
+    // de HIERRO y el RINDE — sin esto había que cargar las 5 materias primas a mano en cada producto.
+    const conReceta=(store.vph_productos||[]).filter(p=> p._uid!==costeando._uid && p.costeo && Array.isArray(p.costeo.ing) && p.costeo.ing.length);
     const optsFor=uid=> '<option value="">— elegir materia prima —</option>'+mats.map(m=>'<option value="'+m._uid+'"'+(m._uid===uid?' selected':'')+'>'+esc(m.nombre)+' ('+money(precioUsoDe(m._uid))+'/'+esc(m.unidadUso||m.unidad||'u')+')</option>').join('');
     const rows=(c.ing||[]).map((r,i)=> '<tr>'+
       '<td><select data-ingsel="'+i+'" style="min-width:190px">'+optsFor(r.insumoUid)+'</select></td>'+
@@ -9037,7 +9041,12 @@ function buildFilterTable(cfg){
       '<p class="note" style="margin-top:0">Cada ingrediente sale del master <b>Insumos y MP</b> (ahí están los precios). <b>Por maquinada</b> = se divide por el rinde; <b>por unidad</b> = va directo (ej: hierro). Si cambiás un precio en el master, se recostea al reabrir.</p>'+
       (mats.length?'':'<p class="note" style="color:var(--red)">⚠️ Todavía no hay materias primas cargadas. Cargalas primero en la pestaña <b>Insumos y MP</b> con precio, unidad de compra, rinde e IVA.</p>')+
       '<div class="tbl-wrap"><table><tr><th>Materia prima (del master)</th><th>Uso</th><th class="num">Cantidad</th><th class="num">Precio uso</th><th class="num">Subtotal</th><th></th></tr>'+rows+'</table></div>'+
-      '<button class="cmp-btn" id="cst-add" style="margin:6px 0">+ Ingrediente</button>'+
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">'+
+        '<button class="cmp-btn" id="cst-add">+ Ingrediente</button>'+
+        (conReceta.length ? '<select id="cst-copiar"><option value="">📋 Copiar receta de otro producto…</option>'+
+          conReceta.map(p=>'<option value="'+esc(p._uid)+'">'+esc(p.codigo||p.nombre)+' — '+esc(p.nombre)+'</option>').join('')+'</select>'+
+          '<span style="color:var(--muted);font-size:11.5px">La maquinada es la misma: después ajustá el <b>hierro</b> y el <b>rinde</b>.</span>' : '')+
+      '</div>'+
       '<div class="cmp-form-grid" style="margin:10px 0"><div class="cmp-field"><label>Rinde (unidades por maquinada)</label><input id="cst-rinde" inputmode="decimal" value="'+esc(c.rinde)+'"></div><div class="cmp-field"><label>Flete por unidad — SOLO mayorista (al minorista se le cobra aparte)</label><input id="cst-flete" inputmode="decimal" value="'+esc(c.flete||0)+'"></div></div>'+
       '<p class="note" style="margin:-2px 0 10px">El flete se resta <b>solo</b> a las listas mayoristas, porque a ellos la entrega les va incluida en el precio; al minorista se le cobra aparte y por eso no le baja el margen. Sale de dividir el precio de la zona por las unidades del pallet (ej. LC60: $28.000 ÷ 75 = $373/u a Córdoba Capital).</p>'+
       '<h4 style="margin:12px 0 4px">Resultado</h4>'+
@@ -9048,6 +9057,20 @@ function buildFilterTable(cfg){
     $('bd-costeo-body').querySelectorAll('input[data-ingc]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.ingc; c.ing[i].cantidad=num(el.value); const sub=$('bd-costeo-body').querySelector('[data-ingsub="'+i+'"]'); if(sub) sub.textContent=money(num(c.ing[i].cantidad)*precioUsoDe(c.ing[i].insumoUid)); updateResumen(); }));
     $('bd-costeo-body').querySelectorAll('[data-ingdel]').forEach(b=> b.onclick=()=>{ c.ing.splice(+b.dataset.ingdel,1); drawCosteo(); });
     $('cst-add').onclick=()=>{ c.ing.push({insumoUid:'',cantidad:0,porUnidad:false}); drawCosteo(); };
+    // Copia la receta de otro producto. Copia SOLO ingredientes + rinde + flete: el precio, el código
+    // y el costo del producto que estás editando NO se tocan. Queda en pantalla sin guardar, así se
+    // ajusta el hierro y el rinde antes de confirmar.
+    const selCp=$('cst-copiar');
+    if(selCp) selCp.addEventListener('change',()=>{
+      const src=(store.vph_productos||[]).find(p=>p._uid===selCp.value); selCp.value='';
+      if(!src || !src.costeo) return;
+      if((c.ing||[]).length && !confirm('Esto reemplaza los ingredientes y el rinde de «'+(costeando.nombre||'')+'» por los de «'+(src.codigo||src.nombre)+'».\n\n¿Seguir?')) return;
+      c.ing=JSON.parse(JSON.stringify(src.costeo.ing||[]));
+      c.rinde=num(src.costeo.rinde); c.flete=num(src.costeo.flete);
+      drawCosteo();
+      const h=(c.ing||[]).find(x=>x.porUnidad);
+      alert('Receta copiada de '+(src.codigo||src.nombre)+'.\n\nAjustá ahora las dos cosas que cambian entre productos:\n· la cantidad de HIERRO'+(h?' (hoy '+h.cantidad+')':'')+'\n· el RINDE (hoy '+c.rinde+' u por maquinada)\n\nTodavía no se guardó: revisá el margen y tocá «Guardar costeo».');
+    });
     $('cst-rinde').addEventListener('input',()=>{ c.rinde=num($('cst-rinde').value); updateResumen(); });
     $('cst-flete').addEventListener('input',()=>{ c.flete=num($('cst-flete').value); updateResumen(); });
     $('cst-cancel').onclick=closeCosteo;
