@@ -979,6 +979,7 @@
           <button class="cmp-btn" id="bd-params" title="Editar las variables que usan los cálculos (objetivo de kg/día, días de curado, validez de presupuestos, etc.)">⚙️ Parámetros</button>
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
+          <button class="cmp-btn" id="bd-lista-pdf" title="Genera el PDF de la lista de precios elegida (Mayorista / Mayorista Contado / Minorista) con los precios EN VIVO del catálogo — para compartir con los corralones.">📄 Lista de precios (PDF)</button>
           <button class="cmp-btn cmp-btn-primary" id="bd-backup" title="Descarga un único JSON con TODAS las colecciones (ventas, compras, presupuestos, leads, producción, etc.)">🗄️ Backup completo</button>
         </div>
       </div>
@@ -9243,11 +9244,38 @@ function buildFilterTable(cfg){
   window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
   window.__catalogoProveedores = ()=> store.vph_proveedores.slice();   // para el módulo Cheques (emitidos)
 
+  // ---------- Lista de precios en PDF (pedido de Marcelo, 10/08) ----------
+  // Con cada aumento, los listados para los corralones se rearmaban a mano. Acá solo se elige la
+  // lista; el documento lo arma el módulo Documentos (window.__imprimir.listaPrecios) leyendo el
+  // catálogo EN VIVO — los mismos precios que usan Ventas y Presupuestos, así que no puede quedar
+  // desactualizado. La llamada cruzada va recién en el click (§2: nunca durante la carga).
+  function elegirListaPdf(){
+    const viejo=document.getElementById('bd-lp-modal'); if(viejo) viejo.remove();
+    const ov=document.createElement('div'); ov.id='bd-lp-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100001;display:flex;align-items:center;justify-content:center;padding:16px';
+    const b='display:block;width:100%;margin:8px 0;padding:12px 14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#111;font:600 14px system-ui;cursor:pointer;text-align:left';
+    ov.innerHTML='<div style="background:#fff;border-radius:14px;padding:18px 20px;max-width:360px;width:100%">'+
+      '<div style="font:800 15px system-ui;color:#111">📄 Lista de precios en PDF</div>'+
+      '<div style="font:12px system-ui;color:#475569;margin:4px 0 8px">Sale con los precios actuales del catálogo.</div>'+
+      '<button style="'+b+'" data-l="may">Mayorista Facturado</button>'+
+      '<button style="'+b+'" data-l="maySF">Mayorista Contado</button>'+
+      '<button style="'+b+'" data-l="min">Minorista</button>'+
+      '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click',e=>{ if(e.target===ov){ ov.remove(); return; }
+      const btn=e.target.closest('button'); if(!btn) return; ov.remove();
+      if(!btn.dataset.l) return;
+      if(window.__imprimir && window.__imprimir.listaPrecios) window.__imprimir.listaPrecios({lista:btn.dataset.l});
+      else alert('El módulo de Documentos no está disponible.');
+    });
+  }
+
   $('bd-nuevo').onclick=()=>openForm(null);
   $('bd-cerrar').onclick=closeForm;
   $('bd-costeo-cerrar').onclick=closeCosteo;
   $('bd-import').onclick=importar;
   $('bd-export').onclick=exportJSON;
+  $('bd-lista-pdf').onclick=elegirListaPdf;
   $('bd-backup').onclick=backupCompleto;
   $('bd-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('bd-modal').addEventListener('click',e=>{ if(e.target===$('bd-modal')) closeForm(); });
@@ -12640,7 +12668,50 @@ function buildFilterTable(cfg){
     return st+lote.map(hoja).join('')+pie();
   }
 
+  // ---------- Lista de precios (pedido de Marcelo, 10/08) ----------
+  // Los listados que se comparten con los corralones se rearmaban a mano en cada aumento. Acá salen
+  // del catálogo EN VIVO (window.__catalogoProductos — los mismos precios que usan Ventas y
+  // Presupuestos), así que el PDF no puede quedar desactualizado respecto del Tablero.
+  // ⚠️ Fecha propia: HOY/p2 NO existen en este módulo (§3: cada IIFE tiene sus helpers).
+  const LISTAS_PDF = {
+    min:   { campo:'precioMinorista',   nombre:'Minorista',
+             cond:'Precios finales por unidad, IVA incluido. El flete se cotiza aparte según la zona de entrega.' },
+    may:   { campo:'precioMayorista',   nombre:'Mayorista',
+             cond:'Precios finales por unidad, IVA incluido. Formas de pago: Pago Contado, Débito o Valor a 30 días de fecha de factura. '+
+                  'Entrega en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).' },
+    maySF: { campo:'precioMayoristaSF', nombre:'Mayorista Contado',
+             cond:'Precios por unidad. Forma de pago: Pago Contado. '+
+                  'Entrega en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).' }
+  };
+  function listaPrecios(o){
+    o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
+    const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
+      .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
+      // LC602H es la variante interna de la base reforzada: se vende como parte del pallet de LC60,
+      // no suelta — listarla duplicaría la Loseta 60 con el mismo precio.
+      .filter(p=>String(p.codigo||'')!=='LC602H')
+      .sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'));
+    if(!prods.length){ alert('No hay productos con precio cargado en la lista "'+L.nombre+'".'); return; }
+    const d=new Date(); const pad=n=>String(n).padStart(2,'0');
+    const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
+    const hoyISO=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+    const conM2=prods.some(p=>num(p.unidadesPorM2)>0);
+    const filas=prods.map(p=>{ const pu=num(p[L.campo]); const uxm2=num(p.unidadesPorM2);
+      return '<tr><td>'+esc(p.codigo||'')+'</td><td>'+esc(p.nombre||'')+'</td>'+
+        '<td class="n">'+money(pu)+'</td>'+
+        (conM2?('<td class="n">'+(uxm2>0?money(pu*uxm2)+' <span style="color:#666">('+pct(uxm2)+' u/m²)</span>':'—')+'</td>'):'')+
+        '<td class="n">'+(num(p.udPorPallet)>0?nf(p.udPorPallet):'—')+'</td></tr>'; }).join('');
+    const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
+      '<table class="doc-tab"><thead><tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+
+      (conM2?'<th class="n">Precio x m²</th>':'')+'<th class="n">Unid. x pallet</th></tr></thead><tbody>'+filas+'</tbody></table>'+
+      '<div class="doc-obs"><b>Condiciones:</b> '+esc(L.cond)+'<br>'+
+      'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
+      '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Lista '+esc(L.nombre)+' — vigente desde '+esc(hoy)+'</span></div>';
+    mostrar(html, nombreArchivo('Lista de precios '+L.nombre, '', '', hoyISO));
+  }
+
   window.__imprimir = {
+    listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'min'} — la usa Base de Datos (📄 Lista de precios)
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
