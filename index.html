@@ -4932,7 +4932,44 @@ function buildFilterTable(cfg){
     const cat=catProductos();
     return cat.find(p=>String(p.codigo||'').trim().toUpperCase()===up) ||
            cat.find(p=>String(p.nombre||'').trim().toUpperCase()===up) || null; }
-  function datalistProdCmp(){ return '<datalist id="f-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+(p.tipo?' · '+esc(p.tipo):'')+'</option>').join('')+'</datalist>'; }
+  // Lo que VPH COMPRA no es lo mismo que lo que VENDE: "Productos varios de Ferretería", "Flete",
+  // "Diesel" y demás no están (ni deben estar) en el catálogo de Base de Datos, así que el
+  // autocompletado de ítems se quedaba corto y había que tipear todo de nuevo cada vez. Esto suma las
+  // descripciones ya usadas en compras anteriores, ordenadas por las más frecuentes — mismo criterio
+  // que el directorio de proveedores: aprende solo del historial, sin listas que mantener.
+  // Se saltea el texto que pone el lector de tickets cuando no puede discriminar el detalle.
+  function descripcionesDeCompras(){
+    // La clave ignora mayúsculas, tildes y espacios de más, así "Productos varios de Ferretería" y
+    // "productos varios de ferreteria" cuentan como el MISMO ítem (si no, la lista se llena de
+    // repetidos). Se ofrece la forma en que quedó escrita más veces — suele ser la mejor escrita —,
+    // y ante un empate, la de la compra más reciente.
+    const clave = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+    const m={};
+    (DB.compras||[]).forEach(c=>(c.items||[]).forEach(it=>{
+      const d=String(it&&it.desc||'').replace(/\s+/g,' ').trim();
+      if(d.length<3 || /^seg[uú]n ticket/i.test(d)) return;
+      const k=clave(d);
+      if(!k) return;
+      if(!m[k]) m[k]={n:0, formas:{}};
+      m[k].n++;
+      const fch=String(c.fecha||'');
+      const fm=m[k].formas[d] || (m[k].formas[d]={txt:d, n:0, ult:''});
+      fm.n++; if(fch>fm.ult) fm.ult=fch;
+    }));
+    return Object.keys(m).map(k=>{
+      const mejor=Object.values(m[k].formas).sort((a,b)=> b.n-a.n || String(b.ult).localeCompare(String(a.ult)))[0];
+      return { desc:mejor.txt, n:m[k].n };
+    }).sort((a,b)=> b.n-a.n || a.desc.localeCompare(b.desc)).slice(0,200);
+  }
+  function datalistProdCmp(){
+    const cat=catProductos();
+    const yaEsta={};
+    cat.forEach(p=>{ yaEsta[String(p.nombre||'').trim().toLowerCase()]=1; });
+    const opsCat = cat.map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+(p.tipo?' · '+esc(p.tipo):'')+'</option>').join('');
+    const opsHist = descripcionesDeCompras().filter(d=>!yaEsta[d.desc.toLowerCase()])
+      .map(d=>'<option value="'+esc(d.desc)+'">'+(d.n>1?('compras anteriores · '+d.n+'×'):'compra anterior')+'</option>').join('');
+    return '<datalist id="f-prod-list">'+opsCat+opsHist+'</datalist>';
+  }
   // Tipo sugerido al dar de alta un producto/servicio nuevo desde una compra: si la categoría de la
   // compra es de gasto (costo fijo, mano de obra, gastos varios), lo más común es que sea un Servicio.
   // Un ítem de una categoría de costo fijo (o de gastos varios) suele ser un Servicio, no un producto.
