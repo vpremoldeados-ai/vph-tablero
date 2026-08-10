@@ -11298,9 +11298,22 @@ function buildFilterTable(cfg){
       : it.grupo===1 ? '<span style="color:var(--red)">Faltante'+(it.u.clientes.length?' · '+esc(it.u.clientes[0]):'')+'</span>'
       : it.grupo===2 ? '<span style="color:var(--muted)">🕐 Puede esperar'+(it.u.clientes.length?' · '+esc(it.u.clientes[0].replace(' 🕐',''))+'':'')+'</span>'
       : '<span style="color:var(--amber)">Reponer a mínimo ('+nf(it.s.min)+')</span>';
-    let html='<tr><th>#</th><th>Producto</th><th class="num">A fabricar</th><th class="num">Kg</th><th>Urgencia</th><th>Fabricado est.</th><th>Disponible desde</th></tr>';
+    // Columna PRIORIDAD: Gustavo trabaja en el celular, en la fábrica, y necesita ver de un vistazo
+    // qué va PRIMERO. El orden ya lo calcula el sort de arriba (grupo + fecha comprometida + kg); acá
+    // se hace visible con un número fijo y un nivel de color. El número es un dato de la fila, no la
+    // posición visual: si se reordena la tabla por otra columna, sigue diciendo el orden de fabricación.
+    const NIVEL=[ {t:'URGENTE',   c:'var(--red)',   bg:'var(--red-bg)'},
+                  {t:'FALTA',     c:'var(--red)',   bg:'var(--red-bg)'},
+                  {t:'Puede esperar', c:'var(--muted)', bg:'var(--bg,#f2f5f9)'},
+                  {t:'Reponer',   c:'var(--amber)', bg:'var(--amber-bg)'} ];
+    const prio=(it,i)=>{ const n=NIVEL[it.grupo]||NIVEL[3];
+      return '<span style="display:inline-block;min-width:30px;text-align:center;background:'+n.c+';color:#fff;border-radius:999px;padding:3px 9px;font-weight:800;font-size:13px">'+(i+1)+'º</span>'+
+             '<div style="font-size:10px;font-weight:700;color:'+n.c+';margin-top:2px;letter-spacing:.03em">'+n.t+'</div>'; };
+    let html='<tr><th>Prioridad</th><th>Producto</th><th class="num">A fabricar</th><th class="num">Kg</th><th>Urgencia</th><th>Fabricado est.</th><th>Disponible desde</th></tr>';
     if(!items.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--green);padding:18px">✅ Sin faltantes ni productos bajo mínimo. Nada urgente para fabricar.</td></tr>';
-    items.forEach((it,i)=>{ html+='<tr><td data-label="#">'+(i+1)+'</td><td data-label="Producto"><b>'+esc(it.p.nombre||'')+'</b>'+(it.p.codigo?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.p.codigo)+'</div>':'')+'</td>'+
+    items.forEach((it,i)=>{ const n=NIVEL[it.grupo]||NIVEL[3];
+      html+='<tr'+(i===0?' style="background:'+n.bg+'"':'')+'><td data-label="Prioridad">'+prio(it,i)+(i===0?'<div style="font-size:9.5px;color:'+n.c+';font-weight:700">👉 EMPEZAR ACÁ</div>':'')+'</td>'+
+      '<td data-label="Producto"><b>'+esc(it.p.nombre||'')+'</b>'+(it.p.codigo?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.p.codigo)+'</div>':'')+'</td>'+
       '<td class="num" data-label="A fabricar" style="font-weight:800">'+nf(it.aFab)+' u</td><td class="num" data-label="Kg">'+(it.kg>0?nf(it.kg):'—')+'</td>'+
       '<td data-label="Urgencia">'+motivo(it)+'</td><td data-label="Fabricado est.">'+fmtF(it.finFab)+'</td><td data-label="Disponible desde"><b>'+fmtF(it.listo)+'</b></td></tr>'; });
     cont.innerHTML=html; window.__ordenable('pe-tabla-plan');
