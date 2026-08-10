@@ -5196,7 +5196,12 @@ function buildFilterTable(cfg){
       quedan--; }
     return isoDe(d); };
   // Comisiones de VIUMI por plan de cuotas (Parámetros → Finanzas). Sobre el BRUTO y sin IVA.
-  const viumiPlazo = ()=> Math.max(0, num(window.__param?window.__param('viumiPlazoHabiles',10):10));
+  // El plazo vive en la tabla de Financiación (💳 Financiación), que es donde están todas las
+  // condiciones de VIUMI. El parámetro viejo queda solo como respaldo por si ese módulo no cargó:
+  // tener el mismo dato en dos lugares editables terminaría con los dos diciendo cosas distintas.
+  const viumiPlazo = ()=>{ const f=window.__financiacion?window.__financiacion():null;
+    const v=f&&f.plazoHabiles!=null ? num(f.plazoHabiles) : num(window.__param?window.__param('viumiPlazoHabiles',10):10);
+    return Math.max(0, v||10); };
   const VIUMI_PLANES=[{c:3,k:'viumiCom3',d:8.89},{c:6,k:'viumiCom6',d:13.19},{c:9,k:'viumiCom9',d:18.49},{c:12,k:'viumiCom12',d:22.59}];
   const viumiTasa = c=>{ const p=VIUMI_PLANES.find(x=>x.c===+c); if(!p) return 0;
     return num(window.__param?window.__param(p.k,p.d):p.d); };
@@ -5943,7 +5948,7 @@ function buildFilterTable(cfg){
             VIUMI_PLANES.map(p=>'<option value="'+p.c+'">'+p.c+' cuotas · '+viumiTasa(p.c).toFixed(2).replace('.',',')+'%</option>').join('')+
             '</select><div style="font-size:10.5px;color:var(--muted);margin-top:3px">Solo para cuotas sin interés con tarjeta <b>Macro</b>. Completa el arancel y el IVA; después confirmá contra la liquidación real.</div>') +
           field('Se acredita el','','<input type="date" id="vc-pl-fecha" value="'+esc((ed&&ed.fechaAcreditacion)||addHabilesISO(fechaDef,viumiPlazo()))+'">'+
-            '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+viumiPlazo()+' días <b>hábiles</b> desde la venta (Parámetros → Finanzas).</div>') +
+            '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+viumiPlazo()+' días <b>hábiles</b> desde la venta, salteando feriados. Si no coincide con VIUMI, fijate que el feriado esté cargado en <b>Producción</b>.</div>') +
           field('¿En qué cuenta se acredita?','','<select id="vc-pl-cuenta">'+cuentasOpt((ed&&ed.cuenta)||chequeraCuentaV())+'</select>') +
           field('Arancel $','','<input id="vc-pl-arancel" value="'+((ed&&num(ed.arancel))||0)+'">') +
           field('IVA del arancel $','','<input id="vc-pl-iva" value="'+((ed&&num(ed.ivaArancel))||0)+'">') +
