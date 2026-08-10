@@ -977,6 +977,7 @@
           <button class="cmp-btn cmp-btn-primary" id="bd-nuevo">+ Nuevo</button>
           <button class="cmp-btn" id="bd-params" title="Editar las variables que usan los cálculos (objetivo de kg/día, días de curado, validez de presupuestos, etc.)">⚙️ Parámetros</button>
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
+          <button class="cmp-btn" id="bd-recostear" title="Recalcula el costo de TODOS los productos con receta cargada, usando los precios actuales del master Materia Prima/Insumos, y guarda el resultado">🔄 Recostear todos</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
           <button class="cmp-btn cmp-btn-primary" id="bd-backup" title="Descarga un único JSON con TODAS las colecciones (ventas, compras, presupuestos, leads, producción, etc.)">🗄️ Backup completo</button>
         </div>
@@ -8946,7 +8947,7 @@ function buildFilterTable(cfg){
     $('bd-note').innerHTML = tab==='productos'
       ? 'Los precios por lista (Minorista / Mayorista / Mayorista S/Factura) se usan para autocompletar el precio al cargar una venta.'
       : (tab==='materiaprima'
-        ? '<b>Materia prima</b> = lo que se incorpora al producto (cemento, arena, piedra, hierro, aditivos). Es el master de precios que usa el <b>Costeo por producto</b>: cambiar un precio acá recostea todo lo que lo lleva en la receta. Las fichas viejas sin categoría se muestran acá hasta que se las clasifique.'
+        ? '<b>Materia prima</b> = lo que se incorpora al producto (cemento, arena, piedra, hierro, aditivos). Es el master de precios que usa el <b>Costeo por producto</b>. Después de actualizar precios acá, tocá <b>🔄 Recostear todos</b> para que el catálogo tome los nuevos: el costo grabado en cada producto no se actualiza solo. Las fichas viejas sin categoría se muestran acá hasta que se las clasifique.'
         : (tab==='insumos'
           ? '<b>Insumo</b> = lo que se consume en el proceso pero NO va dentro del producto (diesel, GNC, gas, repuestos). Se cuenta en el Conteo semanal de Producción y entra al pedido de compra cuando cae bajo el mínimo.'
           : '"Importar desde ventas/compras" crea automáticamente las fichas a partir de los '+(tab==='clientes'?'clientes de las ventas':'proveedores de las compras')+' ya cargados (sin duplicar).'));
@@ -9038,7 +9039,7 @@ function buildFilterTable(cfg){
       '<td class="num" data-ingsub="'+i+'">'+money(num(r.cantidad)*precioUsoDe(r.insumoUid))+'</td>'+
       '<td><button class="cmp-rowbtn" data-ingdel="'+i+'">✕</button></td></tr>').join('');
     $('bd-costeo-body').innerHTML=
-      '<p class="note" style="margin-top:0">Cada ingrediente sale del master <b>Insumos y MP</b> (ahí están los precios). <b>Por maquinada</b> = se divide por el rinde; <b>por unidad</b> = va directo (ej: hierro). Si cambiás un precio en el master, se recostea al reabrir.</p>'+
+      '<p class="note" style="margin-top:0">Cada ingrediente sale del master <b>Insumos y MP</b> (ahí están los precios). <b>Por maquinada</b> = se divide por el rinde; <b>por unidad</b> = va directo (ej: hierro). Si cambiás un precio en el master, el cálculo de acá ya lo toma, pero el costo del catálogo recién se actualiza al <b>Guardar costeo</b> — o de una sola vez para todos los productos con <b>🔄 Recostear todos</b>.</p>'+
       (mats.length?'':'<p class="note" style="color:var(--red)">⚠️ Todavía no hay materias primas cargadas. Cargalas primero en la pestaña <b>Insumos y MP</b> con precio, unidad de compra, rinde e IVA.</p>')+
       '<div class="tbl-wrap"><table><tr><th>Materia prima (del master)</th><th>Uso</th><th class="num">Cantidad</th><th class="num">Precio uso</th><th class="num">Subtotal</th><th></th></tr>'+rows+'</table></div>'+
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">'+
@@ -9094,6 +9095,100 @@ function buildFilterTable(cfg){
       K('Margen Minorista', num(costeando.precioMinorista)?cls(mMin):'', num(costeando.precioMinorista)?(money(mMin.margen)+' · '+mMin.pct.toFixed(1)+'%'):'—', num(costeando.precioMinorista)?('sobre neto '+money(mMin.neto)+' · el flete lo paga el cliente'):'Sin precio minorista en el catálogo') +
       K('Margen Mayorista', num(costeando.precioMayorista)?cls(mMay):'', num(costeando.precioMayorista)?(money(mMay.margen)+' · '+mMay.pct.toFixed(1)+'%'):'—', num(costeando.precioMayorista)?('sobre neto '+money(mMay.neto)+(num(c.flete)?(' − flete '+money(c.flete)):' · sin flete cargado')):'Sin precio mayorista en el catálogo') +
       K('Margen Mayorista S/Factura', num(costeando.precioMayoristaSF)?cls(mSF):'', num(costeando.precioMayoristaSF)?(money(mSF.margen)+' · '+mSF.pct.toFixed(1)+'%'):'—', num(costeando.precioMayoristaSF)?('no gravado, el precio es neto entero'+(num(c.flete)?(' − flete '+money(c.flete)):'')):'Sin precio mayorista s/factura en el catálogo');
+  }
+
+  // ---------- Recostear todos: propaga los precios del master a vph_productos.costo ----------
+  // El costeo se recalculaba en pantalla al abrir el modal, pero solo se PERSISTÍA al tocar "Guardar
+  // costeo", producto por producto. Así, subir el cemento en el master dejaba a todo el catálogo con el
+  // costo viejo grabado, y el margen del tablero, los KPIs y el Estado de Resultados seguían leyendo ese
+  // número muerto. Con el ajuste mensual de precios por índice de costos (el método que eligió Marcelo)
+  // esto pasa TODOS los meses, así que la propagación tiene que ser un solo click.
+  //
+  // No recostea a ciegas: un producto con rinde 0, con un ingrediente que ya no existe en el master o con
+  // una materia prima a precio $0 daría un costo silenciosamente MENOR al real (ese es justo el agujero
+  // de precioUsoDe(), que devuelve 0 sin avisar). Esos casos se SALTEAN y se listan aparte para corregir
+  // la ficha: es preferible mantener el costo viejo, que al menos alguien cargó a mano, que grabar un
+  // costo roto que después nadie distingue de uno bueno.
+  function auditarReceta(p){
+    const c=p.costeo||{}; const ing=Array.isArray(c.ing)?c.ing:[]; const problemas=[];
+    const sinInsumo = ing.filter(r=>!r.insumoUid).length;
+    if(sinInsumo) problemas.push(sinInsumo+' ingrediente(s) sin materia prima elegida');
+    const huerfanos = ing.filter(r=> r.insumoUid && !mpDe(r.insumoUid));
+    if(huerfanos.length) problemas.push(huerfanos.length+' ingrediente(s) apuntan a una ficha borrada del master');
+    const sinPrecio = ing.filter(r=> r.insumoUid && mpDe(r.insumoUid) && precioUsoDe(r.insumoUid)<=0)
+      .map(r=> mpDe(r.insumoUid).nombre);
+    if(sinPrecio.length) problemas.push('sin precio de compra en el master: '+sinPrecio.join(', '));
+    const usaMaquinada = ing.some(r=>!r.porUnidad);
+    if(usaMaquinada && num(c.rinde)<=0) problemas.push('rinde en 0 con ingredientes por maquinada (el hormigón quedaría en $0)');
+    return problemas;
+  }
+  function recostearTodos(){
+    if(window.__rol && window.__rol!=='admin'){ alert('El recosteo reescribe los costos del catálogo — solo disponible para el rol admin.'); return; }
+    const prods=(store.vph_productos||[]).filter(p=> p.costeo && Array.isArray(p.costeo.ing) && p.costeo.ing.length);
+    if(!prods.length){ alert('Ningún producto tiene receta cargada todavía.\n\nCargá la receta con el botón "📊 Costeo" de cada producto en la pestaña Productos.'); return; }
+    const ok=[], bloqueados=[];
+    prods.forEach(p=>{
+      const problemas=auditarReceta(p);
+      const nuevo=Math.round(calcCosteo(p.costeo).costoUnidad*100)/100;
+      const viejo=Math.round(num(p.costo)*100)/100;
+      if(problemas.length) bloqueados.push({p,problemas,viejo,nuevo});
+      else ok.push({p,viejo,nuevo,cambia:nuevo!==viejo});
+    });
+    const cambian=ok.filter(x=>x.cambia);
+    const fila=x=>{ const d=x.nuevo-x.viejo; const pct=x.viejo>0?(d/x.viejo*100):0;
+      const cl=d>0?'var(--red)':(d<0?'var(--green)':'var(--muted)');
+      return '<tr><td><b>'+esc(x.p.codigo||'')+'</b> '+esc(x.p.nombre||'')+'</td><td class="num">'+money(x.viejo)+'</td><td class="num">'+money(x.nuevo)+
+        '</td><td class="num" style="color:'+cl+'">'+(d>0?'+':'')+money(d)+(x.viejo>0?' · '+(d>0?'+':'')+pct.toFixed(1)+'%':'')+'</td></tr>'; };
+    $('bd-costeo-title').textContent='Recostear todos — vista previa';
+    $('bd-costeo-body').innerHTML=
+      '<p class="note" style="margin-top:0">Recalcula el costo por unidad de cada producto con receta usando los <b>precios de hoy</b> del master Materia Prima / Insumos, y lo graba en el catálogo. Todavía no se guardó nada.</p>'+
+      (cambian.length
+        ? '<h4 style="margin:12px 0 4px">'+cambian.length+' producto(s) cambian de costo</h4>'+
+          '<div class="tbl-wrap"><table><tr><th>Producto</th><th class="num">Costo actual</th><th class="num">Costo nuevo</th><th class="num">Diferencia</th></tr>'+
+          cambian.map(fila).join('')+'</table></div>'
+        : (ok.length ? '<p class="note" style="color:var(--green)">✅ Los '+ok.length+' producto(s) con receta válida ya están al día: el costo grabado coincide con los precios del master.</p>' : ''))+
+      (cambian.length && ok.length>cambian.length ? '<p class="note">Los otros '+(ok.length-cambian.length)+' producto(s) con receta válida ya estaban al día.</p>' : '')+
+      (bloqueados.length
+        ? '<h4 style="margin:14px 0 4px;color:var(--red)">⚠️ '+bloqueados.length+' producto(s) se saltean — la receta está incompleta</h4>'+
+          '<p class="note" style="margin:-2px 0 6px">Se les deja el costo actual: recostearlos con la receta así daría un costo <b>más bajo que el real</b>. Corregí la ficha y volvé a recostear.</p>'+
+          '<div class="tbl-wrap"><table><tr><th>Producto</th><th>Qué falta</th><th class="num">Costo actual</th><th class="num">Daría</th></tr>'+
+          bloqueados.map(x=>'<tr><td><b>'+esc(x.p.codigo||'')+'</b> '+esc(x.p.nombre||'')+'</td><td style="font-size:12px">'+esc(x.problemas.join(' · '))+
+            '</td><td class="num">'+money(x.viejo)+'</td><td class="num" style="color:var(--red)">'+money(x.nuevo)+'</td></tr>').join('')+'</table></div>'
+        : '')+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="rc-cancel">Cancelar</button>'+
+        (cambian.length?'<button class="cmp-btn cmp-btn-primary" id="rc-confirm">Guardar '+cambian.length+' costo(s)</button>':'')+'</div>';
+    $('bd-costeo-modal').classList.add('open');
+    $('rc-cancel').onclick=closeCosteo;
+    if($('rc-confirm')) $('rc-confirm').onclick=()=>aplicarRecosteo(cambian);
+  }
+  async function aplicarRecosteo(lista){
+    const btn=$('rc-confirm'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+    const fallidas=[]; let n=0;
+    try{
+      for(const x of lista){
+        // updateDoc de SOLO el costo y la fecha del costeo: un setDoc del producto entero pisaría cambios
+        // que otro módulo (Ventas, Producción, stock) pueda estar escribiendo en paralelo.
+        try{
+          if(window.__usaNube){
+            const c=fb(); if(!c||!c.db) throw new Error('sesión cerrada');
+            const ref=c.FS.doc(c.db,'vph_productos',x.p._uid);
+            const campos={ costo:x.nuevo, 'costeo.fecha':hoyISO };
+            if(c.FS.updateDoc) await c.FS.updateDoc(ref,campos);
+            else await c.FS.setDoc(ref, {...x.p, costo:x.nuevo, costeo:{...x.p.costeo, fecha:hoyISO}});
+          } else {
+            const t=store.vph_productos.find(p=>p._uid===x.p._uid);
+            if(t){ t.costo=x.nuevo; t.costeo=Object.assign({}, t.costeo, {fecha:hoyISO}); }
+          }
+          n++;
+        }catch(e){ fallidas.push((x.p.codigo||x.p.nombre)+': '+(e.code||e.message||'error')); }
+      }
+      if(!window.__usaNube) saveLocal();
+      closeCosteo(); render();
+      alert(fallidas.length
+        ? ('Se guardaron '+n+' costo(s), pero '+fallidas.length+' fallaron:\n\n'+fallidas.join('\n'))
+        : ('✅ '+n+' costo(s) actualizados con los precios de hoy.\n\nRevisá los márgenes por lista: si el costo subió, el precio de venta quedó atrasado.'));
+    }catch(e){ alert('No se pudo completar el recosteo: '+e.message); }
+    finally{ if(btn){ btn.disabled=false; btn.textContent='Guardar '+lista.length+' costo(s)'; } }
   }
 
   // ---------- Importar desde ventas/compras ----------
@@ -9208,6 +9303,7 @@ function buildFilterTable(cfg){
   $('bd-cerrar').onclick=closeForm;
   $('bd-costeo-cerrar').onclick=closeCosteo;
   $('bd-import').onclick=importar;
+  $('bd-recostear').onclick=recostearTodos;
   $('bd-export').onclick=exportJSON;
   $('bd-backup').onclick=backupCompleto;
   $('bd-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
