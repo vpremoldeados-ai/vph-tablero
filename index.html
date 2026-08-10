@@ -746,7 +746,8 @@
         <div class="asof" id="pe-stock-asof"></div>
         <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
         <div class="tbl-wrap"><table id="pe-tabla-stock"></table></div>
-        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>En curado</b> = fabricado hace menos de 10 días (configurable por producto): todavía no se puede entregar. <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico curado − comprometido. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo del producto (se carga en Base de Datos → Productos).</p>
+        <div id="pe-bases-2h" style="margin-top:10px"></div>
+        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En curado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto.</p>
       </section>
       <section>
         <h2><span class="dot" style="background:var(--amber)"></span>🏭 Plan de producción</h2>
@@ -921,6 +922,19 @@
     </div>
   </div>
 
+  <!-- ============ FINANCIACIÓN: comisiones de VIUMI por cuotas y banco (prefijo fin-) ============
+       El catálogo guarda el precio de CONTADO; los precios financiados se calculan con esta tabla.
+       VIUMI publica comisiones nuevas cada mes, así que tienen que ser fáciles de actualizar. -->
+  <div class="cmp-overlay" id="fin-modal">
+    <div class="cmp-dialog" style="max-width:720px">
+      <div class="cmp-dialog-head">
+        <h3>💳 Financiación (comisiones de VIUMI)</h3>
+        <button class="cmp-x" id="fin-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="fin-body"></div>
+    </div>
+  </div>
+
   <!-- ================= PLANTILLAS POR PRODUCTO (WhatsApp) ================= -->
   <div class="cmp-overlay" id="crm-plant-modal">
     <div class="cmp-dialog" style="max-width:680px">
@@ -976,9 +990,11 @@
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="bd-nuevo">+ Nuevo</button>
           <button class="cmp-btn" id="bd-params" title="Editar las variables que usan los cálculos (objetivo de kg/día, días de curado, validez de presupuestos, etc.)">⚙️ Parámetros</button>
+          <button class="cmp-btn" id="bd-financiacion" title="Comisiones de VIUMI por cuotas y banco. El catálogo guarda el precio de contado: los precios en cuotas salen de acá.">💳 Financiación</button>
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
           <button class="cmp-btn" id="bd-recostear" title="Recalcula el costo de TODOS los productos con receta cargada, usando los precios actuales del master Materia Prima/Insumos, y guarda el resultado">🔄 Recostear todos</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
+          <button class="cmp-btn" id="bd-lista-pdf" title="Genera el PDF de la lista de precios elegida (Mayorista / Mayorista Contado / Minorista) con los precios EN VIVO del catálogo — para compartir con los corralones.">📄 Lista de precios (PDF)</button>
           <button class="cmp-btn cmp-btn-primary" id="bd-backup" title="Descarga un único JSON con TODAS las colecciones (ventas, compras, presupuestos, leads, producción, etc.)">🗄️ Backup completo</button>
         </div>
       </div>
@@ -1841,7 +1857,7 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
 // --- Widget Punto de Equilibrio del mes en curso ---
 // El PE en $ depende del MIX mayorista/minorista: PE = Costos Fijos / % contribución marginal.
 // Estimamos la contribución del mes en curso con el costo de MP por kg del último mes cerrado
-// (junio: $9.311.168 / 90.796 kg = $102,55/kg) aplicado a los kg vendidos del mes.
+// (rentabilidad.costoMP ÷ kgVendidos, del doc vph_reportes/dashboard) aplicado a los kg vendidos del mes.
 window.__pintarPE = function(){
   if(!document.getElementById('pe-widget')) return;
   // El facturado del mes se toma EN VIVO (ventas reales del Tablero).
@@ -1861,7 +1877,7 @@ window.__pintarPE = function(){
   const fijosRef = (window.__peFijosRef ? window.__peFijosRef() : null);
   const fijosPE  = fijosRef ? fijosRef.ref : rentabilidad.costosFijos;
   const pe = fijosPE / margenMesPct;                                     // PE ajustado al mix del mes
-  const peBase = rentabilidad.puntoEquilibrio;                           // PE con mix de junio
+  const peBase = rentabilidad.puntoEquilibrio;                           // PE del último cierre (vph_reportes/dashboard)
   // Se compara contra el NETO (sin IVA), que es la misma base sobre la que se calcula el margen de
   // contribución. Antes se comparaba el total CON IVA contra un PE derivado del neto: la barra
   // mostraba más avance del real (en julio, $3,7 M de más).
@@ -1883,7 +1899,7 @@ window.__pintarPE = function(){
         ? 'costos fijos de referencia ' + fmt$(fijosRef.ref) + ' (promedio de los últimos ' + fijosRef.mesesPromedio + ' meses, porque este mes todavía se cargaron ' + fmt$(fijosRef.real) + ')'
         : 'costos fijos del mes ' + fmt$(fijosRef.ref) + ' EN VIVO')
     : 'costos fijos del último cierre ' + fmt$(fijosPE);
-  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ' · ' + notaFijos + ') · todo SIN IVA · PE con mix de junio: ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
+  document.getElementById('asof-pe').textContent = 'PE ajustado al mix del mes: ' + fmt$(pe) + ' (contribución marginal ' + (margenMesPct*100).toFixed(1) + '%' + (margenVivoPE!=null ? ' EN VIVO, con el costo por unidad del catálogo · '+Math.round(rm.coberturaCosto*100)+'% de lo vendido costeado' : ' estimada con el cierre') + ' · ' + notaFijos + ') · todo SIN IVA · PE con mix de ' + ((META&&META.mesCerrado)?META.mesCerrado:'último cierre') + ': ' + fmt$(peBase) + ' · ' + (rm?'facturación en vivo al día de hoy':'ventas al ' + finanzas.fecha) + ' · ' + dTrans + ' de ' + dTot + ' días hábiles';
   document.getElementById('pe-widget').innerHTML =
     '<div class="progress-wrap"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:5px">' +
       '<span>Facturado neto: ' + fmt$(v) + ' (' + (v/pe*100).toFixed(0) + '% del punto de equilibrio)</span>' +
@@ -2308,12 +2324,13 @@ window.__pintarCostos = function(){
   // ---- Fallback: foto del último cierre (solo hasta que lleguen los datos en vivo) ----
   const ult = comprasMensuales[comprasMensuales.length-1];
   const jun = comprasMensuales[0];
+  const cierre = (META&&META.mesCerrado) ? META.mesCerrado : 'último cierre';
   document.getElementById('kpis-costos').innerHTML =
     kpi('Compras '+ult.mes, fmt$(ult.total), 'Del último cierre', 'info') +
-    kpi('Costos fijos mensuales (base jun)', fmt$(rentabilidad.costosFijos), 'Incluye provisión de aguinaldo '+fmt$(rentabilidad.aguinaldoProvision||0), 'info') +
+    kpi('Costos fijos mensuales (base '+cierre+')', fmt$(rentabilidad.costosFijos), 'Incluye provisión de aguinaldo '+fmt$(rentabilidad.aguinaldoProvision||0), 'info') +
     kpi('Punto de equilibrio', fmt$(rentabilidad.puntoEquilibrio), 'Facturación mínima para no perder', 'warn') +
-    kpi('Variables / total (jun)', (jun.variables/jun.total*100).toFixed(0)+'%', 'Materia prima, fletes, insumos', 'info') +
-    kpi('Utilidad proyectada (jun)', fmt$(rentabilidad.utilidadProyectada), 'Después de costos fijos', 'good');
+    kpi('Variables / total ('+cierre+')', (jun.variables/jun.total*100).toFixed(0)+'%', 'Materia prima, fletes, insumos', 'info') +
+    kpi('Utilidad proyectada ('+cierre+')', fmt$(rentabilidad.utilidadProyectada), 'Después de costos fijos', 'good');
   if(_chCompras) _chCompras.destroy();
   _chCompras = new Chart(document.getElementById('chCompras'), {
     type:'bar',
@@ -2345,7 +2362,7 @@ window.__pintarCostos = function(){
     '<tr><td>Provisión mensual de aguinaldo (semestral / 6)</td><td class="num">'+fmt$(rentabilidad.aguinaldoProvision||0)+'</td></tr>' +
     '<tr class="total"><td>Total costos fijos mensuales</td><td class="num">'+fmt$(rentabilidad.costosFijos)+'</td></tr>' +
     '<tr><td>Punto de equilibrio (facturación mínima)</td><td class="num"><b>'+fmt$(rentabilidad.puntoEquilibrio)+'</b></td></tr>' +
-    '<tr><td>Facturación junio → margen de seguridad</td><td class="num" style="color:var(--green)"><b>+'+fmt$(rentabilidad.margenSeguridad)+'</b></td></tr>';
+    '<tr><td>Facturación '+cierre+' → margen de seguridad</td><td class="num" style="color:var(--green)"><b>+'+fmt$(rentabilidad.margenSeguridad)+'</b></td></tr>';
 };
 window.__pintarCostos();
 
@@ -4931,7 +4948,44 @@ function buildFilterTable(cfg){
     const cat=catProductos();
     return cat.find(p=>String(p.codigo||'').trim().toUpperCase()===up) ||
            cat.find(p=>String(p.nombre||'').trim().toUpperCase()===up) || null; }
-  function datalistProdCmp(){ return '<datalist id="f-prod-list">'+catProductos().map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+(p.tipo?' · '+esc(p.tipo):'')+'</option>').join('')+'</datalist>'; }
+  // Lo que VPH COMPRA no es lo mismo que lo que VENDE: "Productos varios de Ferretería", "Flete",
+  // "Diesel" y demás no están (ni deben estar) en el catálogo de Base de Datos, así que el
+  // autocompletado de ítems se quedaba corto y había que tipear todo de nuevo cada vez. Esto suma las
+  // descripciones ya usadas en compras anteriores, ordenadas por las más frecuentes — mismo criterio
+  // que el directorio de proveedores: aprende solo del historial, sin listas que mantener.
+  // Se saltea el texto que pone el lector de tickets cuando no puede discriminar el detalle.
+  function descripcionesDeCompras(){
+    // La clave ignora mayúsculas, tildes y espacios de más, así "Productos varios de Ferretería" y
+    // "productos varios de ferreteria" cuentan como el MISMO ítem (si no, la lista se llena de
+    // repetidos). Se ofrece la forma en que quedó escrita más veces — suele ser la mejor escrita —,
+    // y ante un empate, la de la compra más reciente.
+    const clave = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+    const m={};
+    (DB.compras||[]).forEach(c=>(c.items||[]).forEach(it=>{
+      const d=String(it&&it.desc||'').replace(/\s+/g,' ').trim();
+      if(d.length<3 || /^seg[uú]n ticket/i.test(d)) return;
+      const k=clave(d);
+      if(!k) return;
+      if(!m[k]) m[k]={n:0, formas:{}};
+      m[k].n++;
+      const fch=String(c.fecha||'');
+      const fm=m[k].formas[d] || (m[k].formas[d]={txt:d, n:0, ult:''});
+      fm.n++; if(fch>fm.ult) fm.ult=fch;
+    }));
+    return Object.keys(m).map(k=>{
+      const mejor=Object.values(m[k].formas).sort((a,b)=> b.n-a.n || String(b.ult).localeCompare(String(a.ult)))[0];
+      return { desc:mejor.txt, n:m[k].n };
+    }).sort((a,b)=> b.n-a.n || a.desc.localeCompare(b.desc)).slice(0,200);
+  }
+  function datalistProdCmp(){
+    const cat=catProductos();
+    const yaEsta={};
+    cat.forEach(p=>{ yaEsta[String(p.nombre||'').trim().toLowerCase()]=1; });
+    const opsCat = cat.map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+(p.tipo?' · '+esc(p.tipo):'')+'</option>').join('');
+    const opsHist = descripcionesDeCompras().filter(d=>!yaEsta[d.desc.toLowerCase()])
+      .map(d=>'<option value="'+esc(d.desc)+'">'+(d.n>1?('compras anteriores · '+d.n+'×'):'compra anterior')+'</option>').join('');
+    return '<datalist id="f-prod-list">'+opsCat+opsHist+'</datalist>';
+  }
   // Tipo sugerido al dar de alta un producto/servicio nuevo desde una compra: si la categoría de la
   // compra es de gasto (costo fijo, mano de obra, gastos varios), lo más común es que sea un Servicio.
   // Un ítem de una categoría de costo fijo (o de gastos varios) suele ser un Servicio, no un producto.
@@ -8326,6 +8380,16 @@ function buildFilterTable(cfg){
   // facturar" o si el cliente está fichado con el 10,5%. Acá solo define la condición de IVA (X).
   const esSinFacturarPre = (lista, categoria) =>
     /sin factura/i.test(String(lista||'')) || /desc(uento)?\s*10[.,]5/i.test(String(categoria||''));
+  // Lista de precios que le corresponde a una categoría de cliente. Se busca POR NOMBRE dentro del
+  // catálogo de listas del script 1 (nunca por posición: renumerarlas cambiaría la lista de todos).
+  // Devuelve '' si la categoría no dice ni mayorista ni minorista, y ahí no se toca nada.
+  const listaDeCategoria = cat => {
+    const c=String(cat||''), sf=/desc(uento)?\s*10[.,]5/i.test(c);
+    const buscar = re => (window.__listasPrecio ? window.__listasPrecio() : []).find(l=>re.test(l)) || '';
+    if(/mayorista/i.test(c)) return buscar(sf ? /mayorista sin factura/i : /mayorista factur/i);
+    if(/minorista/i.test(c)) return buscar(sf ? /minorista sin factura/i : /minorista consumidor final/i);
+    return '';
+  };
   const ncp=s=>String(s||'').trim().toUpperCase();
   // Flete CONSOLIDADO: junta las fracciones de pallet de todos los ítems, con tope de kg por pallet.
   // Dos productos que ocupan pallets parciales viajan en el mismo pallet y no se cobra de más.
@@ -8564,7 +8628,28 @@ function buildFilterTable(cfg){
       // Una cotización SIN FACTURAR va con condición de IVA X: no se identifica al comprador. El
       // presupuesto no tiene "tipo de comprobante" (siempre es un presupuesto), pero esta condición
       // es la que después viaja a la venta, donde sí se convierte en "Sin factura".
-      if(esSinFacturarPre(editing.listaPrecios, editing.categoria)){ editing.condIva='X'; const s=$('pf-cond'); if(s) s.value='X'; } });
+      if(esSinFacturarPre(editing.listaPrecios, editing.categoria)){ editing.condIva='X'; const s=$('pf-cond'); if(s) s.value='X'; }
+      else if(editing.condIva==='X'){
+        // ⚠️ Y al VOLVER a una lista facturada hay que deshacerla: si no, un presupuesto que pasó por
+        // una lista sin facturar quedaba con "Cond. IVA: X" impreso aunque después se lo cotizara a un
+        // Responsable Inscripto. Se toma la condición de la ficha del cliente; si no hay, A.
+        const f=clientesConocidos().find(c=>c.nombre===editing.cliente);
+        const cond=(f&&f.cond&&f.cond!=='X') ? f.cond : 'A';
+        editing.condIva=cond; const s=$('pf-cond'); if(s) s.value=cond;
+      } });
+    // Cambiar la CATEGORÍA arrastra la lista de precios que le corresponde (pedido de Marcelo, 07/08:
+    // un presupuesto con categoría MINORISTA nacía con la lista mayorista y había que acordarse de
+    // cambiarla). Se dispara el `change` del propio selector de lista para que re-precie los ítems,
+    // recalcule el flete y ajuste la condición de IVA en UN solo lugar, igual que si se tocara a mano.
+    if($('pf-cat')) $('pf-cat').addEventListener('change',()=>{
+      editing.categoria=$('pf-cat').value;
+      const l=listaDeCategoria(editing.categoria);
+      if(!l || l===editing.listaPrecios) return;
+      const sel=$('pf-lista'); if(!sel) return;
+      sel.value=l;
+      sel.dispatchEvent(new Event('change',{bubbles:true}));
+      if(sel.__repintar) sel.__repintar();   // la lista se ve como tarjetas: hay que refrescar la marcada
+    });
     // La zona ahora se elige con tarjetas (drawZonas), no con un desplegable: un clic recalcula el
     // renglón "Flete". Si el presupuesto vino de un Lead, la zona del lead ya llega marcada.
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
@@ -8712,7 +8797,11 @@ function buildFilterTable(cfg){
   // Arma un presupuesto completo a partir de un lead: cliente + ítems con precios del catálogo + flete por zona.
   function armarDesdeLead(lead){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
-    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
+    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria;
+    // La lista del lead manda; solo si el lead no tiene ninguna se deduce de la categoría, para que un
+    // presupuesto minorista no salga con la lista mayorista que trae el formulario en blanco.
+    if(lead.listaPrecios) p.listaPrecios=normLista(lead.listaPrecios);
+    else { const l=listaDeCategoria(p.categoria); if(l) p.listaPrecios=l; }
     if(esSinFacturarPre(p.listaPrecios, p.categoria)) p.condIva='X';   // cotización sin factura: no se identifica al comprador
     p.zona = lead.zona||'';
     p.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
@@ -9299,12 +9388,39 @@ function buildFilterTable(cfg){
   window.__catalogoClientes = ()=> store.vph_clientes.slice();   // para domicilio/tel en los Documentos
   window.__catalogoProveedores = ()=> store.vph_proveedores.slice();   // para el módulo Cheques (emitidos)
 
+  // ---------- Lista de precios en PDF (pedido de Marcelo, 10/08) ----------
+  // Con cada aumento, los listados para los corralones se rearmaban a mano. Acá solo se elige la
+  // lista; el documento lo arma el módulo Documentos (window.__imprimir.listaPrecios) leyendo el
+  // catálogo EN VIVO — los mismos precios que usan Ventas y Presupuestos, así que no puede quedar
+  // desactualizado. La llamada cruzada va recién en el click (§2: nunca durante la carga).
+  function elegirListaPdf(){
+    const viejo=document.getElementById('bd-lp-modal'); if(viejo) viejo.remove();
+    const ov=document.createElement('div'); ov.id='bd-lp-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100001;display:flex;align-items:center;justify-content:center;padding:16px';
+    const b='display:block;width:100%;margin:8px 0;padding:12px 14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#111;font:600 14px system-ui;cursor:pointer;text-align:left';
+    ov.innerHTML='<div style="background:#fff;border-radius:14px;padding:18px 20px;max-width:360px;width:100%">'+
+      '<div style="font:800 15px system-ui;color:#111">📄 Lista de precios en PDF</div>'+
+      '<div style="font:12px system-ui;color:#475569;margin:4px 0 8px">Sale con los precios actuales del catálogo.</div>'+
+      '<button style="'+b+'" data-l="may">Mayorista Facturado</button>'+
+      '<button style="'+b+'" data-l="maySF">Mayorista Contado</button>'+
+      '<button style="'+b+'" data-l="min">Minorista</button>'+
+      '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click',e=>{ if(e.target===ov){ ov.remove(); return; }
+      const btn=e.target.closest('button'); if(!btn) return; ov.remove();
+      if(!btn.dataset.l) return;
+      if(window.__imprimir && window.__imprimir.listaPrecios) window.__imprimir.listaPrecios({lista:btn.dataset.l});
+      else alert('El módulo de Documentos no está disponible.');
+    });
+  }
+
   $('bd-nuevo').onclick=()=>openForm(null);
   $('bd-cerrar').onclick=closeForm;
   $('bd-costeo-cerrar').onclick=closeCosteo;
   $('bd-import').onclick=importar;
   $('bd-recostear').onclick=recostearTodos;
   $('bd-export').onclick=exportJSON;
+  $('bd-lista-pdf').onclick=elegirListaPdf;
   $('bd-backup').onclick=backupCompleto;
   $('bd-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('bd-modal').addEventListener('click',e=>{ if(e.target===$('bd-modal')) closeForm(); });
@@ -9429,6 +9545,149 @@ function buildFilterTable(cfg){
   const btn=$('bd-params'); if(btn) btn.onclick=abrir;
   $('params-cerrar').onclick=cerrar;
   $('params-modal').addEventListener('click',e=>{ if(e.target===$('params-modal')) cerrar(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO FINANCIACIÓN — comisiones de VIUMI por cantidad de cuotas y por banco
+     emisor de la tarjeta. Colección vph_config, doc 'financiacion'.
+
+     ⚠️ LA DECISIÓN DE FONDO: el catálogo guarda UN precio por lista, y ese precio
+     es el de CONTADO. Los precios financiados NO se guardan: se calculan acá.
+     Si se guardaran, cada cambio de comisiones (VIUMI publica tabla nueva todos
+     los meses) obligaría a reescribir 12 productos × 3 listas. Así se cambian
+     8 números en esta tabla y se recalcula todo solo. Además el precio de
+     contado es el que usa Costeo para medir márgenes: tiene que ser el "real".
+
+     El costo financiero NO lo absorbe VPH: se traslada al cliente. Por eso el
+     precio de lista que ve el cliente es el del plan MÁS LARGO, y de ahí bajan
+     los % OFF hasta el contado (decisión de Marcelo, 28/07).
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const money=n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fb=()=>window.__fbctx;
+  const COL='vph_config', DOC='financiacion';
+
+  // Comisiones SIN IVA, sobre el monto bruto. Las de Macro son la columna de 10 días hábiles de la
+  // tabla vigente 07/2026. Las de otros bancos arrancan en 0 = "no configurado": mientras estén en 0
+  // ese banco no ofrece financiación, en vez de inventar un precio con una tasa que no conocemos.
+  const DEF={ ivaCom:21, plazoHabiles:10, vigencia:'',
+    planes:[ {c:3,  macro:8.89,  otros:0},
+             {c:6,  macro:13.19, otros:0},
+             {c:9,  macro:18.49, otros:0},
+             {c:12, macro:22.59, otros:0} ] };
+  const BANCOS=[{k:'macro', l:'Tarjeta Banco Macro'},{k:'otros', l:'Tarjeta de otro banco'}];
+  let CFG=JSON.parse(JSON.stringify(DEF)), unsub=null, edit=null;
+
+  function aplicar(d){
+    const o=d&&typeof d==='object'?d:{};
+    CFG={ ivaCom: o.ivaCom!=null?num(o.ivaCom):DEF.ivaCom,
+          plazoHabiles: o.plazoHabiles!=null?num(o.plazoHabiles):DEF.plazoHabiles,
+          vigencia: String(o.vigencia||''),
+          planes: Array.isArray(o.planes)&&o.planes.length
+            ? o.planes.map(p=>({c:num(p.c), macro:num(p.macro), otros:num(p.otros)})).filter(p=>p.c>0).sort((a,b)=>a.c-b.c)
+            : JSON.parse(JSON.stringify(DEF.planes)) };
+    window.dispatchEvent(new Event('vph-financiacion'));
+  }
+
+  // ---------- API ----------
+  // Retención efectiva: la comisión más su IVA. Es lo que VIUMI se queda del bruto.
+  const retencion = t => num(t)*(1+num(CFG.ivaCom)/100)/100;
+  window.__financiacion = ()=>JSON.parse(JSON.stringify(CFG));
+  window.__financiacionBancos = ()=>BANCOS.map(b=>({...b}));
+  // Planes con tasa cargada para ese banco. Sin tasa no hay plan: mejor no ofrecerlo que cotizarlo mal.
+  window.__planesFin = banco => CFG.planes.filter(p=>num(p[banco==='otros'?'otros':'macro'])>0)
+    .map(p=>({cuotas:p.c, tasa:num(p[banco==='otros'?'otros':'macro'])}));
+  // Precio que hay que cobrar en N cuotas para que a VPH le quede el precio de contado.
+  // Ojo: es contado/(1−r), NO contado×(1+r). Recargar r y bonificar r no son lo mismo.
+  window.__precioFinanciado = (contado, cuotas, banco)=>{
+    const p=(window.__planesFin(banco)||[]).find(x=>x.cuotas===+cuotas);
+    if(!p) return num(contado);
+    const r=retencion(p.tasa);
+    return r>=1 ? num(contado) : num(contado)/(1-r); };
+  // La escalera completa: del plan más largo (precio de lista) hasta el contado, con el % OFF de cada
+  // escalón. Es lo que se le muestra al cliente. Devuelve [] si ese banco no tiene tasas cargadas.
+  window.__escaleraPrecios = (contado, banco)=>{
+    const planes=window.__planesFin(banco); if(!planes.length) return [];
+    const base=num(contado); if(base<=0) return [];
+    const filas=planes.map(p=>({cuotas:p.cuotas, tasa:p.tasa, precio:window.__precioFinanciado(base,p.cuotas,banco)}))
+      .sort((a,b)=>b.cuotas-a.cuotas);
+    filas.push({cuotas:1, tasa:0, precio:base, contado:true});
+    const lista=filas[0].precio;
+    return filas.map(f=>({...f, lista, off:lista>0?(1-f.precio/lista)*100:0, cuota:f.precio/f.cuotas})); };
+
+  // ---------- Editor ----------
+  function abrir(){ edit=JSON.parse(JSON.stringify(CFG)); draw(); $('fin-modal').classList.add('open'); }
+  function cerrar(){ $('fin-modal').classList.remove('open'); edit=null; }
+  function draw(){
+    const r=t=>num(t)*(1+num(edit.ivaCom)/100)/100;
+    // Ejemplo en vivo con $10.000 de contado: ver el efecto es lo que evita cargar una tasa mal.
+    const EJ=10000;
+    let h='<p style="font-size:12.5px;margin:0 0 10px">Comisiones que cobra <b>VIUMI</b> por financiar, <b>sin IVA</b> y sobre el monto bruto. '+
+      'El catálogo guarda el precio de <b>contado</b>: los precios en cuotas se calculan con esta tabla, así un cambio de comisiones no obliga a retocar ningún producto.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
+        '<div class="cmp-field"><label>IVA de la comisión (%)</label><input id="fin-iva" value="'+num(edit.ivaCom)+'"></div>'+
+        '<div class="cmp-field"><label>Plazo de acreditación (días hábiles)</label><input id="fin-plazo" value="'+num(edit.plazoHabiles)+'"></div>'+
+        '<div class="cmp-field"><label>Vigencia (informativo)</label><input id="fin-vig" value="'+esc(edit.vigencia)+'" placeholder="ej. 01/07/26 al 31/07/26"></div>'+
+      '</div>'+
+      '<div class="tbl-wrap"><table><tr><th>Cuotas</th><th class="num">Tarjeta Macro</th><th class="num">Otro banco</th>'+
+        '<th class="num">Precio si el contado es '+money(EJ)+'</th><th></th></tr>';
+    edit.planes.forEach((p,i)=>{
+      const pm=r(p.macro)<1?EJ/(1-r(p.macro)):0, po=num(p.otros)>0&&r(p.otros)<1?EJ/(1-r(p.otros)):0;
+      h+='<tr><td><input value="'+num(p.c)+'" data-f="c" data-i="'+i+'" style="width:60px"></td>'+
+        '<td class="num"><input value="'+num(p.macro)+'" data-f="macro" data-i="'+i+'" style="width:80px;text-align:right"> %</td>'+
+        '<td class="num"><input value="'+num(p.otros)+'" data-f="otros" data-i="'+i+'" style="width:80px;text-align:right"> %</td>'+
+        '<td class="num" style="font-size:12px">Macro '+(pm?money(pm):'—')+'<div style="color:var(--muted)">Otro '+(po?money(po):'sin cargar')+'</div></td>'+
+        '<td><button class="cmp-rowbtn" data-del="'+i+'">✕</button></td></tr>';
+    });
+    h+='</table></div>';
+    $('fin-body').innerHTML = h +
+      '<div style="margin:8px 0"><button class="cmp-btn" id="fin-add">+ Agregar plan</button></div>'+
+      '<p class="note" style="margin:6px 0 0">Una tasa en <b>0</b> significa <b>sin configurar</b>: ese plan no se le ofrece a ese banco. '+
+      'Es a propósito — cotizar con una tasa que no conocemos sería vender a pérdida sin enterarse. '+
+      'Las comisiones dependen también del <b>plazo de acreditación</b>: si cambiás el plazo con VIUMI, actualizá toda la tabla.</p>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="fin-cancel">Cancelar</button>'+
+        '<button class="cmp-btn cmp-btn-primary" id="fin-save">Guardar</button></div>';
+    $('fin-body').querySelectorAll('input[data-f]').forEach(el=> el.addEventListener('input',()=>{
+      edit.planes[+el.dataset.i][el.dataset.f]=num(el.value); }));
+    $('fin-body').querySelectorAll('input[data-f]').forEach(el=> el.addEventListener('change',draw));
+    ['fin-iva','fin-plazo'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('change',()=>{
+      edit.ivaCom=num($('fin-iva').value); edit.plazoHabiles=num($('fin-plazo').value); draw(); }); });
+    const v=$('fin-vig'); if(v) v.addEventListener('input',()=>{ edit.vigencia=v.value; });
+    $('fin-body').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ edit.planes.splice(+b.dataset.del,1); draw(); });
+    $('fin-add').onclick=()=>{ const ult=edit.planes[edit.planes.length-1]; edit.planes.push({c:(ult?num(ult.c)+3:3), macro:0, otros:0}); draw(); };
+    $('fin-cancel').onclick=cerrar;
+    $('fin-save').onclick=guardar;
+  }
+  function guardar(){
+    edit.ivaCom=num($('fin-iva').value); edit.plazoHabiles=num($('fin-plazo').value); edit.vigencia=$('fin-vig').value;
+    const planes=edit.planes.map(p=>({c:num(p.c), macro:num(p.macro), otros:num(p.otros)})).filter(p=>p.c>0);
+    if(planes.some(p=>p.macro>=100||p.otros>=100)){ alert('Una comisión del 100% o más dejaría el precio en infinito. Revisá los valores.'); return; }
+    if(new Set(planes.map(p=>p.c)).size!==planes.length){ alert('Hay dos filas con la misma cantidad de cuotas.'); return; }
+    const doc={ ivaCom:num(edit.ivaCom), plazoHabiles:num(edit.plazoHabiles), vigencia:String(edit.vigencia||''), planes, ts:new Date().toISOString() };
+    if(window.__usaNube){ const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      c.FS.setDoc(c.FS.doc(c.db,COL,DOC), doc).then(()=>{ aplicar(doc); cerrar(); })
+       .catch(e=>alert('Error al guardar: '+e.message)); }
+    else { try{ localStorage.setItem('vph_financiacion_v1', JSON.stringify(doc)); }catch(e){} aplicar(doc); cerrar(); }
+  }
+
+  function subscribe(){ if(window.__rol!=='admin') return; const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
+    unsub=c.FS.onSnapshot(c.FS.doc(c.db,COL,DOC), s=>{ aplicar(s.exists()?s.data():{}); if($('fin-modal').classList.contains('open')) draw(); }, e=>console.error('financiacion:',e)); }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(subscribe); window.__afterLogout.push(()=>{ if(unsub){unsub();unsub=null;} });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) subscribe();
+    } else { try{ const d=JSON.parse(localStorage.getItem('vph_financiacion_v1')); if(d) aplicar(d); }catch(e){} } }
+
+  const b=$('bd-financiacion'); if(b) b.onclick=abrir;
+  $('fin-cerrar').onclick=cerrar;
+  $('fin-modal').addEventListener('click',e=>{ if(e.target===$('fin-modal')) cerrar(); });
+  window.__abrirFinanciacion=abrir;
   boot();
 })();
 </script>
@@ -10662,10 +10921,14 @@ function buildFilterTable(cfg){
     const ci=curadoInfo(k,dias); const entregado=entregadoDe(k); const comprometido=comprometidoDe(k); const ajuste=ajustadoDe(k);
     const fisico=inicial+ci.curado+ci.enCurado+ajuste-entregado;   // todo lo que hay en planta (con ajustes de conteo)
     const curado=inicial+ci.curado+ajuste-entregado;               // listo para entregar (el ajuste corrige stock ya curado)
-    const disponible=curado-comprometido;                           // lo que se puede vender/entregar YA
+    const disponible=curado-comprometido;                           // lo que se puede ENTREGAR YA (curado) — lo usa Sofía para fechas
+    // Lo que de verdad falta o sobra EN PLANTA, sin mirar el curado (pedido de Marcelo, 09/08):
+    // Gustavo decide qué fabricar con esto — mismo criterio que la columna Disp de la planilla.
+    // El curado solo corre la FECHA de entrega, y eso lo maneja Sofía en Ventas/Presupuestos.
+    const dispReal=fisico-comprometido;
     const min=num(p.stockMinimo);
-    return { k, dias, inicial, entregado, fisico, curado, enCurado:ci.enCurado, lotes:ci.lotes, comprometido, ajuste, disponible, min,
-      estado: disponible<0?'falta':(min>0&&disponible<min?'bajo':'ok') };
+    return { k, dias, inicial, entregado, fisico, curado, enCurado:ci.enCurado, lotes:ci.lotes, comprometido, ajuste, disponible, dispReal, min,
+      estado: dispReal<0?'falta':(min>0&&dispReal<min?'bajo':'ok') };
   }
 
   // Kilos producidos en una fecha ISO
@@ -10814,7 +11077,7 @@ function buildFilterTable(cfg){
     const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
     const clsSem = sem.prom>=OBJ()?'good':(sem.prom>=OBJ()*0.8?'warn':'bad');
     $('pe-kpis').innerHTML =
-      k('Productos con faltante', faltan?'bad':'good', String(faltan), faltan?'Comprometido supera al disponible':(bajos?bajos+' bajo mínimo':'Todo cubierto')) +
+      k('Productos con faltante', faltan?'bad':'good', String(faltan), faltan?'Comprometido supera al físico en planta':(bajos?bajos+' bajo mínimo':'Todo cubierto')) +
       k('Pedidos a entregar','warn', String(pend), 'Pendientes de coordinar/entregar') +
       k('Producido hoy', kgHoy>=OBJ()?'good':'info', nf(kgHoy)+' kg', nf(prodHoy)+' u · objetivo '+nf(OBJ())+' kg/día') +
       k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' ('+({lunvie:'lun–vie',lunsab:'lun–sáb',todos:'todos los días'}[modoProd()]||'lun–vie')+')') +
@@ -10827,7 +11090,7 @@ function buildFilterTable(cfg){
     const filas=activos().map(p=>({p, s:stockDe(p)}));
     let rows=filas;
     if(q){ const s=q.toLowerCase(); rows=rows.filter(f=>(f.p.nombre+' '+f.p.codigo).toLowerCase().includes(s)); }
-    rows.sort((a,b)=>a.s.disponible-b.s.disponible);
+    rows.sort((a,b)=>a.s.dispReal-b.s.dispReal);
     const badge={ ok:'<span class="pe-est ok">OK</span>', bajo:'<span class="pe-est bajo">Bajo mínimo</span>', falta:'<span class="pe-est falta">FALTANTE</span>' };
     let html='<tr><th>Código</th><th>Producto</th><th class="num">Físico</th><th class="num">En curado</th><th class="num">Compr.</th><th class="num">Disponible</th><th class="num">Mín</th><th>Estado</th></tr>';
     if(!rows.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
@@ -10837,10 +11100,26 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Físico">'+nf(s.fisico)+'</td>'+
         '<td class="num" data-label="En curado" style="color:var(--blue)">'+cur+'</td>'+
         '<td class="num" data-label="Compr." style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
-        '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.disponible)+'</td>'+
+        '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.dispReal)+'</td>'+
         '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
-    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = curado − comprometido (curado = fabricado hace 10+ días)';
+    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = físico − comprometido (la fecha de entrega según curado la ve Sofía al vender)';
+    // Indicador de bases de doble hierro (criterio de Marcelo): pallets de LC60 = físico ÷ 70 (el
+    // pallet lleno son 70 comunes + 5 de doble hierro de base) → con el físico de LC60 2H ÷ 5 se sabe
+    // para cuántos pallets alcanzan las bases. Si hay más pallets que bases, hay que fabricar LC60 2H.
+    const el2h=$('pe-bases-2h');
+    if(el2h){
+      const f60=filas.find(f=>String(f.p.codigo||'').trim().toUpperCase()==='ULC60');
+      const f2h=filas.find(f=>String(f.p.codigo||'').trim().toUpperCase()==='LC602H');
+      if(f60&&f2h){
+        const fis60=Math.max(0,f60.s.fisico), fis2h=Math.max(0,f2h.s.fisico);
+        const pallets=Math.floor(fis60/70), bases=Math.floor(fis2h/5);
+        const faltanPal=pallets-bases;
+        el2h.innerHTML = faltanPal>0
+          ? '<div class="alert warn"><span class="aico">🧱</span><div><b>Bases de doble hierro: FABRICAR '+nf(faltanPal*5)+' LC60 2H</b><div>Hay <b>'+nf(pallets)+' pallets de LC60</b> ('+nf(fis60)+' u ÷ 70) y losetas 2H para armar la base de solo <b>'+nf(bases)+'</b> ('+nf(fis2h)+' u ÷ 5): quedan '+nf(faltanPal)+' pallets sin base reforzada.</div></div></div>'
+          : '<div class="alert ok"><span class="aico">🧱</span><div><b>Bases de doble hierro: alcanzan</b><div>Hay '+nf(pallets)+' pallets de LC60 ('+nf(fis60)+' u ÷ 70) y losetas 2H para '+nf(bases)+' bases ('+nf(fis2h)+' u ÷ 5)'+(bases>pallets?' — sobran para '+nf(bases-pallets)+' pallets':'')+'.</div></div></div>';
+      } else el2h.innerHTML='';
+    }
     renderPlan(filas);
     // movimientos
     const movs=prod.map(x=>({...x,tipo:'Producción'})).concat(ent.map(x=>({...x,tipo:'Entrega'}))).concat(ajustes.map(x=>({...x,tipo:'Ajuste'}))).sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,40);
@@ -10863,7 +11142,7 @@ function buildFilterTable(cfg){
       else { if(pe.fechaRequerida && (!u.fecha||pe.fechaRequerida<u.fecha)) u.fecha=pe.fechaRequerida; if(pe.cliente&&!u.clientes.includes(pe.cliente)) u.clientes.push(pe.cliente); } }); });
     // A fabricar: cubrir faltante y reponer hasta el mínimo
     let items=filas.map(({p,s})=>{ const min=s.min>0?s.min:0;
-      const dispCur=s.disponible+(s.enCurado||0);   // lo que ya está en curado también cubre demanda: no re-fabricarlo
+      const dispCur=s.dispReal;   // físico − comprometido: lo en curado también cubre demanda, no re-fabricarlo
       const aFab=Math.max(0, min - dispCur, -dispCur); if(aFab<=0) return null;
       const u=urg[s.k]||{fecha:'',espera:false,clientes:[]};
       const grupo = dispCur<0 ? (u.fecha?0:(u.espera&&!u.clientes.some(c=>!c.endsWith('🕐'))?2:1)) : 3;  // 0 urgente c/fecha · 1 faltante s/fecha · 2 puede esperar · 3 reposición a mínimo
@@ -12677,7 +12956,50 @@ function buildFilterTable(cfg){
     return st+lote.map(hoja).join('')+pie();
   }
 
+  // ---------- Lista de precios (pedido de Marcelo, 10/08) ----------
+  // Los listados que se comparten con los corralones se rearmaban a mano en cada aumento. Acá salen
+  // del catálogo EN VIVO (window.__catalogoProductos — los mismos precios que usan Ventas y
+  // Presupuestos), así que el PDF no puede quedar desactualizado respecto del Tablero.
+  // ⚠️ Fecha propia: HOY/p2 NO existen en este módulo (§3: cada IIFE tiene sus helpers).
+  const LISTAS_PDF = {
+    min:   { campo:'precioMinorista',   nombre:'Minorista',
+             cond:'Precios finales por unidad, IVA incluido. El flete se cotiza aparte según la zona de entrega.' },
+    may:   { campo:'precioMayorista',   nombre:'Mayorista',
+             cond:'Precios finales por unidad, IVA incluido. Formas de pago: Pago Contado, Débito o Valor a 30 días de fecha de factura. '+
+                  'Entrega en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).' },
+    maySF: { campo:'precioMayoristaSF', nombre:'Mayorista Contado',
+             cond:'Precios por unidad. Forma de pago: Pago Contado. '+
+                  'Entrega en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).' }
+  };
+  function listaPrecios(o){
+    o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
+    const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
+      .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
+      // LC602H es la variante interna de la base reforzada: se vende como parte del pallet de LC60,
+      // no suelta — listarla duplicaría la Loseta 60 con el mismo precio.
+      .filter(p=>String(p.codigo||'')!=='LC602H')
+      .sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'));
+    if(!prods.length){ alert('No hay productos con precio cargado en la lista "'+L.nombre+'".'); return; }
+    const d=new Date(); const pad=n=>String(n).padStart(2,'0');
+    const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
+    const hoyISO=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+    const conM2=prods.some(p=>num(p.unidadesPorM2)>0);
+    const filas=prods.map(p=>{ const pu=num(p[L.campo]); const uxm2=num(p.unidadesPorM2);
+      return '<tr><td>'+esc(p.codigo||'')+'</td><td>'+esc(p.nombre||'')+'</td>'+
+        '<td class="n">'+money(pu)+'</td>'+
+        (conM2?('<td class="n">'+(uxm2>0?money(pu*uxm2)+' <span style="color:#666">('+pct(uxm2)+' u/m²)</span>':'—')+'</td>'):'')+
+        '<td class="n">'+(num(p.udPorPallet)>0?nf(p.udPorPallet):'—')+'</td></tr>'; }).join('');
+    const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
+      '<table class="doc-tab"><thead><tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+
+      (conM2?'<th class="n">Precio x m²</th>':'')+'<th class="n">Unid. x pallet</th></tr></thead><tbody>'+filas+'</tbody></table>'+
+      '<div class="doc-obs"><b>Condiciones:</b> '+esc(L.cond)+'<br>'+
+      'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
+      '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Lista '+esc(L.nombre)+' — vigente desde '+esc(hoy)+'</span></div>';
+    mostrar(html, nombreArchivo('Lista de precios '+L.nombre, '', '', hoyISO));
+  }
+
   window.__imprimir = {
+    listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'min'} — la usa Base de Datos (📄 Lista de precios)
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
