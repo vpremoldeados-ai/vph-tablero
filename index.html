@@ -9478,51 +9478,65 @@ function buildFilterTable(cfg){
   const fb=()=>window.__fbctx;
   const COL='vph_config', DOC='financiacion';
 
-  // Comisiones SIN IVA, sobre el monto bruto. Las de Macro son la columna de 10 días hábiles de la
-  // tabla vigente 07/2026. Las de otros bancos arrancan en 0 = "no configurado": mientras estén en 0
-  // ese banco no ofrece financiación, en vez de inventar un precio con una tasa que no conocemos.
+  // ⚠️ VIUMI cobra de DOS formas distintas según el caso, y confundirlas cotiza mal:
+  //  · Promo Macro en cuotas sin interés → UNA comisión que ya incluye todo. La tabla del banco dice
+  //    explícitamente "No debe adicionarse Costo Financiero en cuotas".
+  //  · Resto (otros bancos, programa MiPyME) → ARANCEL base de tarjeta + COSTO FINANCIERO del plan,
+  //    que VIUMI publica en tablas separadas.
+  // Por eso cada plan guarda las dos patas por separado: así se copian tal cual de lo que publica
+  // VIUMI, sin que nadie tenga que sumar a mano todos los meses. La tasa efectiva es ar+cf.
+  // Verificado contra una liquidación real: la venta del 11/08 (arancel 3,19% + 13,02% de costo
+  // financiero MiPyME 6 cuotas) da exactamente los $148.352,57 que VIUMI retuvo.
+  // Todas las tasas son SIN IVA y sobre el monto bruto.
   const DEF={ ivaCom:21, plazoHabiles:10, vigencia:'',
-    planes:[ {c:3,  macro:8.89,  otros:0},
-             {c:6,  macro:13.19, otros:0},
-             {c:9,  macro:18.49, otros:0},
-             {c:12, macro:22.59, otros:0} ] };
-  const BANCOS=[{k:'macro', l:'Tarjeta Banco Macro'},{k:'otros', l:'Tarjeta de otro banco'}];
+    perfiles:[
+      { k:'macro', l:'Tarjeta Banco Macro', nota:'Cuotas sin interés — la comisión ya incluye el costo financiero',
+        tasas:[{c:3,ar:8.89,cf:0},{c:6,ar:13.19,cf:0},{c:9,ar:18.49,cf:0},{c:12,ar:22.59,cf:0}] },
+      { k:'otros', l:'Tarjeta de otro banco', nota:'Arancel base + costo financiero del plan',
+        tasas:[{c:3,ar:3.19,cf:11.15},{c:6,ar:3.19,cf:18.65},{c:9,ar:3.19,cf:17.58},{c:12,ar:3.19,cf:22.03}] },
+      { k:'mipyme', l:'Programa Cuotas MiPyME', nota:'Arancel base + costo financiero MiPyME',
+        tasas:[{c:3,ar:3.19,cf:6.91},{c:6,ar:3.19,cf:13.02}] }
+    ] };
   let CFG=JSON.parse(JSON.stringify(DEF)), unsub=null, edit=null;
 
+  const normTasas = a => (Array.isArray(a)?a:[]).map(t=>({c:num(t.c), ar:num(t.ar), cf:num(t.cf)}))
+    .filter(t=>t.c>0).sort((x,y)=>x.c-y.c);
   function aplicar(d){
     const o=d&&typeof d==='object'?d:{};
     CFG={ ivaCom: o.ivaCom!=null?num(o.ivaCom):DEF.ivaCom,
           plazoHabiles: o.plazoHabiles!=null?num(o.plazoHabiles):DEF.plazoHabiles,
           vigencia: String(o.vigencia||''),
-          planes: Array.isArray(o.planes)&&o.planes.length
-            ? o.planes.map(p=>({c:num(p.c), macro:num(p.macro), otros:num(p.otros)})).filter(p=>p.c>0).sort((a,b)=>a.c-b.c)
-            : JSON.parse(JSON.stringify(DEF.planes)) };
+          perfiles: Array.isArray(o.perfiles)&&o.perfiles.length
+            ? o.perfiles.map(p=>({k:String(p.k||''), l:String(p.l||p.k||''), nota:String(p.nota||''), tasas:normTasas(p.tasas)})).filter(p=>p.k)
+            : JSON.parse(JSON.stringify(DEF.perfiles)) };
     window.dispatchEvent(new Event('vph-financiacion'));
   }
 
   // ---------- API ----------
-  // Retención efectiva: la comisión más su IVA. Es lo que VIUMI se queda del bruto.
+  // Retención efectiva: (arancel + costo financiero) más su IVA. Es lo que VIUMI se queda del bruto.
   const retencion = t => num(t)*(1+num(CFG.ivaCom)/100)/100;
+  const perfilDe = k => CFG.perfiles.find(p=>p.k===String(k||'')) || null;
   window.__financiacion = ()=>JSON.parse(JSON.stringify(CFG));
-  window.__financiacionBancos = ()=>BANCOS.map(b=>({...b}));
-  // Planes con tasa cargada para ese banco. Sin tasa no hay plan: mejor no ofrecerlo que cotizarlo mal.
-  window.__planesFin = banco => CFG.planes.filter(p=>num(p[banco==='otros'?'otros':'macro'])>0)
-    .map(p=>({cuotas:p.c, tasa:num(p[banco==='otros'?'otros':'macro'])}));
+  window.__financiacionPerfiles = ()=>CFG.perfiles.map(p=>({k:p.k, l:p.l, nota:p.nota, planes:p.tasas.length}));
+  // Planes con tasa cargada. Sin tasa no hay plan: mejor no ofrecerlo que cotizarlo mal.
+  window.__planesFin = perfil => { const p=perfilDe(perfil); if(!p) return [];
+    return p.tasas.filter(t=>t.ar+t.cf>0).map(t=>({cuotas:t.c, arancel:t.ar, costoFin:t.cf, tasa:t.ar+t.cf})); };
   // Precio que hay que cobrar en N cuotas para que a VPH le quede el precio de contado.
   // Ojo: es contado/(1−r), NO contado×(1+r). Recargar r y bonificar r no son lo mismo.
-  window.__precioFinanciado = (contado, cuotas, banco)=>{
-    const p=(window.__planesFin(banco)||[]).find(x=>x.cuotas===+cuotas);
+  window.__precioFinanciado = (contado, cuotas, perfil)=>{
+    const p=(window.__planesFin(perfil)||[]).find(x=>x.cuotas===+cuotas);
     if(!p) return num(contado);
     const r=retencion(p.tasa);
     return r>=1 ? num(contado) : num(contado)/(1-r); };
   // La escalera completa: del plan más largo (precio de lista) hasta el contado, con el % OFF de cada
-  // escalón. Es lo que se le muestra al cliente. Devuelve [] si ese banco no tiene tasas cargadas.
-  window.__escaleraPrecios = (contado, banco)=>{
-    const planes=window.__planesFin(banco); if(!planes.length) return [];
+  // escalón. Es lo que se le muestra al cliente. Devuelve [] si ese perfil no tiene tasas cargadas.
+  window.__escaleraPrecios = (contado, perfil)=>{
+    const planes=window.__planesFin(perfil); if(!planes.length) return [];
     const base=num(contado); if(base<=0) return [];
-    const filas=planes.map(p=>({cuotas:p.cuotas, tasa:p.tasa, precio:window.__precioFinanciado(base,p.cuotas,banco)}))
+    const filas=planes.map(p=>({cuotas:p.cuotas, tasa:p.tasa, arancel:p.arancel, costoFin:p.costoFin,
+        precio:window.__precioFinanciado(base,p.cuotas,perfil)}))
       .sort((a,b)=>b.cuotas-a.cuotas);
-    filas.push({cuotas:1, tasa:0, precio:base, contado:true});
+    filas.push({cuotas:1, tasa:0, arancel:0, costoFin:0, precio:base, contado:true});
     const lista=filas[0].precio;
     return filas.map(f=>({...f, lista, off:lista>0?(1-f.precio/lista)*100:0, cuota:f.precio/f.cuotas})); };
 
@@ -9531,50 +9545,57 @@ function buildFilterTable(cfg){
   function cerrar(){ $('fin-modal').classList.remove('open'); edit=null; }
   function draw(){
     const r=t=>num(t)*(1+num(edit.ivaCom)/100)/100;
-    // Ejemplo en vivo con $10.000 de contado: ver el efecto es lo que evita cargar una tasa mal.
-    const EJ=10000;
-    let h='<p style="font-size:12.5px;margin:0 0 10px">Comisiones que cobra <b>VIUMI</b> por financiar, <b>sin IVA</b> y sobre el monto bruto. '+
-      'El catálogo guarda el precio de <b>contado</b>: los precios en cuotas se calculan con esta tabla, así un cambio de comisiones no obliga a retocar ningún producto.</p>'+
+    const EJ=10000;   // ejemplo en vivo: ver el precio resultante evita cargar una tasa mal
+    let h='<p style="font-size:12.5px;margin:0 0 10px">Lo que cobra <b>VIUMI</b> por financiar, <b>sin IVA</b> y sobre el monto bruto — se copian tal cual de las tablas que publica. '+
+      'El catálogo guarda el precio de <b>contado</b>: los precios en cuotas se calculan con esto, así un cambio de comisiones no obliga a retocar ningún producto.</p>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
         '<div class="cmp-field"><label>IVA de la comisión (%)</label><input id="fin-iva" value="'+num(edit.ivaCom)+'"></div>'+
         '<div class="cmp-field"><label>Plazo de acreditación (días hábiles)</label><input id="fin-plazo" value="'+num(edit.plazoHabiles)+'"></div>'+
         '<div class="cmp-field"><label>Vigencia (informativo)</label><input id="fin-vig" value="'+esc(edit.vigencia)+'" placeholder="ej. 01/07/26 al 31/07/26"></div>'+
-      '</div>'+
-      '<div class="tbl-wrap"><table><tr><th>Cuotas</th><th class="num">Tarjeta Macro</th><th class="num">Otro banco</th>'+
-        '<th class="num">Precio si el contado es '+money(EJ)+'</th><th></th></tr>';
-    edit.planes.forEach((p,i)=>{
-      const pm=r(p.macro)<1?EJ/(1-r(p.macro)):0, po=num(p.otros)>0&&r(p.otros)<1?EJ/(1-r(p.otros)):0;
-      h+='<tr><td><input value="'+num(p.c)+'" data-f="c" data-i="'+i+'" style="width:60px"></td>'+
-        '<td class="num"><input value="'+num(p.macro)+'" data-f="macro" data-i="'+i+'" style="width:80px;text-align:right"> %</td>'+
-        '<td class="num"><input value="'+num(p.otros)+'" data-f="otros" data-i="'+i+'" style="width:80px;text-align:right"> %</td>'+
-        '<td class="num" style="font-size:12px">Macro '+(pm?money(pm):'—')+'<div style="color:var(--muted)">Otro '+(po?money(po):'sin cargar')+'</div></td>'+
-        '<td><button class="cmp-rowbtn" data-del="'+i+'">✕</button></td></tr>';
+      '</div>';
+    edit.perfiles.forEach((pf,pi)=>{
+      h+='<div style="margin:14px 0 4px"><b style="font-size:13px">'+esc(pf.l)+'</b>'+
+         (pf.nota?'<div style="font-size:11px;color:var(--muted)">'+esc(pf.nota)+'</div>':'')+'</div>'+
+         '<div class="tbl-wrap"><table><tr><th style="width:70px">Cuotas</th><th class="num">Arancel %</th><th class="num">Costo financ. %</th>'+
+         '<th class="num">Total</th><th class="num">Precio si el contado es '+money(EJ)+'</th><th></th></tr>';
+      pf.tasas.forEach((t,ti)=>{
+        const tot=num(t.ar)+num(t.cf), rr=r(tot), pr=(tot>0&&rr<1)?EJ/(1-rr):0;
+        h+='<tr><td><input value="'+num(t.c)+'" data-p="'+pi+'" data-t="'+ti+'" data-f="c" style="width:55px"></td>'+
+          '<td class="num"><input value="'+num(t.ar)+'" data-p="'+pi+'" data-t="'+ti+'" data-f="ar" style="width:75px;text-align:right"></td>'+
+          '<td class="num"><input value="'+num(t.cf)+'" data-p="'+pi+'" data-t="'+ti+'" data-f="cf" style="width:75px;text-align:right"></td>'+
+          '<td class="num" style="font-weight:700">'+(tot?tot.toFixed(2).replace('.',',')+'%':'—')+'</td>'+
+          '<td class="num">'+(pr?money(pr):'<span style="color:var(--muted)">sin cargar</span>')+
+            (pr?'<div style="font-size:10px;color:var(--muted)">'+money(pr/num(t.c))+' × '+num(t.c)+'</div>':'')+'</td>'+
+          '<td><button class="cmp-rowbtn" data-delp="'+pi+'" data-delt="'+ti+'">✕</button></td></tr>';
+      });
+      h+='</table></div><div style="margin:4px 0 0"><button class="cmp-btn" data-addp="'+pi+'">+ Agregar plan a '+esc(pf.l)+'</button></div>';
     });
-    h+='</table></div>';
     $('fin-body').innerHTML = h +
-      '<div style="margin:8px 0"><button class="cmp-btn" id="fin-add">+ Agregar plan</button></div>'+
-      '<p class="note" style="margin:6px 0 0">Una tasa en <b>0</b> significa <b>sin configurar</b>: ese plan no se le ofrece a ese banco. '+
-      'Es a propósito — cotizar con una tasa que no conocemos sería vender a pérdida sin enterarse. '+
-      'Las comisiones dependen también del <b>plazo de acreditación</b>: si cambiás el plazo con VIUMI, actualizá toda la tabla.</p>'+
+      '<p class="note" style="margin:12px 0 0">Un plan con <b>total 0</b> queda <b>sin configurar</b> y no se ofrece. Es a propósito: cotizar con una tasa que no conocemos sería vender a pérdida sin enterarse.<br>'+
+      '⚠️ Las comisiones dependen del <b>plazo de acreditación</b>. Si lo cambiás con VIUMI, hay que actualizar todas las tablas.</p>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="fin-cancel">Cancelar</button>'+
         '<button class="cmp-btn cmp-btn-primary" id="fin-save">Guardar</button></div>';
-    $('fin-body').querySelectorAll('input[data-f]').forEach(el=> el.addEventListener('input',()=>{
-      edit.planes[+el.dataset.i][el.dataset.f]=num(el.value); }));
-    $('fin-body').querySelectorAll('input[data-f]').forEach(el=> el.addEventListener('change',draw));
+    $('fin-body').querySelectorAll('input[data-f]').forEach(el=>{
+      el.addEventListener('input',()=>{ edit.perfiles[+el.dataset.p].tasas[+el.dataset.t][el.dataset.f]=num(el.value); });
+      el.addEventListener('change',draw); });
     ['fin-iva','fin-plazo'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('change',()=>{
       edit.ivaCom=num($('fin-iva').value); edit.plazoHabiles=num($('fin-plazo').value); draw(); }); });
     const v=$('fin-vig'); if(v) v.addEventListener('input',()=>{ edit.vigencia=v.value; });
-    $('fin-body').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ edit.planes.splice(+b.dataset.del,1); draw(); });
-    $('fin-add').onclick=()=>{ const ult=edit.planes[edit.planes.length-1]; edit.planes.push({c:(ult?num(ult.c)+3:3), macro:0, otros:0}); draw(); };
+    $('fin-body').querySelectorAll('button[data-delp]').forEach(b=> b.onclick=()=>{
+      edit.perfiles[+b.dataset.delp].tasas.splice(+b.dataset.delt,1); draw(); });
+    $('fin-body').querySelectorAll('button[data-addp]').forEach(b=> b.onclick=()=>{
+      const t=edit.perfiles[+b.dataset.addp].tasas, u=t[t.length-1];
+      t.push({c:(u?num(u.c)+3:3), ar:(u?num(u.ar):0), cf:0}); draw(); });
     $('fin-cancel').onclick=cerrar;
     $('fin-save').onclick=guardar;
   }
   function guardar(){
     edit.ivaCom=num($('fin-iva').value); edit.plazoHabiles=num($('fin-plazo').value); edit.vigencia=$('fin-vig').value;
-    const planes=edit.planes.map(p=>({c:num(p.c), macro:num(p.macro), otros:num(p.otros)})).filter(p=>p.c>0);
-    if(planes.some(p=>p.macro>=100||p.otros>=100)){ alert('Una comisión del 100% o más dejaría el precio en infinito. Revisá los valores.'); return; }
-    if(new Set(planes.map(p=>p.c)).size!==planes.length){ alert('Hay dos filas con la misma cantidad de cuotas.'); return; }
-    const doc={ ivaCom:num(edit.ivaCom), plazoHabiles:num(edit.plazoHabiles), vigencia:String(edit.vigencia||''), planes, ts:new Date().toISOString() };
+    const perfiles=edit.perfiles.map(p=>({k:p.k, l:p.l, nota:p.nota, tasas:normTasas(p.tasas)}));
+    for(const p of perfiles){
+      if(p.tasas.some(t=>t.ar+t.cf>=100)){ alert('En «'+p.l+'» hay un plan con 100% o más entre arancel y costo financiero: el precio se iría a infinito. Revisalo.'); return; }
+      if(new Set(p.tasas.map(t=>t.c)).size!==p.tasas.length){ alert('En «'+p.l+'» hay dos filas con la misma cantidad de cuotas.'); return; } }
+    const doc={ ivaCom:num(edit.ivaCom), plazoHabiles:num(edit.plazoHabiles), vigencia:String(edit.vigencia||''), perfiles, ts:new Date().toISOString() };
     if(window.__usaNube){ const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
       c.FS.setDoc(c.FS.doc(c.db,COL,DOC), doc).then(()=>{ aplicar(doc); cerrar(); })
        .catch(e=>alert('Error al guardar: '+e.message)); }
