@@ -8365,6 +8365,16 @@ function buildFilterTable(cfg){
   // facturar" o si el cliente está fichado con el 10,5%. Acá solo define la condición de IVA (X).
   const esSinFacturarPre = (lista, categoria) =>
     /sin factura/i.test(String(lista||'')) || /desc(uento)?\s*10[.,]5/i.test(String(categoria||''));
+  // Lista de precios que le corresponde a una categoría de cliente. Se busca POR NOMBRE dentro del
+  // catálogo de listas del script 1 (nunca por posición: renumerarlas cambiaría la lista de todos).
+  // Devuelve '' si la categoría no dice ni mayorista ni minorista, y ahí no se toca nada.
+  const listaDeCategoria = cat => {
+    const c=String(cat||''), sf=/desc(uento)?\s*10[.,]5/i.test(c);
+    const buscar = re => (window.__listasPrecio ? window.__listasPrecio() : []).find(l=>re.test(l)) || '';
+    if(/mayorista/i.test(c)) return buscar(sf ? /mayorista sin factura/i : /mayorista factur/i);
+    if(/minorista/i.test(c)) return buscar(sf ? /minorista sin factura/i : /minorista consumidor final/i);
+    return '';
+  };
   const ncp=s=>String(s||'').trim().toUpperCase();
   // Flete CONSOLIDADO: junta las fracciones de pallet de todos los ítems, con tope de kg por pallet.
   // Dos productos que ocupan pallets parciales viajan en el mismo pallet y no se cobra de más.
@@ -8603,7 +8613,28 @@ function buildFilterTable(cfg){
       // Una cotización SIN FACTURAR va con condición de IVA X: no se identifica al comprador. El
       // presupuesto no tiene "tipo de comprobante" (siempre es un presupuesto), pero esta condición
       // es la que después viaja a la venta, donde sí se convierte en "Sin factura".
-      if(esSinFacturarPre(editing.listaPrecios, editing.categoria)){ editing.condIva='X'; const s=$('pf-cond'); if(s) s.value='X'; } });
+      if(esSinFacturarPre(editing.listaPrecios, editing.categoria)){ editing.condIva='X'; const s=$('pf-cond'); if(s) s.value='X'; }
+      else if(editing.condIva==='X'){
+        // ⚠️ Y al VOLVER a una lista facturada hay que deshacerla: si no, un presupuesto que pasó por
+        // una lista sin facturar quedaba con "Cond. IVA: X" impreso aunque después se lo cotizara a un
+        // Responsable Inscripto. Se toma la condición de la ficha del cliente; si no hay, A.
+        const f=clientesConocidos().find(c=>c.nombre===editing.cliente);
+        const cond=(f&&f.cond&&f.cond!=='X') ? f.cond : 'A';
+        editing.condIva=cond; const s=$('pf-cond'); if(s) s.value=cond;
+      } });
+    // Cambiar la CATEGORÍA arrastra la lista de precios que le corresponde (pedido de Marcelo, 07/08:
+    // un presupuesto con categoría MINORISTA nacía con la lista mayorista y había que acordarse de
+    // cambiarla). Se dispara el `change` del propio selector de lista para que re-precie los ítems,
+    // recalcule el flete y ajuste la condición de IVA en UN solo lugar, igual que si se tocara a mano.
+    if($('pf-cat')) $('pf-cat').addEventListener('change',()=>{
+      editing.categoria=$('pf-cat').value;
+      const l=listaDeCategoria(editing.categoria);
+      if(!l || l===editing.listaPrecios) return;
+      const sel=$('pf-lista'); if(!sel) return;
+      sel.value=l;
+      sel.dispatchEvent(new Event('change',{bubbles:true}));
+      if(sel.__repintar) sel.__repintar();   // la lista se ve como tarjetas: hay que refrescar la marcada
+    });
     // La zona ahora se elige con tarjetas (drawZonas), no con un desplegable: un clic recalcula el
     // renglón "Flete". Si el presupuesto vino de un Lead, la zona del lead ya llega marcada.
     $('pf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
@@ -8751,7 +8782,11 @@ function buildFilterTable(cfg){
   // Arma un presupuesto completo a partir de un lead: cliente + ítems con precios del catálogo + flete por zona.
   function armarDesdeLead(lead){
     const p=blank(); p.numero=nextNumero(); p.cliente=lead.cliente||''; p.cuit=lead.cuit||'';
-    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria; if(lead.listaPrecios)p.listaPrecios=normLista(lead.listaPrecios);
+    if(lead.condIva)p.condIva=lead.condIva; if(lead.categoria)p.categoria=lead.categoria;
+    // La lista del lead manda; solo si el lead no tiene ninguna se deduce de la categoría, para que un
+    // presupuesto minorista no salga con la lista mayorista que trae el formulario en blanco.
+    if(lead.listaPrecios) p.listaPrecios=normLista(lead.listaPrecios);
+    else { const l=listaDeCategoria(p.categoria); if(l) p.listaPrecios=l; }
     if(esSinFacturarPre(p.listaPrecios, p.categoria)) p.condIva='X';   // cotización sin factura: no se identifica al comprador
     p.zona = lead.zona||'';
     p.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
