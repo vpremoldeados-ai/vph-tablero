@@ -922,6 +922,19 @@
     </div>
   </div>
 
+  <!-- ============ FINANCIACIÓN: comisiones de VIUMI por cuotas y banco (prefijo fin-) ============
+       El catálogo guarda el precio de CONTADO; los precios financiados se calculan con esta tabla.
+       VIUMI publica comisiones nuevas cada mes, así que tienen que ser fáciles de actualizar. -->
+  <div class="cmp-overlay" id="fin-modal">
+    <div class="cmp-dialog" style="max-width:720px">
+      <div class="cmp-dialog-head">
+        <h3>💳 Financiación (comisiones de VIUMI)</h3>
+        <button class="cmp-x" id="fin-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="fin-body"></div>
+    </div>
+  </div>
+
   <!-- ================= PLANTILLAS POR PRODUCTO (WhatsApp) ================= -->
   <div class="cmp-overlay" id="crm-plant-modal">
     <div class="cmp-dialog" style="max-width:680px">
@@ -977,6 +990,7 @@
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="bd-nuevo">+ Nuevo</button>
           <button class="cmp-btn" id="bd-params" title="Editar las variables que usan los cálculos (objetivo de kg/día, días de curado, validez de presupuestos, etc.)">⚙️ Parámetros</button>
+          <button class="cmp-btn" id="bd-financiacion" title="Comisiones de VIUMI por cuotas y banco. El catálogo guarda el precio de contado: los precios en cuotas salen de acá.">💳 Financiación</button>
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
           <button class="cmp-btn" id="bd-lista-pdf" title="Genera el PDF de la lista de precios elegida (Mayorista / Mayorista Contado / Minorista) con los precios EN VIVO del catálogo — para compartir con los corralones.">📄 Lista de precios (PDF)</button>
@@ -9435,6 +9449,149 @@ function buildFilterTable(cfg){
   const btn=$('bd-params'); if(btn) btn.onclick=abrir;
   $('params-cerrar').onclick=cerrar;
   $('params-modal').addEventListener('click',e=>{ if(e.target===$('params-modal')) cerrar(); });
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO FINANCIACIÓN — comisiones de VIUMI por cantidad de cuotas y por banco
+     emisor de la tarjeta. Colección vph_config, doc 'financiacion'.
+
+     ⚠️ LA DECISIÓN DE FONDO: el catálogo guarda UN precio por lista, y ese precio
+     es el de CONTADO. Los precios financiados NO se guardan: se calculan acá.
+     Si se guardaran, cada cambio de comisiones (VIUMI publica tabla nueva todos
+     los meses) obligaría a reescribir 12 productos × 3 listas. Así se cambian
+     8 números en esta tabla y se recalcula todo solo. Además el precio de
+     contado es el que usa Costeo para medir márgenes: tiene que ser el "real".
+
+     El costo financiero NO lo absorbe VPH: se traslada al cliente. Por eso el
+     precio de lista que ve el cliente es el del plan MÁS LARGO, y de ahí bajan
+     los % OFF hasta el contado (decisión de Marcelo, 28/07).
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const num=v=>{ if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const money=n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fb=()=>window.__fbctx;
+  const COL='vph_config', DOC='financiacion';
+
+  // Comisiones SIN IVA, sobre el monto bruto. Las de Macro son la columna de 10 días hábiles de la
+  // tabla vigente 07/2026. Las de otros bancos arrancan en 0 = "no configurado": mientras estén en 0
+  // ese banco no ofrece financiación, en vez de inventar un precio con una tasa que no conocemos.
+  const DEF={ ivaCom:21, plazoHabiles:10, vigencia:'',
+    planes:[ {c:3,  macro:8.89,  otros:0},
+             {c:6,  macro:13.19, otros:0},
+             {c:9,  macro:18.49, otros:0},
+             {c:12, macro:22.59, otros:0} ] };
+  const BANCOS=[{k:'macro', l:'Tarjeta Banco Macro'},{k:'otros', l:'Tarjeta de otro banco'}];
+  let CFG=JSON.parse(JSON.stringify(DEF)), unsub=null, edit=null;
+
+  function aplicar(d){
+    const o=d&&typeof d==='object'?d:{};
+    CFG={ ivaCom: o.ivaCom!=null?num(o.ivaCom):DEF.ivaCom,
+          plazoHabiles: o.plazoHabiles!=null?num(o.plazoHabiles):DEF.plazoHabiles,
+          vigencia: String(o.vigencia||''),
+          planes: Array.isArray(o.planes)&&o.planes.length
+            ? o.planes.map(p=>({c:num(p.c), macro:num(p.macro), otros:num(p.otros)})).filter(p=>p.c>0).sort((a,b)=>a.c-b.c)
+            : JSON.parse(JSON.stringify(DEF.planes)) };
+    window.dispatchEvent(new Event('vph-financiacion'));
+  }
+
+  // ---------- API ----------
+  // Retención efectiva: la comisión más su IVA. Es lo que VIUMI se queda del bruto.
+  const retencion = t => num(t)*(1+num(CFG.ivaCom)/100)/100;
+  window.__financiacion = ()=>JSON.parse(JSON.stringify(CFG));
+  window.__financiacionBancos = ()=>BANCOS.map(b=>({...b}));
+  // Planes con tasa cargada para ese banco. Sin tasa no hay plan: mejor no ofrecerlo que cotizarlo mal.
+  window.__planesFin = banco => CFG.planes.filter(p=>num(p[banco==='otros'?'otros':'macro'])>0)
+    .map(p=>({cuotas:p.c, tasa:num(p[banco==='otros'?'otros':'macro'])}));
+  // Precio que hay que cobrar en N cuotas para que a VPH le quede el precio de contado.
+  // Ojo: es contado/(1−r), NO contado×(1+r). Recargar r y bonificar r no son lo mismo.
+  window.__precioFinanciado = (contado, cuotas, banco)=>{
+    const p=(window.__planesFin(banco)||[]).find(x=>x.cuotas===+cuotas);
+    if(!p) return num(contado);
+    const r=retencion(p.tasa);
+    return r>=1 ? num(contado) : num(contado)/(1-r); };
+  // La escalera completa: del plan más largo (precio de lista) hasta el contado, con el % OFF de cada
+  // escalón. Es lo que se le muestra al cliente. Devuelve [] si ese banco no tiene tasas cargadas.
+  window.__escaleraPrecios = (contado, banco)=>{
+    const planes=window.__planesFin(banco); if(!planes.length) return [];
+    const base=num(contado); if(base<=0) return [];
+    const filas=planes.map(p=>({cuotas:p.cuotas, tasa:p.tasa, precio:window.__precioFinanciado(base,p.cuotas,banco)}))
+      .sort((a,b)=>b.cuotas-a.cuotas);
+    filas.push({cuotas:1, tasa:0, precio:base, contado:true});
+    const lista=filas[0].precio;
+    return filas.map(f=>({...f, lista, off:lista>0?(1-f.precio/lista)*100:0, cuota:f.precio/f.cuotas})); };
+
+  // ---------- Editor ----------
+  function abrir(){ edit=JSON.parse(JSON.stringify(CFG)); draw(); $('fin-modal').classList.add('open'); }
+  function cerrar(){ $('fin-modal').classList.remove('open'); edit=null; }
+  function draw(){
+    const r=t=>num(t)*(1+num(edit.ivaCom)/100)/100;
+    // Ejemplo en vivo con $10.000 de contado: ver el efecto es lo que evita cargar una tasa mal.
+    const EJ=10000;
+    let h='<p style="font-size:12.5px;margin:0 0 10px">Comisiones que cobra <b>VIUMI</b> por financiar, <b>sin IVA</b> y sobre el monto bruto. '+
+      'El catálogo guarda el precio de <b>contado</b>: los precios en cuotas se calculan con esta tabla, así un cambio de comisiones no obliga a retocar ningún producto.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
+        '<div class="cmp-field"><label>IVA de la comisión (%)</label><input id="fin-iva" value="'+num(edit.ivaCom)+'"></div>'+
+        '<div class="cmp-field"><label>Plazo de acreditación (días hábiles)</label><input id="fin-plazo" value="'+num(edit.plazoHabiles)+'"></div>'+
+        '<div class="cmp-field"><label>Vigencia (informativo)</label><input id="fin-vig" value="'+esc(edit.vigencia)+'" placeholder="ej. 01/07/26 al 31/07/26"></div>'+
+      '</div>'+
+      '<div class="tbl-wrap"><table><tr><th>Cuotas</th><th class="num">Tarjeta Macro</th><th class="num">Otro banco</th>'+
+        '<th class="num">Precio si el contado es '+money(EJ)+'</th><th></th></tr>';
+    edit.planes.forEach((p,i)=>{
+      const pm=r(p.macro)<1?EJ/(1-r(p.macro)):0, po=num(p.otros)>0&&r(p.otros)<1?EJ/(1-r(p.otros)):0;
+      h+='<tr><td><input value="'+num(p.c)+'" data-f="c" data-i="'+i+'" style="width:60px"></td>'+
+        '<td class="num"><input value="'+num(p.macro)+'" data-f="macro" data-i="'+i+'" style="width:80px;text-align:right"> %</td>'+
+        '<td class="num"><input value="'+num(p.otros)+'" data-f="otros" data-i="'+i+'" style="width:80px;text-align:right"> %</td>'+
+        '<td class="num" style="font-size:12px">Macro '+(pm?money(pm):'—')+'<div style="color:var(--muted)">Otro '+(po?money(po):'sin cargar')+'</div></td>'+
+        '<td><button class="cmp-rowbtn" data-del="'+i+'">✕</button></td></tr>';
+    });
+    h+='</table></div>';
+    $('fin-body').innerHTML = h +
+      '<div style="margin:8px 0"><button class="cmp-btn" id="fin-add">+ Agregar plan</button></div>'+
+      '<p class="note" style="margin:6px 0 0">Una tasa en <b>0</b> significa <b>sin configurar</b>: ese plan no se le ofrece a ese banco. '+
+      'Es a propósito — cotizar con una tasa que no conocemos sería vender a pérdida sin enterarse. '+
+      'Las comisiones dependen también del <b>plazo de acreditación</b>: si cambiás el plazo con VIUMI, actualizá toda la tabla.</p>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="fin-cancel">Cancelar</button>'+
+        '<button class="cmp-btn cmp-btn-primary" id="fin-save">Guardar</button></div>';
+    $('fin-body').querySelectorAll('input[data-f]').forEach(el=> el.addEventListener('input',()=>{
+      edit.planes[+el.dataset.i][el.dataset.f]=num(el.value); }));
+    $('fin-body').querySelectorAll('input[data-f]').forEach(el=> el.addEventListener('change',draw));
+    ['fin-iva','fin-plazo'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('change',()=>{
+      edit.ivaCom=num($('fin-iva').value); edit.plazoHabiles=num($('fin-plazo').value); draw(); }); });
+    const v=$('fin-vig'); if(v) v.addEventListener('input',()=>{ edit.vigencia=v.value; });
+    $('fin-body').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ edit.planes.splice(+b.dataset.del,1); draw(); });
+    $('fin-add').onclick=()=>{ const ult=edit.planes[edit.planes.length-1]; edit.planes.push({c:(ult?num(ult.c)+3:3), macro:0, otros:0}); draw(); };
+    $('fin-cancel').onclick=cerrar;
+    $('fin-save').onclick=guardar;
+  }
+  function guardar(){
+    edit.ivaCom=num($('fin-iva').value); edit.plazoHabiles=num($('fin-plazo').value); edit.vigencia=$('fin-vig').value;
+    const planes=edit.planes.map(p=>({c:num(p.c), macro:num(p.macro), otros:num(p.otros)})).filter(p=>p.c>0);
+    if(planes.some(p=>p.macro>=100||p.otros>=100)){ alert('Una comisión del 100% o más dejaría el precio en infinito. Revisá los valores.'); return; }
+    if(new Set(planes.map(p=>p.c)).size!==planes.length){ alert('Hay dos filas con la misma cantidad de cuotas.'); return; }
+    const doc={ ivaCom:num(edit.ivaCom), plazoHabiles:num(edit.plazoHabiles), vigencia:String(edit.vigencia||''), planes, ts:new Date().toISOString() };
+    if(window.__usaNube){ const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      c.FS.setDoc(c.FS.doc(c.db,COL,DOC), doc).then(()=>{ aplicar(doc); cerrar(); })
+       .catch(e=>alert('Error al guardar: '+e.message)); }
+    else { try{ localStorage.setItem('vph_financiacion_v1', JSON.stringify(doc)); }catch(e){} aplicar(doc); cerrar(); }
+  }
+
+  function subscribe(){ if(window.__rol!=='admin') return; const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
+    unsub=c.FS.onSnapshot(c.FS.doc(c.db,COL,DOC), s=>{ aplicar(s.exists()?s.data():{}); if($('fin-modal').classList.contains('open')) draw(); }, e=>console.error('financiacion:',e)); }
+  function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(subscribe); window.__afterLogout.push(()=>{ if(unsub){unsub();unsub=null;} });
+      if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) subscribe();
+    } else { try{ const d=JSON.parse(localStorage.getItem('vph_financiacion_v1')); if(d) aplicar(d); }catch(e){} } }
+
+  const b=$('bd-financiacion'); if(b) b.onclick=abrir;
+  $('fin-cerrar').onclick=cerrar;
+  $('fin-modal').addEventListener('click',e=>{ if(e.target===$('fin-modal')) cerrar(); });
+  window.__abrirFinanciacion=abrir;
   boot();
 })();
 </script>
