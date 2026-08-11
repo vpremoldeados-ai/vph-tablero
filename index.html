@@ -275,6 +275,20 @@
   /* La columna Urgencia del Plan lleva texto largo (motivo + la marca verde) y th,td va con nowrap:
      sin esto una sola frase estiraba la tabla 190 px más que el ancho de la página, también en la PC. */
   #page-prodent .pe-col-urg{white-space:normal;max-width:300px}
+  /* Coordinar entregas: el día del viaje con su NOMBRE, y las bandas que separan la semana en curso.
+     Gustavo mira esto en el celular y necesita ver de una qué sale hoy y qué sale esta semana. */
+  .pe-diachip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 11px;font-weight:800;font-size:12px;letter-spacing:.02em;text-transform:uppercase;background:#eef2f7;color:#3c4c63}
+  .pe-diachip.hoy{background:var(--green);color:#fff}
+  .pe-diachip.manana{background:var(--amber);color:#fff}
+  .pe-diachip.semana{background:var(--blue-bg);color:var(--blue)}
+  .pe-diachip.atrasado{background:var(--red);color:#fff}
+  .pe-diachip.sinfecha{background:transparent;color:var(--muted);border:1px dashed var(--border)}
+  .pe-viaje.hoy{border-left-color:var(--green) !important;box-shadow:var(--shadow)}
+  .pe-viaje.despues,.pe-viaje.sinfecha{opacity:.72}   /* lo de más adelante no compite con la semana en curso */
+  .pe-banda{display:flex;align-items:center;gap:9px;margin:18px 0 8px;font-weight:800;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .pe-banda::after{content:'';flex:1;height:1px;background:var(--border)}
+  .pe-banda:first-child{margin-top:2px}
+  .pe-banda.ahora{color:var(--blue)} .pe-banda.tarde{color:var(--red)}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
   /* Celular de Gustavo: tablas densas (Plan, Conteo, movimientos) pasan de filas horizontales a tarjetas apiladas.
      DOS excepciones, las dos a propósito:
@@ -829,7 +843,7 @@
         <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--blue)"></span>Viajes armados — carga por camión</h2>
         <div class="asof" id="pe-viajes-asof"></div>
         <div id="pe-viajes"></div>
-        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.</p>
+        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.<br>Los viajes van ordenados por <b>fecha más próxima</b>, con el <b>nombre del día</b>, y separados en <b>atrasados · esta semana (lunes a domingo) · más adelante · sin fecha</b>. El día se toma del campo <b>Día de entrega</b> del pedido: si no está cargado como fecha (<b>dd/mm/aa</b>), el viaje se muestra igual pero cae al final, en «sin fecha».</p>
       </section>
       <section>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -11696,6 +11710,24 @@ function buildFilterTable(cfg){
   // (ej: el camión de Matías Sánchez lleva 8 pallets). Acá ve cuánto lleva cada viaje y cuánto le queda.
   const CAP_PARAM={ 'Sánchez':'capSanchez', 'Marcelo Vassallo':'capVassallo', 'Brío':'capBrio', 'Expreso Biletta':'capBiletta' };
   const capacidadDe=t=>{ const k=CAP_PARAM[String(t||'').trim()]; return k?Math.max(0,num(window.__param(k,0))):0; };
+  /* ---------- La FECHA del viaje ----------------------------------------------------------------
+     `diaEntrega` es un campo de texto libre, pero en la práctica Sofía lo carga siempre como
+     dd/mm/aa (verificado contra los 25 pedidos del backup del 09/08). Hasta ahora los viajes se
+     ordenaban con localeCompare sobre ese texto: dentro del mismo mes parecía andar, pero
+     "03/09/26" quedaba ANTES que "12/08/26" — el 3 de septiembre arriba del 12 de agosto.
+     Acá se convierte a fecha de verdad para poder ordenar y nombrar el día. Si el texto no se
+     entiende (algo escrito a mano tipo "la semana que viene") devuelve null y ese viaje va al
+     final, sin romper nada: se sigue mostrando el texto tal cual se cargó. */
+  const DIA_SEM=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  function fechaDeDia(txt){
+    const s=String(txt||'').trim(); if(!s) return null;
+    let m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);   // dd/mm/aa · formato argentino
+    if(m){ let a=+m[3]; if(a<100) a+=2000; const d=new Date(a,+m[2]-1,+m[1]);
+      return (d.getMonth()===+m[2]-1 && d.getDate()===+m[1]) ? d : null; }   // descarta 31/02 y similares
+    m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);                      // aaaa-mm-dd por las dudas
+    if(m){ const d=new Date(+m[1],+m[2]-1,+m[3]); return (d.getMonth()===+m[2]-1 && d.getDate()===+m[3]) ? d : null; }
+    return null;
+  }
   function renderViajes(){
     const cont=$('pe-viajes'); if(!cont) return;
     const pend=pedidos.filter(p=>p.estado!=='entregado');
@@ -11703,11 +11735,41 @@ function buildFilterTable(cfg){
     pend.forEach(p=>{ const dia=String(p.diaEntrega||'').trim()||'Sin fecha'; const tr=String(p.transporte||'').trim()||'Sin asignar';
       const k=dia+'||'+tr; g[k]=g[k]||{dia, tr, peds:[], pallets:0, peso:0};
       const t=totCarga(p); g[k].peds.push(p); g[k].pallets+=t.pallets; g[k].peso+=t.peso; });
-    const viajes=Object.values(g).sort((a,b)=> String(a.dia==='Sin fecha'?'zzzz':a.dia).localeCompare(String(b.dia==='Sin fecha'?'zzzz':b.dia)) || String(a.tr).localeCompare(String(b.tr)));
+    // Semana EN CURSO = lunes a domingo. Es lo único que Gustavo necesita mirar; el resto va abajo.
+    const hoy0=new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate());
+    const dsem=hoy0.getDay();                                        // 0 = domingo
+    const finSemana=new Date(hoy0); finSemana.setDate(finSemana.getDate() + (dsem===0?0:7-dsem));
+    const manana=new Date(hoy0); manana.setDate(manana.getDate()+1);
+    const dd=d=>d.getTime();
+    // cuándo: 0 atrasado · 1 hoy · 2 mañana · 3 resto de esta semana · 4 más adelante · 5 sin fecha
+    const cuando=f=> !f ? 5 : dd(f)<dd(hoy0) ? 0 : dd(f)===dd(hoy0) ? 1 : dd(f)===dd(manana) ? 2 : dd(f)<=dd(finSemana) ? 3 : 4;
+    const viajes=Object.values(g).map(v=>{ v.f=fechaDeDia(v.dia); v.c=cuando(v.f); return v; })
+      .sort((a,b)=> a.c-b.c || (a.f&&b.f ? dd(a.f)-dd(b.f) : 0) || String(a.tr).localeCompare(String(b.tr)));
+    const enSemana=viajes.filter(v=>v.c<=3).length;
     const asof=$('pe-viajes-asof');
-    if(asof) asof.textContent = viajes.length ? (viajes.length+' viaje'+(viajes.length!==1?'s':'')+' · '+pend.length+' pedido'+(pend.length!==1?'s':'')+' pendiente'+(pend.length!==1?'s':'')) : 'Sin pedidos pendientes';
+    if(asof) asof.textContent = viajes.length
+      ? (viajes.length+' viaje'+(viajes.length!==1?'s':'')+' · '+pend.length+' pedido'+(pend.length!==1?'s':'')+' pendiente'+(pend.length!==1?'s':'')
+         +' · '+(enSemana?enSemana+' en la semana en curso':'ninguno esta semana'))
+      : 'Sin pedidos pendientes';
     if(!viajes.length){ cont.innerHTML='<div style="text-align:center;color:var(--green);padding:20px;border:1px dashed var(--border);border-radius:12px">✅ No hay entregas pendientes de coordinar.</div>'; return; }
+    // Chip con el NOMBRE DEL DÍA: "MARTES 11/08 · HOY". Es lo primero que mira Gustavo en el celular.
+    const CHIP=[ {k:'atrasado', t:'ATRASADO'}, {k:'hoy', t:'HOY'}, {k:'manana', t:'MAÑANA'},
+                 {k:'semana', t:''},           {k:'despues', t:''}, {k:'sinfecha', t:''} ];
+    const chipDia=v=>{ const c=CHIP[v.c];
+      const nombre = v.f ? DIA_SEM[v.f.getDay()]+' '+p2(v.f.getDate())+'/'+p2(v.f.getMonth()+1) : esc(v.dia);
+      return '<div class="pe-diachip '+c.k+'">📅 '+esc(nombre)+(c.t?' · '+c.t:'')+'</div>'; };
+    // Bandas: separan la semana en curso de lo que viene después. El primer viaje de cada bloque la trae.
+    const BANDA=[ {desde:0, cls:'tarde',  t:'⚠️ Atrasados — la fecha ya pasó'},
+                  {desde:1, cls:'ahora',  t:'📅 Esta semana'},
+                  {desde:4, cls:'',       t:'Más adelante'},
+                  {desde:5, cls:'',       t:'Sin fecha de entrega'} ];
+    let bandaPuesta=-1;
     cont.innerHTML = viajes.map(v=>{
+      let banda='';
+      const b=[...BANDA].reverse().find(x=>v.c>=x.desde);
+      if(b && b.desde!==bandaPuesta){ bandaPuesta=b.desde; banda='<div class="pe-banda '+b.cls+'">'+b.t+'</div>'; }
+      return banda+trjViaje(v); }).join('');
+    function trjViaje(v){
       const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
       const excede=cap>0&&v.pallets>cap;
       const col = excede?'var(--red)' : (cap>0&&libre<=0?'var(--green)' : (cap>0?'var(--amber)':'var(--muted)'));
@@ -11715,10 +11777,10 @@ function buildFilterTable(cfg){
         : excede ? '<b style="color:var(--red)">⚠️ se pasa por '+(v.pallets-cap)+' pallet'+((v.pallets-cap)!==1?'s':'')+' — hay que dividir el viaje</b>'
         : libre===0 ? '<b style="color:var(--green)">✅ camión completo</b>'
         : '<b style="color:var(--amber)">quedan '+libre+' pallet'+(libre!==1?'s':'')+' libres</b>';
-      return '<div style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
+      return '<div class="pe-viaje '+CHIP[v.c].k+'" style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          chipDia(v)+
           '<div style="font-weight:800;font-size:14px">🚚 '+esc(v.tr)+'</div>'+
-          '<div style="font-size:12.5px;color:var(--muted)">📅 '+esc(v.dia)+'</div>'+
           '<div style="margin-left:auto;font-weight:800;font-size:14px;color:'+col+'">'+v.pallets+(cap>0?(' / '+cap):'')+' pallet'+(v.pallets!==1?'s':'')+'</div>'+
         '</div>'+
         (cap>0?'<div class="progress" style="height:10px;margin:6px 0"><i style="width:'+pct+'%;background:'+col+'"></i></div>':'<div style="height:6px"></div>')+
@@ -11727,7 +11789,8 @@ function buildFilterTable(cfg){
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p);
           return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'; }).join('')+'</div>'+
-      '</div>'; }).join('');
+      '</div>';
+    }
   }
   function renderCoord(){
     renderViajes();
