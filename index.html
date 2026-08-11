@@ -289,6 +289,14 @@
   .pe-banda::after{content:'';flex:1;height:1px;background:var(--border)}
   .pe-banda:first-child{margin-top:2px}
   .pe-banda.ahora{color:var(--blue)} .pe-banda.tarde{color:var(--red)}
+  /* Detalle del armado de pallets en Entregas a coordinar. La celda lleva nombres largos y una línea
+     por producto: sin white-space:normal el nowrap de th,td estiraría la tabla entera. */
+  #page-prodent .pe-col-ped{white-space:normal;max-width:320px}
+  .pe-pallets{margin-top:4px;border-top:1px dashed var(--border);padding-top:4px}
+  .pe-pallets .pp-lin{font-size:11px;line-height:1.45;color:#3c4c63}
+  .pe-pallets .pp-cod{font-weight:800;color:var(--text)}
+  .pe-pallets .pp-org{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:0 4px}
+  .pe-pallets .pp-ref{font-size:10px;color:var(--amber);font-weight:700}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
   /* Celular de Gustavo: tablas densas (Plan, Conteo, movimientos) pasan de filas horizontales a tarjetas apiladas.
      DOS excepciones, las dos a propósito:
@@ -306,6 +314,11 @@
     #page-prodent .tbl-wrap table:not(.pe-tbl-matriz):not(.pe-tbl-planilla) td[colspan]::before{content:none}
     #page-prodent .tbl-wrap table:not(.pe-tbl-matriz):not(.pe-tbl-planilla) td[data-label=""]{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px;text-align:left}
     #page-prodent .tbl-wrap table:not(.pe-tbl-matriz):not(.pe-tbl-planilla) td[data-label=""]::before{content:none}
+    /* La celda "Pedido" lleva el armado de pallets: varios renglones. Dentro de la ficha del celular
+       las celdas son flex (etiqueta a la izquierda, dato a la derecha) y el detalle quedaba metido en
+       58 px, ilegible. Acá pasa a ocupar el ancho completo de la tarjeta, con la etiqueta arriba. */
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz):not(.pe-tbl-planilla) td.pe-col-ped{display:block;text-align:left}
+    #page-prodent .tbl-wrap table:not(.pe-tbl-matriz):not(.pe-tbl-planilla) td.pe-col-ped::before{display:block;margin:0 0 3px}
     #page-prodent .pe-stepper button{width:46px;height:46px;font-size:22px}
     #page-prodent .cmp-rowbtn{padding:7px 12px;font-size:12.5px}
 
@@ -856,7 +869,7 @@
         <div class="filter-bar" id="pe-ped-filtros"></div>
         <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-ped-buscar" placeholder="Buscar cliente, producto, ciudad..." style="margin-left:0"></div>
         <div class="tbl-wrap"><table id="pe-tabla-ped"></table></div>
-        <p class="note">Cada pedido es una venta pendiente de entregar. Al marcar <b>Entregado</b> se descuenta del stock físico y sale de lo comprometido. Los pedidos se crean con <b>"→ Entrega"</b> desde una Venta, o a mano acá.</p>
+        <p class="note">Cada pedido es una venta pendiente de entregar. Al marcar <b>Entregado</b> se descuenta del stock físico y sale de lo comprometido. Los pedidos se crean con <b>"→ Entrega"</b> desde una Venta, o a mano acá.<br>En la columna <b>Pedido</b> va el <b>armado de los pallets</b>, producto por producto: <i>330 u en 5 pallets · 75 + 75 + 75 + 75 + 30</i>. Dice <b>ARMADO</b> cuando el reparto está guardado en el pedido (lo editás con «Editar») y <b>SUGERIDO</b> cuando es el reparto automático según las <b>unidades por pallet</b> del catálogo. Si un producto lleva <b>base reforzada</b>, se aclara cuántas van de doble hierro.</p>
       </section>
     </div>
 
@@ -11246,7 +11259,9 @@ function buildFilterTable(cfg){
       // Refuerzo de base DERIVADO del plan real (null si el producto no lo usa). Es un CAMPO de la fila,
       // nunca una fila nueva: el pallet sigue llevando las mismas unidades y los bultos no cambian.
       const ref = splitRefuerzo(pr, pallets, cant);
-      rows.push({ key, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref });
+      // `real` = el armado lo decidió alguien y quedó guardado en el pedido (pe.plan). Si es false, lo
+      // que se muestra es el reparto automático por udPorPallet — sirve de guía, pero no es un plan.
+      rows.push({ key, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref, real:!!guardado });
     });
     return rows;
   }
@@ -11705,6 +11720,25 @@ function buildFilterTable(cfg){
   // que se le manda al transportista y el remito del pedido.
   const dirPed = pe => [pe.direccion, pe.ciudad].filter(Boolean).join(' - ');
   function cargaMini(pe){ const t=totCarga(pe); if(!t.pallets) return ''; return '<div style="font-size:11px;color:var(--muted);margin-top:2px">📦 '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')+'</div>'; }
+  /* Detalle de CÓMO se arman los pallets, producto por producto (pedido de Marcelo, 11/08).
+     Gustavo tenía el total ("5 pallets") pero no el reparto, que es lo que necesita para armarlos:
+     330 losetas no son "5 pallets" a ojo, son 75+75+75+75+30. El dato ya lo calculaba cargaRows()
+     para el planificador de viajes y para el remito; acá solo se hace visible.
+     Distingue el armado GUARDADO en el pedido del reparto automático por udPorPallet, porque no son
+     lo mismo: uno es una decisión y el otro una estimación. */
+  function cargaDetalle(pe){
+    const rows=cargaRows(pe); if(!rows.length) return '';
+    return '<div class="pe-pallets">'+rows.map(r=>{
+      const n=r.pallets.length;
+      const cuerpo = !n ? '<span style="color:var(--muted)">sin cantidad</span>'
+        : r.ud>0 ? nf(r.cant)+' u en <b>'+n+' pallet'+(n!==1?'s':'')+'</b> · '+r.pallets.join(' + ')
+                 : nf(r.cant)+' u · <span style="color:var(--amber)">falta «unidades por pallet» en el catálogo</span>';
+      return '<div class="pp-lin"><span class="pp-cod">'+esc(r.codigo||r.nombre||'—')+'</span> '+cuerpo
+        + (n&&r.ud>0 ? ' <span class="pp-org">'+(r.real?'armado':'sugerido')+'</span>' : '')
+        + (r.ref ? '<div class="pp-ref">🧱 base reforzada: '+nf(r.ref.cant)+' '+esc(r.ref.codigo||r.ref.nombre)+' + '+nf(r.ref.neto)+' '+esc(r.codigo||r.nombre)+'</div>' : '')
+        + '</div>';
+    }).join('')+'</div>';
+  }
   // ---------- Planificador de viajes: agrupa por transportista + día y compara con la capacidad ----------
   // Sofía junta clientes para que salgan en el mismo camión el mismo día, aprovechando al máximo la carga
   // (ej: el camión de Matías Sánchez lleva 8 pallets). Acá ve cuánto lleva cada viaje y cuánto le queda.
@@ -11810,7 +11844,7 @@ function buildFilterTable(cfg){
         + (pe.fechaRequerida?'<div style="font-size:10.5px;color:var(--red);font-weight:700">🎯 requerida '+fmtFecha(pe.fechaRequerida)+'</div>':'')
         + (pe.puedeEsperar?'<div style="font-size:10.5px;color:var(--muted)">🕐 puede esperar</div>':'');
       html+='<tr><td data-label="Cliente"><b>'+esc(pe.cliente||'—')+'</b></td><td data-label="Entrega">'+entregaCell+'</td><td data-label="Transporte">'+esc(pe.transporte||'—')+'</td>'+
-      '<td data-label="Pedido">'+esc(resumenPed(pe))+cargaMini(pe)+'</td>'+
+      '<td class="pe-col-ped" data-label="Pedido">'+esc(resumenPed(pe))+cargaMini(pe)+cargaDetalle(pe)+'</td>'+
       '<td data-label="Entregar en">'+(dirPed(pe)?esc(dirPed(pe)):'<span style="color:var(--red)">falta la dirección</span>')+'</td>'+
       '<td data-label="Estado">'+(badge[pe.estado]||badge.pendiente)+'</td>'+
       '<td data-label="" style="white-space:nowrap">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
