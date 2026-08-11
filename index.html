@@ -11370,7 +11370,44 @@ function buildFilterTable(cfg){
     });
     return rows;
   }
-  function totCarga(pe){ let pallets=0, peso=0; cargaRows(pe).forEach(r=>{ pallets+=r.pallets.length; r.pallets.forEach(u=> peso+=u*r.peso); }); return { pallets, peso }; }
+  // ---------- Pallets MIXTOS (varios modelos sobre el MISMO pallet físico) ----------
+  // Pedido de Marcelo (11/08): a los mayoristas les conviene compartir pallet (ej: 63 GR35 + 63 GB35
+  // llenan UNO justo en vez de viajar en dos por la mitad). Es una CAPA DE AGRUPADO sobre el plan por
+  // producto: cada producto sigue partiendo su cantidad en tandas (pe.plan), y un grupo mixto dice
+  // "estas tandas de productos distintos viajan sobre el mismo pallet". ⚠️ Por diseño NO toca
+  // cantidades: el comprometido, la entrega y la base reforzada siguen saliendo del plan por producto
+  // (mezclar no cambia cuántas losetas van apiladas sobre cada base) — solo cambia el CONTEO de
+  // pallets físicos (camión, remito, programa del transportista).
+  // Guardado: pe.mixtos = [{m:[{k:<key>, i:<n° de tanda>}, ...]}, ...] — array de objetos y no de
+  // arrays porque Firestore no permite un array adentro de otro.
+  // Devuelve los grupos VÁLIDOS: 2+ tandas existentes, de productos con udPorPallet, sin repetir una
+  // tanda entre grupos (se contaría dos veces: gana el primero). Una referencia rota —el plan cambió,
+  // el producto salió del pedido— se descarta sola, sin romper nada.
+  function mixtosDe(pe, rows){
+    if(!pe || !Array.isArray(pe.mixtos) || !pe.mixtos.length) return [];
+    rows = rows || cargaRows(pe);
+    const usados={}; const out=[];
+    pe.mixtos.forEach(g=>{
+      const mm=[];
+      (g && Array.isArray(g.m) ? g.m : []).forEach(x=>{
+        const k=String((x&&x.k)||'').trim().toUpperCase(), i=Math.round(num(x&&x.i));
+        const r=rows.find(rr=>rr.key===k);
+        // Sin udPorPallet la "tanda" es el bulto entero (planStd cae a [cant]): no es un pallet real
+        // que se pueda compartir — mismo criterio que planEsReal en el remito.
+        if(!r || r.ud<=0 || i<0 || i>=r.pallets.length) return;
+        const id=k+'#'+i;
+        if(usados[id] || mm.some(y=>y.id===id)) return;
+        mm.push({ id, k, i, u:r.pallets[i], row:r });
+      });
+      if(mm.length>=2){ mm.forEach(y=>{ usados[y.id]=1; }); out.push(mm); }
+    });
+    return out;
+  }
+  function totCarga(pe){ const rows=cargaRows(pe); let pallets=0, peso=0; rows.forEach(r=>{ pallets+=r.pallets.length; r.pallets.forEach(u=> peso+=u*r.peso); });
+    // Cada grupo mixto junta N tandas sobre UN pallet físico → se descuentan N−1 del total. El peso
+    // no cambia: son las mismas unidades, mejor acomodadas.
+    const mix=mixtosDe(pe, rows); mix.forEach(g=>{ pallets-=(g.length-1); });
+    return { pallets, peso, mixtos:mix.length }; }
 
   // ---------- Render principal ----------
   function render(){
@@ -11824,7 +11861,7 @@ function buildFilterTable(cfg){
   // Dónde hay que descargar. Un solo lugar: lo usan la tabla, el planificador de viajes, el programa
   // que se le manda al transportista y el remito del pedido.
   const dirPed = pe => [pe.direccion, pe.ciudad].filter(Boolean).join(' - ');
-  function cargaMini(pe){ const t=totCarga(pe); if(!t.pallets) return ''; return '<div style="font-size:11px;color:var(--muted);margin-top:2px">📦 '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')+'</div>'; }
+  function cargaMini(pe){ const t=totCarga(pe); if(!t.pallets) return ''; return '<div style="font-size:11px;color:var(--muted);margin-top:2px">📦 '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.mixtos?(' · 🧩 '+t.mixtos+' mixto'+(t.mixtos!==1?'s':'')):'')+(t.peso>0?(' · '+(Math.round(t.peso/100)/10)+' t'):'')+'</div>'; }
   /* Detalle de CÓMO se arman los pallets, producto por producto (pedido de Marcelo, 11/08).
      Gustavo tenía el total ("5 pallets") pero no el reparto, que es lo que necesita para armarlos:
      330 losetas no son "5 pallets" a ojo, son 75+75+75+75+30. El dato ya lo calculaba cargaRows()
@@ -11833,16 +11870,30 @@ function buildFilterTable(cfg){
      lo mismo: uno es una decisión y el otro una estimación. */
   function cargaDetalle(pe){
     const rows=cargaRows(pe); if(!rows.length) return '';
+    // Las tandas que van en un pallet mixto se marcan con 🧩 en la línea del producto, y cada grupo
+    // tiene su propia línea con la composición — es lo que Gustavo necesita para armarlo.
+    const mix=mixtosDe(pe, rows);
+    const comp={}; mix.forEach((g,gi)=>g.forEach(y=>{ comp[y.id]=gi; }));
     return '<div class="pe-pallets">'+rows.map(r=>{
       const n=r.pallets.length;
+      const nMix=r.pallets.filter((u,i)=>comp[r.key+'#'+i]!=null).length, nProp=n-nMix;
+      const cab = nMix===0 ? '<b>'+n+' pallet'+(n!==1?'s':'')+'</b>'
+        : nProp===0 ? '<b>'+(nMix===1?'pallet mixto 🧩':nMix+' pallets mixtos 🧩')+'</b>'
+        : '<b>'+nProp+' pallet'+(nProp!==1?'s':'')+' + '+nMix+' mixto'+(nMix!==1?'s':'')+' 🧩</b>';
       const cuerpo = !n ? '<span style="color:var(--muted)">sin cantidad</span>'
-        : r.ud>0 ? nf(r.cant)+' u en <b>'+n+' pallet'+(n!==1?'s':'')+'</b> · '+r.pallets.join(' + ')
+        : r.ud>0 ? nf(r.cant)+' u en '+cab+' · '+r.pallets.map((u,i)=>comp[r.key+'#'+i]!=null?nf(u)+'🧩':nf(u)).join(' + ')
                  : nf(r.cant)+' u · <span style="color:var(--amber)">falta «unidades por pallet» en el catálogo</span>';
       return '<div class="pp-lin"><span class="pp-cod">'+esc(r.codigo||r.nombre||'—')+'</span> '+cuerpo
         + (n&&r.ud>0 ? ' <span class="pp-org">'+(r.real?'armado':'sugerido')+'</span>' : '')
         + (r.ref ? '<div class="pp-ref">🧱 base reforzada: '+nf(r.ref.cant)+' '+esc(r.ref.codigo||r.ref.nombre)+' + '+nf(r.ref.neto)+' '+esc(r.codigo||r.nombre)+'</div>' : '')
         + '</div>';
-    }).join('')+'</div>';
+    }).join('')
+    + mix.map((g,gi)=>{
+        const kg=g.reduce((a,y)=>a+y.u*y.row.peso,0);
+        return '<div class="pp-lin">🧩 <b>Pallet mixto'+(mix.length>1?' '+String.fromCharCode(65+gi):'')+'</b>: '+
+          g.map(y=>nf(y.u)+' '+esc(y.row.codigo||y.row.nombre)).join(' + ')+(kg>0?' · '+nf(kg)+' kg':'')+'</div>';
+      }).join('')
+    +'</div>';
   }
   // ---------- Planificador de viajes: agrupa por transportista + día y compara con la capacidad ----------
   // Sofía junta clientes para que salgan en el mismo camión el mismo día, aprovechando al máximo la carga
@@ -12023,8 +12074,11 @@ function buildFilterTable(cfg){
     // el pedido. Igual se confirma en el formulario de datos de entrega antes de imprimir.
     // `numero` vacío: lo asigna el módulo Remitos al emitir. `ventaUid` es la venta que originó el
     // pedido (si vino de una): el formulario del remito la deja cambiar antes de imprimir.
+    // Pallets mixtos del pedido, resueltos a código+tanda para que el remito pueda descontar los
+    // compartidos del Total Bultos y mostrar la composición de cada uno.
+    const mixtos=mixtosDe(pe, rows).map(g=>({ m:g.map(y=>({ codigo:y.row.codigo||'', desc:y.row.nombre||'', i:y.i, u:y.u })) }));
     return { numero:'', fecha:fecha||pe.fechaEntregado||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
-      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items,
+      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items, mixtos:mixtos,
       pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'' };
   };
   function imprimirRemito(pe){
@@ -12053,7 +12107,7 @@ function buildFilterTable(cfg){
 
   // Form de pedido
   let editPed=null;
-  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, estado:'pendiente', nota:'' }; }
+  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
   function openPed(pe){ editPed = pe?JSON.parse(JSON.stringify(pe)):blankPed(); if(!editPed.items||!editPed.items.length)editPed.items=[{producto:'',codigo:'',cantidad:1}]; $('pe-ped-title').textContent=pe?'Editar pedido':'Nuevo pedido'; drawPed(); $('pe-modal-ped').classList.add('open'); }
   function drawPed(){
     const pe=editPed;
@@ -12095,6 +12149,9 @@ function buildFilterTable(cfg){
       const keys=new Set(editPed.items.map(it=>keyDe(it.codigo,it.producto))); const plan={};
       if(editPed.plan){ Object.keys(editPed.plan).forEach(kk=>{ const a=editPed.plan[kk]; if(keys.has(kk) && Array.isArray(a) && a.length) plan[kk]=a.map(x=>Math.round(num(x))).filter(x=>x>0); }); }
       editPed.plan=plan;
+      // Pallets mixtos: se guardan solo los grupos válidos (2+ tandas que existen en el plan final),
+      // normalizados a {m:[{k,i}]}. Un grupo a medio armar no se persiste.
+      editPed.mixtos = mixtosDe(editPed, cargaRows(editPed)).map(g=>({ m:g.map(y=>({k:y.k, i:y.i})) }));
       persistPed(editPed); $('pe-modal-ped').classList.remove('open'); };
   }
   function drawPedItems(){
@@ -12122,11 +12179,71 @@ function buildFilterTable(cfg){
         '</div>'+
         '<div data-planout="'+i+'" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>'+
       '</div>';
-    }).join('') + '<div class="pe-plan-tot" style="font-weight:800;font-size:13px;margin-top:4px"></div>';
-    cont.querySelectorAll('input[data-planinp]').forEach(el=>{ const i=+el.dataset.planinp; el.addEventListener('input',()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=parsePlan(el.value); refreshPlanOut(); }); });
+    }).join('') + '<div id="pp-mixtos"></div><div class="pe-plan-tot" style="font-weight:800;font-size:13px;margin-top:4px"></div>';
+    // Al editar un plan a mano pueden cambiar las tandas (índices): los grupos mixtos se revalidan
+    // y repintan solos — drawMixtos toca OTRO contenedor, no le roba el foco al input.
+    cont.querySelectorAll('input[data-planinp]').forEach(el=>{ const i=+el.dataset.planinp; el.addEventListener('input',()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=parsePlan(el.value); drawMixtos(); refreshPlanOut(); }); });
     cont.querySelectorAll('button[data-planstd]').forEach(b=>{ const i=+b.dataset.planstd; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=planStd(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
     cont.querySelectorAll('button[data-planpar]').forEach(b=>{ const i=+b.dataset.planpar; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=planParejo(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
+    drawMixtos();
     refreshPlanOut();
+  }
+  // ---------- Editor de pallets MIXTOS ----------
+  // Mientras se edita, editPed.mixtos puede tener grupos a medio armar (0 o 1 tanda): se muestran
+  // igual para poder completarlos, pero el conteo (totCarga) y el guardado solo toman los de 2+.
+  function drawMixtos(){
+    const cont=$('pp-mixtos'); if(!cont) return;
+    const rows=cargaRows(editPed);
+    const tandas=[]; rows.forEach(r=>{ if(r.ud<=0) return; r.pallets.forEach((u,i)=> tandas.push({ id:r.key+'#'+i, k:r.key, i, u, row:r })); });
+    // Con un solo producto no hay nada que mezclar (repartir un producto entre pallets ya lo hace el
+    // plan de arriba) — la sección ni aparece, para no ensuciar el form del caso común.
+    if(new Set(tandas.map(t=>t.k)).size<2){ cont.innerHTML=''; return; }
+    const raw=Array.isArray(editPed.mixtos)?editPed.mixtos:[];
+    // Dueño de cada tanda (validando contra el plan ACTUAL: una tanda que ya no existe sale sola del grupo).
+    const dueno={};
+    raw.forEach((g,gi)=>{ (g&&Array.isArray(g.m)?g.m:[]).forEach(x=>{ const id=String((x&&x.k)||'').trim().toUpperCase()+'#'+Math.round(num(x&&x.i)); if(dueno[id]==null && tandas.some(t=>t.id===id)) dueno[id]=gi; }); });
+    cont.innerHTML =
+      '<div style="border:1px dashed var(--border);border-radius:10px;padding:10px;margin:2px 0 8px">'+
+      '<div style="font-size:12.5px;font-weight:800;margin-bottom:2px">🧩 Pallets mixtos</div>'+
+      '<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px">Varios modelos sobre el MISMO pallet. Tocá las tandas que viajan juntas — las cantidades no cambian, solo comparten el pallet.</p>'+
+      raw.map((g,gi)=>{
+        const mios=tandas.filter(t=>dueno[t.id]===gi);
+        const u=mios.reduce((a,t)=>a+t.u,0), kg=mios.reduce((a,t)=>a+t.u*t.row.peso,0);
+        const frac=mios.reduce((a,t)=>a+(t.row.ud>0? t.u/t.row.ud : 0),0);
+        const chips=tandas.map(t=>{
+          const dentro=dueno[t.id]===gi, otro=dueno[t.id]!=null && !dentro;
+          return '<button type="button" class="cmp-rowbtn" data-mixg="'+gi+'" data-mixt="'+esc(t.id)+'"'+(otro?' disabled':'')+
+            ' style="font-size:12px;'+(dentro?'background:var(--green);color:#fff;border-color:var(--green)':'')+(otro?'opacity:.35':'')+'">'+
+            esc(t.row.codigo||t.row.nombre)+' · '+nf(t.u)+' u</button>';
+        }).join(' ');
+        let aviso='';
+        if(mios.length<2) aviso='<div style="font-size:11.5px;color:var(--muted);margin-top:5px">Elegí 2 o más tandas de productos distintos (con menos, el grupo no se guarda).</div>';
+        else {
+          const pct=Math.round(frac*100);
+          aviso='<div style="font-size:11.5px;margin-top:5px;color:var(--muted)"><b>'+nf(u)+' u</b> · '+nf(Math.round(kg))+' kg · ocupa ~'+pct+'% de un pallet estándar</div>'
+            +(pct>100?'<div style="font-size:11.5px;color:var(--amber)">⚠️ Más del 100%: la pila va más alta que un pallet normal — confirmá que entre en el camión y que se pueda levantar.</div>':'')
+            +(kg>1500?'<div style="font-size:11.5px;color:var(--amber)">⚠️ Supera los 1.500 kg: más de lo que se calcula por pallet.</div>':'');
+          // Tandas de UN solo producto no son un mixto: eso se resuelve editando el plan de arriba.
+          if(new Set(mios.map(t=>t.k)).size<2) aviso+='<div style="font-size:11.5px;color:var(--amber)">⚠️ Son tandas del MISMO producto — para juntarlas editá las cantidades del plan de arriba.</div>';
+        }
+        return '<div style="border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:6px">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px"><b style="font-size:12.5px">Pallet mixto'+(raw.length>1?' '+String.fromCharCode(65+gi):'')+'</b>'+
+          '<button type="button" class="cmp-rowbtn" data-mixdel="'+gi+'">✕ Deshacer</button></div>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'+aviso+'</div>';
+      }).join('')+
+      '<button type="button" class="cmp-addline" id="pp-mix-add" style="margin-top:0">+ Armar pallet mixto</button>'+
+      '</div>';
+    $('pp-mix-add').onclick=()=>{ editPed.mixtos=Array.isArray(editPed.mixtos)?editPed.mixtos:[]; editPed.mixtos.push({m:[]}); drawMixtos(); refreshPlanOut(); };
+    cont.querySelectorAll('button[data-mixdel]').forEach(b=> b.onclick=()=>{ editPed.mixtos.splice(+b.dataset.mixdel,1); drawMixtos(); refreshPlanOut(); });
+    cont.querySelectorAll('button[data-mixt]').forEach(b=> b.onclick=()=>{
+      const gi=+b.dataset.mixg, id=b.dataset.mixt, corte=id.lastIndexOf('#');
+      const k=id.slice(0,corte), i=+id.slice(corte+1);
+      const g=editPed.mixtos && editPed.mixtos[gi]; if(!g) return;
+      g.m=Array.isArray(g.m)?g.m:[];
+      const ya=g.m.findIndex(x=>String((x&&x.k)||'').trim().toUpperCase()===k && Math.round(num(x&&x.i))===i);
+      if(ya>=0) g.m.splice(ya,1); else g.m.push({k,i});
+      drawMixtos(); refreshPlanOut();
+    });
   }
   function refreshPlanOut(){
     const cont=$('pp-plan'); if(!cont) return;
@@ -12163,7 +12280,9 @@ function buildFilterTable(cfg){
       out.innerHTML = '<b>'+r.pallets.length+'</b> pallet'+(r.pallets.length!==1?'s':'')+' ('+r.pallets.map(nf).join(' + ')+')'+pesoTxt+
         (ok?'':' <span style="color:var(--red)">⚠ suma '+nf(suma)+' ≠ '+nf(r.cant)+' u</span>')+refTxt;
     });
-    const tot=cont.querySelector('.pe-plan-tot'); if(tot) tot.innerHTML='Total: '+gPal+' pallet'+(gPal!==1?'s':'')+(gPeso>0?(' · '+nf(gPeso)+' kg ('+(Math.round(gPeso/100)/10)+' t)'):'');
+    // El total es de pallets FÍSICOS: los grupos mixtos juntan tandas sobre un mismo pallet.
+    const t=totCarga(editPed);
+    const tot=cont.querySelector('.pe-plan-tot'); if(tot) tot.innerHTML='Total: '+t.pallets+' pallet'+(t.pallets!==1?'s':'')+(t.mixtos?(' · 🧩 '+t.mixtos+' mixto'+(t.mixtos!==1?'s':'')):'')+(gPeso>0?(' · '+nf(gPeso)+' kg ('+(Math.round(gPeso/100)/10)+' t)'):'');
   }
 
   // API: ¿esta venta YA se pasó a Producción? Devuelve el pedido o null.
@@ -13115,7 +13234,10 @@ function buildFilterTable(cfg){
 
   // ---------- Remito (recibe objeto normalizado) ----------
   // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva,
-  //        domicilioEntrega, items:[{codigo,desc,obs,cant,pallets}], palletResumen }
+  //        domicilioEntrega, items:[{codigo,desc,obs,cant,pallets}], mixtos, palletResumen }
+  // mixtos (OPCIONAL): pallets compartidos por varios productos — [{m:[{codigo,desc,i,u},...]},...],
+  //   donde cada miembro referencia la tanda i de items[].pallets de ese producto. Lo manda
+  //   Producción; un remito hecho desde Ventas no lo trae y todo sigue como siempre.
   // items[].pallets (OPCIONAL): el plan REAL de pallets de ese ítem, en unidades por pallet (ej. [75,75,30]).
   //   Lo manda Producción y Logística, donde Gustavo puede haber editado el armado a mano. ⚠️ Si viene, se
   //   usa tal cual: recalcularlo acá desdibujaría el armado que se cargó de verdad en el camión. Si no
@@ -13214,13 +13336,36 @@ function buildFilterTable(cfg){
       // pedido SIN estar cargado en el catálogo (pasó de verdad: código "FLE", y el remito lo contaba
       // como un pallet más). Por eso, si el ítem no matchea ningún producto, se mira el nombre/código.
       .filter(r=> !esServicioItem(r));
+    // ---------- Pallets MIXTOS: varios productos sobre el MISMO pallet físico ----------
+    // Cada miembro referencia una tanda de items[].pallets por código (o descripción) + índice. Una
+    // referencia que no cierra —código que no está, índice fuera del plan, tanda repetida— se
+    // descarta: mejor contar ese pallet aparte que descontar bultos que no existen en el papel.
+    const grupos=[];
+    (Array.isArray(obj.mixtos)?obj.mixtos:[]).forEach(g=>{
+      const mm=[];
+      (g&&Array.isArray(g.m)?g.m:[]).forEach(x=>{
+        const r=its.find(rr=> (x&&x.codigo && normc(rr.it.codigo)===normc(x.codigo)) || (x&&x.desc && normc(rr.it.desc)===normc(x.desc)));
+        const i=Math.round(num(x&&x.i));
+        if(!r || !planEsReal(r) || i<0 || i>=r.pallets.length) return;
+        const id=normc(r.it.codigo||r.it.desc)+'#'+i;
+        if(mm.some(y=>y.id===id) || grupos.some(gg=>gg.some(y=>y.id===id))) return;
+        mm.push({ id, r, i, u:r.pallets[i] });
+      });
+      if(mm.length>=2) grupos.push(mm);
+    });
+    const compartida={}; grupos.forEach(g=>g.forEach(y=>{ compartida[y.id]=1; }));
+    const esComp=(r,i)=> !!compartida[normc(r.it.codigo||r.it.desc)+'#'+i];
+    const exclusivas=r=> r.pallets.filter((u,i)=>!esComp(r,i));
     const bultosDe=r=> planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant));
     let filas=its.map(r=>'<tr><td>'+celdaCodigo(r.it.codigo)+'</td><td>'+esc(r.it.desc||'')+'</td><td>'+esc(r.it.obs||'')+'</td>'+
       '<td class="n">'+nf(r.it.cant)+'</td><td class="n">'+nf(bultosDe(r))+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';
-    const totBultos=its.reduce((a,r)=>a+bultosDe(r),0);
+    // Un pallet mixto es UN bulto físico aunque lleve N productos: al total se le descuentan los
+    // compartidos de más. La columna por renglón sigue diciendo en cuántos bultos viaja CADA producto.
+    const totBultos=its.reduce((a,r)=>a+bultosDe(r),0) - grupos.reduce((a,g)=>a+g.length-1,0);
     const tabla='<table class="doc-tab"><tr><th>Código</th><th>Productos</th><th>Observaciones</th><th class="n">Cantidad</th><th class="n">Bultos</th></tr>'+filas+
-      '<tr><td colspan="4" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>';
+      '<tr><td colspan="4" class="n"><b>Total Bultos</b></td><td class="n"><b>'+nf(totBultos)+'</b></td></tr></table>'+
+      (grupos.length?'<div style="font-size:10px;color:#666;margin:-6px 0 8px">🧩 '+grupos.length+' pallet'+(grupos.length!==1?'s':'')+' mixto'+(grupos.length!==1?'s':'')+' con más de un producto: el Total Bultos cuenta cada pallet UNA sola vez (no es la suma de la columna).</div>':'');
     // Contra qué comprobante se entrega: es lo que permite atar el papel a la factura (y al revés,
     // saber si una venta ya salió). Si el remito no tiene venta asociada, se dice explícitamente.
     const asoc = '<div style="margin-bottom:8px;font-size:11.5px"><b>Corresponde a:</b> '+
@@ -13231,11 +13376,19 @@ function buildFilterTable(cfg){
     let pallets='';
     if(conPal.length){
       const filasP=conPal.map(r=>{
+        // Las tandas que van en un pallet mixto no se repiten acá: se listan en la fila del grupo.
+        const excl=exclusivas(r), nMix=r.pallets.length-excl.length;
         const kgIt=r.pallets.reduce((a,u)=>a+u*r.peso,0);
+        const como = excl.length ? armadoTxt(excl,r.peso)+(nMix?' + 🧩 en pallet mixto':'') : '🧩 va en pallet mixto';
         return '<tr><td>'+esc(r.it.codigo||'')+'</td><td>'+esc(r.it.desc||'')+'</td><td class="n">'+nf(r.it.cant)+'</td>'+
-          '<td>'+armadoTxt(r.pallets,r.peso)+'</td><td class="n">'+(kgIt>0?nf(kgIt)+' kg':'—')+'</td></tr>';
+          '<td>'+como+'</td><td class="n">'+(kgIt>0?nf(kgIt)+' kg':'—')+'</td></tr>';
+      }).join('')+
+      grupos.map((g,gi)=>{
+        const kg=g.reduce((a,y)=>a+y.u*y.r.peso,0);
+        return '<tr><td>🧩</td><td><b>Pallet mixto'+(grupos.length>1?' '+String.fromCharCode(65+gi):'')+'</b></td><td class="n">'+nf(g.reduce((a,y)=>a+y.u,0))+'</td>'+
+          '<td>'+g.map(y=>nf(y.u)+' '+esc(y.r.it.codigo||y.r.it.desc)).join(' + ')+'</td><td class="n">'+(kg>0?nf(kg)+' kg':'—')+'</td></tr>';
       }).join('');
-      const totPal=conPal.reduce((a,r)=>a+r.pallets.length,0);
+      const totPal=conPal.reduce((a,r)=>a+exclusivas(r).length,0)+grupos.length;
       const totKg=conPal.reduce((a,r)=>a+r.pallets.reduce((b,u)=>b+u*r.peso,0),0);
       const sinPeso=conPal.filter(r=>!(r.peso>0)).map(r=>r.it.desc||r.it.codigo||'—');
       pallets='<h4 style="margin:12px 0 4px;font-size:12px">Armado de pallets</h4>'+
