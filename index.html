@@ -13128,6 +13128,15 @@ function buildFilterTable(cfg){
   // cargan el flete DENTRO del precio: unitario = Capital + fletePallet100 ÷ unidades del pallet
   // (regla de Sofía, 11/08). El E-cheq a 30 días de fecha de factura es SOLO para las facturadas.
   // ⚠️ Fecha propia: HOY/p2 NO existen en este módulo (§3: cada IIFE tiene sus helpers).
+  // Nombres COMPLETOS para el listado (pedido de Sofía, 11/08): el corralón necesita las medidas del
+  // tope a la vista. Solo cambia lo IMPRESO en la lista de precios — el catálogo, el matching de
+  // leads y el stock no se tocan (renombrar en el catálogo arrastra todo eso, ver §3 del CLAUDE.md).
+  const NOMBRE_LISTA = {
+    TEC50:'Tope Circular 18×12×50', TET50:'Tope Trapecio 15×12×50',
+    TEC100:'Tope Cuadrado 15×15×100', TER100:'Tope Cuadrado 15×15×100',
+    TET100:'Tope Trapecio 15×12×100'
+  };
+  const nombreLista = p => NOMBRE_LISTA[String(p.codigo||'').trim().toUpperCase()] || String(p.nombre||'');
   const LP_CBA='Entrega sin costo en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).',
         LP_100='Entrega sin costo hasta 100 km de Córdoba Capital (flete incluido en el precio).',
         LP_COMUN='Pedidos por pallets enteros. Plazo de entrega: 7 días hábiles desde la confirmación. Descuento 5% por compras mayores a 5 pallets.',
@@ -13164,7 +13173,8 @@ function buildFilterTable(cfg){
       // Con flete incluido, un producto sin udPorPallet no tiene cómo repartir el flete por unidad:
       // mejor afuera de esa lista que con un precio inventado.
       .filter(p=>!L.flete100 || num(p.udPorPallet)>0)
-      .sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'));
+      // Ordena por el nombre IMPRESO (los topes renombrados quedan juntos igual).
+      .sort((a,b)=>nombreLista(a).localeCompare(nombreLista(b),'es'));
     if(!prods.length){ alert('No hay productos con precio cargado en la lista "'+L.nombre+'".'); return; }
     const d=new Date(); const pad=n=>String(n).padStart(2,'0');
     const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
@@ -13176,7 +13186,7 @@ function buildFilterTable(cfg){
     // La foto al lado del código, igual que en presupuestos/ventas/remitos (pedido de Sofía, 11/08:
     // que el corralón identifique el producto de un vistazo). celdaCodigo no rompe si falta la foto.
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
-      return '<tr><td style="white-space:nowrap">'+celdaCodigo(p.codigo)+'</td><td>'+esc(p.nombre||'')+'</td>'+
+      return '<tr><td style="white-space:nowrap">'+celdaCodigo(p.codigo)+'</td><td>'+esc(nombreLista(p))+'</td>'+
         '<td class="n"><b>'+money(pu)+'</b></td>'+
         (L.may?('<td class="n">'+money(Math.round(pu*(1+margen/100)))+'</td>'):'')+
         (conM2?('<td class="n">'+(uxm2>0?money(Math.round(pu*uxm2))+' <span style="color:#666">('+pct(uxm2)+' u/m²)</span>':'—')+'</td>'):'')+
