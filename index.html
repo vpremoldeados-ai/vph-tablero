@@ -8563,59 +8563,55 @@ function buildFilterTable(cfg){
     return p; }
   function precioLista(prod,lista){ return window.__precioDeLista(prod, lista); }   // fuente única: script 1
   function aplicarProducto(it,prod,lista){ it.codigo=prod.codigo||''; const bruto=precioLista(prod,lista)||num(prod.precioMinorista)||num(prod.precioMayorista); const sf=/sin factura/i.test(lista||''); if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto);} else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit=al>0?round2(bruto/(1+al/100)):round2(bruto);}
-    // El catálogo guarda el precio de CONTADO. Se anota tal cual en el ítem y, si el presupuesto tiene
-    // financiación elegida, el precio del renglón se recarga a partir de ahí.
+    // El catálogo guarda el precio de CONTADO y el renglón queda en contado (estrategia 11/08).
     it.precioContado=it.precioUnit; aplicarFinItem(it); }
 
   // ---------- Financiación del presupuesto ----------
-  // El precio de LISTA (el que ve el cliente) es el del plan MÁS LARGO del perfil elegido, y de ahí
-  // bajan los % OFF hasta el contado. El recargo se aplica a TODOS los renglones, flete incluido:
-  // VIUMI retiene sobre el total facturado, así que si el flete no se recargara VPH lo absorbería.
-  //
-  // ⚠️ Cada ítem guarda su `precioContado`. El precio del renglón SIEMPRE se deriva de ese número, no
-  // del anterior: si se recargara sobre el precio ya recargado, cambiar de perfil dos veces aplicaría
-  // el coeficiente dos veces y el presupuesto saldría carísimo sin que nadie lo note.
+  // Estrategia 11/08 (la misma del cotizador web): los renglones y el "Total Presupuesto" van
+  // SIEMPRE al precio de CONTADO — el número más bajo es el que compite cuando el cliente compara
+  // presupuestos. La financiación vive en la ESCALERA (pantalla y recuadro "Formas de pago" del
+  // PDF): contado resaltado → 3 → 6 → 12 cuotas = precio de lista, con contado/(1−r) sobre cada
+  // renglón, flete incluido (VIUMI retiene sobre el total facturado).
+  // El selector de perfil ya NO recarga los renglones (eso era el flujo del 28/07): solo elige con
+  // qué tasas se arma la escalera. Vacío = perfil MÁS CARO (regla de Marcelo: sin saber la
+  // tarjeta, nunca cotizar a pérdida).
+  // ⚠️ `precioContado` se sigue guardando por ítem: los presupuestos del flujo viejo quedaron con
+  // los renglones al precio de LISTA, y desde ahí se normalizan a contado al abrir o imprimir.
   const finCuotas = perfil => { const pl=(window.__planesFin?window.__planesFin(perfil):[])||[];
     return pl.length ? Math.max.apply(null, pl.map(x=>x.cuotas)) : 0; };
-  // Redondea al PESO el precio final (con IVA), que es el que ve el cliente, y de ahí saca el neto.
-  function aplicarFinItem(it){
-    const base=num(it.precioContado!=null?it.precioContado:it.precioUnit);
-    const al=itemAlic(it), perfil=editing&&editing.finPerfil, cuotas=perfil?finCuotas(perfil):0;
-    if(!perfil||!cuotas||!window.__precioFinanciado){ it.precioUnit=round2(base); return; }
-    const finalContado=base*(1+al/100);
-    const finalLista=Math.round(window.__precioFinanciado(finalContado, cuotas, perfil));
-    it.precioUnit = al>0 ? round2(finalLista/(1+al/100)) : finalLista; }
+  // Renglón SIEMPRE a contado (si un doc viejo guardó lista, precioContado trae el contado real).
+  function aplicarFinItem(it){ it.precioUnit=round2(num(it.precioContado!=null?it.precioContado:it.precioUnit)); }
   function reprecioFin(){ (editing.items||[]).forEach(it=>{ if(it.precioContado==null) it.precioContado=num(it.precioUnit); aplicarFinItem(it); }); }
-  // Camino inverso: de un precio de lista tipeado a mano, deducir el contado que le corresponde.
-  function recalcContadoDesdeLista(it){
-    const perfil=editing&&editing.finPerfil, cuotas=perfil?finCuotas(perfil):0;
-    if(!perfil||!cuotas||!window.__precioFinanciado){ it.precioContado=num(it.precioUnit); return; }
-    const al=itemAlic(it), finalLista=num(it.precioUnit)*(1+al/100);
-    // El coeficiente es lineal, así que el contado sale del mismo factor usado al recargar.
-    const factor=window.__precioFinanciado(1000, cuotas, perfil)/1000;
-    const finalContado=factor>0?finalLista/factor:finalLista;
-    it.precioContado = al>0 ? round2(finalContado/(1+al/100)) : round2(finalContado); }
+  // Un precio corregido a mano ES el contado del renglón (los renglones van a contado).
+  function anotarContado(it){ it.precioContado=num(it.precioUnit); }
+  // Perfil efectivo de la escalera: el elegido o, sin elegir, el más caro.
+  const perfilEscalera = ()=> (editing&&editing.finPerfil) || (window.__perfilMasCaro?window.__perfilMasCaro():'') || '';
   // El mayorista NO lleva escalera: los corralones pagan a 30 días o con cheque, no con tarjeta en
   // cuotas. Mostrarles una lista recargada los espanta (decisión de Marcelo, 28/07).
   const finAplica = p => !/mayorista/i.test(String((p&&p.listaPrecios)||''))
                       && !/mayorista/i.test(String((p&&p.categoria)||''));
   function finOpts(sel){ const pf=(window.__financiacionPerfiles?window.__financiacionPerfiles():[]).filter(x=>x.planes>0);
-    return '<option value="">Sin financiación — precios de contado</option>'+
+    return '<option value="">Tarjeta a confirmar — se cotiza con el perfil más caro</option>'+
       pf.map(x=>'<option value="'+esc(x.k)+'"'+(String(sel||'')===x.k?' selected':'')+'>'+esc(x.l)+' · hasta '+finCuotas(x.k)+' cuotas</option>').join(''); }
   // La escalera del TOTAL, para que Sofía vea antes de mandar qué le va a ofrecer al cliente.
   // Se arma re-preciando cada renglón en cada plan y sumando, así los números del PDF cierran:
   // si se calculara como total × (1−off), los precios unitarios no multiplicarían.
   function escaleraTotales(){
-    const perfil=editing.finPerfil; if(!perfil||!window.__planesFin) return [];
-    const planes=(window.__planesFin(perfil)||[]).slice().sort((a,b)=>b.cuotas-a.cuotas);
+    if(!finAplica(editing)) return [];   // el mayorista no lleva escalera, ni con el perfil default
+    const perfil=perfilEscalera(); if(!perfil||!window.__planesFin) return [];
+    // Solo los planes OFRECIDOS (3/6/12 — decisión de Marcelo 11/08): el 9 de la matriz es para
+    // liquidar cobros VIUMI, no se publica.
+    const ofrecidos=window.__planesOfrecidos?window.__planesOfrecidos():null;
+    const planes=(window.__planesFin(perfil)||[]).filter(p=>!ofrecidos||ofrecidos.includes(p.cuotas)).sort((a,b)=>b.cuotas-a.cuotas);
     if(!planes.length) return [];
     const filas=planes.concat([{cuotas:1, tasa:0, contado:true}]).map(pl=>{
       const copia=JSON.parse(JSON.stringify(editing));
       copia.items=(copia.items||[]).map(it=>{
         const base=num(it.precioContado!=null?it.precioContado:it.precioUnit), al=itemAlic(it);
         const fc=base*(1+al/100);
-        const fl=pl.contado?Math.round(fc):Math.round(window.__precioFinanciado(fc, pl.cuotas, perfil));
-        return {...it, precioUnit: al>0?round2(fl/(1+al/100)):fl}; });
+        // Contado SIN redondear (tiene que dar exacto el Total del form); financiados al peso.
+        const fl=pl.contado?fc:Math.round(window.__precioFinanciado(fc, pl.cuotas, perfil));
+        return {...it, precioUnit: al>0?fl/(1+al/100):fl}; });
       const k=calc(copia);
       return { cuotas:pl.cuotas, contado:!!pl.contado, total:k.total }; });
     // Mismo criterio que el módulo Financiación: se descartan los planes dominados (más cuotas y más
@@ -8721,7 +8717,9 @@ function buildFilterTable(cfg){
   let editing=null;
   function blank(){ return { numero:'', fecha:hoyISO, validezDias:num(window.__param('validezPresup',15)), cliente:'', cuit:'', condIva:'A', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, domicilioEntrega:'', zona:'', palletsFlete:0, finPerfil:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, notaCliente:'', nota:'', estado:'borrador' }; }
   let _onSaved=null;   // callback opcional (ej. marcar un lead como "cotizado" SOLO si el presupuesto se guarda)
-  function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}]; $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
+  function openForm(p){ _onSaved=null; editing = p?JSON.parse(JSON.stringify(p)):blank(); editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.numero) editing.numero=nextNumero(); if(!editing.items||!editing.items.length)editing.items=[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
+    reprecioFin();   // un doc del flujo viejo (renglones a precio de lista) se normaliza a contado al abrir
+    $('pre-form-title').textContent=p?'Editar Presupuesto '+(p.numero||''):'Nuevo Presupuesto'; drawForm(); $('pre-modal').classList.add('open'); }
   function closeForm(){ $('pre-modal').classList.remove('open'); editing=null; _onSaved=null; }
   function opt(arr,sel){ return arr.map(x=>'<option value="'+esc(x)+'"'+(String(sel)===String(x)?' selected':'')+'>'+esc(x)+'</option>').join(''); }
   function drawForm(){
@@ -8743,7 +8741,7 @@ function buildFilterTable(cfg){
         field('Forma de entrega (flete)','col2','<div class="pf-picker" id="pf-zona-picker" style="margin:2px 0 0"></div>') +
         '<div class="cmp-field col2" id="pf-fin-wrap"><label>Financiación con tarjeta</label>'+
           '<select id="pf-fin">'+finOpts(p.finPerfil)+'</select>'+
-          '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">El precio de los renglones pasa a ser el de <b>máxima financiación</b> (lo que ve el cliente) y el presupuesto muestra los descuentos por pagar en menos cuotas, hasta el contado. El flete se recarga igual.</div></div>'+
+          '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">Los renglones y el total van al precio de <b>CONTADO</b> (el número que compite). La financiación sale en el recuadro <b>«Formas de pago»</b> del PDF: contado con su % OFF y las cuotas hasta el precio de lista (12 cuotas), flete incluido. Elegí el perfil solo si el cliente ya confirmó la tarjeta.</div></div>'+
       '</div>'+
       '<h4 style="margin:6px 0 4px;font-size:13px">Ítems</h4>'+
       '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Tocá un producto para agregarlo (volvé a tocarlo para sumar otra unidad):</div>'+
@@ -8802,7 +8800,8 @@ function buildFilterTable(cfg){
       window.__tarjetas('pf-lista');
       window.__tarjetas('pf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
     }
-    // Financiación: al elegir perfil se re-precian TODOS los renglones desde su precio de contado.
+    // Financiación: elegir perfil solo cambia las tasas de la escalera — los renglones quedan a
+    // contado (reprecioFin normaliza por si el doc venía del flujo viejo con renglones a lista).
     const finEl=$('pf-fin');
     if(finEl) finEl.addEventListener('change',()=>{ editing.finPerfil=finEl.value; reprecioFin(); drawItems(); drawTotals(); });
     sincFinWrap();
@@ -8886,9 +8885,9 @@ function buildFilterTable(cfg){
         '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>';
     }).join('');
     $('pf-items').querySelectorAll('input,select').forEach(el=>{ const ev=el.tagName==='SELECT'?'change':'input'; el.addEventListener(ev,()=>{ const i=+el.dataset.i,kk=el.dataset.k; editing.items[i][kk]=el.value;
-      // Un precio corregido a mano con financiación puesta es el precio de LISTA: hay que recalcular
-      // de cuánto sale el contado, si no al cambiar de plan se perdería la corrección.
-      if(kk==='precioUnit') recalcContadoDesdeLista(editing.items[i]);
+      // Un precio corregido a mano ES el contado del renglón: se anota para que la escalera
+      // (que financia desde precioContado) siga la corrección.
+      if(kk==='precioUnit') anotarContado(editing.items[i]);
       updateRow(i); drawTotals(); }); });
     $('pf-items').querySelectorAll('input[data-k="desc"]').forEach(el=> el.addEventListener('change',()=>{ const i=+el.dataset.i; const prod=matchProducto(el.value); if(prod){ editing.items[i].desc=prod.nombre; aplicarProducto(editing.items[i],prod,editing.listaPrecios); drawItems(); drawTotals(); } }));
     $('pf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
@@ -8910,8 +8909,11 @@ function buildFilterTable(cfg){
     const esc=escaleraTotales();
     if(!esc.length){ box.innerHTML=''; box.style.display='none'; return; }
     box.style.display='';
-    box.innerHTML='<div style="font-size:11px;color:#2f6fb2;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Lo que va a ver el cliente</div>'+
-      esc.map(f=>'<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;font-size:'+(f.off===0?'14px':'12.5px')+'">'+
+    // Del más bajo al más alto, como la web: el CONTADO resaltado abre la lista y la última fila
+    // es el precio de lista (12 cuotas). Es exactamente lo que va a salir en el PDF.
+    const filas=esc.slice().reverse();
+    box.innerHTML='<div style="font-size:11px;color:#2f6fb2;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Lo que va a ver el cliente (recuadro Formas de pago)</div>'+
+      filas.map(f=>'<div style="display:flex;gap:8px;align-items:baseline;padding:'+(f.contado?'4px 6px':'2px 6px')+';font-size:'+(f.contado?'14px':'12.5px')+(f.contado?';background:#e9f9f0;border-radius:6px':'')+'">'+
         '<b style="min-width:96px">'+(f.contado?'Contado':f.cuotas+' cuotas')+'</b>'+
         '<b>'+money(f.total)+'</b>'+
         (f.contado?'':'<span style="color:var(--muted)">de '+money(f.cuota)+' c/u</span>')+
@@ -9798,6 +9800,25 @@ function buildFilterTable(cfg){
   // Planes con tasa cargada. Sin tasa no hay plan: mejor no ofrecerlo que cotizarlo mal.
   window.__planesFin = perfil => { const p=perfilDe(perfil); if(!p) return [];
     return p.tasas.filter(t=>t.ar+t.cf>0).map(t=>({cuotas:t.c, arancel:t.ar, costoFin:t.cf, tasa:t.ar+t.cf})); };
+  // Planes que se OFRECEN al cliente en la escalera (presupuesto y cotizador web): 3, 6 y 12.
+  // Decisión de Marcelo (11/08): mantener los planes clásicos aunque con tarjeta de otro banco el
+  // de 9 salga más barato que el de 6. El 9 SIGUE cargado en la matriz — hace falta para liquidar
+  // un cobro VIUMI que venga en 9 cuotas — pero no se publica en ninguna escalera.
+  const PLANES_OFRECIDOS=[3,6,12];
+  window.__planesOfrecidos = ()=>PLANES_OFRECIDOS.slice();
+  // El perfil MÁS CARO: el que se usa cuando no se sabe con qué tarjeta va a pagar el cliente
+  // (regla de Marcelo, 28/07 — así nunca se cotiza a pérdida; si paga con una tarjeta más barata,
+  // la diferencia queda a favor de VPH). Entre perfiles se compara el plan MÁS LARGO de cada uno:
+  // gana el que llega a más cuotas y, a igual cantidad, el de tasa más alta (hoy: "otro banco").
+  window.__perfilMasCaro = ()=>{
+    let best=null, bestCuotas=0, bestTasa=-1;
+    CFG.perfiles.forEach(p=>{
+      const planes=(p.tasas||[]).filter(t=>num(t.ar)+num(t.cf)>0); if(!planes.length) return;
+      const maxC=Math.max.apply(null, planes.map(t=>num(t.c)));
+      const t=planes.find(x=>num(x.c)===maxC), tasa=num(t.ar)+num(t.cf);
+      if(maxC>bestCuotas || (maxC===bestCuotas && tasa>bestTasa)){ best=p.k; bestCuotas=maxC; bestTasa=tasa; }
+    });
+    return best; };
   // Precio que hay que cobrar en N cuotas para que a VPH le quede el precio de contado.
   // Ojo: es contado/(1−r), NO contado×(1+r). Recargar r y bonificar r no son lo mismo.
   window.__precioFinanciado = (contado, cuotas, perfil)=>{
@@ -9807,8 +9828,9 @@ function buildFilterTable(cfg){
     return r>=1 ? num(contado) : num(contado)/(1-r); };
   // La escalera completa: del plan más largo (precio de lista) hasta el contado, con el % OFF de cada
   // escalón. Es lo que se le muestra al cliente. Devuelve [] si ese perfil no tiene tasas cargadas.
+  // Solo entran los PLANES_OFRECIDOS (3/6/12): el resto de la matriz existe para liquidar cobros.
   window.__escaleraPrecios = (contado, perfil)=>{
-    const planes=window.__planesFin(perfil); if(!planes.length) return [];
+    const planes=window.__planesFin(perfil).filter(p=>PLANES_OFRECIDOS.includes(p.cuotas)); if(!planes.length) return [];
     const base=num(contado); if(base<=0) return [];
     const filas=planes.map(p=>({cuotas:p.cuotas, tasa:p.tasa, arancel:p.arancel, costoFin:p.costoFin,
         precio:window.__precioFinanciado(base,p.cuotas,perfil)}))
@@ -12734,6 +12756,66 @@ function buildFilterTable(cfg){
   // El párrafo de entrega depende de la forma de envío que se cargó en el lead/presupuesto (`v.zona`,
   // las claves las define ZONAS en el módulo Presupuestos): si el cliente RETIRA EN FÁBRICA no tiene
   // sentido hablarle de la entrega en obra con hidrogrúa — se le pone la dirección y el horario.
+  // ---------- Escalera de financiación del presupuesto (recuadro "Formas de pago") ----------
+  // La MISMA matemática que el form de Presupuestos y el cotizador web: cada renglón se financia
+  // por separado (precio final con IVA redondeado al peso, contado/(1−r)) y la escalera del total
+  // suma esos renglones — así los precios unitarios multiplican y los números del papel cierran.
+  // El flete es un renglón más: se financia igual (VIUMI retiene sobre el total facturado).
+  // Los planes DOMINADOS (más cuotas y más barato que uno más corto) se descartan, como siempre.
+  // Devuelve las filas del más bajo al más alto (contado primero) o null si no corresponde:
+  // mayorista (decisión 28/07), sin tasas cargadas, o sin módulo Financiación.
+  // v.finPerfil = perfil elegido por Sofía; vacío → el MÁS CARO (tarjeta sin confirmar).
+  // Los renglones del doc van a contado; si es un doc del flujo viejo (renglones a precio de
+  // lista), la base sale de precioContado. Expuesta como __escaleraDoc para los tests en node.
+  function escaleraDoc(v){
+    if(!window.__planesFin || !window.__precioFinanciado) return null;
+    const s=String((v&&v.listaPrecios)||'') || String((v&&v.categoria)||'');
+    if(/mayorista/i.test(s)) return null;
+    const perfil = (v&&v.finPerfil) || (window.__perfilMasCaro?window.__perfilMasCaro():'');
+    if(!perfil) return null;
+    // Solo los planes OFRECIDOS (3/6/12): el 9 de la matriz es para liquidar cobros, no se publica.
+    const ofrecidos=window.__planesOfrecidos?window.__planesOfrecidos():null;
+    const planes=(window.__planesFin(perfil)||[]).filter(p=>!ofrecidos||ofrecidos.includes(p.cuotas)).sort((a,b)=>b.cuotas-a.cuotas);
+    if(!planes.length) return null;
+    const filas=planes.concat([{cuotas:1, contado:true}]).map(pl=>{
+      const copia=JSON.parse(JSON.stringify(v));
+      copia.items=(copia.items||[]).map(it=>{
+        if(!it) return it;
+        const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
+        const base=num(it.precioContado!=null?it.precioContado:it.precioUnit);
+        const fc=base*(1+al/100);
+        // El contado NO se redondea: su fila tiene que dar EXACTO el "Total Presupuesto (contado)"
+        // del documento (los precios del catálogo no siempre dividen justo por 1,21 y un total con
+        // centavos al lado de una fila redondeada parecería un error). Los financiados sí van al
+        // peso (regla de Marcelo).
+        const fl=pl.contado?fc:Math.round(window.__precioFinanciado(fc, pl.cuotas, perfil));
+        return {...it, precioUnit: al>0 ? fl/(1+al/100) : fl};
+      });
+      return { cuotas:pl.cuotas, contado:!!pl.contado, total:calcVenta(copia).total };
+    });
+    const util=[]; let tope=Infinity;
+    filas.forEach(f=>{ if(f.total < tope-0.005){ util.push(f); tope=f.total; } });
+    if(util.length<2) return null;   // sin al menos un plan además del contado no hay escalera
+    const lista=util[0].total;
+    return util.map(f=>({...f, lista, off:lista>0?(1-f.total/lista)*100:0, cuota:f.total/f.cuotas})).reverse();
+  }
+  window.__escaleraDoc = escaleraDoc;
+  const offFmt = o => o.toFixed(1).replace('.', ',')+'% OFF';
+  function bloqueEscalera(v){
+    const filas=escaleraDoc(v); if(!filas) return '';
+    return '<div style="margin-top:10px;border:1.5px solid #157A3D;border-radius:6px;overflow:hidden">'+
+      '<div style="background:#157A3D;color:#fff;font-weight:800;font-size:10.5px;letter-spacing:.06em;padding:4px 10px">FORMAS DE PAGO</div>'+
+      filas.map(f=>{
+        if(f.contado) return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:6px 10px;background:#e7fbf1;font-weight:800;font-size:13px">'+
+          '<span>Contado por transferencia</span><span>'+money(f.total)+' <span style="font-size:10px;color:#157A3D">'+offFmt(f.off)+'</span></span></div>';
+        const esLista=f.off<=0.05;
+        return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 10px;border-top:1px solid #e2e8f0;font-size:11px">'+
+          '<span>'+f.cuotas+' cuotas'+(esLista?' sin interés':'')+' de '+money(f.cuota)+' con tarjeta bancarizada'+(esLista?' <span style="color:#888">(precio de lista)</span>':'')+'</span>'+
+          '<span>'+money(f.total)+(esLista?'':' <span style="color:#157A3D;font-weight:700;font-size:9.5px">'+offFmt(f.off)+'</span>')+'</span></div>';
+      }).join('')+
+    '</div>';
+  }
+
   function condicionesPresup(v){
     // Qué trato comercial es. Manda la LISTA DE PRECIOS (la regex toma también los nombres viejos:
     // "1 Mayorista Responsable Inscripto", "2 Mayorista Sin Facturar"); si el documento es viejo y no
@@ -12763,15 +12845,14 @@ function buildFilterTable(cfg){
     //  · MAYORISTA SIN FACTURA: contado y nada más — no se le da plazo a quien no lleva factura.
     //  · MAYORISTA FACTURADO: contado, débito o valor a 30 días. Sin "Precios con IVA": va con IVA
     //    discriminado en factura A, así que esa aclaración es de la lista minorista.
-    //  · MINORISTA: como estaba, con las cuotas sin interés (es una promo minorista).
-    // ⚠️ La promo de las 12 cuotas del Macro tiene FECHA DE VENCIMIENTO escrita en el texto: cuando
-    // termine agosto 2026 hay que cambiarla acá (o sacarla), o el presupuesto va a seguir ofreciendo
-    // algo que ya no existe.
+    //  · MINORISTA (11/08, estrategia contado + escalera): los precios del papel son de CONTADO y
+    //    las cuotas viven en el recuadro "Formas de pago" — este texto solo remite ahí. Reemplaza
+    //    al viejo con la promo Macro de agosto, que quedaba contradictorio con la escalera
+    //    (aprobado por Marcelo, 11/08).
     const pago = mayorista
       ? (sinFactura ? 'Pago Contado.' : 'Pago Contado, Débito o Valor a 30 días de fecha de factura.')
-      : 'Precios con IVA - Pago Contado, Débito o Valor a 30 días de fecha de factura.'+
-        ' 3 y 6 cuotas sin interés con tarjetas bancarizadas y 12 cuotas sin interés para clientes del Bco. Macro '+
-        'los días jueves, viernes y sábados de agosto 2026.';
+      : 'Precios de contado por transferencia. Hasta 12 cuotas sin interés con tarjetas bancarizadas, '+
+        'al precio de lista del recuadro "Formas de pago".';
     return '<div class="doc-obs" style="font-size:10px;margin-top:6px">'+
       '<div><b>Formas de Pago:</b> '+pago+'</div>'+
       '<div style="margin-top:3px">'+entrega+'</div>'+
@@ -12798,6 +12879,11 @@ function buildFilterTable(cfg){
   window.__fotoProducto = codigo => { const img=IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()]; return img?('Productos/'+img):''; };
   // ---------- Detalle de Venta / Presupuesto ----------
   function detalle(v, esPresupuesto){
+    // Renglones SIEMPRE a contado en el papel (estrategia 11/08): un presupuesto del flujo viejo
+    // (renglones al precio de lista, 28/07) se normaliza acá, venga de donde venga la impresión.
+    // Las VENTAS no se tocan: sus renglones tienen que coincidir con lo facturado y cobrado.
+    if(esPresupuesto && (v.items||[]).some(it=>it&&it.precioContado!=null&&num(it.precioContado)!==num(it.precioUnit)))
+      v=Object.assign({}, v, {items:v.items.map(it=> it&&it.precioContado!=null ? {...it, precioUnit:it.precioContado} : it)});
     const cli=buscarCliente(v.cliente,v.cuit)||{};
     const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
     // El número del encabezado, con LA MISMA regla que el remito y el nombre del archivo:
@@ -12850,6 +12936,8 @@ function buildFilterTable(cfg){
       : '<table class="doc-tab"><tr><th>Código</th><th>Descripción</th><th class="n">Cant.</th>'+
         '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th><th class="n">Alicuota</th><th class="n">Subtotal c/IVA</th></tr>'+filas+'</table>';
     const d=desglose(v), k=calcVenta(v);
+    // Escalera de financiación: solo presupuestos minoristas (bloqueEscalera devuelve '' si no va)
+    const escBlock = esPresupuesto ? bloqueEscalera(v) : '';
     let tot='';
     if(!esConsumidorFinal){
       if(d.netoGrav>0) tot+='<div class="row"><span>Importe Neto Gravado</span><b>'+money(d.netoGrav)+'</b></div>';
@@ -12857,7 +12945,7 @@ function buildFilterTable(cfg){
       if(d.netoNoGrav>0) tot+='<div class="row"><span>Importe Neto No Gravado</span><b>'+money(d.netoNoGrav)+'</b></div>';
     }
     [['percepIva','Perc. IVA'],['percepIibb','Perc. IIBB'],['impInternos','Imp. Internos'],['intereses','Intereses']].forEach(([f,l])=>{ if(num(v[f])) tot+='<div class="row"><span>'+l+'</span><b>'+money(v[f])+'</b></div>'; });
-    tot+='<div class="row big"><span>Total '+(esPresupuesto?'Presupuesto':'Venta')+'</span><b>'+money(k.total)+'</b></div>';
+    tot+='<div class="row big"><span>Total '+(esPresupuesto?(escBlock?'Presupuesto (contado)':'Presupuesto'):'Venta')+'</span><b>'+money(k.total)+'</b></div>';
     if(!esPresupuesto){ tot+='<div class="row"><span>Total Cobrado</span><b>'+money(k.cobrado)+'</b></div>'+
       '<div class="row"><span>Total a Cobrar</span><b>'+money(k.saldo)+'</b></div>'; }
     let obs='';
@@ -12889,7 +12977,7 @@ function buildFilterTable(cfg){
       :(letraNota?letraNota.toUpperCase():'X')) : 'X';
     const tituloFac = v.cae ? (v.tipoComprobante||'FACTURA').toUpperCase() : (esPresupuesto?'PRESUPUESTO':'DETALLE DE VENTA');
     return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer)+
-      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+obs+caeBlock+pie(v);
+      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+escBlock+obs+caeBlock+pie(v);
   }
 
   // ---------- Recibo de Cobranza ----------
