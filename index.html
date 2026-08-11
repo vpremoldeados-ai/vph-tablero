@@ -12619,7 +12619,9 @@ function buildFilterTable(cfg){
   const IMG_PRODUCTO = {
     ULC60:'ULC60.png', ULC40:'ULC40.png', UGB35:'UGB.png', UGC35:'UGC.png', UGR35:'UGR.png',
     TEC50:'TEC50.png', TET50:'TET50.png', UL60:'UL60.png', UCC10:'UCC10.png',
-    TET100:'TET100.png', TER100:'TER100.png'
+    // TER100 se renombró a TEC100 en el catálogo (06/08); la foto sirve para los dos códigos
+    // (TER100 sigue para reimprimir documentos viejos que quedaron con el código anterior).
+    TET100:'TET100.png', TER100:'TER100.png', TEC100:'TER100.png'
   };
   function celdaCodigo(codigo){
     const img = IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()];
@@ -13171,8 +13173,10 @@ function buildFilterTable(cfg){
     // Todo lo derivado se redondea al peso entero (regla de Marcelo para los precios publicados).
     const unit = p => { const base=num(p[L.campo]);
       return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
+    // La foto al lado del código, igual que en presupuestos/ventas/remitos (pedido de Sofía, 11/08:
+    // que el corralón identifique el producto de un vistazo). celdaCodigo no rompe si falta la foto.
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
-      return '<tr><td>'+esc(p.codigo||'')+'</td><td>'+esc(p.nombre||'')+'</td>'+
+      return '<tr><td style="white-space:nowrap">'+celdaCodigo(p.codigo)+'</td><td>'+esc(p.nombre||'')+'</td>'+
         '<td class="n"><b>'+money(pu)+'</b></td>'+
         (L.may?('<td class="n">'+money(Math.round(pu*(1+margen/100)))+'</td>'):'')+
         (conM2?('<td class="n">'+(uxm2>0?money(Math.round(pu*uxm2))+' <span style="color:#666">('+pct(uxm2)+' u/m²)</span>':'—')+'</td>'):'')+
