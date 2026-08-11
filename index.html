@@ -994,7 +994,7 @@
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
           <button class="cmp-btn" id="bd-recostear" title="Recalcula el costo de TODOS los productos con receta cargada, usando los precios actuales del master Materia Prima/Insumos, y guarda el resultado">🔄 Recostear todos</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
-          <button class="cmp-btn" id="bd-lista-pdf" title="Genera el PDF de la lista de precios elegida (Mayorista / Mayorista Contado / Minorista) con los precios EN VIVO del catálogo — para compartir con los corralones.">📄 Lista de precios (PDF)</button>
+          <button class="cmp-btn" id="bd-lista-pdf" title="Genera el PDF de la lista de precios elegida (Mayorista / Mayorista Contado / las dos de hasta 100 km / Minorista) con los precios EN VIVO del catálogo — para compartir con los corralones.">📄 Lista de precios (PDF)</button>
           <button class="cmp-btn cmp-btn-primary" id="bd-backup" title="Descarga un único JSON con TODAS las colecciones (ventas, compras, presupuestos, leads, producción, etc.)">🗄️ Backup completo</button>
         </div>
       </div>
@@ -9512,6 +9512,8 @@ function buildFilterTable(cfg){
       '<div style="font:12px system-ui;color:#475569;margin:4px 0 8px">Sale con los precios actuales del catálogo.</div>'+
       '<button style="'+b+'" data-l="may">Mayorista Facturado</button>'+
       '<button style="'+b+'" data-l="maySF">Mayorista Contado</button>'+
+      '<button style="'+b+'" data-l="may100">Mayorista Facturado — hasta 100 km</button>'+
+      '<button style="'+b+'" data-l="maySF100">Mayorista Contado — hasta 100 km</button>'+
       '<button style="'+b+'" data-l="min">Minorista</button>'+
       '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
     document.body.appendChild(ov);
@@ -9565,6 +9567,10 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
+    // Lista de precios mayorista en PDF (Base de Datos → 📄). El flete de "hasta 100 km" lo cobra
+    // Expreso Biletta y lo actualiza cuando quiere — por eso es un parámetro y no un número en el código.
+    {g:'Lista de precios', k:'fletePallet100', l:'Flete por pallet hasta 100 km ($)', def:0, t:'num', hint:'Lo que cobra el transporte (Expreso Biletta) por pallet hasta 100 km de Córdoba Capital (ej. Santa Rosa de Calamuchita). La lista "Mayorista hasta 100 km" suma este flete dividido las unidades del pallet al precio de cada producto. En 0 esa lista NO se genera.'},
+    {g:'Lista de precios', k:'margenSugerido', l:'Margen sugerido de reventa (%)', def:75, t:'num', hint:'La columna "Sugerido reventa" de las listas mayoristas en PDF: el precio de la lista más este porcentaje.'},
     {g:'Logística', k:'capSanchez', l:'Capacidad camión Sánchez (pallets)',              def:8,  t:'num', hint:'Cuántos pallets entran por viaje. Se usa en Producción y Logística → Coordinar entregas para saber cuánto lugar queda en cada camión.'},
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
     {g:'Logística', k:'capBiletta', l:'Capacidad Expreso Biletta (pallets)',             def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte.'},
@@ -13111,42 +13117,74 @@ function buildFilterTable(cfg){
     return st+lote.map(hoja).join('')+pie();
   }
 
-  // ---------- Lista de precios (pedido de Marcelo, 10/08) ----------
+  // ---------- Lista de precios (pedido de Marcelo, 10/08; ampliada 11/08 a pedido de Sofía) ----------
   // Los listados que se comparten con los corralones se rearmaban a mano en cada aumento. Acá salen
   // del catálogo EN VIVO (window.__catalogoProductos — los mismos precios que usan Ventas y
   // Presupuestos), así que el PDF no puede quedar desactualizado respecto del Tablero.
+  // Las mayoristas llevan además el precio por pallet (la unidad real de compra del corralón) y el
+  // sugerido de reventa (+% editable en Parámetros). Las "hasta 100 km" (la lista de DELTA POLO)
+  // cargan el flete DENTRO del precio: unitario = Capital + fletePallet100 ÷ unidades del pallet
+  // (regla de Sofía, 11/08). El E-cheq a 30 días de fecha de factura es SOLO para las facturadas.
   // ⚠️ Fecha propia: HOY/p2 NO existen en este módulo (§3: cada IIFE tiene sus helpers).
+  const LP_CBA='Entrega sin costo en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).',
+        LP_100='Entrega sin costo hasta 100 km de Córdoba Capital (flete incluido en el precio).',
+        LP_COMUN='Pedidos por pallets enteros. Plazo de entrega: 7 días hábiles desde la confirmación. Descuento 5% por compras mayores a 5 pallets.',
+        LP_PAGO_FACT='Formas de pago: Pago Contado, Débito o E-cheq a 30 días de fecha de factura.',
+        LP_PAGO_CONT='Forma de pago: Pago Contado.';
   const LISTAS_PDF = {
-    min:   { campo:'precioMinorista',   nombre:'Minorista',
-             cond:'Precios finales por unidad, IVA incluido. El flete se cotiza aparte según la zona de entrega.' },
-    may:   { campo:'precioMayorista',   nombre:'Mayorista',
-             cond:'Precios finales por unidad, IVA incluido. Formas de pago: Pago Contado, Débito o Valor a 30 días de fecha de factura. '+
-                  'Entrega en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).' },
-    maySF: { campo:'precioMayoristaSF', nombre:'Mayorista Contado',
-             cond:'Precios por unidad. Forma de pago: Pago Contado. '+
-                  'Entrega en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).' }
+    min:     { campo:'precioMinorista',   nombre:'Minorista',
+               cond:'Precios finales por unidad, IVA incluido. El flete se cotiza aparte según la zona de entrega.' },
+    may:     { campo:'precioMayorista',   nombre:'Mayorista', may:1,
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B). '+LP_PAGO_FACT+' Compra mínima: 1 pallet. '+LP_CBA+' '+LP_COMUN },
+    maySF:   { campo:'precioMayoristaSF', nombre:'Mayorista Contado', may:1,
+               cond:'Precios por unidad. '+LP_PAGO_CONT+' Compra mínima: 1 pallet. '+LP_CBA+' '+LP_COMUN },
+    may100:  { campo:'precioMayorista',   nombre:'Mayorista hasta 100 km', may:1, flete100:1,
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B). '+LP_PAGO_FACT+' Compra mínima: 4 pallets. '+LP_100+' '+LP_COMUN },
+    maySF100:{ campo:'precioMayoristaSF', nombre:'Mayorista Contado hasta 100 km', may:1, flete100:1,
+               cond:'Precios por unidad. '+LP_PAGO_CONT+' Compra mínima: 4 pallets. '+LP_100+' '+LP_COMUN }
   };
   function listaPrecios(o){
     o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
+    // El flete "hasta 100 km" (Expreso Biletta) se edita en ⚙️ Parámetros porque el transporte lo
+    // actualiza cuando quiere. En 0 = sin cotizar → la lista NO se genera: mandar precios sin el
+    // flete sería regalar el envío sin enterarse (mismo criterio que las tasas de Financiación).
+    const flete100 = L.flete100 ? num(window.__param ? window.__param('fletePallet100',0) : 0) : 0;
+    if(L.flete100 && !(flete100>0)){
+      alert('Falta cargar el "Flete por pallet hasta 100 km" en Base de Datos → ⚙️ Parámetros (es lo que cobra Expreso Biletta por pallet). Con ese dato cargado, esta lista se genera sola.');
+      return;
+    }
+    const margen = num(window.__param ? window.__param('margenSugerido',75) : 75);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
       .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
       // LC602H es la variante interna de la base reforzada: se vende como parte del pallet de LC60,
       // no suelta — listarla duplicaría la Loseta 60 con el mismo precio.
       .filter(p=>String(p.codigo||'')!=='LC602H')
+      // Con flete incluido, un producto sin udPorPallet no tiene cómo repartir el flete por unidad:
+      // mejor afuera de esa lista que con un precio inventado.
+      .filter(p=>!L.flete100 || num(p.udPorPallet)>0)
       .sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'));
     if(!prods.length){ alert('No hay productos con precio cargado en la lista "'+L.nombre+'".'); return; }
     const d=new Date(); const pad=n=>String(n).padStart(2,'0');
     const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
     const hoyISO=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
     const conM2=prods.some(p=>num(p.unidadesPorM2)>0);
-    const filas=prods.map(p=>{ const pu=num(p[L.campo]); const uxm2=num(p.unidadesPorM2);
+    // Todo lo derivado se redondea al peso entero (regla de Marcelo para los precios publicados).
+    const unit = p => { const base=num(p[L.campo]);
+      return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
+    const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
       return '<tr><td>'+esc(p.codigo||'')+'</td><td>'+esc(p.nombre||'')+'</td>'+
-        '<td class="n">'+money(pu)+'</td>'+
-        (conM2?('<td class="n">'+(uxm2>0?money(pu*uxm2)+' <span style="color:#666">('+pct(uxm2)+' u/m²)</span>':'—')+'</td>'):'')+
-        '<td class="n">'+(num(p.udPorPallet)>0?nf(p.udPorPallet):'—')+'</td></tr>'; }).join('');
+        '<td class="n"><b>'+money(pu)+'</b></td>'+
+        (L.may?('<td class="n">'+money(Math.round(pu*(1+margen/100)))+'</td>'):'')+
+        (conM2?('<td class="n">'+(uxm2>0?money(Math.round(pu*uxm2))+' <span style="color:#666">('+pct(uxm2)+' u/m²)</span>':'—')+'</td>'):'')+
+        '<td class="n">'+(ud>0?nf(ud):'—')+'</td>'+
+        (L.may?('<td class="n">'+(ud>0?money(pu*ud):'—')+'</td>'):'')+
+        '</tr>'; }).join('');
     const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
+      (L.may?'<div class="doc-obs" style="margin-bottom:6px"><b>Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.</b></div>':'')+
       '<table class="doc-tab"><thead><tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+
-      (conM2?'<th class="n">Precio x m²</th>':'')+'<th class="n">Unid. x pallet</th></tr></thead><tbody>'+filas+'</tbody></table>'+
+      (L.may?('<th class="n">Sugerido reventa +'+pct(margen)+'%</th>'):'')+
+      (conM2?'<th class="n">Precio x m²</th>':'')+'<th class="n">Unid. x pallet</th>'+
+      (L.may?'<th class="n">Precio x pallet</th>':'')+'</tr></thead><tbody>'+filas+'</tbody></table>'+
       '<div class="doc-obs"><b>Condiciones:</b> '+esc(L.cond)+'<br>'+
       'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
       '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Lista '+esc(L.nombre)+' — vigente desde '+esc(hoy)+'</span></div>';
@@ -13154,7 +13192,7 @@ function buildFilterTable(cfg){
   }
 
   window.__imprimir = {
-    listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'min'} — la usa Base de Datos (📄 Lista de precios)
+    listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'may100'|'maySF100'|'min'} — la usa Base de Datos (📄 Lista de precios)
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
