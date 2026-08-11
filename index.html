@@ -270,6 +270,11 @@
   .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
   .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
   .pe-cod-mini{display:none}   /* el código debajo del nombre: SOLO en el celular (en la PC ya está su columna) */
+  .pe-fis-ok{font-size:10.5px;font-weight:700;color:var(--green);line-height:1.3;margin-top:3px}   /* "el físico ya llegó al mínimo" en el Plan de producción */
+  .pe-prio-mini{display:none}  /* el puesto (1º URGENTE) dentro de la celda del producto: SOLO en el celular */
+  /* La columna Urgencia del Plan lleva texto largo (motivo + la marca verde) y th,td va con nowrap:
+     sin esto una sola frase estiraba la tabla 190 px más que el ancho de la página, también en la PC. */
+  #page-prodent .pe-col-urg{white-space:normal;max-width:300px}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
   /* Celular de Gustavo: tablas densas (Plan, Conteo, movimientos) pasan de filas horizontales a tarjetas apiladas.
      DOS excepciones, las dos a propósito:
@@ -298,10 +303,23 @@
     #page-prodent .tbl-wrap table.pe-tbl-planilla{font-size:11.5px}
     #page-prodent .tbl-wrap table.pe-tbl-planilla th,
     #page-prodent .tbl-wrap table.pe-tbl-planilla td{padding:7px 6px}
-    #page-prodent .tbl-wrap table.pe-tbl-planilla th{font-size:10px;text-transform:uppercase;letter-spacing:.02em}
-    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-cod{display:none}
+    /* Los encabezados se parten en dos renglones: con nowrap, "DISPONIBLE DESDE" le pedía 107 px a
+       una columna cuyos datos ocupan 62. Es la diferencia entre 2 y 4 pantallas de scroll. */
+    #page-prodent .tbl-wrap table.pe-tbl-planilla th{font-size:10px;text-transform:uppercase;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:bottom}
+    /* La columna Urgencia lleva texto largo (el motivo + la marca verde): tiene que envolver o sola
+       estira la tabla a 600 px. Las demás columnas siguen con nowrap (un número partido se lee mal). */
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-urg{white-space:normal;min-width:132px;max-width:152px}
+    /* Columnas que se esconden en el celular porque su dato viaja adentro de la celda del producto:
+       Código → .pe-cod-mini · Prioridad (Plan de producción) → .pe-prio-mini */
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-cod,
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-prio{display:none}
     #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-cod-mini{display:block;font-size:9.5px;font-weight:600;color:var(--muted)}
-    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-prod{position:sticky;left:0;z-index:2;background:var(--card);white-space:normal;line-height:1.2;min-width:96px;max-width:112px;box-shadow:1px 0 0 var(--border)}
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-prio-mini{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px}
+    /* Fondo opaco en TODAS las filas: la columna fija se dibuja encima de las que scrollean, así que
+       si fuera transparente se vería el texto de abajo pasando por atrás. Con background:inherit la
+       celda fija toma el color de SU fila, y así respeta el verde/rojo/ámbar del Plan de producción. */
+    #page-prodent .tbl-wrap table.pe-tbl-planilla tr{background:var(--card)}
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-prod{position:sticky;left:0;z-index:2;background:inherit;white-space:normal;line-height:1.2;min-width:104px;max-width:124px;box-shadow:1px 0 0 var(--border)}
     #page-prodent .tbl-wrap table.pe-tbl-planilla th.pe-col-prod{z-index:3}
     #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-est{padding:2px 7px;font-size:10px}
     #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-cur-desde{display:none}   /* la fecha de curado la usa Sofía al vender, no Gustavo en la planilla */
@@ -773,8 +791,8 @@
       <section>
         <h2><span class="dot" style="background:var(--amber)"></span>🏭 Plan de producción</h2>
         <div class="asof" id="pe-plan-asof"></div>
-        <div class="tbl-wrap"><table id="pe-tabla-plan"></table></div>
-        <p class="note">Qué fabricar y en qué orden: primero los <b>faltantes con fecha requerida</b> (la más próxima arriba), después los faltantes sin fecha, después los que el cliente <b>puede esperar</b> (lo marca Sofía en el pedido), y al final la <b>reposición hasta el stock mínimo</b>. Las fechas estimadas asumen producción de lunes a viernes al ritmo real de las últimas 2 semanas, en el orden de esta lista, más los días de curado.</p>
+        <div class="tbl-wrap"><table id="pe-tabla-plan" class="pe-tbl-planilla"></table></div>
+        <p class="note">Qué fabricar y en qué orden: primero los <b>faltantes con fecha requerida</b> (la más próxima arriba), después los faltantes sin fecha, después los que el cliente <b>puede esperar</b> (lo marca Sofía en el pedido), y al final la <b>reposición hasta el stock mínimo</b>. Las fechas estimadas asumen producción de lunes a viernes al ritmo real de las últimas 2 semanas, en el orden de esta lista, más los días de curado.<br><b style="color:var(--green)">✅ En verde</b>: el <b>stock físico ya llegó al mínimo</b> — lo que hay en planta alcanza, y si igual aparece en la lista es porque una parte <b>ya está comprometida</b> en pedidos. Cuando además no falta nada para ningún pedido, <b>toda la fila va en verde</b>.</p>
       </section>
       <section>
         <h2><span class="dot" style="background:var(--blue)"></span>Últimos movimientos</h2>
@@ -11343,13 +11361,34 @@ function buildFilterTable(cfg){
     const prio=(it,i)=>{ const n=NIVEL[it.grupo]||NIVEL[3];
       return '<span style="display:inline-block;min-width:30px;text-align:center;background:'+n.c+';color:#fff;border-radius:999px;padding:3px 9px;font-weight:800;font-size:13px">'+(i+1)+'º</span>'+
              '<div style="font-size:10px;font-weight:700;color:'+n.c+';margin-top:2px;letter-spacing:.03em">'+n.t+'</div>'; };
-    let html='<tr><th>Prioridad</th><th>Producto</th><th class="num">A fabricar</th><th class="num">Kg</th><th>Urgencia</th><th>Fabricado est.</th><th>Disponible desde</th></tr>';
+    // En el CELULAR la tabla es una planilla y la columna Prioridad se esconde: el puesto y el nivel
+    // se meten adentro de la celda del producto (que es la que queda fija a la izquierda), igual que
+    // el código en la tabla de Stock. Si no, al scrollear al costado se perdería el "qué va primero".
+    const prioMini=(it,i)=>{ const n=NIVEL[it.grupo]||NIVEL[3];
+      return '<div class="pe-prio-mini"><span style="background:'+n.c+';color:#fff;border-radius:999px;padding:1px 7px;font-weight:800;font-size:11px">'+(i+1)+'º</span>'+
+             '<span style="font-size:9.5px;font-weight:700;color:'+n.c+';letter-spacing:.03em">'+n.t+(i===0?' 👉':'')+'</span></div>'; };
+    /* EL STOCK FÍSICO YA LLEGÓ AL MÍNIMO → verde (pedido de Marcelo, 11/08).
+       El plan pide fabricar sobre el DISPONIBLE (físico − comprometido), así que un producto puede
+       aparecer en la lista con el patio lleno: hay 1.123 losetas y el mínimo son 900, pero 718 ya
+       tienen dueño. Gustavo ve la pila y no entiende por qué se le pide fabricar. Esta marca verde
+       contesta esa pregunta en la propia fila.
+       ⚠️ El verde NO pisa la prioridad: si además hay un faltante real (disponible negativo, grupos
+       0/1/2) la fila sigue en rojo y solo se agrega la aclaración. El fondo verde queda para el caso
+       en que no falta nada para nadie y se fabrica solo para reponer el colchón (grupo 3). */
+    const fisOk = it => num(it.s.min)>0 && num(it.s.fisico) >= num(it.s.min);
+    const notaFisico = it => !fisOk(it) ? ''
+      : '<div class="pe-fis-ok">✅ El físico ya llegó al mínimo: '+nf(it.s.fisico)+' de '+nf(it.s.min)
+        +(num(it.s.comprometido)>0 ? ' — se fabrica por las '+nf(it.s.comprometido)+' comprometidas' : '')+'</div>';
+    let html='<tr><th class="pe-col-prio">Prioridad</th><th class="pe-col-prod">Producto</th><th class="num">A fabricar</th><th class="num">Kg</th><th class="pe-col-urg">Urgencia</th><th>Fabricado est.</th><th>Disponible desde</th></tr>';
     if(!items.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--green);padding:18px">✅ Sin faltantes ni productos bajo mínimo. Nada urgente para fabricar.</td></tr>';
     items.forEach((it,i)=>{ const n=NIVEL[it.grupo]||NIVEL[3];
-      html+='<tr'+(i===0?' style="background:'+n.bg+'"':'')+'><td data-label="Prioridad">'+prio(it,i)+(i===0?'<div style="font-size:9.5px;color:'+n.c+';font-weight:700">👉 EMPEZAR ACÁ</div>':'')+'</td>'+
-      '<td data-label="Producto"><b>'+esc(it.p.nombre||'')+'</b>'+(it.p.codigo?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.p.codigo)+'</div>':'')+'</td>'+
+      const bg = (fisOk(it) && it.grupo===3) ? 'var(--green-bg)' : (i===0 ? n.bg : '');
+      html+='<tr'+(bg?' style="background:'+bg+'"':'')+'><td class="pe-col-prio" data-label="Prioridad">'+prio(it,i)+(i===0?'<div style="font-size:9.5px;color:'+n.c+';font-weight:700">👉 EMPEZAR ACÁ</div>':'')+'</td>'+
+      // data-sortval: la celda lleva adentro el puesto y el código, y sin esto __ordenable ordenaría
+      // la columna Producto por un número armado con esos dígitos en vez de por el nombre.
+      '<td class="pe-col-prod" data-label="Producto" data-sortval="'+esc(it.p.nombre||'')+'">'+prioMini(it,i)+'<b>'+esc(it.p.nombre||'')+'</b>'+(it.p.codigo?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.p.codigo)+'</div>':'')+'</td>'+
       '<td class="num" data-label="A fabricar" style="font-weight:800">'+nf(it.aFab)+' u</td><td class="num" data-label="Kg">'+(it.kg>0?nf(it.kg):'—')+'</td>'+
-      '<td data-label="Urgencia">'+motivo(it)+'</td><td data-label="Fabricado est.">'+fmtF(it.finFab)+'</td><td data-label="Disponible desde"><b>'+fmtF(it.listo)+'</b></td></tr>'; });
+      '<td class="pe-col-urg" data-label="Urgencia">'+motivo(it)+notaFisico(it)+'</td><td data-label="Fabricado est.">'+fmtF(it.finFab)+'</td><td data-label="Disponible desde"><b>'+fmtF(it.listo)+'</b></td></tr>'; });
     cont.innerHTML=html; window.__ordenable('pe-tabla-plan');
     const asof=$('pe-plan-asof'); if(asof) asof.textContent='Ritmo estimado: '+nf(ritmo)+' kg/día hábil (promedio últimos '+nf(window.__param('ritmoDias',14))+' días'+(ritmo===OBJ()?' — sin datos, usa el objetivo':'')+') · fechas en orden de esta cola + curado';
   }
