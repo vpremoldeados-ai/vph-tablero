@@ -5762,7 +5762,37 @@ function buildFilterTable(cfg){
 
   // ---------- Formulario ----------
   let editing=null;
-  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, domicilioEntrega:'', arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[] }; }
+  function blankVenta(){ return { fecha:hoyISO, vencimiento:hoyISO, periodo:hoyISO.slice(0,7), tipoComprobante:'Factura A', condIva:'A', puntoVenta:'0010', nroFactura:'', nroInterno:'', cliente:'', cuit:'', categoria:'MAYORISTA', vendedor:'', listaPrecios:window.__listaDefecto.mayorista, domicilioEntrega:'', arca:'', compAsoc:'', items:[{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}], descGeneral:0, percepIva:0, percepIibb:0, impInternos:0, intereses:0, notaCliente:'', nota:'', cobros:[], finCuotas:0, finPerfil:'' }; }
+  // ---------- Plan de financiación de la venta (estrategia 11/08, cierra el circuito de la escalera) ----------
+  // El presupuesto ofrece la escalera; cuando el cliente ELIGE pagar en cuotas, la venta se factura
+  // por el BRUTO financiado de ese plan — si quedara a contado, el cobro por VIUMI no cerraría con
+  // lo facturado. finCuotas = plan elegido (0 = contado, como siempre); finPerfil = perfil de tasas
+  // (heredado del presupuesto, o el MÁS CARO si no se confirmó la tarjeta).
+  // La matemática es LA MISMA de la escalera: precio final con IVA redondeado al peso, contado/(1−r),
+  // y cada renglón SIEMPRE desde su precioContado (nunca sobre el precio ya recargado — recargar dos
+  // veces cotizaría carísimo en silencio). El neto del renglón se guarda SIN redondear a propósito:
+  // así N unidades × precio final dan EXACTO el total de la fila de la escalera que vio el cliente.
+  const finAplicaVta = v => !/mayorista/i.test(String((v&&v.listaPrecios)||'')) && !/mayorista/i.test(String((v&&v.categoria)||''));
+  const perfilVta = v => (v&&v.finPerfil) || (window.__perfilMasCaro?window.__perfilMasCaro():'') || '';
+  const finFactorVta = (cuotas, perfil) => { if(!num(cuotas)||!perfil||!window.__precioFinanciado) return 1;
+    return window.__precioFinanciado(1000, num(cuotas), perfil)/1000; };
+  function aplicarPlanItem(it, cuotas, perfil){
+    if(it.precioContado==null) it.precioContado=num(it.precioUnit);
+    const al=itemAlic(it), base=num(it.precioContado);
+    if(!num(cuotas)){ it.precioUnit=round2(base); return; }
+    const fc=base*(1+al/100);
+    const fl=Math.round(fc*finFactorVta(cuotas, perfil));
+    it.precioUnit = al>0 ? fl/(1+al/100) : fl;
+  }
+  function reprecioPlan(){ const c=num(editing.finCuotas), pf=c?perfilVta(editing):'';
+    (editing.items||[]).forEach(it=>aplicarPlanItem(it, c, pf)); }
+  const PERFIL_LBL = k => { const p=(window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.k===k); return p?p.l:k; };
+  function finVtaOpts(v){
+    const planes = window.__planesOfrecidos ? window.__planesOfrecidos() : [3,6,12];
+    const sel = num(v.finCuotas);
+    return '<option value="0">Contado / otro medio — precios tal cual (lo de siempre)</option>'+
+      planes.slice().sort((a,b)=>a-b).map(c=>'<option value="'+c+'"'+(sel===c?' selected':'')+'>'+c+' cuotas con tarjeta (VIUMI) — renglones al precio del plan</option>').join('');
+  }
   // ---------- Cliente / venta SIN FACTURAR ----------
   // Si la operación va sin factura, el comprobante tiene que ser "Sin factura" y la condición de IVA
   // X (no se identifica al comprador). Pedido de Marcelo (05/08); vale igual para mayoristas y
@@ -5834,6 +5864,10 @@ function buildFilterTable(cfg){
         // se usa la dirección de la ficha del cliente (que puede ser la fiscal, no la de la obra).
         field('Dirección de entrega','col2','<input id="vf-doment" value="'+esc(v.domicilioEntrega||'')+'" placeholder="Calle, número, localidad — vacío usa la dirección del cliente">') +
         field('Lista de precios','','<select id="vf-lista">'+opt(window.__listaOpts(v.listaPrecios),v.listaPrecios)+'</select>') +
+        // Plan de financiación acordado (solo minorista): re-precia los renglones al bruto del plan.
+        (finAplicaVta(v) ? '<div class="cmp-field col2" id="vf-fin-wrap"><label>Forma de pago acordada</label>'+
+          '<select id="vf-fin">'+finVtaOpts(v)+'</select>'+
+          '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">Si el cliente eligió cuotas de la escalera del presupuesto, elegí el plan acá: los renglones suben al precio de ese plan (tasas del perfil <b>'+esc(PERFIL_LBL(perfilVta(v)))+'</b>) y la factura y el cobro por VIUMI salen por ese bruto. En contado no cambia nada.</div></div>' : '') +
         field('Tipo comprobante','','<select id="vf-tipo">'+opt(TIPOS_COMPROB,v.tipoComprobante)+'</select>') +
         '<div class="cmp-field col2" id="vf-asoc-wrap"'+(esNotaCD(v.tipoComprobante)?'':' style="display:none"')+
           '><label>Factura que corrige (la pide ARCA)</label><select id="vf-asoc">'+optAsoc(v)+'</select></div>' +
@@ -5887,11 +5921,28 @@ function buildFilterTable(cfg){
       if(fx && fx.categoria){ editing.categoria=fx.categoria; const s=$('vf-cat'); if(s) s.value=fx.categoria; }
       if(sincronizarSinFacturar(editing)) drawForm();
     });
-    $('vf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('vf-lista').value; let ch=false; editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p){ aplicarProducto(it,p,editing.listaPrecios); ch=true; } }); if(ch){ drawItems(); drawTotals(); } });
+    $('vf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('vf-lista').value; let ch=false; editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p){ aplicarProducto(it,p,editing.listaPrecios); ch=true; } });
+      // aplicarProducto deja el renglón a contado: si la venta tiene plan elegido, volver a aplicarlo
+      if(ch){ reprecioPlan(); drawItems(); drawTotals(); } });
+    // Plan de financiación: elegirlo re-precia TODOS los renglones desde su precio de contado.
+    const finV=$('vf-fin');
+    if(finV) finV.addEventListener('change',()=>{
+      editing.finCuotas=num(finV.value);
+      // Se congela el perfil usado: si mañana cambian las tasas o el perfil default, esta venta
+      // sigue diciendo con qué tasas se cerró (y el cobro VIUMI liquida con esas).
+      editing.finPerfil = editing.finCuotas ? perfilVta(editing) : '';
+      reprecioPlan(); drawItems(); drawTotals(); });
     // Pasar la venta a una lista "sin facturar" (o a una categoría con el 10,5%) deja el comprobante en
     // "Sin factura" y la condición de IVA en X. Se redibuja el form porque "Sin factura" cambia los
     // campos del encabezado (aparece el N° interno en vez del punto de venta / N° de factura).
-    const alCambiarSinFactura = ()=>{ if(sincronizarSinFacturar(editing)) drawForm(); };
+    // Y el plan de financiación sigue a la categoría: pasar a MAYORISTA lo saca (y vuelve todo a
+    // contado); volver a minorista hace reaparecer el selector.
+    const alCambiarSinFactura = ()=>{
+      const cambio=sincronizarSinFacturar(editing);
+      const aplica=finAplicaVta(editing);
+      if(!aplica && num(editing.finCuotas)){ editing.finCuotas=0; editing.finPerfil=''; reprecioPlan(); drawForm(); return; }
+      if(aplica !== !!$('vf-fin-wrap')){ drawForm(); return; }   // el selector aparece/desaparece con la categoría
+      if(cambio) drawForm(); };
     $('vf-lista').addEventListener('change', alCambiarSinFactura);
     if($('vf-cat')) $('vf-cat').addEventListener('change', alCambiarSinFactura);
     $('vf-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
@@ -5914,7 +5965,12 @@ function buildFilterTable(cfg){
         '<td class="num" id="vf-sub-'+i+'">'+money(base)+'</td><td class="num" id="vf-tot-'+i+'">'+money(base*(1+al/100))+'</td>'+
         '<td>'+(editing.items.length>1?'<button class="cmp-rowbtn" data-del="'+i+'">✕</button>':'')+'</td></tr>';
     }).join('');
-    $('vf-items').querySelectorAll('input,select').forEach(el=>{ const ev=el.tagName==='SELECT'?'change':'input'; el.addEventListener(ev,()=>{ const i=+el.dataset.i,kk=el.dataset.k; editing.items[i][kk]=el.value; updateRow(i); drawTotals(); }); });
+    $('vf-items').querySelectorAll('input,select').forEach(el=>{ const ev=el.tagName==='SELECT'?'change':'input'; el.addEventListener(ev,()=>{ const i=+el.dataset.i,kk=el.dataset.k; editing.items[i][kk]=el.value;
+      // Con un plan elegido, el precio tipeado a mano ES el del plan: el contado se deduce con el
+      // mismo factor (lineal, el IVA se cancela). Sin plan, el precio tipeado ES el contado.
+      if(kk==='precioUnit'){ const c=num(editing.finCuotas), f=c?finFactorVta(c, perfilVta(editing)):1;
+        editing.items[i].precioContado = f>0 ? num(el.value)/f : num(el.value); }
+      updateRow(i); drawTotals(); }); });
     // Autocompletar precio/IVA al elegir un producto del catálogo
     $('vf-items').querySelectorAll('input[data-k="desc"]').forEach(el=> el.addEventListener('change',()=>{ const i=+el.dataset.i; const prod=matchProducto(el.value); if(prod){ editing.items[i].desc=prod.nombre; aplicarProducto(editing.items[i], prod, editing.listaPrecios); drawItems(); drawTotals(); } }));
     $('vf-items').querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{ editing.items.splice(+b.dataset.del,1); drawItems(); drawTotals(); });
@@ -5928,7 +5984,8 @@ function buildFilterTable(cfg){
       (num(editing.percepIibb)?'<div class="cmp-tot-row"><span>Perc. IIBB</span><b>'+money(num(editing.percepIibb))+'</b></div>':'')+
       (num(editing.impInternos)?'<div class="cmp-tot-row"><span>Imp. Internos</span><b>'+money(num(editing.impInternos))+'</b></div>':'')+
       (num(editing.intereses)?'<div class="cmp-tot-row"><span>Intereses</span><b>'+money(num(editing.intereses))+'</b></div>':'')+
-      '<div class="cmp-tot-row big"><span>Total Venta</span><span>'+money(kk.total)+'</span></div>';
+      '<div class="cmp-tot-row big"><span>Total Venta'+(num(editing.finCuotas)?' ('+num(editing.finCuotas)+' cuotas)':'')+'</span><span>'+money(kk.total)+'</span></div>'+
+      (num(editing.finCuotas)?'<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Bruto financiado en <b>'+num(editing.finCuotas)+' cuotas de '+money(kk.total/num(editing.finCuotas))+'</b> (perfil '+esc(PERFIL_LBL(perfilVta(editing)))+'). Se factura y se cobra por VIUMI por este total.</div>':'');
   }
   let _onSaved=null;   // callback opcional (ej. marcar un presupuesto como convertido SOLO si se guarda la venta)
   // ---------- Número interno de las ventas SIN FACTURA ----------
@@ -5987,8 +6044,18 @@ function buildFilterTable(cfg){
           '<button class="cmp-rowbtn" data-cdel="'+i+'" title="Revertir / eliminar este cobro">✕</button></span></div>').join('')
       : '<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Todavía no hay cobros registrados.</p>';
     const ed = cobroEdit!=null ? v.cobros[cobroEdit] : null;
-    const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO, medioDef = ed ? ed.medio : MEDIOS_COBRO[0];
+    // Venta cerrada en cuotas → el cobro nuevo arranca en VIUMI con el plan de la venta preseleccionado
+    const medioViumi = MEDIOS_COBRO.find(m=>esPlataforma(m)) || 'Viumi';
+    const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO,
+          medioDef = ed ? ed.medio : (num(v.finCuotas) ? medioViumi : MEDIOS_COBRO[0]);
     const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef);
+    // Tasas para la propuesta de liquidación: las del PERFIL con el que se cerró la venta (si la
+    // venta no tiene plan, Macro — el comportamiento de siempre). Arancel y costo financiero por
+    // separado, como los publica VIUMI. Fallback a los parámetros viejos si Financiación no cargó.
+    const perfilCobro = v.finPerfil || 'macro';
+    const planesCobro = (window.__planesFin ? window.__planesFin(perfilCobro) : [])
+      .map(p=>({c:p.cuotas, ar:p.arancel, cf:p.costoFin, tasa:p.tasa}));
+    if(!planesCobro.length) VIUMI_PLANES.forEach(p=>planesCobro.push({c:p.c, ar:viumiTasa(p.c), cf:0, tasa:viumiTasa(p.c)}));
     $('vnt-form-cobro').innerHTML =
       '<p style="margin:0 0 10px;font-size:13px">'+esc(v.cliente||'—')+' — total <b>'+money(kk.total)+'</b> · cobrado <b style="color:var(--green)">'+money(kk.cobrado)+'</b> · saldo <b style="color:'+(kk.saldo>0.5?'var(--amber)':'var(--green)')+'">'+money(kk.saldo)+'</b></p>'+
       '<div style="margin-bottom:10px">'+lista+'</div>'+
@@ -6012,8 +6079,8 @@ function buildFilterTable(cfg){
         '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
           field('Plan de cuotas','','<select id="vc-pl-plan">'+
             '<option value="">A mano</option>'+
-            VIUMI_PLANES.map(p=>'<option value="'+p.c+'">'+p.c+' cuotas · '+viumiTasa(p.c).toFixed(2).replace('.',',')+'%</option>').join('')+
-            '</select><div style="font-size:10.5px;color:var(--muted);margin-top:3px">Solo para cuotas sin interés con tarjeta <b>Macro</b>. Completa el arancel y el IVA; después confirmá contra la liquidación real.</div>') +
+            planesCobro.map(p=>'<option value="'+p.c+'"'+((!ed && num(v.finCuotas)===p.c)?' selected':'')+'>'+p.c+' cuotas · '+p.tasa.toFixed(2).replace('.',',')+'%</option>').join('')+
+            '</select><div style="font-size:10.5px;color:var(--muted);margin-top:3px">Tasas del perfil <b>'+esc((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).reduce((a,x)=>x.k===perfilCobro?x.l:a, perfilCobro))+'</b>'+(num(v.finCuotas)?' (con el que se cerró esta venta)':'')+'. Completa arancel, IVA y costo financiero; después confirmá contra la liquidación real.</div>') +
           field('Se acredita el','','<input type="date" id="vc-pl-fecha" value="'+esc((ed&&ed.fechaAcreditacion)||addHabilesISO(fechaDef,viumiPlazo()))+'">'+
             '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+viumiPlazo()+' días <b>hábiles</b> desde la venta, salteando feriados. Si no coincide con VIUMI, fijate que el feriado esté cargado en <b>Producción</b>.</div>') +
           field('¿En qué cuenta se acredita?','','<select id="vc-pl-cuenta">'+cuentasOpt((ed&&ed.cuenta)||chequeraCuentaV())+'</select>') +
@@ -6054,16 +6121,22 @@ function buildFilterTable(cfg){
     if(fEl) fEl.addEventListener('change',()=>{ if(plFecha && !plFecha.dataset.tocado)
       plFecha.value=addHabilesISO(fEl.value||hoyISO, viumiPlazo()); });
     const planEl=$('vc-pl-plan');
-    if(planEl) planEl.addEventListener('change',()=>{
-      const c=planEl.value; if(!c) return;
-      const bruto=num($('vc-monto').value), tasa=viumiTasa(c);
-      const ar=Math.round(bruto*tasa)/100;   // tasa viene en %, por eso /100 va junto al redondeo
+    // Propone arancel/IVA/costo financiero desde la tabla del perfil. El costo financiero va CON su
+    // IVA adentro (cf × 1,21): VIUMI no lo discrimina en la liquidación — es la diferencia que falta
+    // para llegar al "Monto a recibir". Con Macro cf=0 y queda igual que siempre.
+    function llenarPlan(){
+      const c=planEl?planEl.value:''; if(!c) return;
+      const p=planesCobro.find(x=>x.c===+c); if(!p) return;
+      const bruto=num($('vc-monto').value);
+      const ar=Math.round(bruto*p.ar)/100;   // tasas en %, por eso /100 va junto al redondeo
       $('vc-pl-arancel').value=ar;
       $('vc-pl-iva').value=Math.round(ar*21)/100;
-      // Con tarjeta Macro en cuotas sin interés NO se adiciona costo financiero (lo dice la tabla).
-      $('vc-pl-cfin').value=0;
+      $('vc-pl-cfin').value=Math.round(bruto*p.cf*1.21)/100;
       $('vc-pl-fecha').value=addHabilesISO($('vc-fecha').value||hoyISO, viumiPlazo());
-      calcNetoPlat(); });
+      calcNetoPlat(); }
+    if(planEl) planEl.addEventListener('change',llenarPlan);
+    // Cobro nuevo de una venta cerrada en cuotas: el plan ya viene elegido → proponer la liquidación
+    if(platShow && !ed && num(v.finCuotas) && planEl && planEl.value) llenarPlan();
     function calcNetoPlat(){
       const el=$('vc-pl-neto'); if(!el) return;
       const bruto=num($('vc-monto').value), ar=num($('vc-pl-arancel').value), iv=num($('vc-pl-iva').value),
@@ -6132,7 +6205,10 @@ function buildFilterTable(cfg){
     return p; }
   function precioLista(prod, lista){ return window.__precioDeLista(prod, lista); }   // fuente única: script 1
   function aplicarProducto(it, prod, lista){ it.codigo=prod.codigo||''; const bruto = precioLista(prod,lista) || num(prod.precioMinorista) || num(prod.precioMayorista); const sf=/sin factura/i.test(lista||'');
-    if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); } }
+    if(sf){ it.iva='nogravado'; it.precioUnit=round2(bruto); } else { it.iva=prod.ivaVenta||'21'; const al=num(it.iva); it.precioUnit = al>0 ? round2(bruto/(1+al/100)) : round2(bruto); }
+    // El catálogo guarda el CONTADO: se anota en el ítem para que el plan de financiación (si hay)
+    // recargue siempre desde acá y no sobre un precio ya recargado.
+    it.precioContado=it.precioUnit; }
 
   function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_ventas_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
   function importJSON(file){ const r=new FileReader(); r.onload=()=>{ try{ const d=JSON.parse(r.result); if(!Array.isArray(d.ventas)) throw new Error('formato inválido');
@@ -6303,8 +6379,15 @@ function buildFilterTable(cfg){
     if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
     v.domicilioEntrega = p.domicilioEntrega||'';   // la dirección de entrega viaja del presupuesto a la venta
     v.descGeneral=p.descGeneral||0; v.notaCliente=p.notaCliente||''; v.nota=(p.nota?p.nota+' · ':'')+'Desde presupuesto '+(p.numero||'');
+    // El perfil de financiación del presupuesto viaja a la venta: si el cliente eligió cuotas de la
+    // escalera, Sofía marca el plan en "Forma de pago acordada" y los renglones suben con ESAS tasas.
+    if(p.finPerfil) v.finPerfil=p.finPerfil;
     const items=(p.items||[]).filter(it=>it&&(it.desc||num(it.precioUnit)));
-    v.items = items.length ? items.map(it=>({desc:it.desc||'',codigo:it.codigo||'',cant:num(it.cant)||1,precioUnit:num(it.precioUnit),descPct:num(it.descPct),iva:it.iva||'21'})) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
+    // La venta nace con los renglones a CONTADO (los presupuestos nuevos ya vienen así; uno del
+    // flujo viejo con renglones a precio de lista se normaliza acá desde precioContado). Si el
+    // cliente eligió cuotas, Sofía marca el plan en el form y los renglones suben desde ese contado.
+    v.items = items.length ? items.map(it=>{ const contado=(it.precioContado!=null?num(it.precioContado):num(it.precioUnit));
+      return {desc:it.desc||'',codigo:it.codigo||'',cant:num(it.cant)||1,precioUnit:contado,precioContado:contado,descPct:num(it.descPct),iva:it.iva||'21'}; }) : [{desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}];
     // El renglón "Flete" ya viene entre los ítems del presupuesto y se copia TAL CUAL (precio incluido):
     // lo que se factura es lo que se cotizó, no una cuenta nueva. Esta red solo actúa si el presupuesto
     // tiene una zona con costo y le falta el renglón (presupuesto viejo, importado o editado a mano).
