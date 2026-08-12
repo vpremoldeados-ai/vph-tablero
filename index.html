@@ -1171,6 +1171,7 @@
         <span id="vnt-periodo-lbl" style="font-size:12px;color:var(--muted)"></span>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="vnt-nueva">+ Nueva Venta</button>
+          <button class="cmp-btn" id="vnt-retenciones" title="Retenciones que nos hicieron los clientes — para pasarle al contador">🧾 Retenciones sufridas</button>
           <button class="cmp-btn" id="vnt-export">Exportar JSON</button>
           <button class="cmp-btn" id="vnt-import">Importar JSON</button>
           <input type="file" id="vnt-import-file" accept="application/json" style="display:none">
@@ -5296,6 +5297,14 @@ function buildFilterTable(cfg){
   window.__esPlataformaCobro = esPlataforma;
   window.__netoPlataforma = netoPlataforma;
   const esCheque = m => /cheq/i.test(String(m||''));   // cualquier variante → se sincroniza con el módulo Cheques
+  // RETENCIÓN: el cliente actúa como agente de retención y le paga a ARCA una parte, en nombre de VPH.
+  // La venta se cobra COMPLETA (por eso ES un cobro y suma a lo cobrado), pero esa plata NUNCA entra a
+  // ninguna cuenta: es un pago a cuenta del impuesto de VPH, no un descuento ni un gasto. Si la Caja la
+  // contara mostraría plata que no existe — el mismo error que ya pasó con los cheques. Se excluye igual.
+  const esRetencion = m => /retenci/i.test(String(m||''));
+  window.__esRetencion = esRetencion;   // lo consume Caja en movimientosReales()
+  // Los cuatro que un cliente puede retenerle a VPH. Ganancias primero: es el habitual.
+  const IMPUESTOS_RET = ['Ganancias','IVA','Ingresos Brutos','SUSS'];
   // ⚠️ El <select> tiene que incluir el medio que el cobro YA tiene aunque no esté en la lista (los
   // cargados como "Cheque" o "E-Cheq" antes de unificar). Si no, no queda nada seleccionado, el
   // navegador muestra la primera opción y guardar convertiría el cobro en Transferencia en silencio.
@@ -6080,6 +6089,16 @@ function buildFilterTable(cfg){
         field('Medio','','<select id="vc-medio">'+medioOpts(MEDIOS_COBRO, medioDef)+'</select>') +
         '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+(chShow?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
+      // Retención: el cliente actúa de agente de retención. Estos dos datos son los que pide el
+      // contador para computar el crédito — sin el certificado, la retención no se puede usar.
+      '<div id="vc-ret-extra" style="display:'+(esRetencion(medioDef)?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos de la retención (para el contador)</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
+          field('¿Qué impuesto?','','<select id="vc-ret-imp">'+IMPUESTOS_RET.map(x=>'<option value="'+esc(x)+'"'+(((ed&&ed.retImpuesto)||'Ganancias')===x?' selected':'')+'>'+esc(x)+'</option>').join('')+'</select>') +
+          field('N° de certificado','','<input id="vc-ret-cert" value="'+esc((ed&&ed.retCertificado)||'')+'" placeholder="el que figura en el comprobante">') +
+        '</div>'+
+        '<div style="font-size:11px;color:var(--muted);margin-top:8px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH y se descuenta del impuesto. Pedile siempre el certificado.</div>'+
+      '</div>'+
       '<div id="vc-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea/actualiza en el módulo Cheques)</div>'+
         '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
@@ -6114,11 +6133,13 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
     // Si es cheque, la plata no entra a ninguna cuenta todavía (entra al cobrarse, desde el módulo Cheques).
-    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2);
+    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2), ret=esRetencion(v2);
       $('vc-cheque-extra').style.display = ch?'block':'none';
       $('vc-plat-extra').style.display = pl?'block':'none';
+      if($('vc-ret-extra')) $('vc-ret-extra').style.display = ret?'block':'none';
       // Con plataforma la cuenta se elige adentro del bloque (es la de acreditación, no la de hoy).
-      $('vc-cuenta-wrap').style.display = (ch||pl)?'none':'';
+      // Con retención NO se pregunta: esa plata no entró a ninguna cuenta.
+      $('vc-cuenta-wrap').style.display = (ch||pl||ret)?'none':'';
       if(pl) sugerirLiquidacion(); });
 
     // Al elegir VIUMI por primera vez se propone la fecha a 10 días; el IVA se completa al 21% del
@@ -6188,12 +6209,66 @@ function buildFilterTable(cfg){
         rec.cuenta=$('vc-pl-cuenta')?$('vc-pl-cuenta').value:'';   // dónde acredita, no dónde entró hoy
         if(!rec.fechaAcreditacion){ alert('Poné la fecha en que se acredita la plata de la plataforma.'); return; }
         if(netoPlataforma(rec)<=0){ alert('Los descuentos de la liquidación se comen todo el cobro. Revisá los importes.'); return; } }
+      else if(esRetencion(rec.medio)){
+        // Sin cuenta A PROPÓSITO: no entró plata a ningún banco. Guardar una descuadraría el detalle
+        // por cuenta de Caja con un ingreso que nunca existió.
+        rec.retImpuesto=$('vc-ret-imp')?$('vc-ret-imp').value:'Ganancias';
+        rec.retCertificado=$('vc-ret-cert')?$('vc-ret-cert').value.trim():'';
+      }
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
       const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
       // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
       if(esCheque(rec.medio) && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
       else if(!esCheque(rec.medio) && window.__deleteChequeCobro){ window.__deleteChequeCobro(rec.id); }
       drawCobro(); };
+  }
+
+  // ---------- Retenciones sufridas ----------
+  // Las que los clientes le hicieron a VPH actuando como agentes de retención. Son pagos a cuenta de
+  // impuestos de VPH: el contador las descuenta al liquidar, pero necesita fecha, importe, quién retuvo
+  // y el N° de certificado. Antes había que abrir venta por venta para juntarlas.
+  function retencionesSufridas(){
+    const R=[];
+    (DB.ventas||[]).forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(!esRetencion(c.medio)) return;
+      const fecha=String(c.fecha||'').slice(0,10);
+      R.push({ fecha, periodo:fecha.slice(0,7), cliente:v.cliente||'—', cuit:v.cuit||'',
+        comprobante:((v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).replace(/^-/,'')||'—',
+        impuesto:c.retImpuesto||'Ganancias', certificado:c.retCertificado||'', monto:num(c.monto) }); }); });
+    return R.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha)));
+  }
+  function mostrarRetenciones(){
+    const R=retencionesSufridas();
+    const porPer={}; R.forEach(r=>{ (porPer[r.periodo]=porPer[r.periodo]||[]).push(r); });
+    const total=R.reduce((a,r)=>a+r.monto,0);
+    let html='<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px">'+
+      '<h3 style="margin:0;font-size:16px">🧾 Retenciones sufridas</h3>'+
+      '<div><button class="cmp-btn" id="ret-copiar">Copiar para el contador</button>'+
+      '<button class="cmp-btn" id="ret-cerrar" style="margin-left:6px">Cerrar</button></div></div>';
+    if(!R.length){
+      html+='<p style="color:var(--muted)">Todavía no hay ninguna cargada.<br><br>Se registran como un cobro más de la venta, eligiendo el medio <b>Retención</b>: la venta queda saldada y esa parte no entra a la caja, porque la depositó el cliente en ARCA.</p>';
+    } else {
+      html+='<p style="margin:0 0 10px;font-size:13px">'+R.length+' retencion'+(R.length===1?'':'es')+' · total <b>'+money(total)+'</b></p>';
+      Object.keys(porPer).sort().reverse().forEach(p=>{
+        const g=porPer[p], sub=g.reduce((a,r)=>a+r.monto,0);
+        html+='<div style="font-weight:800;margin:12px 0 4px">'+esc(labelPeriodo(p))+' — '+money(sub)+'</div>'+
+          '<div class="tbl-wrap"><table><tr><th>Fecha</th><th>Cliente</th><th>Comprobante</th><th>Impuesto</th><th>Certificado</th><th class="num">Monto</th></tr>'+
+          g.map(r=>'<tr><td>'+fmtFecha(r.fecha)+'</td><td><div class="cel-nombre" title="'+esc(r.cliente)+'">'+esc(r.cliente)+'</div></td>'+
+            '<td>'+esc(r.comprobante)+'</td><td>'+esc(r.impuesto)+'</td>'+
+            '<td>'+(r.certificado?esc(r.certificado):'<span style="color:var(--amber)" title="Sin el certificado el contador no puede computar el crédito">⚠ falta</span>')+'</td>'+
+            '<td class="num"><b>'+money(r.monto)+'</b></td></tr>').join('')+'</table></div>';
+      });
+    }
+    let ov=document.getElementById('vnt-ret-modal');
+    if(!ov){ ov=document.createElement('div'); ov.id='vnt-ret-modal';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px';
+      document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
+    ov.innerHTML='<div style="background:var(--card,#fff);border-radius:14px;padding:18px;max-width:900px;width:100%;max-height:86vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.35)">'+html+'</div>';
+    ov.querySelector('#ret-cerrar').onclick=()=>ov.remove();
+    ov.querySelector('#ret-copiar').onclick=()=>{
+      const tsv=['Fecha\tCliente\tCUIT\tComprobante\tImpuesto\tCertificado\tMonto']
+        .concat(R.map(r=>[fmtFecha(r.fecha),r.cliente,r.cuit,r.comprobante,r.impuesto,r.certificado,r.monto].join('\t'))).join('\n');
+      navigator.clipboard.writeText(tsv).then(()=>alert('Copiado. Pegalo en un mail o en una planilla y mandáselo al contador.'),
+        ()=>alert('No se pudo copiar automáticamente.')); };
   }
 
   function clientesConocidos(){ const m={}; DB.ventas.forEach(v=>{ if(v.cliente && !m[v.cliente]) m[v.cliente]={nombre:v.cliente,cuit:v.cuit,cond:v.condIva}; }); return Object.values(m); }
@@ -6278,6 +6353,7 @@ function buildFilterTable(cfg){
   $('vnt-nueva').onclick=()=>openForm(null);
   $('vnt-cerrar').onclick=closeForm;
   $('vnt-cobro-cerrar').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
+  $('vnt-retenciones').onclick=mostrarRetenciones;
   $('vnt-export').onclick=exportJSON;
   $('vnt-import').onclick=()=>$('vnt-import-file').click();
   $('vnt-import-file').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
@@ -7358,7 +7434,9 @@ function buildFilterTable(cfg){
   // esos entran/salen por el módulo Cheques cuando se cobran, no en la fecha del cobro.
   function movimientosReales(desde){
     const M=[];
-    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio))) return;
+    // Se excluyen los cobros que NO mueven plata: con cheque (entra el día que se cobra), cancelados
+    // administrativamente, y las RETENCIONES (esa parte se la quedó ARCA, nunca entró a una cuenta).
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio))) return;
       // Cobro por plataforma (VIUMI): el cliente pagó el bruto, pero a la cuenta entra el NETO y recién
       // el día que acredita. Antes de eso no es plata disponible; contarlo hoy y por el bruto infla la
       // caja dos veces (por fecha y por monto).
@@ -7369,7 +7447,9 @@ function buildFilterTable(cfg){
         return; }
       const f=String(c.fecha||'').slice(0,10);
       if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
-    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio))) return;
+    // Ídem del lado de los pagos: si VPH retiene al proveedor, la factura se salda por ese monto pero
+    // la plata no sale de ninguna cuenta (se le paga a ARCA después, por otro camino).
+    compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio)) || (window.__esRetencion && window.__esRetencion(p.medio))) return;
       // Pago con TARJETA (con débitos): la factura quedó saldada, pero la plata sale recién cuando el
       // banco debita el resumen — cuota por cuota, el día real y de la cuenta real. Contar el pago en
       // su fecha además de los débitos sería la misma plata dos veces (por eso el return).
