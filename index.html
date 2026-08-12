@@ -6097,7 +6097,12 @@ function buildFilterTable(cfg){
           field('¿Qué impuesto?','','<select id="vc-ret-imp">'+IMPUESTOS_RET.map(x=>'<option value="'+esc(x)+'"'+(((ed&&ed.retImpuesto)||'Ganancias')===x?' selected':'')+'>'+esc(x)+'</option>').join('')+'</select>') +
           field('N° de certificado','','<input id="vc-ret-cert" value="'+esc((ed&&ed.retCertificado)||'')+'" placeholder="el que figura en el comprobante">') +
         '</div>'+
-        '<div style="font-size:11px;color:var(--muted);margin-top:8px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH y se descuenta del impuesto. Pedile siempre el certificado.</div>'+
+        '<div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<button type="button" class="cmp-btn" id="vc-ret-leer">📄 Leer el certificado (PDF)</button>'+
+          '<input type="file" id="vc-ret-file" accept="application/pdf" style="display:none">'+
+          '<span id="vc-ret-msg" style="font-size:12px"></span>'+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--muted);margin-top:8px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH y se descuenta del impuesto. Subí el PDF que te manda el cliente y se completa solo.</div>'+
       '</div>'+
       '<div id="vc-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea/actualiza en el módulo Cheques)</div>'+
@@ -6194,6 +6199,39 @@ function buildFilterTable(cfg){
     // sin cuenta, y NO cuenta como plata de hoy). Es donde se rompen los números de caja si se elige mal.
     if(window.__tarjetas){ window.__tarjetas('vc-medio'); window.__tarjetas('vc-cuenta'); }
     if($('vc-cancel')) $('vc-cancel').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
+    // Leer el certificado de retención desde el PDF que manda el cliente.
+    if($('vc-ret-leer')){
+      $('vc-ret-leer').onclick=()=>$('vc-ret-file').click();
+      $('vc-ret-file').onchange=async e=>{
+        const file=e.target.files&&e.target.files[0]; e.target.value='';
+        if(!file) return;
+        const msg=$('vc-ret-msg'); const poner=(h,c)=>{ if(msg){ msg.innerHTML=h; msg.style.color=c||'var(--muted)'; } };
+        if(!window.__leerPdfTexto){ poner('El lector de PDF no está disponible.','var(--red)'); return; }
+        poner('Leyendo el PDF…');
+        let texto='';
+        try{ texto=await window.__leerPdfTexto(file, 3); }
+        catch(err){ poner('No se pudo leer: '+esc(err.message||''),'var(--red)'); return; }
+        if(String(texto||'').replace(/\s/g,'').length<40){
+          poner('El PDF no tiene texto adentro (parece escaneado). Cargá los datos a mano.','var(--amber)'); return; }
+        const r=parseCertRetencion(texto);
+        // Se completa lo que se pudo leer. El MONTO solo si está vacío o si coincide: si ya había uno
+        // distinto se avisa en vez de pisarlo — puede ser que el cobro sea de otra cosa.
+        if(r.impuesto && $('vc-ret-imp')) $('vc-ret-imp').value=r.impuesto;
+        if(r.certificado && $('vc-ret-cert')) $('vc-ret-cert').value=r.certificado;
+        if(r.fecha && $('vc-fecha')) $('vc-fecha').value=r.fecha;
+        const actual=num($('vc-monto').value);
+        if(r.monto>0){
+          if(!actual) $('vc-monto').value=r.monto;
+          else if(Math.abs(actual-r.monto)>0.5)
+            r.avisos.push('⚠️ El certificado dice '+money(r.monto)+' y en el monto tenés '+money(actual)+'. Revisá cuál va.');
+        }
+        const ok=[r.impuesto&&('impuesto '+r.impuesto), r.certificado&&('cert. '+r.certificado),
+                  r.monto>0&&money(r.monto), r.fecha&&fmtFecha(r.fecha)].filter(Boolean).join(' · ');
+        poner((ok?'✔ Leído: '+esc(ok):'No reconocí ningún dato')+
+          (r.avisos.length?'<div style="margin-top:4px;color:var(--amber)">'+r.avisos.map(esc).join('<br>')+'</div>':''),
+          ok?'var(--green)':'var(--amber)');
+      };
+    }
     if($('vc-cancel-edit')) $('vc-cancel-edit').onclick=()=>{ cobroEdit=null; drawCobro(); };
     $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; }
       const prev = cobroEdit!=null ? v.cobros[cobroEdit] : null;
@@ -6221,6 +6259,57 @@ function buildFilterTable(cfg){
       if(esCheque(rec.medio) && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
       else if(!esCheque(rec.medio) && window.__deleteChequeCobro){ window.__deleteChequeCobro(rec.id); }
       drawCobro(); };
+  }
+
+  // ---------- Leer el certificado de retención (PDF) ----------
+  // Los certificados los emite el sistema del agente de retención, así que vienen con capa de texto:
+  // se leen con __leerPdfTexto (el mismo lector del resumen de la tarjeta), sin OCR ni servidor.
+  // ⚠️ Criterio: ante la duda, NO se completa. Un importe equivocado pasa de largo; un campo vacío
+  // se nota. Es el mismo criterio del lector de tickets de compra.
+  const CUIT_VPH = '30717840042';
+  function parseCertRetencion(txt){
+    const T = String(txt||'').replace(/ /g,' ').replace(/[ \t]+/g,' ');
+    const U = T.toUpperCase();
+    const r = { impuesto:'', certificado:'', fecha:'', monto:0, agente:'', avisos:[] };
+
+    // --- qué impuesto ---
+    if(/GANANCIA/.test(U)) r.impuesto='Ganancias';
+    else if(/INGRESOS\s*BRUTOS|\bIIBB\b|SIRCREB|SIRTAC/.test(U)) r.impuesto='Ingresos Brutos';
+    else if(/VALOR\s*AGREGADO|\bI\.?V\.?A\.?\b/.test(U)) r.impuesto='IVA';
+    else if(/SEGURIDAD\s*SOCIAL|\bSUSS\b/.test(U)) r.impuesto='SUSS';
+    if(!r.impuesto){                     // códigos de impuesto de SICORE
+      if(/\b217\b/.test(U)) r.impuesto='Ganancias'; else if(/\b767\b/.test(U)) r.impuesto='IVA';
+    }
+
+    // --- número de certificado --- (se toma el más largo de los que aparezcan rotulados)
+    const certs=[];
+    const reCert=/CERTIFICAD[OA][^\n]{0,40}?([0-9][0-9.\-\s]{5,24}[0-9])/g;
+    let m; while((m=reCert.exec(U))) certs.push(m[1].replace(/[^\d]/g,''));
+    const reNro=/(?:N[°ºRO.]{0,4}|NUMERO|NÚMERO)\s*[:.\-]?\s*([0-9]{8,20})/g;
+    while((m=reNro.exec(U))) certs.push(m[1]);
+    if(certs.length) r.certificado = certs.sort((a,b)=>b.length-a.length)[0];
+
+    // --- importe retenido --- SOLO si viene rotulado: hay varios importes en el papel (base
+    // imponible, alícuota, total) y agarrar el que no es sería peor que no completar nada.
+    const reImp=/(?:IMPORTE|MONTO|TOTAL)\s*(?:RETENIDO|DE\s*(?:LA\s*)?RETENCI[ÓO]N|RETENCI[ÓO]N\s*PRACTICADA)[^\d\-]{0,20}([\d.]+,\d{2}|[\d,]+\.\d{2}|\d+)/;
+    const mi=U.match(reImp) || U.match(/RETENCI[ÓO]N\s*PRACTICADA[^\d\-]{0,20}([\d.]+,\d{2})/);
+    if(mi) r.monto = num(mi[1]);
+    else r.avisos.push('No encontré el importe retenido rotulado — cargalo a mano mirando el PDF.');
+
+    // --- fecha --- (la de la retención; si no está, la de emisión)
+    const mf = U.match(/FECHA\s*(?:DE\s*)?(?:RETENCI[ÓO]N|EMISI[ÓO]N|COMPROBANTE)?[^\d]{0,12}(\d{2}[\/\-]\d{2}[\/\-]\d{2,4})/);
+    if(mf){ const p=mf[1].split(/[\/\-]/); let a=p[2]; if(a.length===2) a='20'+a;
+      r.fecha = a+'-'+p[1]+'-'+p[0]; }
+
+    // --- controles de coherencia ---
+    const cuits = (U.match(/\b(\d{2}[\-\s]?\d{8}[\-\s]?\d)\b/g)||[]).map(x=>x.replace(/[^\d]/g,''));
+    if(cuits.length && !cuits.includes(CUIT_VPH))
+      r.avisos.push('⚠️ El certificado no menciona el CUIT de VPH ('+CUIT_VPH+'). Verificá que sea el correcto.');
+    const otros = cuits.filter(c=>c!==CUIT_VPH);
+    if(otros.length) r.agente = otros[0];
+    if(!r.impuesto) r.avisos.push('No pude identificar el impuesto — elegilo a mano.');
+    if(!r.certificado) r.avisos.push('No encontré el N° de certificado — cargalo a mano.');
+    return r;
   }
 
   // ---------- Retenciones sufridas ----------
