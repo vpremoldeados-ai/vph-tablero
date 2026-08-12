@@ -2834,19 +2834,37 @@ function buildFilterTable(cfg){
   const habilSigISO = iso=>{ let f=String(iso||'').slice(0,10);
     for(let i=0;i<10 && !esDiaHabil(f);i++) f=addDiasISO(f,1);
     return f; };
-  // Plazo en días de un proveedor, desde su ficha. ⚠️ proveedoresConocidos() NO sirve acá: se arma
-  // desde las compras ya cargadas y no tiene los campos de la ficha. Esto lee el master real.
-  function plazoPagoDe(nombre){
-    const n=String(nombre||'').trim().toUpperCase(); if(!n) return 0;
-    const f=(window.__catalogoProveedores?window.__catalogoProveedores():[])
-      .find(p=>String(p.nombre||'').trim().toUpperCase()===n);
-    return f ? Math.max(0, Math.round(num(f.plazoPagoDias))) : 0;
+  // Ficha del proveedor. ⚠️ proveedoresConocidos() NO sirve acá: se arma desde las compras ya cargadas
+  // y no tiene los campos de la ficha. Esto lee el master real (vph_proveedores).
+  function fichaProveedor(nombre){
+    const n=String(nombre||'').trim().toUpperCase(); if(!n) return null;
+    return (window.__catalogoProveedores?window.__catalogoProveedores():[])
+      .find(p=>String(p.nombre||'').trim().toUpperCase()===n) || null;
   }
-  // Fecha en que hay que pagarle: fecha de factura + su plazo, corrida a día hábil. Sin plazo cargado
-  // devuelve '' (el llamador decide el default) — proponer "hoy" para un proveedor a 60 días sería
-  // pagarle dos meses antes, y proponer 60 días para uno de contado sería no pagarle nunca.
+  // 🔴 Son DOS plazos distintos y no hay que confundirlos (aclarado por Marcelo el 12/08 con el caso
+  // MAPEI: factura del 16/07 que vence el 16/08, pagada con un e-cheq fechado al 14/09):
+  //   · plazoPagoDias  = a los cuántos días VENCE LA FACTURA, o sea cuándo hay que entregarle el pago.
+  //   · plazoEcheqDias = a los cuántos días se FECHA EL E-CHEQ (siempre contado desde la factura). Es
+  //     el día en que sale la plata de la cuenta. Puede ser más largo que el vto. de la factura: se le
+  //     entrega el valor a tiempo y el proveedor lo cobra después.
+  // Si no está cargado el del e-cheq, se usa el de la factura (el caso normal: se paga y listo).
+  const plazoPagoDe  = nombre=>{ const f=fichaProveedor(nombre); return f?Math.max(0,Math.round(num(f.plazoPagoDias))):0; };
+  const plazoEcheqDe = nombre=>{ const f=fichaProveedor(nombre); if(!f) return 0;
+    const e=Math.max(0,Math.round(num(f.plazoEcheqDias)));
+    return e || Math.max(0,Math.round(num(f.plazoPagoDias))); };
+  // Vto. de la FACTURA: es lo que dice el papel del proveedor. ⚠️ NO se corre a día hábil — un
+  // vencimiento comercial puede caer domingo perfectamente, y moverlo sería inventar una fecha que la
+  // factura no dice (y mostrar la deuda como no vencida un día más de lo real).
+  // Sin plazo cargado devuelve '' (el llamador decide el default): proponer "hoy" para un proveedor a
+  // 60 días sería pagarle dos meses antes, y proponer 60 días para uno de contado, no pagarle nunca.
   function vencPagoISO(fechaFactura, proveedor){
     const p=plazoPagoDe(proveedor); if(!p) return '';
+    return addDiasISO(String(fechaFactura||hoyISO).slice(0,10), p);
+  }
+  // Fecha del E-CHEQ. Esta SÍ se corre a día hábil: el banco no acredita un sábado ni un feriado, y el
+  // home banking no deja emitir un e-cheq con fecha de pago no hábil.
+  function vencEcheqISO(fechaFactura, proveedor){
+    const p=plazoEcheqDe(proveedor); if(!p) return '';
     return habilSigISO(addDiasISO(String(fechaFactura||hoyISO).slice(0,10), p));
   }
   // Reparte un pago en N e-cheqs: importes IGUALES y vencimientos cada `cada` días corridos desde el
@@ -3678,15 +3696,17 @@ function buildFilterTable(cfg){
     function pintarVencInfo(){
       const cont=$('f-venc-info'); if(!cont) return;
       const prov=$('f-prov')?$('f-prov').value:'', f=$('f-fecha')?$('f-fecha').value:'';
-      const dias=plazoPagoDe(prov);
+      const dias=plazoPagoDe(prov), diasE=plazoEcheqDe(prov);
       if(!dias){ cont.innerHTML = String(prov||'').trim()
         ? '<span style="color:var(--muted)">Ese proveedor no tiene plazo de pago cargado (Base de Datos → Proveedores).</span>' : '';
         return; }
-      const exacta=addDiasISO(f||hoyISO, dias), corrida=habilSigISO(exacta);
+      const prop=vencPagoISO(f||hoyISO, prov);
       const actual=$('f-venc')?$('f-venc').value:'';
-      cont.innerHTML='<span style="color:var(--green)">'+esc(prov)+': '+dias+' días de la factura → <b>'+fmtFecha(corrida)+'</b></span>'+
-        (corrida!==exacta ? '<br><span style="color:var(--muted)">'+fmtFecha(exacta)+' cae día no hábil: se corre al hábil siguiente.</span>' : '')+
-        (actual && actual!==corrida ? '<br><span style="color:var(--amber)">Cargaste '+fmtFecha(actual)+', distinto del plazo.</span>' : '');
+      cont.innerHTML='<span style="color:var(--green)">'+esc(prov)+': vence a los '+dias+' días → <b>'+fmtFecha(prop)+'</b></span>'+
+        // El plazo del e-cheq se avisa acá aunque no se use todavía: es el día en que va a salir la
+        // plata, y conviene verlo al cargar la factura (no recién al pagarla).
+        (diasE>dias ? '<br><span style="color:var(--muted)">El e-cheq se fecha a los '+diasE+' días de la factura: <b>'+fmtFecha(vencEcheqISO(f||hoyISO, prov))+'</b>, que es cuando sale la plata.</span>' : '')+
+        (actual && actual!==prop ? '<br><span style="color:var(--amber)">Cargaste '+fmtFecha(actual)+', distinto del plazo.</span>' : '');
     }
     if($('f-fecha')) $('f-fecha').addEventListener('change',proponerVenc);
     // Alta nueva: si el proveedor ya viene cargado (ej. desde el lector de tickets), proponer ya.
@@ -4813,10 +4833,12 @@ function buildFilterTable(cfg){
   function openPago(c){
     payingUid=c._uid; const kk=calc(c);
     const cuitProv=cuitDeProveedor(c.proveedor, c.cuit);
-    // Fecha de pago que le corresponde por el plazo de su ficha (MAPEI: factura + 60 días, corrido a
-    // hábil). Si el proveedor no tiene plazo cargado queda '' y el campo arranca en hoy, como siempre.
+    // Fecha con la que hay que FECHAR EL E-CHEQ, según la ficha del proveedor (MAPEI: 60 días de la
+    // factura, corrido a día hábil) — NO el vencimiento de la factura, que puede ser más corto: el
+    // valor se entrega el día del vencimiento y el proveedor lo cobra en la fecha del e-cheq.
+    // Si el proveedor no tiene plazo cargado queda '' y el campo arranca en hoy, como siempre.
     // Se cuenta desde la fecha de la FACTURA, no desde hoy: el plazo lo fija el comprobante.
-    const vencProp=vencPagoISO(c.fecha, c.proveedor), plazoProv=plazoPagoDe(c.proveedor);
+    const vencProp=vencEcheqISO(c.fecha, c.proveedor), plazoProv=plazoEcheqDe(c.proveedor);
     $('cmp-form-pago').innerHTML =
       '<div style="border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:13px">'+
         '<b>'+esc(c.proveedor||'—')+'</b>'+(cuitProv?' · <span style="font-variant-numeric:tabular-nums">CUIT '+esc(fmtCuit(cuitProv))+'</span>':' · <span style="color:var(--amber)">sin CUIT cargado</span>')+
@@ -4892,8 +4914,12 @@ function buildFilterTable(cfg){
       if(!plazoProv){ cont.innerHTML='<span style="color:var(--muted)">Sin plazo de pago cargado en la ficha de este proveedor.</span>'; return; }
       const exacta=addDiasISO(c.fecha||hoyISO, plazoProv);
       const actual=$('p-ch-venc')?$('p-ch-venc').value:'';
-      cont.innerHTML='<span style="color:var(--green)">'+plazoProv+' días de la factura del '+fmtFecha(c.fecha)+' → <b>'+fmtFecha(vencProp)+'</b></span>'+
+      const plazoFact=plazoPagoDe(c.proveedor);
+      cont.innerHTML='<span style="color:var(--green)">E-cheq a '+plazoProv+' días de la factura del '+fmtFecha(c.fecha)+' → <b>'+fmtFecha(vencProp)+'</b></span>'+
         (vencProp!==exacta ? '<br><span style="color:var(--muted)">'+fmtFecha(exacta)+' cae día no hábil: se corre al hábil siguiente.</span>' : '')+
+        // Cuando los dos plazos difieren conviene recordar la otra fecha: el valor hay que entregarlo
+        // el día del vencimiento de la factura, aunque el e-cheq se cobre después.
+        (plazoFact && plazoFact<plazoProv ? '<br><span style="color:var(--muted)">La factura vence el '+fmtFecha(vencPagoISO(c.fecha, c.proveedor))+' ('+plazoFact+' días): entregale el valor para esa fecha.</span>' : '')+
         (actual && actual!==vencProp ? '<br><span style="color:var(--amber)">Pusiste '+fmtFecha(actual)+', distinto del plazo acordado.</span>' : '');
     }
     // Rearma montos y fechas desde los 4 campos de arriba (monto, 1er vencimiento, cantidad, cada).
@@ -5207,26 +5233,28 @@ function buildFilterTable(cfg){
 
     // ---------- VARIOS E-CHEQS para un pago de varias facturas ----------
     let ppCortes=null, ppFilas=[];   // cortes movidos a mano y overrides de fecha/N°/banco por fila
-    // Vencimiento propuesto: el plazo del proveedor contado desde la factura MÁS VIEJA de las que se
-    // están pagando. Cada factura tiene su propia fecha y por lo tanto su propio vencimiento; se toma
-    // el más temprano para no pagar tarde ninguna. Los otros quedan a la vista en el aviso.
+    // Fecha propuesta para el 1er e-cheq: el plazo de e-cheq del proveedor contado desde la factura
+    // MÁS VIEJA de las que se están pagando. Cada factura tiene su fecha y por lo tanto su propio
+    // vencimiento; se toma el más temprano para no pagar tarde ninguna. El resto queda en el aviso.
     function vencPropProv(){
       const d=pagoProv.distribucion||[]; if(!d.length) return '';
       const fs=d.map(x=>{ const c=DB.compras.find(y=>y._uid===x.compraUid); return c?String(c.fecha||'').slice(0,10):''; }).filter(Boolean);
       if(!fs.length) return '';
-      return vencPagoISO(fs.sort()[0], pagoProv.proveedor);
+      return vencEcheqISO(fs.sort()[0], pagoProv.proveedor);
     }
     function pintarPlazoProv(){
       const cont=$('pp-ch-plazo'); if(!cont) return;
-      const dias=plazoPagoDe(pagoProv.proveedor);
+      const dias=plazoEcheqDe(pagoProv.proveedor);
       if(!dias){ cont.innerHTML='<span style="color:var(--muted)">Sin plazo de pago cargado en la ficha de este proveedor.</span>'; return; }
       const d=pagoProv.distribucion||[];
-      const vencs=d.map(x=>{ const c=DB.compras.find(y=>y._uid===x.compraUid); return c?vencPagoISO(c.fecha, pagoProv.proveedor):''; }).filter(Boolean).sort();
+      const vencs=d.map(x=>{ const c=DB.compras.find(y=>y._uid===x.compraUid); return c?vencEcheqISO(c.fecha, pagoProv.proveedor):''; }).filter(Boolean).sort();
       const prop=vencPropProv();
-      cont.innerHTML = !prop ? '<span style="color:var(--muted)">'+dias+' días de fecha de factura.</span>'
-        : '<span style="color:var(--green)">'+dias+' días de factura → la más vieja vence el <b>'+fmtFecha(prop)+'</b></span>'+
+      const plazoFact=plazoPagoDe(pagoProv.proveedor);
+      cont.innerHTML = !prop ? '<span style="color:var(--muted)">E-cheq a '+dias+' días de fecha de factura.</span>'
+        : '<span style="color:var(--green)">E-cheq a '+dias+' días de factura → el de la más vieja va al <b>'+fmtFecha(prop)+'</b></span>'+
           (vencs.length>1 && vencs[vencs.length-1]!==prop
-            ? '<br><span style="color:var(--muted)">Las '+vencs.length+' facturas vencen entre '+fmtFecha(vencs[0])+' y '+fmtFecha(vencs[vencs.length-1])+'.</span>' : '');
+            ? '<br><span style="color:var(--muted)">Por fecha de factura, los e-cheqs irían entre '+fmtFecha(vencs[0])+' y '+fmtFecha(vencs[vencs.length-1])+'.</span>' : '')+
+          (plazoFact && plazoFact<dias ? '<br><span style="color:var(--muted)">Las facturas vencen a los '+plazoFact+' días: entregale los valores para esas fechas.</span>' : '');
     }
     function drawEcheqsProv(){
       const cont=$('pp-ch-grid'); if(!cont) return;
@@ -9787,8 +9815,8 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'categoria',h:'Categoría'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','email','telefono'] },
     proveedores: { col:'vph_proveedores', label:'Proveedores', sing:'Proveedor', origen:'vph_compras', campoOrigen:'proveedor',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'plazoPagoDias',l:'Plazo de pago (días desde la fecha de factura — ej. e-cheq a 60 días → 60. Vacío = se paga contra entrega)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
-      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'plazoPagoDias',h:'Plazo pago',num:1},{k:'telefono',h:'Teléfono'} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'plazoPagoDias',l:'Vence la factura a los … días de su fecha (ej. 30. Vacío = contado / contra entrega)',t:'number'},{k:'plazoEcheqDias',l:'El e-cheq se fecha a los … días de la FACTURA (ej. MAPEI 60. Vacío = igual que el vencimiento)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'plazoPagoDias',h:'Vto. días',num:1},{k:'plazoEcheqDias',h:'E-cheq días',num:1},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
       fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'¿Qué es? (tipo)',t:'select',opts:TIPOS_PROD,cards:1},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'refuerzoDesde',l:'Refuerzo de base — solo si el pallet supera estas unidades (ej: 40 → un pallet de 40 o menos va sin base; vacío = siempre)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
