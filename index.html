@@ -893,12 +893,21 @@
       <section>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
           <h2 style="margin:0"><span class="dot" style="background:var(--blue)"></span>Producción y entregas del mes</h2>
-          <input type="month" id="pe-mes" class="cmp-select" style="margin-left:auto;max-width:170px">
+          <button class="cmp-btn" id="pe-btn-feriados" style="margin-left:auto">📅 Feriados</button>
+          <input type="month" id="pe-mes" class="cmp-select" style="max-width:170px">
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px"><b style="color:var(--green)">verde +</b> = fabricado · <b style="color:var(--red)">rojo −</b> = entregado. Última fila: total de kilogramos por día.</div>
         <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" class="pe-tbl-matriz" style="font-size:12px"></table></div>
         <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
       </section>
+    </div>
+  </div>
+
+  <!-- Overlay: feriados / días sin producción -->
+  <div class="cmp-overlay" id="pe-modal-fer">
+    <div class="cmp-dialog" style="max-width:620px">
+      <div class="cmp-dialog-head"><h3>📅 Feriados y días sin producción</h3><button class="cmp-x" id="pe-fer-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-fer"></div>
     </div>
   </div>
 
@@ -11733,7 +11742,7 @@ function buildFilterTable(cfg){
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[];
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[];
   let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
@@ -11791,11 +11800,100 @@ function buildFilterTable(cfg){
     return { key:r.key, codigo:r.pr2.codigo||'', nombre:r.pr2.nombre||'', pr2:r.pr2, cant:refCant, neto:total-refCant, porPallet:r.porPallet };
   }
 
+  // ---------- FERIADOS / días sin producción ----------
+  // 🔴 Esto FALTABA: `window.__esFeriado` se consumía en 3 lugares (la fecha de acreditación de VIUMI,
+  // el débito del resumen de la tarjeta y el vencimiento de los e-cheqs propios) pero NUNCA se definía,
+  // así que siempre devolvía undefined y ningún feriado se salteaba. La colección `vph_feriados` estaba
+  // en el backup y en las reglas de Firestore, pero no había ni suscripción ni pantalla para cargarlos.
+  // Un documento por día: id determinístico `fer_<AAAA-MM-DD>` para que recargar el mismo año actualice
+  // en vez de duplicar (misma convención que los ajustes de conteo, §3).
+  const isoDeF = d=>{ const p=x=>String(x).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); };
+  const esFeriadoISO = iso=>{ const f=String(iso||'').slice(0,10); return !!f && feriados.some(x=>String(x.fecha||'').slice(0,10)===f); };
+  window.__esFeriado = esFeriadoISO;
+  window.__feriados  = ()=> feriados.map(f=>({fecha:String(f.fecha||'').slice(0,10), motivo:f.motivo||''}))
+                                    .filter(f=>f.fecha).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  function persistFeriado(fecha, motivo){
+    const f=String(fecha||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(f)) return false;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return false; }
+    c.FS.setDoc(c.FS.doc(c.db,'vph_feriados','fer_'+f), {fecha:f, motivo:String(motivo||'').trim(), usuario:usuario()})
+      .catch(e=>alert('Error al guardar el feriado: '+e.message));
+    return true;
+  }
+  function delFeriado(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_feriados',uid)).catch(e=>alert('Error: '+e.message)); }
+  // Lee un pegado libre ("2026-08-17 San Martín" o "17/08/26 · San Martín", uno por línea). Se hizo
+  // porque el calendario cambia todos los años: sin esto habría que tipear 19 fechas cada enero.
+  function parseFeriadosTexto(txt){
+    const out=[];
+    String(txt||'').split(/[\r\n]+/).forEach(ln=>{
+      const s=ln.trim(); if(!s) return;
+      let f='', m=s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if(m) f=m[1]+'-'+m[2]+'-'+m[3];
+      else { m=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+        if(m){ let y=+m[3]; if(y<100) y+=2000; f=y+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); } }
+      if(!f) return;
+      const motivo=s.replace(m[0],'').replace(/^[\s·\-–—:,|]+/,'').trim();
+      if(!out.some(x=>x.fecha===f)) out.push({fecha:f, motivo});
+    });
+    return out;
+  }
+  function openFeriados(){
+    drawFeriados();
+    $('pe-modal-fer').classList.add('open');
+  }
+  function drawFeriados(){
+    const L=window.__feriados();
+    const anios=[...new Set(L.map(f=>f.fecha.slice(0,4)))].sort();
+    const delAnio=a=>L.filter(f=>f.fecha.slice(0,4)===a);
+    const dow=iso=>{ const d=parseISO(iso); return d?['domingo','lunes','martes','miércoles','jueves','viernes','sábado'][d.getDay()]:''; };
+    $('pe-form-fer').innerHTML=
+      '<p style="margin:0 0 10px;font-size:13px">Los días que <b>no se produce</b> y en los que <b>el banco no acredita</b>. Se usan para calcular la fecha de pago de los e-cheqs, la acreditación de VIUMI, el débito del resumen de la tarjeta, las fechas de entrega estimadas y los días hábiles del punto de equilibrio.</p>'+
+      (!L.length ? '<div class="alert warn" style="margin:0 0 12px"><span class="aico">⚠️</span><div><b>No hay ningún feriado cargado.</b><div class="act">Hasta que cargues los del año, el Tablero cuenta los feriados como días hábiles y propone fechas de pago 1 o 2 días antes de lo real.</div></div></div>' : '')+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 2fr auto;align-items:end">'+
+        '<div class="cmp-field"><label>Fecha</label><input type="date" id="pe-fer-fecha" value="'+hoyISO+'"></div>'+
+        '<div class="cmp-field"><label>Motivo (opcional)</label><input id="pe-fer-motivo" placeholder="Ej. San Martín, puente turístico, parada de planta"></div>'+
+        '<div class="cmp-field"><label>&nbsp;</label><button class="cmp-btn cmp-btn-primary" id="pe-fer-add">+ Agregar</button></div>'+
+      '</div>'+
+      '<details style="margin:0 0 12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--muted)">Cargar varios de una (pegar una lista)</summary>'+
+        '<p style="font-size:12px;color:var(--muted);margin:8px 0 6px">Una fecha por línea, con el motivo al lado. Entiende <b>2026-08-17</b> y <b>17/08/26</b>. Los que ya estén cargados se actualizan, no se duplican.</p>'+
+        '<textarea id="pe-fer-bulk" rows="6" style="width:100%;font-family:monospace;font-size:12px" placeholder="2026-08-17 San Martín&#10;2026-10-12 Diversidad Cultural"></textarea>'+
+        '<div style="margin-top:6px"><button class="cmp-btn" id="pe-fer-bulk-btn">Cargar la lista</button> <span id="pe-fer-bulk-msg" style="font-size:12px;color:var(--muted)"></span></div>'+
+      '</details>'+
+      (!anios.length ? '' : anios.map(a=>
+        '<h4 style="margin:14px 0 6px;font-size:13px">'+a+' <span style="color:var(--muted);font-weight:400">— '+delAnio(a).length+' día'+(delAnio(a).length>1?'s':'')+'</span></h4>'+
+        '<div class="tbl-wrap"><table style="width:100%;font-size:12.5px;border-collapse:collapse">'+
+        delAnio(a).map(f=>'<tr style="border-bottom:1px solid var(--border)">'+
+          '<td style="padding:5px;white-space:nowrap"><b>'+fmtFecha(f.fecha)+'</b> <span style="color:var(--muted)">'+dow(f.fecha)+'</span></td>'+
+          '<td style="padding:5px">'+esc(f.motivo||'—')+'</td>'+
+          '<td style="padding:5px;text-align:right"><button class="cmp-rowbtn" data-delfer="'+esc('fer_'+f.fecha)+'">✕</button></td></tr>').join('')+
+        '</table></div>').join(''));
+    $('pe-fer-add').onclick=()=>{
+      const f=$('pe-fer-fecha').value;
+      if(!f){ alert('Elegí la fecha.'); return; }
+      if(esFeriadoISO(f)){ alert('El '+fmtFecha(f)+' ya está cargado como feriado.'); return; }
+      if(persistFeriado(f, $('pe-fer-motivo').value)) setTimeout(drawFeriados,400);
+    };
+    $('pe-fer-bulk-btn').onclick=()=>{
+      const arr=parseFeriadosTexto($('pe-fer-bulk').value);
+      if(!arr.length){ $('pe-fer-bulk-msg').textContent='No reconocí ninguna fecha en ese texto.'; return; }
+      if(!confirm('¿Cargar '+arr.length+' feriado'+(arr.length>1?'s':'')+'?\n\n'+arr.slice(0,5).map(x=>fmtFecha(x.fecha)+(x.motivo?' — '+x.motivo:'')).join('\n')+(arr.length>5?'\n…':''))) return;
+      let n=0; arr.forEach(x=>{ if(persistFeriado(x.fecha, x.motivo)) n++; });
+      $('pe-fer-bulk-msg').textContent='Cargados '+n+'.';
+      setTimeout(drawFeriados,600);
+    };
+    $('pe-form-fer').querySelectorAll('button[data-delfer]').forEach(b=> b.onclick=()=>{
+      if(confirm('¿Sacar ese día de la lista de feriados?')){ delFeriado(b.dataset.delfer); setTimeout(drawFeriados,400); } });
+  }
+
   // ---------- Curado, kilos y ritmo de producción ----------
   // Parámetros editables (Base de Datos → ⚙️ Parámetros), leídos en vivo con default de respaldo.
   const OBJ=()=>num(window.__param('objKgDia',6000));   // objetivo kg/día (semáforo de Gustavo)
   const modoProd=()=>String(window.__param('diasProd','lunvie'));   // días de producción
-  const esHabil=d=>{ const w=d.getDay(); const m=modoProd(); if(m==='todos') return true; if(m==='lunsab') return w!==0; return w>=1&&w<=5; };
+  // ⚠️ Un FERIADO tampoco es día hábil: no se produce y el banco no acredita. Antes esHabil solo
+  // miraba el día de la semana, así que un feriado contaba como día de fábrica y corría para adelante
+  // el ritmo, las fechas estimadas de entrega y los días hábiles del punto de equilibrio.
+  const esHabil=d=>{ const w=d.getDay(); const m=modoProd();
+    if(esFeriadoISO(isoDeF(d))) return false;
+    if(m==='todos') return true; if(m==='lunsab') return w!==0; return w>=1&&w<=5; };
   const parseISO=s=>{ if(!s) return null; const a=String(s).slice(0,10).split('-').map(Number); if(a.length<3||!a[0]) return null; const d=new Date(a[0],a[1]-1,a[2]); return isNaN(d)?null:d; };
   const addDias=(d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
   function addDiasHabiles(d,n){ const x=new Date(d); let c=0, guard=0; while(c<n && guard++<400){ x.setDate(x.getDate()+1); if(esHabil(x)) c++; } return x; }
@@ -12933,10 +13031,14 @@ function buildFilterTable(cfg){
     // Al crearse o borrarse un pedido, Ventas tiene que repintar: ahí se muestra si la venta ya se
     // pasó a Producción, y sin este aviso seguiría marcando como pendiente una que ya se pasó.
     sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar(); });
-    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); }
+    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a);
+    // Los feriados los consumen OTROS módulos (e-cheqs, VIUMI, tarjeta) a través de __esFeriado, así
+    // que al llegar la lista hay que avisarles: si no, la primera pantalla que se abra calcula sin
+    // feriados y propone una fecha de pago 1 o 2 días antes de la real.
+    sub('vph_feriados',a=>{ feriados=a; if(window.__refreshAlertas) window.__refreshAlertas(); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
@@ -12957,6 +13059,8 @@ function buildFilterTable(cfg){
   $('pe-btn-conteo-prod').onclick=openConteoProd;
   $('pe-btn-conteo-ins').onclick=openConteoIns;
   $('pe-btn-pedircompra').onclick=pedidoCompra;
+  { const fb2=$('pe-btn-feriados'); if(fb2) fb2.onclick=openFeriados; }
+  { const fc=$('pe-fer-cerrar'); if(fc) fc.onclick=()=>$('pe-modal-fer').classList.remove('open'); }
   $('pe-prod-cerrar').onclick=()=>$('pe-modal-prod').classList.remove('open');
   $('pe-ent-cerrar').onclick=()=>$('pe-modal-ent').classList.remove('open');
   $('pe-conteo-cerrar').onclick=()=>$('pe-modal-conteo').classList.remove('open');
@@ -12966,7 +13070,7 @@ function buildFilterTable(cfg){
   { const pb=$('pe-programa'); if(pb) pb.onclick=programaTransportista; }
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
-  [$('pe-modal-prod'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+  [$('pe-modal-prod'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
 })();
 </script>
