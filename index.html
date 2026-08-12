@@ -11604,7 +11604,10 @@ function buildFilterTable(cfg){
       const ref = splitRefuerzo(pr, pallets, cant);
       // `real` = el armado lo decidió alguien y quedó guardado en el pedido (pe.plan). Si es false, lo
       // que se muestra es el reparto automático por udPorPallet — sirve de guía, pero no es un plan.
-      rows.push({ key, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref, real:!!guardado });
+      // `j` = n° de aparición del producto en el pedido (un pedido puede traer el MISMO producto en
+      // dos renglones, ej. una venta con dos renglones de ULC60): sin esto, los pallets mixtos no
+      // podían distinguir las tandas de un renglón de las del otro (pasó de verdad, 11/08).
+      rows.push({ key, j: rows.filter(x=>x.key===key).length, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref, real:!!guardado });
     });
     return rows;
   }
@@ -11629,13 +11632,16 @@ function buildFilterTable(cfg){
       const mm=[];
       (g && Array.isArray(g.m) ? g.m : []).forEach(x=>{
         const k=String((x&&x.k)||'').trim().toUpperCase(), i=Math.round(num(x&&x.i));
-        const r=rows.find(rr=>rr.key===k);
+        // `j` = a cuál de los renglones del producto apunta (un pedido puede traer el mismo producto
+        // dos veces). Un ref guardado sin `j` (formato del 11/08) apunta al primero, como siempre.
+        const j=(x && x.j!=null) ? Math.round(num(x.j)) : 0;
+        const r=rows.find(rr=>rr.key===k && rr.j===j);
         // Sin udPorPallet la "tanda" es el bulto entero (planStd cae a [cant]): no es un pallet real
         // que se pueda compartir — mismo criterio que planEsReal en el remito.
         if(!r || r.ud<=0 || i<0 || i>=r.pallets.length) return;
-        const id=k+'#'+i;
+        const id=k+'#'+j+'#'+i;
         if(usados[id] || mm.some(y=>y.id===id)) return;
-        mm.push({ id, k, i, u:r.pallets[i], row:r });
+        mm.push({ id, k, j, i, u:r.pallets[i], row:r });
       });
       if(mm.length>=2){ mm.forEach(y=>{ usados[y.id]=1; }); out.push(mm); }
     });
@@ -12114,12 +12120,12 @@ function buildFilterTable(cfg){
     const comp={}; mix.forEach((g,gi)=>g.forEach(y=>{ comp[y.id]=gi; }));
     return '<div class="pe-pallets">'+rows.map(r=>{
       const n=r.pallets.length;
-      const nMix=r.pallets.filter((u,i)=>comp[r.key+'#'+i]!=null).length, nProp=n-nMix;
+      const nMix=r.pallets.filter((u,i)=>comp[r.key+'#'+r.j+'#'+i]!=null).length, nProp=n-nMix;
       const cab = nMix===0 ? '<b>'+n+' pallet'+(n!==1?'s':'')+'</b>'
         : nProp===0 ? '<b>'+(nMix===1?'pallet mixto 🧩':nMix+' pallets mixtos 🧩')+'</b>'
         : '<b>'+nProp+' pallet'+(nProp!==1?'s':'')+' + '+nMix+' mixto'+(nMix!==1?'s':'')+' 🧩</b>';
       const cuerpo = !n ? '<span style="color:var(--muted)">sin cantidad</span>'
-        : r.ud>0 ? nf(r.cant)+' u en '+cab+' · '+r.pallets.map((u,i)=>comp[r.key+'#'+i]!=null?nf(u)+'🧩':nf(u)).join(' + ')
+        : r.ud>0 ? nf(r.cant)+' u en '+cab+' · '+r.pallets.map((u,i)=>comp[r.key+'#'+r.j+'#'+i]!=null?nf(u)+'🧩':nf(u)).join(' + ')
                  : nf(r.cant)+' u · <span style="color:var(--amber)">falta «unidades por pallet» en el catálogo</span>';
       return '<div class="pp-lin"><span class="pp-cod">'+esc(r.codigo||r.nombre||'—')+'</span> '+cuerpo
         + (n&&r.ud>0 ? ' <span class="pp-org">'+(r.real?'armado':'sugerido')+'</span>' : '')
@@ -12314,7 +12320,7 @@ function buildFilterTable(cfg){
     // pedido (si vino de una): el formulario del remito la deja cambiar antes de imprimir.
     // Pallets mixtos del pedido, resueltos a código+tanda para que el remito pueda descontar los
     // compartidos del Total Bultos y mostrar la composición de cada uno.
-    const mixtos=mixtosDe(pe, rows).map(g=>({ m:g.map(y=>({ codigo:y.row.codigo||'', desc:y.row.nombre||'', i:y.i, u:y.u })) }));
+    const mixtos=mixtosDe(pe, rows).map(g=>({ m:g.map(y=>({ codigo:y.row.codigo||'', desc:y.row.nombre||'', j:y.j, i:y.i, u:y.u })) }));
     return { numero:'', fecha:fecha||pe.fechaEntregado||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items, mixtos:mixtos,
       pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'' };
@@ -12389,7 +12395,7 @@ function buildFilterTable(cfg){
       editPed.plan=plan;
       // Pallets mixtos: se guardan solo los grupos válidos (2+ tandas que existen en el plan final),
       // normalizados a {m:[{k,i}]}. Un grupo a medio armar no se persiste.
-      editPed.mixtos = mixtosDe(editPed, cargaRows(editPed)).map(g=>({ m:g.map(y=>({k:y.k, i:y.i})) }));
+      editPed.mixtos = mixtosDe(editPed, cargaRows(editPed)).map(g=>({ m:g.map(y=>({k:y.k, j:y.j, i:y.i})) }));
       persistPed(editPed); $('pe-modal-ped').classList.remove('open'); };
   }
   function drawPedItems(){
@@ -12432,14 +12438,15 @@ function buildFilterTable(cfg){
   function drawMixtos(){
     const cont=$('pp-mixtos'); if(!cont) return;
     const rows=cargaRows(editPed);
-    const tandas=[]; rows.forEach(r=>{ if(r.ud<=0) return; r.pallets.forEach((u,i)=> tandas.push({ id:r.key+'#'+i, k:r.key, i, u, row:r })); });
+    const tandas=[]; rows.forEach(r=>{ if(r.ud<=0) return; r.pallets.forEach((u,i)=> tandas.push({ id:r.key+'#'+r.j+'#'+i, k:r.key, j:r.j, i, u, row:r })); });
     // Con un solo producto no hay nada que mezclar (repartir un producto entre pallets ya lo hace el
     // plan de arriba) — la sección ni aparece, para no ensuciar el form del caso común.
     if(new Set(tandas.map(t=>t.k)).size<2){ cont.innerHTML=''; return; }
     const raw=Array.isArray(editPed.mixtos)?editPed.mixtos:[];
-    // Dueño de cada tanda (validando contra el plan ACTUAL: una tanda que ya no existe sale sola del grupo).
+    // Dueño de cada tanda (validando contra el plan ACTUAL: una tanda que ya no existe sale sola del
+    // grupo). Un ref sin `j` (guardado antes de soportar el mismo producto dos veces) apunta al 1°.
     const dueno={};
-    raw.forEach((g,gi)=>{ (g&&Array.isArray(g.m)?g.m:[]).forEach(x=>{ const id=String((x&&x.k)||'').trim().toUpperCase()+'#'+Math.round(num(x&&x.i)); if(dueno[id]==null && tandas.some(t=>t.id===id)) dueno[id]=gi; }); });
+    raw.forEach((g,gi)=>{ (g&&Array.isArray(g.m)?g.m:[]).forEach(x=>{ const id=String((x&&x.k)||'').trim().toUpperCase()+'#'+((x&&x.j!=null)?Math.round(num(x.j)):0)+'#'+Math.round(num(x&&x.i)); if(dueno[id]==null && tandas.some(t=>t.id===id)) dueno[id]=gi; }); });
     cont.innerHTML =
       '<div style="border:1px dashed var(--border);border-radius:10px;padding:10px;margin:2px 0 8px">'+
       '<div style="font-size:12.5px;font-weight:800;margin-bottom:2px">🧩 Pallets mixtos</div>'+
@@ -12450,7 +12457,7 @@ function buildFilterTable(cfg){
         const frac=mios.reduce((a,t)=>a+(t.row.ud>0? t.u/t.row.ud : 0),0);
         const chips=tandas.map(t=>{
           const dentro=dueno[t.id]===gi, otro=dueno[t.id]!=null && !dentro;
-          return '<button type="button" class="cmp-rowbtn" data-mixg="'+gi+'" data-mixt="'+esc(t.id)+'"'+(otro?' disabled':'')+
+          return '<button type="button" class="cmp-rowbtn" data-mixg="'+gi+'" data-mk="'+esc(t.k)+'" data-mj="'+t.j+'" data-mi="'+t.i+'"'+(otro?' disabled':'')+
             ' style="font-size:12px;'+(dentro?'background:var(--green);color:#fff;border-color:var(--green)':'')+(otro?'opacity:.35':'')+'">'+
             esc(t.row.codigo||t.row.nombre)+' · '+nf(t.u)+' u</button>';
         }).join(' ');
@@ -12473,13 +12480,12 @@ function buildFilterTable(cfg){
       '</div>';
     $('pp-mix-add').onclick=()=>{ editPed.mixtos=Array.isArray(editPed.mixtos)?editPed.mixtos:[]; editPed.mixtos.push({m:[]}); drawMixtos(); refreshPlanOut(); };
     cont.querySelectorAll('button[data-mixdel]').forEach(b=> b.onclick=()=>{ editPed.mixtos.splice(+b.dataset.mixdel,1); drawMixtos(); refreshPlanOut(); });
-    cont.querySelectorAll('button[data-mixt]').forEach(b=> b.onclick=()=>{
-      const gi=+b.dataset.mixg, id=b.dataset.mixt, corte=id.lastIndexOf('#');
-      const k=id.slice(0,corte), i=+id.slice(corte+1);
+    cont.querySelectorAll('button[data-mk]').forEach(b=> b.onclick=()=>{
+      const gi=+b.dataset.mixg, k=b.dataset.mk, j=+b.dataset.mj, i=+b.dataset.mi;
       const g=editPed.mixtos && editPed.mixtos[gi]; if(!g) return;
       g.m=Array.isArray(g.m)?g.m:[];
-      const ya=g.m.findIndex(x=>String((x&&x.k)||'').trim().toUpperCase()===k && Math.round(num(x&&x.i))===i);
-      if(ya>=0) g.m.splice(ya,1); else g.m.push({k,i});
+      const ya=g.m.findIndex(x=>String((x&&x.k)||'').trim().toUpperCase()===k && ((x&&x.j!=null)?Math.round(num(x.j)):0)===j && Math.round(num(x&&x.i))===i);
+      if(ya>=0) g.m.splice(ya,1); else g.m.push({k,j,i});
       drawMixtos(); refreshPlanOut();
     });
   }
@@ -13473,9 +13479,10 @@ function buildFilterTable(cfg){
   // ---------- Remito (recibe objeto normalizado) ----------
   // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva,
   //        domicilioEntrega, items:[{codigo,desc,obs,cant,pallets}], mixtos, palletResumen }
-  // mixtos (OPCIONAL): pallets compartidos por varios productos — [{m:[{codigo,desc,i,u},...]},...],
-  //   donde cada miembro referencia la tanda i de items[].pallets de ese producto. Lo manda
-  //   Producción; un remito hecho desde Ventas no lo trae y todo sigue como siempre.
+  // mixtos (OPCIONAL): pallets compartidos por varios productos — [{m:[{codigo,desc,j,i,u},...]},...],
+  //   donde cada miembro referencia la tanda i de items[].pallets del j-ésimo renglón de ese producto
+  //   (j desambigua un producto repetido en dos renglones). Lo manda Producción; un remito hecho
+  //   desde Ventas no lo trae y todo sigue como siempre.
   // items[].pallets (OPCIONAL): el plan REAL de pallets de ese ítem, en unidades por pallet (ej. [75,75,30]).
   //   Lo manda Producción y Logística, donde Gustavo puede haber editado el armado a mano. ⚠️ Si viene, se
   //   usa tal cual: recalcularlo acá desdibujaría el armado que se cargó de verdad en el camión. Si no
@@ -13582,17 +13589,21 @@ function buildFilterTable(cfg){
     (Array.isArray(obj.mixtos)?obj.mixtos:[]).forEach(g=>{
       const mm=[];
       (g&&Array.isArray(g.m)?g.m:[]).forEach(x=>{
-        const r=its.find(rr=> (x&&x.codigo && normc(rr.it.codigo)===normc(x.codigo)) || (x&&x.desc && normc(rr.it.desc)===normc(x.desc)));
+        // `j` desambigua cuando el MISMO producto viene en dos renglones del documento (pasa cuando
+        // la venta trae dos renglones de ULC60): j-ésimo renglón que matchea el código/descripción.
+        // Un ref viejo sin `j` apunta al primero, como siempre.
+        const cand=its.filter(rr=> (x&&x.codigo && normc(rr.it.codigo)===normc(x.codigo)) || (x&&x.desc && normc(rr.it.desc)===normc(x.desc)));
+        const r=cand[(x && x.j!=null) ? Math.round(num(x.j)) : 0];
         const i=Math.round(num(x&&x.i));
         if(!r || !planEsReal(r) || i<0 || i>=r.pallets.length) return;
-        const id=normc(r.it.codigo||r.it.desc)+'#'+i;
+        const id=its.indexOf(r)+'#'+i;
         if(mm.some(y=>y.id===id) || grupos.some(gg=>gg.some(y=>y.id===id))) return;
         mm.push({ id, r, i, u:r.pallets[i] });
       });
       if(mm.length>=2) grupos.push(mm);
     });
     const compartida={}; grupos.forEach(g=>g.forEach(y=>{ compartida[y.id]=1; }));
-    const esComp=(r,i)=> !!compartida[normc(r.it.codigo||r.it.desc)+'#'+i];
+    const esComp=(r,i)=> !!compartida[its.indexOf(r)+'#'+i];
     const exclusivas=r=> r.pallets.filter((u,i)=>!esComp(r,i));
     const bultosDe=r=> planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant));
     let filas=its.map(r=>'<tr><td>'+celdaCodigo(r.it.codigo)+'</td><td>'+esc(r.it.desc||'')+'</td><td>'+esc(r.it.obs||'')+'</td>'+
