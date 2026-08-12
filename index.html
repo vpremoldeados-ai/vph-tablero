@@ -12307,8 +12307,14 @@ function buildFilterTable(cfg){
     const cli=cs.find(c=>(c.nombre||'').trim().toUpperCase()===String(pe.cliente||'').trim().toUpperCase())||{};
     const dom=dirPed(pe) || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
     const rows=cargaRows(pe);
+    // El mismo producto puede venir en DOS renglones: cada renglón se empareja con SU fila (misma
+    // clave Y misma aparición `j`), no con la primera que matchee — si no, el segundo ULC60 salía en
+    // el remito con el plan y el peso del primero (pasó de verdad, 12/08: el renglón de 75 u decía
+    // "1 pallet de 50 u" y el total de kg quedaba corto).
+    const occ={};
     const items=(pe.items||[]).filter(it=>it&&(it.producto||it.codigo)&&num(it.cantidad)>0).map(it=>{
-      const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
+      const k=keyDe(it.codigo,it.producto); const j=occ[k]||0; occ[k]=j+1;
+      const r=rows.find(x=>x.key===k && x.j===j);
       // El armado va en su propio bloque del PDF (con las unidades y el peso de cada pallet), así que
       // acá se manda el plan crudo y la columna Observaciones queda libre.
       return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), pallets:(r?r.pallets:null) };
@@ -12341,9 +12347,14 @@ function buildFilterTable(cfg){
       : ('• '+r.nombre+': '+nf(r.cant))).join('\n');
     if(!confirm('¿Marcar como ENTREGADO el pedido de '+(pe.cliente||'—')+'?\n\nSe descuenta del stock:\n'+(det||'(sin ítems)'))) return;
     const ids=[];
+    // Misma regla que el remito: con el producto repetido en dos renglones, cada uno usa SU plan de
+    // pallets (clave + aparición j) — con el del primero, el split de la base reforzada del segundo
+    // renglón salía de un plan ajeno.
+    const occ={};
     (pe.items||[]).filter(Boolean).forEach(it=>{ if(num(it.cantidad)>0 && it.producto){
       const pr=resolverProd(it.producto,it.codigo);
-      const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
+      const k=keyDe(it.codigo,it.producto); const j=occ[k]||0; occ[k]=j+1;
+      const r=rows.find(x=>x.key===k && x.j===j);
       ids.push.apply(ids, registrarEntrega(c, hoyISO, pe.cliente||'', {producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, pe._uid, r?r.pallets:null)); } });
     if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO));
     pe.estado='entregado'; pe.fechaEntregado=hoyISO; persistPed(pe);
@@ -13624,27 +13635,39 @@ function buildFilterTable(cfg){
     const conPal = its.filter(planEsReal);
     let pallets='';
     if(conPal.length){
-      const filasP=conPal.map(r=>{
-        // Las tandas que van en un pallet mixto no se repiten acá: se listan en la fila del grupo.
-        const excl=exclusivas(r), nMix=r.pallets.length-excl.length;
-        const kgIt=r.pallets.reduce((a,u)=>a+u*r.peso,0);
-        const como = excl.length ? armadoTxt(excl,r.peso)+(nMix?' + 🧩 en pallet mixto':'') : '🧩 va en pallet mixto';
-        return '<tr><td>'+esc(r.it.codigo||'')+'</td><td>'+esc(r.it.desc||'')+'</td><td class="n">'+nf(r.it.cant)+'</td>'+
-          '<td>'+como+'</td><td class="n">'+(kgIt>0?nf(kgIt)+' kg':'—')+'</td></tr>';
-      }).join('')+
-      grupos.map((g,gi)=>{
-        const kg=g.reduce((a,y)=>a+y.u*y.r.peso,0);
-        return '<tr><td>🧩</td><td><b>Pallet mixto'+(grupos.length>1?' '+String.fromCharCode(65+gi):'')+'</b></td><td class="n">'+nf(g.reduce((a,y)=>a+y.u,0))+'</td>'+
-          '<td>'+g.map(y=>nf(y.u)+' '+esc(y.r.it.codigo||y.r.it.desc)).join(' + ')+'</td><td class="n">'+(kg>0?nf(kg)+' kg':'—')+'</td></tr>';
-      }).join('');
-      const totPal=conPal.reduce((a,r)=>a+exclusivas(r).length,0)+grupos.length;
       const totKg=conPal.reduce((a,r)=>a+r.pallets.reduce((b,u)=>b+u*r.peso,0),0);
       const sinPeso=conPal.filter(r=>!(r.peso>0)).map(r=>r.it.desc||r.it.codigo||'—');
-      pallets='<h4 style="margin:12px 0 4px;font-size:12px">Armado de pallets</h4>'+
-        '<table class="doc-tab"><tr><th>Código</th><th>Producto</th><th class="n">Cantidad</th><th>Cómo van los pallets</th><th class="n">Peso</th></tr>'+filasP+
-        '<tr><td colspan="3" class="n"><b>Total</b></td><td><b>'+totPal+' pallet'+(totPal!==1?'s':'')+
-          (totKg>=1000?' · '+(Math.round(totKg/100)/10)+' t':'')+'</b></td>'+
-          '<td class="n"><b>'+(totKg>0?nf(totKg)+' kg':'—')+'</b></td></tr></table>'+
+      const tTxt = totKg>=1000 ? ' · '+(Math.round(totKg/100)/10)+' t' : '';
+      let tablaP, totPal;
+      if(grupos.length){
+        // CON pallets mixtos, el bloque lista los PALLETS FÍSICOS uno por renglón, numerados y en el
+        // orden en que se arman (primero los mixtos, después los simples) — es la lista que pidió
+        // Marcelo (12/08): "1er pallet mixto: 63 UGB35 + 63 UGR35 · … · 3er pallet: 75 ULC60". La
+        // vista por producto ("va en pallet mixto") obligaba a cruzar dos partes de la tabla para
+        // saber qué apilar sobre cada base.
+        const fis=[];
+        grupos.forEach((g,gi)=> fis.push({ mix:' 🧩 <b>mixto'+(grupos.length>1?' '+String.fromCharCode(65+gi):'')+'</b>',
+          txt:g.map(y=>nf(y.u)+' '+esc(y.r.it.codigo||y.r.it.desc)).join(' + '),
+          u:g.reduce((a,y)=>a+y.u,0), kg:g.reduce((a,y)=>a+y.u*y.r.peso,0) }));
+        conPal.forEach(r=> r.pallets.forEach((u,i)=>{ if(!esComp(r,i)) fis.push({ mix:'', txt:nf(u)+' '+esc(r.it.codigo||r.it.desc), u, kg:u*r.peso }); }));
+        totPal=fis.length;
+        tablaP='<table class="doc-tab"><tr><th>Pallet</th><th>Qué lleva</th><th class="n">Unidades</th><th class="n">Peso</th></tr>'+
+          fis.map((f,i)=>'<tr><td><b>'+(i+1)+'</b>'+f.mix+'</td><td>'+f.txt+'</td><td class="n">'+nf(f.u)+'</td><td class="n">'+(f.kg>0?nf(f.kg)+' kg':'—')+'</td></tr>').join('')+
+          '<tr><td colspan="2" class="n"><b>Total · '+totPal+' pallet'+(totPal!==1?'s':'')+tTxt+'</b></td>'+
+          '<td class="n"><b>'+nf(fis.reduce((a,f)=>a+f.u,0))+'</b></td><td class="n"><b>'+(totKg>0?nf(totKg)+' kg':'—')+'</b></td></tr></table>';
+      } else {
+        // SIN mixtos: por producto y compacto, idéntico a como salió siempre.
+        totPal=conPal.reduce((a,r)=>a+r.pallets.length,0);
+        tablaP='<table class="doc-tab"><tr><th>Código</th><th>Producto</th><th class="n">Cantidad</th><th>Cómo van los pallets</th><th class="n">Peso</th></tr>'+
+          conPal.map(r=>{
+            const kgIt=r.pallets.reduce((a,u)=>a+u*r.peso,0);
+            return '<tr><td>'+esc(r.it.codigo||'')+'</td><td>'+esc(r.it.desc||'')+'</td><td class="n">'+nf(r.it.cant)+'</td>'+
+              '<td>'+armadoTxt(r.pallets,r.peso)+'</td><td class="n">'+(kgIt>0?nf(kgIt)+' kg':'—')+'</td></tr>';
+          }).join('')+
+          '<tr><td colspan="3" class="n"><b>Total</b></td><td><b>'+totPal+' pallet'+(totPal!==1?'s':'')+tTxt+'</b></td>'+
+          '<td class="n"><b>'+(totKg>0?nf(totKg)+' kg':'—')+'</b></td></tr></table>';
+      }
+      pallets='<h4 style="margin:12px 0 4px;font-size:12px">Armado de pallets</h4>'+tablaP+
         (sinPeso.length?'<div style="font-size:10px;color:#666;margin:-6px 0 8px">Sin peso cargado en el catálogo: '+esc(sinPeso.join(', '))+' — el total de kg no los incluye.</div>':'');
     } else if(obj.palletResumen){
       pallets='<div class="doc-obs"><b>Plan de carga:</b> '+esc(obj.palletResumen)+'</div>';
