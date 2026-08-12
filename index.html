@@ -11810,7 +11810,11 @@ function buildFilterTable(cfg){
   const isoDeF = d=>{ const p=x=>String(x).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); };
   const esFeriadoISO = iso=>{ const f=String(iso||'').slice(0,10); return !!f && feriados.some(x=>String(x.fecha||'').slice(0,10)===f); };
   window.__esFeriado = esFeriadoISO;
-  window.__feriados  = ()=> feriados.map(f=>({fecha:String(f.fecha||'').slice(0,10), motivo:f.motivo||''}))
+  // ⚠️ Va el `_uid` REAL del documento, no uno reconstruido como 'fer_'+fecha: puede haber días
+  // cargados a mano desde la Firebase Console con otro id (pasó con el 10/07/26), y el botón de
+  // borrar tiene que poder sacarlos igual. Con el id reconstruido la ✕ no encontraba el documento
+  // y el día quedaba imborrable desde la pantalla.
+  window.__feriados  = ()=> feriados.map(f=>({uid:f._uid, fecha:String(f.fecha||'').slice(0,10), motivo:f.motivo||''}))
                                     .filter(f=>f.fecha).sort((a,b)=>a.fecha.localeCompare(b.fecha));
   function persistFeriado(fecha, motivo){
     const f=String(fecha||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(f)) return false;
@@ -11845,6 +11849,9 @@ function buildFilterTable(cfg){
     const anios=[...new Set(L.map(f=>f.fecha.slice(0,4)))].sort();
     const delAnio=a=>L.filter(f=>f.fecha.slice(0,4)===a);
     const dow=iso=>{ const d=parseISO(iso); return d?['domingo','lunes','martes','miércoles','jueves','viernes','sábado'][d.getDay()]:''; };
+    // Un mismo día cargado dos veces (uno por la pantalla y otro a mano desde la Console) no rompe
+    // ningún cálculo —esFeriadoISO usa some()— pero conviene que se vea, para poder limpiarlo.
+    const dup=iso=>L.filter(x=>x.fecha===iso).length>1;
     $('pe-form-fer').innerHTML=
       '<p style="margin:0 0 10px;font-size:13px">Los días que <b>no se produce</b> y en los que <b>el banco no acredita</b>. Se usan para calcular la fecha de pago de los e-cheqs, la acreditación de VIUMI, el débito del resumen de la tarjeta, las fechas de entrega estimadas y los días hábiles del punto de equilibrio.</p>'+
       (!L.length ? '<div class="alert warn" style="margin:0 0 12px"><span class="aico">⚠️</span><div><b>No hay ningún feriado cargado.</b><div class="act">Hasta que cargues los del año, el Tablero cuenta los feriados como días hábiles y propone fechas de pago 1 o 2 días antes de lo real.</div></div></div>' : '')+
@@ -11863,8 +11870,9 @@ function buildFilterTable(cfg){
         '<div class="tbl-wrap"><table style="width:100%;font-size:12.5px;border-collapse:collapse">'+
         delAnio(a).map(f=>'<tr style="border-bottom:1px solid var(--border)">'+
           '<td style="padding:5px;white-space:nowrap"><b>'+fmtFecha(f.fecha)+'</b> <span style="color:var(--muted)">'+dow(f.fecha)+'</span></td>'+
-          '<td style="padding:5px">'+esc(f.motivo||'—')+'</td>'+
-          '<td style="padding:5px;text-align:right"><button class="cmp-rowbtn" data-delfer="'+esc('fer_'+f.fecha)+'">✕</button></td></tr>').join('')+
+          '<td style="padding:5px">'+esc(f.motivo||'—')+
+            (dup(f.fecha)?' <span style="color:var(--amber);font-size:11px">· repetido, se puede borrar uno</span>':'')+'</td>'+
+          '<td style="padding:5px;text-align:right"><button class="cmp-rowbtn" data-delfer="'+esc(f.uid||'')+'">✕</button></td></tr>').join('')+
         '</table></div>').join(''));
     $('pe-fer-add').onclick=()=>{
       const f=$('pe-fer-fecha').value;
