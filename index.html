@@ -6053,7 +6053,8 @@ function buildFilterTable(cfg){
 
   // ---------- Cobros (registrar / editar / revertir / borrar) ----------
   let cobrandoUid=null, cobroEdit=null;
-  function openCobro(v){ cobrandoUid=v._uid; cobroEdit=null; drawCobro(); $('vnt-modal-cobro').classList.add('open'); }
+  let retArchivoPend=null;   // PDF del certificado leído pero todavía no archivado (se sube al Guardar)
+  function openCobro(v){ cobrandoUid=v._uid; cobroEdit=null; retArchivoPend=null; drawCobro(); $('vnt-modal-cobro').classList.add('open'); }
   function drawCobro(){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
@@ -6213,6 +6214,7 @@ function buildFilterTable(cfg){
         catch(err){ poner('No se pudo leer: '+esc(err.message||''),'var(--red)'); return; }
         if(String(texto||'').replace(/\s/g,'').length<40){
           poner('El PDF no tiene texto adentro (parece escaneado). Cargá los datos a mano.','var(--amber)'); return; }
+        retArchivoPend=file;   // se archiva recién al Guardar, así un PDF que se lee y se descarta no deja basura
         const r=parseCertRetencion(texto);
         // Se completa lo que se pudo leer. El MONTO solo si está vacío o si coincide: si ya había uno
         // distinto se avisa en vez de pisarlo — puede ser que el cobro sea de otra cosa.
@@ -6227,13 +6229,14 @@ function buildFilterTable(cfg){
         }
         const ok=[r.impuesto&&('impuesto '+r.impuesto), r.certificado&&('cert. '+r.certificado),
                   r.monto>0&&money(r.monto), r.fecha&&fmtFecha(r.fecha)].filter(Boolean).join(' · ');
+        r.avisos.push('📎 El PDF queda archivado en el sistema al Guardar.');
         poner((ok?'✔ Leído: '+esc(ok):'No reconocí ningún dato')+
           (r.avisos.length?'<div style="margin-top:4px;color:var(--amber)">'+r.avisos.map(esc).join('<br>')+'</div>':''),
           ok?'var(--green)':'var(--amber)');
       };
     }
     if($('vc-cancel-edit')) $('vc-cancel-edit').onclick=()=>{ cobroEdit=null; drawCobro(); };
-    $('vc-save').onclick=()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; }
+    $('vc-save').onclick=async ()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; }
       const prev = cobroEdit!=null ? v.cobros[cobroEdit] : null;
       const rec={ id:(prev&&prev.id)||('cob_'+newUid()), fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked };
       if(esCheque(rec.medio)){ rec.chNumero=$('vc-ch-num')?$('vc-ch-num').value.trim():''; rec.chBanco=$('vc-ch-banco')?$('vc-ch-banco').value.trim():''; rec.chVenc=$('vc-ch-venc')?$('vc-ch-venc').value:''; }
@@ -6252,6 +6255,13 @@ function buildFilterTable(cfg){
         // por cuenta de Caja con un ingreso que nunca existió.
         rec.retImpuesto=$('vc-ret-imp')?$('vc-ret-imp').value:'Ganancias';
         rec.retCertificado=$('vc-ret-cert')?$('vc-ret-cert').value.trim():'';
+        if(prev && prev.retAdjunto && !retArchivoPend){ rec.retAdjunto=prev.retAdjunto; rec.retArchivo=prev.retArchivo||''; }
+        if(retArchivoPend){
+          // Si el archivado falla NO se pierde el cobro: los datos valen más que la copia del PDF.
+          try{ rec.retAdjunto=await guardarAdjuntoCert(retArchivoPend, v._uid); rec.retArchivo=retArchivoPend.name||''; }
+          catch(err){ alert('El cobro se guarda igual, pero no pude archivar el PDF:\n'+(err.message||'')+'\n\nGuardá el certificado a mano por las dudas.'); }
+          retArchivoPend=null;
+        }
       }
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
       const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
@@ -6312,6 +6322,47 @@ function buildFilterTable(cfg){
     return r;
   }
 
+  // ---------- Archivar el PDF del certificado ----------
+  // ⚠️ Firebase STORAGE no se puede usar en este proyecto: habilitarlo exige pasar al plan Blaze
+  // (tarjeta), verificado en la Console el 24/07 y descartado por Marcelo. Por eso el archivo se
+  // guarda como texto (base64) en una colección propia. Es gratis y no suma ningún servicio nuevo.
+  // ⚠️ En colección APARTE y NO dentro de la venta a propósito: un documento de Firestore tope 1 MB,
+  // así que una venta con dos o tres certificados adentro dejaría de poder guardarse — la venta
+  // quedaría trabada para siempre. Aparte, la lista de ventas no arrastra los PDF en cada carga.
+  const MAX_ADJUNTO = 600*1024;   // deja margen sobrado bajo el límite de 1 MB por documento
+  async function guardarAdjuntoCert(file, ventaUid){
+    const ctx=window.__fbctx;
+    if(!ctx || !ctx.db || !ctx.FS) throw new Error('no hay conexión con la nube');
+    if(file.size > MAX_ADJUNTO) throw new Error('el PDF pesa '+Math.round(file.size/1024)+' KB y el máximo para archivarlo es '+Math.round(MAX_ADJUNTO/1024)+' KB');
+    const b64 = await new Promise((res,rej)=>{ const fr=new FileReader();
+      fr.onload=()=>res(String(fr.result||'').split(',')[1]||'');
+      fr.onerror=()=>rej(new Error('no se pudo leer el archivo')); fr.readAsDataURL(file); });
+    if(!b64) throw new Error('el archivo vino vacío');
+    const uid='adj_'+newUid()+'_'+Date.now();
+    await ctx.FS.setDoc(ctx.FS.doc(ctx.db,'vph_adjuntos',uid), {
+      _uid:uid, tipo:'certificado-retencion', ventaUid:ventaUid||'',
+      nombre:String(file.name||'certificado.pdf').slice(0,120),
+      contentType:file.type||'application/pdf', bytes:file.size, fecha:hoyISO, datos:b64 });
+    return uid;
+  }
+  async function abrirAdjunto(uid, nombre){
+    const ctx=window.__fbctx; if(!ctx||!ctx.db){ alert('Sin conexión con la nube.'); return; }
+    // La ventana se abre YA, con el clic: si se abriera después de traer el archivo, el navegador
+    // lo tomaría como una ventana emergente y la bloquearía.
+    const w=window.open('','_blank');
+    try{
+      const d=await ctx.FS.getDoc(ctx.FS.doc(ctx.db,'vph_adjuntos',uid));
+      if(!d.exists || !d.exists()){ if(w) w.close(); alert('No encontré el archivo guardado.'); return; }
+      const a=d.data()||{}; const bin=atob(String(a.datos||''));
+      const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      const url=URL.createObjectURL(new Blob([arr],{type:a.contentType||'application/pdf'}));
+      if(w) w.location=url;
+      else { const el=document.createElement('a'); el.href=url; el.download=a.nombre||nombre||'certificado.pdf'; el.click(); }
+      setTimeout(()=>URL.revokeObjectURL(url), 60000);
+    }catch(e){ if(w) w.close(); alert('No se pudo abrir el certificado.\n'+(e.message||'')); }
+  }
+  window.__abrirAdjunto = abrirAdjunto;
+
   // ---------- Retenciones sufridas ----------
   // Las que los clientes le hicieron a VPH actuando como agentes de retención. Son pagos a cuenta de
   // impuestos de VPH: el contador las descuenta al liquidar, pero necesita fecha, importe, quién retuvo
@@ -6322,7 +6373,8 @@ function buildFilterTable(cfg){
       const fecha=String(c.fecha||'').slice(0,10);
       R.push({ fecha, periodo:fecha.slice(0,7), cliente:v.cliente||'—', cuit:v.cuit||'',
         comprobante:((v.puntoVenta||'')+(v.nroFactura?'-'+v.nroFactura:'')).replace(/^-/,'')||'—',
-        impuesto:c.retImpuesto||'Ganancias', certificado:c.retCertificado||'', monto:num(c.monto) }); }); });
+        impuesto:c.retImpuesto||'Ganancias', certificado:c.retCertificado||'', monto:num(c.monto),
+        adjunto:c.retAdjunto||'', archivo:c.retArchivo||'' }); }); });
     return R.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha)));
   }
   function mostrarRetenciones(){
@@ -6340,10 +6392,11 @@ function buildFilterTable(cfg){
       Object.keys(porPer).sort().reverse().forEach(p=>{
         const g=porPer[p], sub=g.reduce((a,r)=>a+r.monto,0);
         html+='<div style="font-weight:800;margin:12px 0 4px">'+esc(labelPeriodo(p))+' — '+money(sub)+'</div>'+
-          '<div class="tbl-wrap"><table><tr><th>Fecha</th><th>Cliente</th><th>Comprobante</th><th>Impuesto</th><th>Certificado</th><th class="num">Monto</th></tr>'+
+          '<div class="tbl-wrap"><table><tr><th>Fecha</th><th>Cliente</th><th>Comprobante</th><th>Impuesto</th><th>Certificado</th><th>PDF</th><th class="num">Monto</th></tr>'+
           g.map(r=>'<tr><td>'+fmtFecha(r.fecha)+'</td><td><div class="cel-nombre" title="'+esc(r.cliente)+'">'+esc(r.cliente)+'</div></td>'+
             '<td>'+esc(r.comprobante)+'</td><td>'+esc(r.impuesto)+'</td>'+
             '<td>'+(r.certificado?esc(r.certificado):'<span style="color:var(--amber)" title="Sin el certificado el contador no puede computar el crédito">⚠ falta</span>')+'</td>'+
+            '<td>'+(r.adjunto?'<button class="cmp-rowbtn" data-adj="'+esc(r.adjunto)+'" data-nom="'+esc(r.archivo||'certificado.pdf')+'" title="Abrir el certificado archivado">📄 ver</button>':'<span style="color:var(--muted)">—</span>')+'</td>'+
             '<td class="num"><b>'+money(r.monto)+'</b></td></tr>').join('')+'</table></div>';
       });
     }
@@ -6353,6 +6406,7 @@ function buildFilterTable(cfg){
       document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
     ov.innerHTML='<div style="background:var(--card,#fff);border-radius:14px;padding:18px;max-width:900px;width:100%;max-height:86vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.35)">'+html+'</div>';
     ov.querySelector('#ret-cerrar').onclick=()=>ov.remove();
+    ov.querySelectorAll('button[data-adj]').forEach(b=> b.onclick=()=>abrirAdjunto(b.dataset.adj, b.dataset.nom));
     ov.querySelector('#ret-copiar').onclick=()=>{
       const tsv=['Fecha\tCliente\tCUIT\tComprobante\tImpuesto\tCertificado\tMonto']
         .concat(R.map(r=>[fmtFecha(r.fecha),r.cliente,r.cuit,r.comprobante,r.impuesto,r.certificado,r.monto].join('\t'))).join('\n');
