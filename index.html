@@ -11584,10 +11584,17 @@ function buildFilterTable(cfg){
   function planStd(cant, ud){ cant=Math.max(0,Math.round(num(cant))); ud=Math.round(num(ud)); if(cant<=0) return []; if(ud<=0) return [cant]; const full=Math.floor(cant/ud), resto=cant-full*ud; const arr=[]; for(let i=0;i<full;i++)arr.push(ud); if(resto>0)arr.push(resto); return arr; }
   function planParejo(cant, ud){ cant=Math.max(0,Math.round(num(cant))); ud=Math.round(num(ud)); if(cant<=0) return []; if(ud<=0) return [cant]; const n=Math.max(1,Math.ceil(cant/ud)); const base=Math.floor(cant/n); let resto=cant-base*n; const arr=[]; for(let i=0;i<n;i++){ arr.push(base+(i<resto?1:0)); } return arr; }
   function parsePlan(s){ return String(s==null?'':s).split(/[^0-9]+/).map(x=>Math.round(num(x))).filter(x=>x>0); }
+  // Clave del plan de carga por RENGLÓN: el j-ésimo renglón repetido del mismo producto guarda su
+  // plan en "KEY#j", y el primero en "KEY" pelado — que es donde ya vivían TODOS los planes antes de
+  // este cambio, así que los pedidos viejos se leen sin migrar nada. Sin esto, dos renglones de
+  // ULC60 (50 u y 75 u) compartían pe.plan[key]: editar el plan de uno pisaba el del otro y el que
+  // no coincidía quedaba en "⚠ suma X ≠ Y" (pasó de verdad, 12/08).
+  const planKeyDe=(key,j)=> j>0 ? key+'#'+j : key;
   // Devuelve una fila por producto físico del pedido (excluye Servicio/Flete) con su plan de pallets.
   function cargaRows(pe){
     const rows=[];
-    (pe.items||[]).filter(Boolean).forEach(it=>{
+    (pe.items||[]).forEach((it,idx)=>{
+      if(!it) return;
       if(!it.producto && !it.codigo) return;
       const pr=resolverProd(it.producto,it.codigo);
       if(pr && (pr.tipo||'')==='Servicio') return;
@@ -11596,18 +11603,22 @@ function buildFilterTable(cfg){
       // camión — si se cuela, suma un pallet fantasma al viaje y al remito.
       if(!pr && (/\b(flete|acarreo|env[ií]o|servicio|mano de obra|colocaci[oó]n)\b/i.test(String(it.producto||'')) || /^fle/i.test(String(it.codigo||'').trim()))) return;
       const key=keyDe(it.codigo,it.producto);
+      // `j` = n° de aparición del producto en el pedido (un pedido puede traer el MISMO producto en
+      // dos renglones, ej. una venta con dos renglones de ULC60): sin esto, ni los pallets mixtos ni
+      // el plan guardado podían distinguir un renglón del otro (pasó de verdad, 11/08).
+      const j=rows.filter(x=>x.key===key).length;
       const ud=pr?num(pr.udPorPallet):0, peso=pr?num(pr.pesoUnit):0, cant=Math.round(num(it.cantidad));
-      const guardado = pe.plan && pe.plan[key] && pe.plan[key].length;
-      const pallets = guardado ? pe.plan[key].map(x=>Math.round(num(x))) : planStd(cant,ud);
+      const pk=planKeyDe(key,j);
+      const guardado = pe.plan && pe.plan[pk] && pe.plan[pk].length;
+      const pallets = guardado ? pe.plan[pk].map(x=>Math.round(num(x))) : planStd(cant,ud);
       // Refuerzo de base DERIVADO del plan real (null si el producto no lo usa). Es un CAMPO de la fila,
       // nunca una fila nueva: el pallet sigue llevando las mismas unidades y los bultos no cambian.
       const ref = splitRefuerzo(pr, pallets, cant);
       // `real` = el armado lo decidió alguien y quedó guardado en el pedido (pe.plan). Si es false, lo
       // que se muestra es el reparto automático por udPorPallet — sirve de guía, pero no es un plan.
-      // `j` = n° de aparición del producto en el pedido (un pedido puede traer el MISMO producto en
-      // dos renglones, ej. una venta con dos renglones de ULC60): sin esto, los pallets mixtos no
-      // podían distinguir las tandas de un renglón de las del otro (pasó de verdad, 11/08).
-      rows.push({ key, j: rows.filter(x=>x.key===key).length, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref, real:!!guardado });
+      // `idx` = índice del renglón en pe.items: es lo que permite volver del renglón del pedido a SU
+      // fila (remito, marcar entregado) sin adivinar por key, que con renglones repetidos empata.
+      rows.push({ key, j, idx, codigo:(it.codigo||(pr&&pr.codigo)||''), nombre:(it.producto||(pr&&pr.nombre)||''), cant, ud, peso, pallets, ref, real:!!guardado });
     });
     return rows;
   }
@@ -12307,12 +12318,15 @@ function buildFilterTable(cfg){
     const cli=cs.find(c=>(c.nombre||'').trim().toUpperCase()===String(pe.cliente||'').trim().toUpperCase())||{};
     const dom=dirPed(pe) || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
     const rows=cargaRows(pe);
-    const items=(pe.items||[]).filter(it=>it&&(it.producto||it.codigo)&&num(it.cantidad)>0).map(it=>{
-      const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
+    // La fila se busca por el ÍNDICE del renglón (r.idx), no por producto: con el mismo producto en
+    // dos renglones, buscar por key le colgaba a los dos el plan del primero.
+    const items=(pe.items||[]).map((it,idx)=>{
+      if(!it||!(it.producto||it.codigo)||num(it.cantidad)<=0) return null;
+      const r=rows.find(x=>x.idx===idx);
       // El armado va en su propio bloque del PDF (con las unidades y el peso de cada pallet), así que
       // acá se manda el plan crudo y la columna Observaciones queda libre.
       return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), pallets:(r?r.pallets:null) };
-    });
+    }).filter(Boolean);
     // ⚠️ La fecha del remito es la de la ENTREGA: si el pedido ya se entregó, esa; si no, la fecha
     // requerida por el cliente; y si no hay ninguna, HOY. Nunca `pe.fecha`, que es cuándo se cargó
     // el pedido. Igual se confirma en el formulario de datos de entrega antes de imprimir.
@@ -12341,9 +12355,11 @@ function buildFilterTable(cfg){
       : ('• '+r.nombre+': '+nf(r.cant))).join('\n');
     if(!confirm('¿Marcar como ENTREGADO el pedido de '+(pe.cliente||'—')+'?\n\nSe descuenta del stock:\n'+(det||'(sin ítems)'))) return;
     const ids=[];
-    (pe.items||[]).filter(Boolean).forEach(it=>{ if(num(it.cantidad)>0 && it.producto){
+    // Igual que en el remito: la fila se busca por r.idx, porque el mismo producto puede venir en
+    // dos renglones con planes distintos y por key los dos descontarían con el plan del primero.
+    (pe.items||[]).forEach((it,idx)=>{ if(it && num(it.cantidad)>0 && it.producto){
       const pr=resolverProd(it.producto,it.codigo);
-      const r=rows.find(x=>x.key===keyDe(it.codigo,it.producto));
+      const r=rows.find(x=>x.idx===idx);
       ids.push.apply(ids, registrarEntrega(c, hoyISO, pe.cliente||'', {producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, pe._uid, r?r.pallets:null)); } });
     if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO));
     pe.estado='entregado'; pe.fechaEntregado=hoyISO; persistPed(pe);
@@ -12390,8 +12406,11 @@ function buildFilterTable(cfg){
     if(window.__tarjetas) window.__tarjetas('pp-transp');
     $('pp-cancel').onclick=()=>$('pe-modal-ped').classList.remove('open');
     $('pp-save').onclick=()=>{ if(!String(editPed.cliente||'').trim()){ alert('Ingresá el cliente.'); return; } editPed.items=(editPed.items||[]).filter(it=>it && it.producto && num(it.cantidad)>0).map(it=>{ const pr=resolverProd(it.producto,it.codigo); return { producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad) }; });
-      const keys=new Set(editPed.items.map(it=>keyDe(it.codigo,it.producto))); const plan={};
-      if(editPed.plan){ Object.keys(editPed.plan).forEach(kk=>{ const a=editPed.plan[kk]; if(keys.has(kk) && Array.isArray(a) && a.length) plan[kk]=a.map(x=>Math.round(num(x))).filter(x=>x>0); }); }
+      // El plan se reconstruye desde las filas ACTUALES: cada renglón con armado real guarda el suyo
+      // bajo su clave canónica (KEY o KEY#j). De paso migra los planes viejos guardados solo por key
+      // y tira los de productos que salieron del pedido.
+      const plan={};
+      cargaRows(editPed).forEach(r=>{ if(!r.real) return; const v=r.pallets.filter(x=>x>0); if(v.length) plan[planKeyDe(r.key,r.j)]=v; });
       editPed.plan=plan;
       // Pallets mixtos: se guardan solo los grupos válidos (2+ tandas que existen en el plan final),
       // normalizados a {m:[{k,i}]}. Un grupo a medio armar no se persiste.
@@ -12426,9 +12445,9 @@ function buildFilterTable(cfg){
     }).join('') + '<div id="pp-mixtos"></div><div class="pe-plan-tot" style="font-weight:800;font-size:13px;margin-top:4px"></div>';
     // Al editar un plan a mano pueden cambiar las tandas (índices): los grupos mixtos se revalidan
     // y repintan solos — drawMixtos toca OTRO contenedor, no le roba el foco al input.
-    cont.querySelectorAll('input[data-planinp]').forEach(el=>{ const i=+el.dataset.planinp; el.addEventListener('input',()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=parsePlan(el.value); drawMixtos(); refreshPlanOut(); }); });
-    cont.querySelectorAll('button[data-planstd]').forEach(b=>{ const i=+b.dataset.planstd; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=planStd(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
-    cont.querySelectorAll('button[data-planpar]').forEach(b=>{ const i=+b.dataset.planpar; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[rows[i].key]=planParejo(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
+    cont.querySelectorAll('input[data-planinp]').forEach(el=>{ const i=+el.dataset.planinp; el.addEventListener('input',()=>{ editPed.plan=editPed.plan||{}; editPed.plan[planKeyDe(rows[i].key,rows[i].j)]=parsePlan(el.value); drawMixtos(); refreshPlanOut(); }); });
+    cont.querySelectorAll('button[data-planstd]').forEach(b=>{ const i=+b.dataset.planstd; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[planKeyDe(rows[i].key,rows[i].j)]=planStd(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
+    cont.querySelectorAll('button[data-planpar]').forEach(b=>{ const i=+b.dataset.planpar; b.onclick=()=>{ editPed.plan=editPed.plan||{}; editPed.plan[planKeyDe(rows[i].key,rows[i].j)]=planParejo(rows[i].cant,rows[i].ud); drawPlanCarga(); }; });
     drawMixtos();
     refreshPlanOut();
   }
