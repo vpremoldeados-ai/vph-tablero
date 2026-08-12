@@ -2808,6 +2808,66 @@ function buildFilterTable(cfg){
     }
     return arr;
   }
+  // ---- E-CHEQS PROPIOS: plazo del proveedor y fecha de pago ----
+  // MAPEI (y los otros grandes de materia prima) trabajan con "e-cheq a N días de FECHA DE FACTURA".
+  // El plazo vive en la ficha del proveedor (Base de Datos → Proveedores → "Plazo de pago"), no en el
+  // código: cada proveedor tiene el suyo y lo cambia una negociación, no un programador.
+  const addDiasISO = (iso,n)=>{ const a=String(iso||hoyISO).slice(0,10).split('-').map(Number);
+    const d=new Date(a[0], a[1]-1, a[2]); d.setDate(d.getDate()+Math.round(num(n)));
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+  const esDiaHabil = iso=>{ const a=String(iso||'').slice(0,10).split('-').map(Number);
+    if(a.length<3 || !a[0]) return true;
+    const w=new Date(a[0], a[1]-1, a[2]).getDay();
+    return w!==0 && w!==6 && !(window.__esFeriado && window.__esFeriado(String(iso).slice(0,10))); };
+  // Si el vencimiento cae sábado, domingo o feriado se corre al día hábil SIGUIENTE (decisión de
+  // Marcelo, 12/08): nunca se paga antes de lo acordado y la plata queda uno o dos días más en la
+  // cuenta. ⚠️ Hacia ADELANTE, nunca hacia atrás — correrlo al viernes sería regalar días de caja.
+  const habilSigISO = iso=>{ let f=String(iso||'').slice(0,10);
+    for(let i=0;i<10 && !esDiaHabil(f);i++) f=addDiasISO(f,1);
+    return f; };
+  // Plazo en días de un proveedor, desde su ficha. ⚠️ proveedoresConocidos() NO sirve acá: se arma
+  // desde las compras ya cargadas y no tiene los campos de la ficha. Esto lee el master real.
+  function plazoPagoDe(nombre){
+    const n=String(nombre||'').trim().toUpperCase(); if(!n) return 0;
+    const f=(window.__catalogoProveedores?window.__catalogoProveedores():[])
+      .find(p=>String(p.nombre||'').trim().toUpperCase()===n);
+    return f ? Math.max(0, Math.round(num(f.plazoPagoDias))) : 0;
+  }
+  // Fecha en que hay que pagarle: fecha de factura + su plazo, corrida a día hábil. Sin plazo cargado
+  // devuelve '' (el llamador decide el default) — proponer "hoy" para un proveedor a 60 días sería
+  // pagarle dos meses antes, y proponer 60 días para uno de contado sería no pagarle nunca.
+  function vencPagoISO(fechaFactura, proveedor){
+    const p=plazoPagoDe(proveedor); if(!p) return '';
+    return habilSigISO(addDiasISO(String(fechaFactura||hoyISO).slice(0,10), p));
+  }
+  // Reparte un pago en N e-cheqs: importes IGUALES y vencimientos cada `cada` días corridos desde el
+  // primero, cada uno corrido a día hábil. Los centavos que no dividen exacto van al ÚLTIMO cheque,
+  // así la suma cierra SIEMPRE con el monto del pago — mismo criterio (y por el mismo motivo: es
+  // plata real y el papel tiene que matchear) que armarDebitos con las cuotas de la tarjeta.
+  // `cada` en 0 → todos vencen el mismo día (solo dividen el importe, no lo estiran en el tiempo).
+  function armarEcheqs(monto, n, primeraISO, cada){
+    const q=Math.min(12, Math.max(1, Math.round(num(n))||1)), total=round2(num(monto));
+    const cts=Math.round(total*100), parteCts=Math.floor(cts/q);
+    return fechasEcheqs(q, primeraISO, cada).map((f,i)=>({ fecha:f, monto:(i===q-1 ? cts-parteCts*(q-1) : parteCts)/100 }));
+  }
+  // Un e-cheq NO se puede emitir con fecha de pago anterior al día en que se emite: el home banking lo
+  // rechaza. Pasa solo cuando la factura ya está vencida (el plazo del proveedor cayó en el pasado), así
+  // que se AVISA y no se bloquea — puede ser una carga retroactiva de algo que ya se pagó.
+  function avisoVencPasado(fechas, emisionISO){
+    const em=String(emisionISO||'').slice(0,10); if(!em) return '';
+    const n=(fechas||[]).filter(f=>f && String(f).slice(0,10)<em).length;
+    return n ? '<p style="color:var(--amber);font-size:11.5px;margin:6px 0 0">⚠️ '+(n===1?'Un e-cheq vence':n+' e-cheqs vencen')+' ANTES del '+fmtFecha(em)+', que es la fecha de este pago: así no se pueden emitir en el home banking. Si la factura ya estaba vencida, corré las fechas a futuro y avisale al proveedor.</p>' : '';
+  }
+  // Solo las fechas: los N vencimientos escalonados. Lo usa armarEcheqs y también el pago multi-factura,
+  // donde los importes NO son iguales (los define el agrupamiento de facturas) pero las fechas sí.
+  function fechasEcheqs(n, primeraISO, cada){
+    const q=Math.min(12, Math.max(1, Math.round(num(n))||1)), paso=Math.max(0, Math.round(num(cada)));
+    const prim=String(primeraISO||hoyISO).slice(0,10), arr=[];
+    // El 1er vencimiento se respeta TAL CUAL (es el que fijó el plazo del proveedor y puede haberse
+    // editado a mano); los siguientes se cuentan desde él y sí se corren a día hábil.
+    for(let i=0;i<q;i++) arr.push(i===0 ? prim : habilSigISO(addDiasISO(prim, paso*i)));
+    return arr;
+  }
   // Cuenta de la que se debita la VISA (Parámetros → Finanzas). Solo si está declarada en Caja:
   // si el nombre no matchea ninguna cuenta, se devuelve '' para no inventar una que no existe.
   const tarjCuentaDef = ()=>{ const q=String(window.__param?window.__param('tarjetaCuenta','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
@@ -3552,7 +3612,8 @@ function buildFilterTable(cfg){
         field('Categoría','col2','<select id="f-cat">'+catOpts(c.categoria)+'</select>') +
         field('Tipo comprobante','col2','<select id="f-tipo">'+opt(TIPOS_COMPROB,c.tipoComprobante)+'</select>') +
         field('Emisión','','<input type="date" id="f-fecha" value="'+c.fecha+'">') +
-        field('Vto. de pago','','<input type="date" id="f-venc" value="'+c.vencimiento+'">') +
+        field('Vto. de pago','','<input type="date" id="f-venc" value="'+c.vencimiento+'">'+
+          '<div id="f-venc-info" style="font-size:11px;line-height:1.35;margin-top:3px"></div>') +
         field('Período contable','','<input type="month" id="f-per" value="'+c.periodo+'">') +
         field('Pto. Venta','','<input id="f-pv" value="'+esc(c.puntoVenta)+'" placeholder="0001">') +
         field('N° Factura','col2','<input id="f-nro" value="'+esc(c.nroFactura)+'" placeholder="00000000">') +
@@ -3588,7 +3649,39 @@ function buildFilterTable(cfg){
       const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
       el.addEventListener('input',()=>{ editing[key]=el.value; if(['f-descg','f-piva','f-piibb','f-impint','f-int'].includes(id)) drawTotals(); });
     });
-    $('f-prov').addEventListener('change',()=>{ const found=proveedoresConocidos().find(p=>p.nombre===$('f-prov').value); if(found && !$('f-cuit').value){ $('f-cuit').value=found.cuit||''; editing.cuit=found.cuit||''; if(found.cond){$('f-cond').value=found.cond; editing.condIva=found.cond;} } });
+    $('f-prov').addEventListener('change',()=>{ const found=proveedoresConocidos().find(p=>p.nombre===$('f-prov').value); if(found && !$('f-cuit').value){ $('f-cuit').value=found.cuit||''; editing.cuit=found.cuit||''; if(found.cond){$('f-cond').value=found.cond; editing.condIva=found.cond;} }
+      proponerVenc(); });
+
+    // ---- Vto. de pago propuesto con el plazo del proveedor ----
+    // Antes el vencimiento nacía igual a la fecha de emisión, así que una factura de MAPEI a 60 días
+    // entraba "vencida el mismo día": Finanzas la contaba en la deuda vencida y la proyección de Caja
+    // la ponía a salir hoy. Con el plazo en la ficha, se propone la fecha real.
+    // ⚠️ Solo se PROPONE, y nunca pisa un vencimiento que se tocó a mano (vencManual) ni uno que ya
+    // difiere de la fecha de emisión — o sea, una factura vieja abierta para editar queda intacta.
+    let vencManual = !!(c._uid && c.vencimiento && c.vencimiento!==c.fecha);
+    if($('f-venc')) $('f-venc').addEventListener('input',()=>{ vencManual=true; pintarVencInfo(); });
+    function proponerVenc(){
+      const prov=$('f-prov')?$('f-prov').value:'', f=$('f-fecha')?$('f-fecha').value:'';
+      const prop=vencPagoISO(f, prov);
+      if(prop && !vencManual && $('f-venc')){ $('f-venc').value=prop; editing.vencimiento=prop; }
+      pintarVencInfo();
+    }
+    function pintarVencInfo(){
+      const cont=$('f-venc-info'); if(!cont) return;
+      const prov=$('f-prov')?$('f-prov').value:'', f=$('f-fecha')?$('f-fecha').value:'';
+      const dias=plazoPagoDe(prov);
+      if(!dias){ cont.innerHTML = String(prov||'').trim()
+        ? '<span style="color:var(--muted)">Ese proveedor no tiene plazo de pago cargado (Base de Datos → Proveedores).</span>' : '';
+        return; }
+      const exacta=addDiasISO(f||hoyISO, dias), corrida=habilSigISO(exacta);
+      const actual=$('f-venc')?$('f-venc').value:'';
+      cont.innerHTML='<span style="color:var(--green)">'+esc(prov)+': '+dias+' días de la factura → <b>'+fmtFecha(corrida)+'</b></span>'+
+        (corrida!==exacta ? '<br><span style="color:var(--muted)">'+fmtFecha(exacta)+' cae día no hábil: se corre al hábil siguiente.</span>' : '')+
+        (actual && actual!==corrida ? '<br><span style="color:var(--amber)">Cargaste '+fmtFecha(actual)+', distinto del plazo.</span>' : '');
+    }
+    if($('f-fecha')) $('f-fecha').addEventListener('change',proponerVenc);
+    // Alta nueva: si el proveedor ya viene cargado (ej. desde el lector de tickets), proponer ya.
+    if(!c._uid) proponerVenc(); else pintarVencInfo();
     $('f-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     // Tarjetas: la categoría define si la compra es COSTO FIJO (entra al punto de equilibrio), así que
     // conviene verla de un vistazo; y el tipo de comprobante distingue una Nota de Crédito de una compra.
@@ -3685,7 +3778,11 @@ function buildFilterTable(cfg){
       const tjInfo = debs.length
         ? ' <span style="color:var(--blue);font-size:11px">💳 '+debs.filter(d=>d.debitado).length+'/'+debs.length+' debitado'+(debs.length>1?'s':'')+(tjPend?' · próx. '+fmtFecha(tjPend.fecha):'')+'</span>'
         : '';
-      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+tjInfo+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-op="'+i+'" title="Reimprimir la orden de pago">🖨️</button> <button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
+      // Un e-cheq que cancela varias facturas deja un pago en cada una, todos con el MISMO cheque. Hay
+      // que verlo antes de anular uno: el cheque emitido es uno solo, por el total del grupo.
+      const grpInfo = p.echeqGrupo
+        ? '<div style="font-size:10.5px;color:var(--amber)">parte del e-cheq'+(p.chNumero?' N° '+esc(p.chNumero):'')+' de '+money(p.echeqTotal)+', que también paga otras facturas</div>' : '';
+      return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+fmtFecha(p.fecha)+'</td><td style="text-align:right;padding:6px">'+money(p.monto)+'</td><td style="padding:6px">'+medio+' '+cuenta+tjInfo+grpInfo+'</td><td style="text-align:center;padding:6px"><button class="cmp-rowbtn" data-op="'+i+'" title="Reimprimir la orden de pago">🖨️</button> <button class="cmp-rowbtn" data-ep="'+i+'">✎ Editar</button> <button class="cmp-rowbtn" data-dp="'+i+'">✕ Eliminar</button></td></tr>';
     }).join('');
     el.querySelectorAll('button[data-op]').forEach(b=> b.onclick=()=>{ imprimirOrdenPago(editing, editing.pagos[+b.dataset.op]); });
     el.querySelectorAll('button[data-ep]').forEach(b=> b.onclick=()=>{ openEditPago(+b.dataset.ep); });
@@ -4689,10 +4786,28 @@ function buildFilterTable(cfg){
       facturas:[{comprobante:refCompraDoc(c), fecha:c.fecha, monto:num(pago.monto), saldo:k.saldo}]
     });
   }
+  // Orden de pago de VARIOS valores sobre UNA factura (el caso de los e-cheqs divididos): un renglón
+  // por e-cheq con su fecha de pago, y una sola fila de comprobante con el total aplicado.
+  // ⚠️ La fecha de cada valor es su VENCIMIENTO, no la emisión: es el día en que el proveedor cobra,
+  // que es justamente el dato por el que se dividió el pago.
+  function imprimirOrdenPagoVarios(c, pagos){
+    if(!window.__imprimir || !window.__imprimir.ordenPago){ alert('El módulo de Documentos no está disponible.'); return; }
+    const k=calc(c), tot=pagos.reduce((s,p)=>s+num(p.monto),0);
+    window.__imprimir.ordenPago({
+      proveedor:c.proveedor||'—', cuit:cuitDeProveedor(c.proveedor, c.cuit), condIva:c.condIva||'',
+      fecha:(pagos[0]&&pagos[0].fecha)||hoyISO,
+      valores:pagos.map(p=>({fecha:p.chVenc||p.fecha, detalle:detalleMedioPago(p), monto:num(p.monto)})),
+      facturas:[{comprobante:refCompraDoc(c), fecha:c.fecha, monto:tot, saldo:k.saldo}]
+    });
+  }
 
   function openPago(c){
     payingUid=c._uid; const kk=calc(c);
     const cuitProv=cuitDeProveedor(c.proveedor, c.cuit);
+    // Fecha de pago que le corresponde por el plazo de su ficha (MAPEI: factura + 60 días, corrido a
+    // hábil). Si el proveedor no tiene plazo cargado queda '' y el campo arranca en hoy, como siempre.
+    // Se cuenta desde la fecha de la FACTURA, no desde hoy: el plazo lo fija el comprobante.
+    const vencProp=vencPagoISO(c.fecha, c.proveedor), plazoProv=plazoPagoDe(c.proveedor);
     $('cmp-form-pago').innerHTML =
       '<div style="border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:13px">'+
         '<b>'+esc(c.proveedor||'—')+'</b>'+(cuitProv?' · <span style="font-variant-numeric:tabular-nums">CUIT '+esc(fmtCuit(cuitProv))+'</span>':' · <span style="color:var(--amber)">sin CUIT cargado</span>')+
@@ -4709,8 +4824,13 @@ function buildFilterTable(cfg){
         '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
           field('N° de cheque','','<input id="p-ch-num">') +
           field('Banco','','<input id="p-ch-banco">') +
-          field('Vencimiento / fecha de pago','col2','<input type="date" id="p-ch-venc" value="'+hoyISO+'">') +
-        '</div></div>'+
+          field('Vencimiento / fecha de pago','col2','<input type="date" id="p-ch-venc" value="'+(vencProp||hoyISO)+'">'+
+            '<div id="p-ch-plazo" style="font-size:11px;line-height:1.35;margin-top:3px"></div>') +
+          field('¿En cuántos e-cheqs lo dividís?','','<input id="p-ch-n" type="number" min="1" max="12" step="1" value="1">') +
+          field('Un e-cheq cada (días)','','<input id="p-ch-cada" type="number" min="0" max="365" step="1" value="30">') +
+        '</div>'+
+        '<div id="p-ch-grid" style="margin-top:8px"></div>'+
+      '</div>'+
       // Al elegir "cheque propio" se muestra igual lo que hay en cartera: en VPH lo habitual es
       // endosar, no emitir. Tocar uno cambia el medio a endoso y lo deja elegido, de un solo clic.
       '<div id="p-cartera-aviso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
@@ -4750,7 +4870,62 @@ function buildFilterTable(cfg){
       if(tj){ const def=tarjCuentaDef(), sel=$('p-cuenta');
         if(def && sel){ sel.value=def; if(sel.__repintar) sel.__repintar(); } }
       $('p-monto').readOnly = end;
+      if(ch&&!end) recalcEcheqs();
       if(end) drawEndosoPicker(); else { endosoSel=[]; $('p-monto').value=kk.saldo; drawCarteraAviso(); } });
+
+    // ---------- DIVIDIR EL PAGO EN VARIOS E-CHEQS ----------
+    // Un e-cheq por fila = un PAGO de esta factura + un cheque emitido en el módulo Cheques. Cada uno
+    // con su fecha, así la Caja proyecta la salida el día que de verdad se va a debitar cada uno.
+    // ⚠️ La suma de las filas tiene que dar EXACTO el monto del pago: se valida al guardar.
+    let chFilas=[];   // [{monto, fecha, num, banco}] — num/banco se conservan al recalcular
+    function pintarPlazo(){
+      const cont=$('p-ch-plazo'); if(!cont) return;
+      if(!plazoProv){ cont.innerHTML='<span style="color:var(--muted)">Sin plazo de pago cargado en la ficha de este proveedor.</span>'; return; }
+      const exacta=addDiasISO(c.fecha||hoyISO, plazoProv);
+      const actual=$('p-ch-venc')?$('p-ch-venc').value:'';
+      cont.innerHTML='<span style="color:var(--green)">'+plazoProv+' días de la factura del '+fmtFecha(c.fecha)+' → <b>'+fmtFecha(vencProp)+'</b></span>'+
+        (vencProp!==exacta ? '<br><span style="color:var(--muted)">'+fmtFecha(exacta)+' cae día no hábil: se corre al hábil siguiente.</span>' : '')+
+        (actual && actual!==vencProp ? '<br><span style="color:var(--amber)">Pusiste '+fmtFecha(actual)+', distinto del plazo acordado.</span>' : '');
+    }
+    // Rearma montos y fechas desde los 4 campos de arriba (monto, 1er vencimiento, cantidad, cada).
+    // El N° se auto-incrementa solo si el primero es un número (las chequeras vienen correlativas);
+    // si está vacío o tiene letras, las filas quedan libres para tipear el número que dé el banco.
+    function recalcEcheqs(){
+      const n=Math.max(1, Math.min(12, Math.round(num($('p-ch-n')?$('p-ch-n').value:1))||1));
+      const base=armarEcheqs(num($('p-monto').value), n, ($('p-ch-venc')&&$('p-ch-venc').value)||vencProp||hoyISO, num($('p-ch-cada')?$('p-ch-cada').value:30));
+      const n0=String($('p-ch-num')?$('p-ch-num').value:'').trim(), corr=/^\d+$/.test(n0);
+      chFilas=base.map((b,i)=>({ monto:b.monto, fecha:b.fecha,
+        num: (chFilas[i]&&chFilas[i].num!=null) ? chFilas[i].num : (corr ? String(+n0+i) : (i===0?n0:'')),
+        banco: (chFilas[i]&&chFilas[i].banco!=null) ? chFilas[i].banco : String($('p-ch-banco')?$('p-ch-banco').value:'').trim() }));
+      drawEcheqs(); pintarPlazo();
+    }
+    function drawEcheqs(){
+      const cont=$('p-ch-grid'); if(!cont) return;
+      if(chFilas.length<2){ cont.innerHTML=''; return; }
+      const tot=chFilas.reduce((s,f)=>s+num(f.monto),0), esperado=num($('p-monto').value);
+      const dif=round2(esperado-tot);
+      cont.innerHTML='<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Los '+chFilas.length+' e-cheqs</div>'+
+        '<div class="tbl-wrap"><table style="width:100%;font-size:12px;border-collapse:collapse">'+
+        '<thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">#</th><th style="text-align:left;padding:4px">Vence</th><th style="text-align:right;padding:4px">Importe</th><th style="text-align:left;padding:4px">N°</th><th style="text-align:left;padding:4px">Banco</th></tr></thead><tbody>'+
+        chFilas.map((f,i)=>'<tr style="border-bottom:1px solid var(--border)">'+
+          '<td style="padding:4px;white-space:nowrap">'+(i+1)+(esDiaHabil(f.fecha)?'':' <span title="cae día no hábil" style="color:var(--amber)">⚠️</span>')+'</td>'+
+          '<td style="padding:4px"><input type="date" data-ef="'+i+'" value="'+esc(f.fecha)+'" style="width:100%"></td>'+
+          '<td style="padding:4px"><input type="number" step="0.01" data-em="'+i+'" value="'+f.monto+'" style="width:100%;text-align:right"></td>'+
+          '<td style="padding:4px"><input data-en="'+i+'" value="'+esc(f.num||'')+'" style="width:100%"></td>'+
+          '<td style="padding:4px"><input data-eb="'+i+'" value="'+esc(f.banco||'')+'" style="width:100%"></td></tr>').join('')+
+        '</tbody><tfoot><tr style="font-weight:700"><td colspan="2" style="padding:4px">Total</td><td style="text-align:right;padding:4px'+(Math.abs(dif)>0.5?';color:var(--red)':'')+'">'+money(tot)+'</td><td colspan="2"></td></tr></tfoot></table></div>'+
+        (Math.abs(dif)>0.5
+          ? '<p style="color:var(--red);font-size:11.5px;margin:6px 0 0">⚠️ Los e-cheqs suman '+money(tot)+' y el pago es de '+money(esperado)+': '+(dif>0?'faltan ':'sobran ')+money(Math.abs(dif))+'. Corregí un importe o cambiá el monto del pago.</p>'
+          : '<p style="color:var(--muted);font-size:11.5px;margin:6px 0 0">Se van a registrar '+chFilas.length+' pagos de esta factura, uno por e-cheq, y '+chFilas.length+' cheques emitidos en el módulo Cheques. La Caja proyecta cada salida en su fecha.</p>')+
+        avisoVencPasado(chFilas.map(f=>f.fecha), $('p-fecha')?$('p-fecha').value:'');
+      cont.querySelectorAll('input[data-ef]').forEach(e=> e.addEventListener('change',()=>{ chFilas[+e.dataset.ef].fecha=e.value; drawEcheqs(); }));
+      cont.querySelectorAll('input[data-em]').forEach(e=> e.addEventListener('input',()=>{ chFilas[+e.dataset.em].monto=num(e.value); drawEcheqs(); }));
+      cont.querySelectorAll('input[data-en]').forEach(e=> e.addEventListener('input',()=>{ chFilas[+e.dataset.en].num=e.value; }));
+      cont.querySelectorAll('input[data-eb]').forEach(e=> e.addEventListener('input',()=>{ chFilas[+e.dataset.eb].banco=e.value; }));
+    }
+    // Cambiar la cantidad o el intervalo rearma todo; cambiar el N°/banco de arriba solo re-siembra.
+    ['p-ch-n','p-ch-cada','p-ch-venc','p-monto'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('change',()=>{ chFilas=[]; recalcEcheqs(); }); });
+    ['p-ch-num','p-ch-banco'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('input',()=>{ chFilas=[]; recalcEcheqs(); }); });
 
     // Qué hay en la cartera para endosar, con sus montos, mientras se decide cómo pagar.
     function drawCarteraAviso(){
@@ -4819,6 +4994,26 @@ function buildFilterTable(cfg){
           });
         }
         return; }
+      // VARIOS E-CHEQS: un pago (y un cheque) por cada uno. Se guardan TODOS de una sola vez con un
+      // único persistPagos — así no hay una escritura a medias si algo falla en el medio, y la Caja
+      // no ve por un instante la factura pagada de menos.
+      if(esCheque(medio) && !esEndoso(medio) && chFilas.length>1){
+        const totCh=round2(chFilas.reduce((s,f)=>s+num(f.monto),0)), esperado=round2(num($('p-monto').value));
+        if(Math.abs(totCh-esperado)>0.5){ alert('Los e-cheqs suman '+money(totCh)+' y el pago es de '+money(esperado)+'.\n\nCorregí los importes de la grilla (o el monto del pago) para que cierren.'); return; }
+        if(chFilas.some(f=>num(f.monto)<=0)){ alert('Hay un e-cheq con importe en cero. Sacalo bajando la cantidad, o cargale el importe.'); return; }
+        if(chFilas.some(f=>!f.fecha)){ alert('Hay un e-cheq sin fecha de vencimiento.'); return; }
+        const fEmision=$('p-fecha').value||hoyISO;
+        const nuevos=chFilas.map(f=>({ id:'pag_'+newUid(), fecha:fEmision, monto:round2(num(f.monto)), medio,
+          chNumero:String(f.num||'').trim(), chBanco:String(f.banco||'').trim(), chVenc:f.fecha }));
+        const pagos=(c2.pagos||[]).slice().concat(nuevos); c2.pagos=pagos; persistPagos(c2._uid, pagos);
+        if(window.__upsertChequePago) nuevos.forEach(p=> window.__upsertChequePago({ pagoId:p.id, compraUid:c2._uid,
+          compraNro:c2.nroFactura||c2.numero||'', entidad:c2.proveedor||'', numero:p.chNumero, banco:p.chBanco,
+          monto:p.monto, fechaEmision:p.fecha, fechaVencimiento:p.chVenc||p.fecha }));
+        $('cmp-modal-pago').classList.remove('open');
+        // UNA orden de pago con los N valores entregados (no N órdenes de una factura): es el papel que
+        // acompaña la entrega de los e-cheqs, y el proveedor firma una sola vez.
+        imprimirOrdenPagoVarios(c2, nuevos);
+        return; }
       const pago={ id:'pag_'+newUid(), fecha:$('p-fecha').value, monto:num($('p-monto').value), medio };
       if(esCheque(medio)){ pago.chNumero=$('p-ch-num')?$('p-ch-num').value.trim():''; pago.chBanco=$('p-ch-banco')?$('p-ch-banco').value.trim():''; pago.chVenc=$('p-ch-venc')?$('p-ch-venc').value:''; }
       else if(esTarjeta(medio)){
@@ -4865,6 +5060,38 @@ function buildFilterTable(cfg){
     return dist;
   }
 
+  // ---- Repartir un pago multi-factura entre N e-cheqs, por CORTES entre facturas ----
+  // ⚠️ Decisión de diseño: cada e-cheq cubre facturas ENTERAS. Un cheque NUNCA queda partido entre dos
+  // facturas, así cada cheque emitido tiene su importe = la suma de las facturas que cancela y su
+  // propio registro en el módulo Cheques. Si se permitiera partirlo, un cheque tendría que colgar de
+  // varios pagos a la vez y anular uno solo dejaría un cheque huérfano por un importe que ya no existe.
+  // Consecuencia: no se pueden hacer más e-cheqs que facturas. Para partir UNA factura en varios
+  // e-cheqs está el botón Pagar de esa factura (ahí sí es 1 factura : N cheques, sin ambigüedad).
+  // Devuelve los índices donde arranca cada grupo (sin el 0), balanceando por importe.
+  function cortesPorImporte(dist, n){
+    const M=dist.length, tot=dist.reduce((s,x)=>s+num(x.monto),0), out=[];
+    let acum=0, k=1;
+    for(let i=0;i<M && out.length<n-1;i++){
+      acum+=num(dist[i].monto);
+      const faltan=n-1-out.length;
+      // El corte solo se acepta si deja al menos una factura para cada grupo que todavía falta.
+      if(acum >= tot*k/n && (i+1) <= M-faltan){ out.push(i+1); k++; }
+    }
+    // Importes muy desparejos (una factura enorme al principio) pueden no llegar a n-1 cortes: se
+    // completan pegados al final, que es la única posición que siempre deja los grupos con contenido.
+    for(let j=out.length; j<n-1; j++) out.push(M-(n-1-j));
+    return out;
+  }
+  function gruposEcheq(dist, n, cortes){
+    const M=dist.length, q=Math.max(1, Math.min(12, M, Math.round(num(n))||1));
+    const ok = Array.isArray(cortes) && cortes.length===q-1 &&
+      cortes.every((x,i)=> x>(i===0?0:cortes[i-1]) && x<=M-(q-1-i));
+    const cs = ok ? cortes.slice() : cortesPorImporte(dist, q);
+    const ini=[0].concat(cs), fin=cs.concat([M]);
+    return ini.map((a,i)=>{ const items=dist.slice(a, fin[i]);
+      return { items, monto:round2(items.reduce((s,x)=>s+num(x.monto),0)) }; });
+  }
+
   function openPagoProv(){
     pagoProv={ proveedor:'', monto:0, fecha:hoyISO, medio:'Efectivo', cuenta:'', distribucion:[] };
     const provs=proveedoresConocidos().map(p=>p.nombre).sort();
@@ -4888,16 +5115,22 @@ function buildFilterTable(cfg){
           field('Primer débito (vence el resumen)','','<input type="date" id="pp-tj-fecha" value="'+proxDebitoISO(hoyISO)+'">') +
         '</div></div>'+
       '<div id="pp-cuit" class="asof" style="margin:-8px 0 10px"></div>'+
-      // Este modal reparte UN importe entre varias facturas, así que no ofrece el endoso: un cheque no
-      // se parte en dos. Pero igual conviene ver qué hay en cartera al decidir cómo pagar.
+      // Este modal no ofrece el ENDOSO: un cheque de un tercero no se parte en dos, y acá el importe se
+      // reparte entre varias facturas. (Emitir varios e-cheqs PROPIOS sí se puede — ver más abajo.)
+      // Igual conviene ver qué hay en cartera al decidir cómo pagar.
       '<div id="pp-cartera-aviso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
       '<div id="pp-cheque-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">Datos del cheque/e-cheque</div>'+
         '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">'+
           field('N° de cheque','','<input id="pp-ch-num">') +
           field('Banco','','<input id="pp-ch-banco">') +
-          field('Vencimiento','col2','<input type="date" id="pp-ch-venc" value="'+hoyISO+'">') +
-        '</div></div>'+
+          field('1er vencimiento','col2','<input type="date" id="pp-ch-venc" value="'+hoyISO+'">'+
+            '<div id="pp-ch-plazo" style="font-size:11px;line-height:1.35;margin-top:3px"></div>') +
+          field('¿En cuántos e-cheqs lo dividís?','','<input id="pp-ch-n" type="number" min="1" max="12" step="1" value="1">') +
+          field('Un e-cheq cada (días)','','<input id="pp-ch-cada" type="number" min="0" max="365" step="1" value="30">') +
+        '</div>'+
+        '<div id="pp-ch-grid" style="margin-top:8px"></div>'+
+      '</div>'+
       '<div id="pp-facturas" style="margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc)">'+
         '<p style="margin:0 0 8px 0;font-size:12px;color:var(--muted)"><b>Facturas pendientes:</b> cargá el monto arriba para ver cómo se distribuye</p>'+
         '<div id="pp-dist-table" style="font-size:12px"></div>'+
@@ -4937,6 +5170,7 @@ function buildFilterTable(cfg){
       if(tj){ const def=tarjCuentaDef(), sel=$('pp-cuenta');
         if(def && sel){ sel.value=def; pagoProv.cuenta=def; if(sel.__repintar) sel.__repintar(); } }
       pagoProv.medio=ppMedio.value;
+      if(ch){ sembrarVencProv(); drawEcheqsProv(); }
     });
 
     const ppCuenta=$('pp-cuenta'); if(ppCuenta) ppCuenta.addEventListener('change',()=>{ pagoProv.cuenta=ppCuenta.value; });
@@ -4958,7 +5192,80 @@ function buildFilterTable(cfg){
       html+='<tr style="border-top:1px solid var(--border);font-weight:700;font-size:11px"><td style="padding:4px">Total</td><td style="text-align:right;padding:4px">'+money(fact.reduce((a,f)=>a+f.saldo,0))+'</td><td style="text-align:right;padding:4px;color:var(--amber)">'+money(totAplicar)+'</td></tr></table>';
       if(totAplicar<pagoProv.monto-0.5){ html+='<p style="color:var(--amber);font-size:11px;margin:6px 0 0">⚠️ Sobra '+money(pagoProv.monto-totAplicar)+' sin asignar (todas las facturas se cancelan)</p>'; }
       tbl.innerHTML=html;
+      sembrarVencProv();
+      drawEcheqsProv();
     }
+
+    // ---------- VARIOS E-CHEQS para un pago de varias facturas ----------
+    let ppCortes=null, ppFilas=[];   // cortes movidos a mano y overrides de fecha/N°/banco por fila
+    // Vencimiento propuesto: el plazo del proveedor contado desde la factura MÁS VIEJA de las que se
+    // están pagando. Cada factura tiene su propia fecha y por lo tanto su propio vencimiento; se toma
+    // el más temprano para no pagar tarde ninguna. Los otros quedan a la vista en el aviso.
+    function vencPropProv(){
+      const d=pagoProv.distribucion||[]; if(!d.length) return '';
+      const fs=d.map(x=>{ const c=DB.compras.find(y=>y._uid===x.compraUid); return c?String(c.fecha||'').slice(0,10):''; }).filter(Boolean);
+      if(!fs.length) return '';
+      return vencPagoISO(fs.sort()[0], pagoProv.proveedor);
+    }
+    function pintarPlazoProv(){
+      const cont=$('pp-ch-plazo'); if(!cont) return;
+      const dias=plazoPagoDe(pagoProv.proveedor);
+      if(!dias){ cont.innerHTML='<span style="color:var(--muted)">Sin plazo de pago cargado en la ficha de este proveedor.</span>'; return; }
+      const d=pagoProv.distribucion||[];
+      const vencs=d.map(x=>{ const c=DB.compras.find(y=>y._uid===x.compraUid); return c?vencPagoISO(c.fecha, pagoProv.proveedor):''; }).filter(Boolean).sort();
+      const prop=vencPropProv();
+      cont.innerHTML = !prop ? '<span style="color:var(--muted)">'+dias+' días de fecha de factura.</span>'
+        : '<span style="color:var(--green)">'+dias+' días de factura → la más vieja vence el <b>'+fmtFecha(prop)+'</b></span>'+
+          (vencs.length>1 && vencs[vencs.length-1]!==prop
+            ? '<br><span style="color:var(--muted)">Las '+vencs.length+' facturas vencen entre '+fmtFecha(vencs[0])+' y '+fmtFecha(vencs[vencs.length-1])+'.</span>' : '');
+    }
+    function drawEcheqsProv(){
+      const cont=$('pp-ch-grid'); if(!cont) return;
+      pintarPlazoProv();
+      const nEl=$('pp-ch-n'), dist=pagoProv.distribucion||[];
+      if(!esCheque(pagoProv.medio) || esEndoso(pagoProv.medio) || !dist.length){ cont.innerHTML=''; return; }
+      // No se puede emitir más e-cheqs que facturas (ver el comentario de gruposEcheq).
+      const pedido=Math.max(1, Math.round(num(nEl?nEl.value:1))||1), q=Math.min(pedido, dist.length, 12);
+      const gs=gruposEcheq(dist, q, ppCortes);
+      const fechas=fechasEcheqs(gs.length, ($('pp-ch-venc')&&$('pp-ch-venc').value)||hoyISO, num($('pp-ch-cada')?$('pp-ch-cada').value:30));
+      const n0=String($('pp-ch-num')?$('pp-ch-num').value:'').trim(), corr=/^\d+$/.test(n0);
+      if(gs.length<2){ cont.innerHTML = pedido>dist.length
+        ? '<p style="color:var(--amber);font-size:11.5px;margin:0">Estás pagando '+dist.length+' factura'+(dist.length>1?'s':'')+', así que no se puede dividir en '+pedido+' e-cheqs (cada e-cheq cubre facturas enteras). Para partir UNA factura en varios e-cheqs, usá el botón <b>Pagar</b> de esa factura.</p>' : '';
+        return; }
+      cont.innerHTML='<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Los '+gs.length+' e-cheqs · cada uno cancela facturas enteras</div>'+
+        '<div class="tbl-wrap"><table style="width:100%;font-size:12px;border-collapse:collapse">'+
+        '<thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">#</th><th style="text-align:left;padding:4px">Vence</th><th style="text-align:left;padding:4px">Cancela</th><th style="text-align:right;padding:4px">Importe</th><th style="text-align:left;padding:4px">N°</th><th style="text-align:left;padding:4px">Banco</th><th></th></tr></thead><tbody>'+
+        gs.map((g,i)=>{ const fi=(ppFilas[i]&&ppFilas[i].fecha)||fechas[i];
+          return '<tr style="border-bottom:1px solid var(--border)">'+
+          '<td style="padding:4px;white-space:nowrap">'+(i+1)+(esDiaHabil(fi)?'':' <span title="cae día no hábil" style="color:var(--amber)">⚠️</span>')+'</td>'+
+          '<td style="padding:4px"><input type="date" data-pf="'+i+'" value="'+esc(fi)+'" style="width:100%"></td>'+
+          '<td style="padding:4px;white-space:normal">'+g.items.map(x=>esc(x.nroFactura)).join(' + ')+'</td>'+
+          '<td style="text-align:right;padding:4px;white-space:nowrap"><b>'+money(g.monto)+'</b></td>'+
+          '<td style="padding:4px"><input data-pn="'+i+'" value="'+esc((ppFilas[i]&&ppFilas[i].num!=null)?ppFilas[i].num:(corr?String(+n0+i):(i===0?n0:'')))+'" style="width:100%"></td>'+
+          '<td style="padding:4px"><input data-pb="'+i+'" value="'+esc((ppFilas[i]&&ppFilas[i].banco!=null)?ppFilas[i].banco:String($('pp-ch-banco')?$('pp-ch-banco').value:'').trim())+'" style="width:100%"></td>'+
+          '<td style="padding:4px;white-space:nowrap">'+(i<gs.length-1
+            ? '<button type="button" class="cmp-rowbtn" data-mv="'+i+'" data-dir="-1" title="Pasar la última factura de este e-cheq al siguiente">◀</button> '+
+              '<button type="button" class="cmp-rowbtn" data-mv="'+i+'" data-dir="1" title="Traer la primera factura del e-cheq siguiente">▶</button>' : '')+
+          '</td></tr>'; }).join('')+
+        '</tbody><tfoot><tr style="font-weight:700"><td colspan="3" style="padding:4px">Total</td><td style="text-align:right;padding:4px">'+money(gs.reduce((s,g)=>s+g.monto,0))+'</td><td colspan="3"></td></tr></tfoot></table></div>'+
+        '<p style="color:var(--muted);font-size:11.5px;margin:6px 0 0">Con ◀ ▶ movés una factura de un e-cheq al otro (los importes se recalculan). Se van a emitir '+gs.length+' cheques y la Caja proyecta cada salida en su fecha.</p>'+
+        avisoVencPasado(gs.map((g,i)=>(ppFilas[i]&&ppFilas[i].fecha)||fechas[i]), pagoProv.fecha);
+      // Guardar los cortes efectivos para que mover uno no se pierda al repintar.
+      ppCortes=gs.slice(0,-1).reduce((acc,g)=>{ acc.push((acc.length?acc[acc.length-1]:0)+g.items.length); return acc; },[]);
+      cont.querySelectorAll('input[data-pf]').forEach(e=> e.addEventListener('change',()=>{ const i=+e.dataset.pf; ppFilas[i]=ppFilas[i]||{}; ppFilas[i].fecha=e.value; drawEcheqsProv(); }));
+      cont.querySelectorAll('input[data-pn]').forEach(e=> e.addEventListener('input',()=>{ const i=+e.dataset.pn; ppFilas[i]=ppFilas[i]||{}; ppFilas[i].num=e.value; }));
+      cont.querySelectorAll('input[data-pb]').forEach(e=> e.addEventListener('input',()=>{ const i=+e.dataset.pb; ppFilas[i]=ppFilas[i]||{}; ppFilas[i].banco=e.value; }));
+      cont.querySelectorAll('button[data-mv]').forEach(b=> b.onclick=()=>{
+        const i=+b.dataset.mv, dir=+b.dataset.dir, cs=ppCortes.slice();
+        const min=(i===0?0:cs[i-1])+1, max=(i+1<cs.length?cs[i+1]:dist.length)-1;
+        cs[i]=Math.max(min, Math.min(max, cs[i]+dir));
+        ppCortes=cs; drawEcheqsProv(); });
+    }
+    ['pp-ch-n','pp-ch-cada','pp-ch-venc'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('change',()=>{ ppCortes=null; ppFilas=[]; drawEcheqsProv(); }); });
+    ['pp-ch-num','pp-ch-banco'].forEach(id=>{ const e=$(id); if(e) e.addEventListener('input',()=>{ ppFilas=[]; drawEcheqsProv(); }); });
+    // El vencimiento propuesto depende de las facturas, que se conocen recién al elegir proveedor y monto.
+    function sembrarVencProv(){ const p=vencPropProv(), el=$('pp-ch-venc');
+      if(p && el && (!el.value || el.value===hoyISO)){ el.value=p; ppFilas=[]; } }
 
     $('pp-cancel').onclick=()=>$('cmp-modal-pago-prov').classList.remove('open');
     $('pp-save').onclick=()=>{
@@ -4977,6 +5284,53 @@ function buildFilterTable(cfg){
       const tjCuotas = esTj ? Math.max(1, Math.round(num($('pp-tj-cuotas')?$('pp-tj-cuotas').value:1))||1) : 1;
       if(esTj && tjCuotas>36){ alert('¿'+tjCuotas+' cuotas? El máximo es 36 — revisá el número.'); return; }
       const tjPrim = esTj ? (($('pp-tj-fecha')&&$('pp-tj-fecha').value) || proxDebitoISO(pagoProv.fecha||hoyISO)) : '';
+
+      // ---- VARIOS E-CHEQS: un cheque por grupo de facturas ----
+      // Cada e-cheq cancela facturas ENTERAS, así que genera un pago por factura (todos con los datos
+      // del mismo cheque) y UN solo cheque emitido, por el total del grupo, colgado del primer pago.
+      // Los pagos del grupo quedan marcados con echeqGrupo para que se vea que comparten el papel.
+      if(esChequepay){
+        const nPed=Math.max(1, Math.round(num($('pp-ch-n')?$('pp-ch-n').value:1))||1);
+        const gs=gruposEcheq(pagoProv.distribucion, Math.min(nPed, pagoProv.distribucion.length), ppCortes);
+        if(gs.length>1){
+          const fechas=fechasEcheqs(gs.length, ($('pp-ch-venc')&&$('pp-ch-venc').value)||hoyISO, num($('pp-ch-cada')?$('pp-ch-cada').value:30));
+          const n0=String($('pp-ch-num')?$('pp-ch-num').value:'').trim(), corr=/^\d+$/.test(n0);
+          const bco0=String($('pp-ch-banco')?$('pp-ch-banco').value:'').trim();
+          const porCompra={}, valores=[], aplic=[];
+          gs.forEach((g,i)=>{
+            const fila=ppFilas[i]||{};
+            const fvenc=fila.fecha||fechas[i];
+            const numCh=String(fila.num!=null?fila.num:(corr?String(+n0+i):(i===0?n0:''))).trim();
+            const bcoCh=String(fila.banco!=null?fila.banco:bco0).trim();
+            const filas=g.items.map(x=>{ const comp=DB.compras.find(c=>c._uid===x.compraUid);
+              return comp ? {comp, pago:{ id:'pag_'+newUid(), fecha:pagoProv.fecha, monto:round2(num(x.monto)), medio,
+                chNumero:numCh, chBanco:bcoCh, chVenc:fvenc }} : null; }).filter(Boolean);
+            if(!filas.length) return;
+            const anchor=filas[0].pago.id, total=round2(filas.reduce((s,x)=>s+num(x.pago.monto),0));
+            if(filas.length>1) filas.forEach(x=>{ x.pago.echeqGrupo=anchor; x.pago.echeqTotal=total; });
+            filas.forEach(x=>{
+              if(!porCompra[x.comp._uid]) porCompra[x.comp._uid]={comp:x.comp, pagos:(x.comp.pagos||[]).slice()};
+              porCompra[x.comp._uid].pagos.push(x.pago);
+              aplic.push({comp:x.comp, monto:x.pago.monto, pago:x.pago}); });
+            if(window.__upsertChequePago) window.__upsertChequePago({
+              pagoId:anchor, compraUid:filas[0].comp._uid,
+              compraNro:g.items.map(x=>x.nroFactura).join(' + '), entidad:pagoProv.proveedor||'',
+              numero:numCh, banco:bcoCh, monto:total, fechaEmision:pagoProv.fecha, fechaVencimiento:fvenc });
+            valores.push({fecha:fvenc, monto:total,
+              detalle:detalleMedioPago({medio, chNumero:numCh, chBanco:bcoCh, chVenc:fvenc}) });
+          });
+          Object.keys(porCompra).forEach(uid=>{ const x=porCompra[uid]; x.comp.pagos=x.pagos; persistPagos(uid, x.pagos); });
+          alert('Pago registrado con '+gs.length+' e-cheqs en '+Object.keys(porCompra).length+' factura(s).\n\nAcordate de emitirlos en el home banking: acá solo quedan registrados.');
+          $('cmp-modal-pago-prov').classList.remove('open');
+          render();
+          if(window.__imprimir && window.__imprimir.ordenPago) window.__imprimir.ordenPago({
+            proveedor:pagoProv.proveedor, cuit:cuitDeProveedor(pagoProv.proveedor,''), condIva:aplic[0].comp.condIva||'',
+            fecha:pagoProv.fecha, valores,
+            facturas:aplic.map(x=>({comprobante:refCompraDoc(x.comp), fecha:x.comp.fecha, monto:num(x.monto), saldo:calc(x.comp).saldo}))
+          });
+          return;
+        }
+      }
 
       // Guardar pago en cada factura
       const aplicadas=[];   // para la orden de pago consolidada (una fila por factura cancelada)
@@ -9424,8 +9778,8 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'categoria',h:'Categoría'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','email','telefono'] },
     proveedores: { col:'vph_proveedores', label:'Proveedores', sing:'Proveedor', origen:'vph_compras', campoOrigen:'proveedor',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
-      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'telefono',h:'Teléfono'} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'plazoPagoDias',l:'Plazo de pago (días desde la fecha de factura — ej. e-cheq a 60 días → 60. Vacío = se paga contra entrega)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'plazoPagoDias',h:'Plazo pago',num:1},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
       fields:[ {k:'nombre',l:'Nombre',t:'text',col2:1},{k:'codigo',l:'Código',t:'text'},{k:'tipo',l:'¿Qué es? (tipo)',t:'select',opts:TIPOS_PROD,cards:1},{k:'unidad',l:'Unidad',t:'select',opts:UNID},{k:'ivaVenta',l:'IVA',t:'select',opts2:ALIC},{k:'costo',l:'Costo $',t:'number'},{k:'precioMinorista',l:'Precio Minorista $',t:'number'},{k:'precioMayorista',l:'Precio Mayorista $',t:'number'},{k:'precioMayoristaSF',l:'Precio Mayorista S/Factura $',t:'number'},{k:'stock',l:'Stock inicial',t:'number'},{k:'stockMinimo',l:'Stock mínimo',t:'number'},{k:'diasCurado',l:'Días de curado (default 10)',t:'number'},{k:'udPorPallet',l:'Unidades por pallet',t:'number'},{k:'pesoUnit',l:'Peso por unidad (kg)',t:'number'},{k:'unidadesPorM2',l:'Unidades por m² (ej: LC60 = 4,3)',t:'number'},{k:'refuerzoCodigo',l:'Refuerzo de base — código (ej: LC602H, SIN espacios)',t:'text'},{k:'refuerzoPorPallet',l:'Refuerzo de base — unidades por pallet (ej: 5)',t:'number'},{k:'refuerzoDesde',l:'Refuerzo de base — solo si el pallet supera estas unidades (ej: 40 → un pallet de 40 o menos va sin base; vacío = siempre)',t:'number'},{k:'seFabrica',l:'Es un producto que fabricamos (aparece en Producción y Logística)',t:'checkbox'},{k:'seVende',l:'Se vende — aparece en Ventas / Presupuestos / CRM (dejar tildado también el Flete)',t:'checkbox'},{k:'activo',l:'Activo',t:'checkbox'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
