@@ -12632,6 +12632,26 @@ function buildFilterTable(cfg){
   // (ej: el camión de Matías Sánchez lleva 8 pallets). Acá ve cuánto lleva cada viaje y cuánto le queda.
   const CAP_PARAM={ 'Sánchez':'capSanchez', 'Marcelo Vassallo':'capVassallo', 'Brío':'capBrio', 'Expreso Biletta':'capBiletta' };
   const capacidadDe=t=>{ const k=CAP_PARAM[String(t||'').trim()]; return k?Math.max(0,num(window.__param(k,0))):0; };
+  /* ---------- Sugerencia de división cuando un viaje se pasa de la capacidad --------------------
+     Pedido de Marcelo (13/08): separar del mismo viaje a un cliente como Corralón San Miguel cuando
+     entre sus pedidos del día se pasan de la capacidad del camión (ej. capSanchez=8). NO se mueve
+     nada solo: arma una sugerencia (first-fit-decreasing por PEDIDO entero, nunca parte un pedido en
+     dos) y un botón la aplica corriendo los pedidos que sobran al siguiente día HÁBIL (esHabil, así
+     respeta feriados) con el MISMO transporte — un click, no una escritura automática en cada render.
+     Un pedido que SOLO ya se pasa de la capacidad no entra en ningún bin: eso es una entrega parcial
+     (partir el pedido en dos remitos), que es otra función y se avisa aparte, no se inventa acá. */
+  function sugerirDivision(v, cap){
+    const solos=[], entran=[];
+    v.peds.forEach(p=>{ const pal=totCarga(p).pallets; (pal>cap ? solos : entran).push({p, pal}); });
+    entran.sort((a,b)=>b.pal-a.pal);                    // first-fit-decreasing: los grandes primero
+    const bins=[];
+    entran.forEach(({p,pal})=>{
+      let bin=bins.find(b=>b.pallets+pal<=cap);
+      if(!bin){ bin={peds:[], pallets:0}; bins.push(bin); }
+      bin.peds.push(p); bin.pallets+=pal;
+    });
+    return { bins, solos:solos.map(x=>x.p) };
+  }
   /* ---------- La FECHA del viaje ----------------------------------------------------------------
      `diaEntrega` es un campo de texto libre, pero en la práctica Sofía lo carga siempre como
      dd/mm/aa (verificado contra los 25 pedidos del backup del 09/08). Hasta ahora los viajes se
@@ -12686,11 +12706,20 @@ function buildFilterTable(cfg){
                   {desde:4, cls:'',       t:'Más adelante'},
                   {desde:5, cls:'',       t:'Sin fecha de entrega'} ];
     let bandaPuesta=-1;
+    const sugerencias=[];   // una entrada por viaje con botón de "Aplicar división" (índice = data-viaje-idx)
     cont.innerHTML = viajes.map(v=>{
       let banda='';
       const b=[...BANDA].reverse().find(x=>v.c>=x.desde);
       if(b && b.desde!==bandaPuesta){ bandaPuesta=b.desde; banda='<div class="pe-banda '+b.cls+'">'+b.t+'</div>'; }
       return banda+trjViaje(v); }).join('');
+    cont.querySelectorAll('button[data-viaje-idx]').forEach(btn=> btn.onclick=()=>{
+      const s=sugerencias[+btn.dataset.viajeIdx]; if(!s) return;
+      const detalle=s.bins.slice(1).map((b,i)=>'· '+fmtF(addDiasHabiles(s.fBase,i+1))+': '+b.peds.map(p=>p.cliente||'—').join(', ')+' ('+b.pallets+' pal)').join('\n');
+      if(!confirm('Vas a mover estos pedidos a otro día (mismo transporte: '+s.tr+'):\n\n'+detalle+'\n\n¿Confirmar?')) return;
+      s.bins.slice(1).forEach((b,i)=>{ const fecha=fmtF(addDiasHabiles(s.fBase,i+1));
+        b.peds.forEach(p=>{ p.diaEntrega=fecha; persistPed(p); }); });
+      render();
+    });
     function trjViaje(v){
       const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
       const excede=cap>0&&v.pallets>cap;
@@ -12699,6 +12728,22 @@ function buildFilterTable(cfg){
         : excede ? '<b style="color:var(--red)">⚠️ se pasa por '+(v.pallets-cap)+' pallet'+((v.pallets-cap)!==1?'s':'')+' — hay que dividir el viaje</b>'
         : libre===0 ? '<b style="color:var(--green)">✅ camión completo</b>'
         : '<b style="color:var(--amber)">quedan '+libre+' pallet'+(libre!==1?'s':'')+' libres</b>';
+      let sugerenciaHtml='';
+      if(excede){
+        const {bins, solos}=sugerirDivision(v, cap);
+        const hayQueMover = bins.length>1 || solos.length;
+        if(hayQueMover){
+          let bloques = bins.map((b,i)=> '<div>'+(i===0?'Viaje 1 (queda igual)':'Viaje '+(i+1)+(v.f?' → '+fmtF(addDiasHabiles(v.f,i)):''))+': <b>'+b.pallets+' pal</b> — '+b.peds.map(p=>esc(p.cliente||'—')).join(', ')+'</div>').join('');
+          let avisoSolos = solos.length ? '<div style="color:var(--red);margin-top:4px">⚠️ '+solos.map(p=>esc(p.cliente||'—')+' ('+totCarga(p).pallets+' pal en UN solo pedido)').join(', ')+': no entra en ningún camión completo — hay que partirlo en una entrega parcial a mano, esto no lo hace la sugerencia.</div>' : '';
+          const idx=sugerencias.length;
+          if(v.f && bins.length>1) sugerencias.push({bins, fBase:v.f, tr:v.tr});
+          sugerenciaHtml = '<div style="margin-top:8px;padding:8px 10px;border:1px dashed '+col+';border-radius:8px;font-size:12px;background:rgba(0,0,0,.02)">'+
+            '<b>✂️ Sugerencia de división</b>'+bloques+avisoSolos+
+            (v.f && bins.length>1 ? '<button class="cmp-rowbtn" data-viaje-idx="'+idx+'" style="margin-top:6px">Aplicar: mover al siguiente día hábil</button>'
+              : (!v.f && bins.length>1 ? '<div style="color:var(--muted);margin-top:4px">Sin fecha entendible en este viaje — cambiá el día a mano.</div>' : ''))+
+          '</div>';
+        }
+      }
       return '<div class="pe-viaje '+CHIP[v.c].k+'" style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
           chipDia(v)+
@@ -12711,6 +12756,7 @@ function buildFilterTable(cfg){
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p);
           return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'; }).join('')+'</div>'+
+        sugerenciaHtml+
       '</div>';
     }
   }
