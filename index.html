@@ -13001,7 +13001,10 @@ function buildFilterTable(cfg){
     $('pe-form-ped').innerHTML=
       '<div class="cmp-form-grid">'+
         '<div class="cmp-field col2"><label>Cliente</label><input id="pp-cli" list="pe-ped-cli-dl" value="'+esc(pe.cliente)+'">'+cliDl+'</div>'+
-        '<div class="cmp-field"><label>Día de entrega</label><input id="pp-dia" value="'+esc(pe.diaEntrega)+'" placeholder="lunes 13 / 15-07"></div>'+
+        '<div class="cmp-field"><label>Día de entrega</label><div style="display:flex;gap:6px">'+
+          '<input id="pp-dia" value="'+esc(pe.diaEntrega)+'" placeholder="dd/mm/aa" style="flex:1;min-width:0">'+
+          '<input type="date" id="pp-dia-cal" title="Elegir del calendario" style="width:40px;padding:0 2px">'+
+        '</div></div>'+
         '<div class="cmp-field"><label>Fecha requerida (cliente)</label><input type="date" id="pp-freq" value="'+esc(pe.fechaRequerida||'')+'"></div>'+
         '<div class="cmp-field"><label>Prioridad</label><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:9px 0;cursor:pointer"><input type="checkbox" id="pp-espera"'+(pe.puedeEsperar?' checked':'')+'> 🕐 El cliente puede esperar</label></div>'+
         '<div class="cmp-field"><label>Transporte</label><select id="pp-transp">'+opt(TRANSPORTES,pe.transporte)+'</select></div>'+
@@ -13020,6 +13023,14 @@ function buildFilterTable(cfg){
     drawPlanCarga();
     [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; }); });
     $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; });
+    // "Día de entrega" se guarda como texto dd/mm/aa (así lo carga Sofía, es lo que entiende
+    // fechaDeDia() en Coordinar entregas) — el calendario es solo un ATAJO para escribirlo: al
+    // elegir una fecha ahí, se formatea a dd/mm/aa y se pisa el campo de texto. No se guarda el
+    // <input type="date"> en ningún lado, así que no cambia el formato de los datos existentes.
+    { const fIni=fechaDeDia(pe.diaEntrega); if(fIni) $('pp-dia-cal').value=isoDeF(fIni);
+      $('pp-dia-cal').addEventListener('change',()=>{ const v=$('pp-dia-cal').value; if(!v) return;
+        const [y,m,d]=v.split('-'); const val=d+'/'+m+'/'+y.slice(2);
+        $('pp-dia').value=val; editPed.diaEntrega=val; }); }
     $('pp-add').onclick=()=>{ editPed.items.push({producto:'',codigo:'',cantidad:1}); drawPedItems(); };
     // Tarjetas para el transportista: Gustavo carga esto DESDE EL CELULAR y un desplegable de Android
     // abre una hoja modal que come dos toques; la tarjeta se resuelve con uno. Además alimenta el
