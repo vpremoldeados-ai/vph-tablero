@@ -12049,7 +12049,7 @@ function buildFilterTable(cfg){
   }
   // API para Presupuestos/Ventas: window.__disponibilidadProducto('LC60'|'Loseta...', 46) → {inmediata, fecha?, texto}
   window.__disponibilidadProducto = function(ref, cantidad){ const p=resolverProd(ref,ref); if(!p||(p.tipo||'')==='Servicio') return null; return disponibilidadDe(p,cantidad); };
-  // 🔴 Comprometido de TODOS los pedidos pendientes MENOS uno puntual. Hace falta para chequear la
+  // 🔴 Comprometido de los pedidos pendientes que COMPITEN con uno dado. Hace falta para chequear la
   // disponibilidad de un pedido CONTRA SÍ MISMO (Coordinar entregas, el pedido en edición): como
   // `mapaComprometido()` ya reserva la cantidad de ESE pedido (es uno de los `pedidos` pendientes),
   // preguntarle a `disponibilidadDe` por esa misma cantidad la contaba DOS VECES — una metida adentro
@@ -12057,9 +12057,16 @@ function buildFilterTable(cfg){
   // corría la fecha estimada mucho más tarde de la real (pasó en producción, 13/08: un pedido con
   // stock curando desde el 15/08 mostraba "recién el 24/08" porque se estaba haciendo cola detrás de
   // SU PROPIA reserva). Mismo reparto padre/refuerzo que mapaComprometido — ver ese comentario.
-  function mapaComprometidoSinPedido(uid){
+  // 🔴 `fechaHasta` (opcional): el stock se asigna POR ORDEN DE FECHA DE VIAJE — para saber si el
+  // viaje del 18/08 llega seco, solo compiten los pedidos que se entregan ESE día o antes; uno del
+  // 19/08 o uno sin fecha todavía no le puede "robar" el lote que cura el 15/08 (2ª vuelta del mismo
+  // bug, 14/08: aun sin contarse a sí mismo, el pedido del 18/08 seguía en rojo porque se hacía cola
+  // detrás de pedidos POSTERIORES). Un pedido sin fecha entendible queda afuera del mapa cuando se
+  // filtra por fecha: cuando se le cargue el día, todos los chequeos se recalculan solos.
+  function mapaComprometidoSinPedido(uid, fechaHasta){
     const m={};
     pedidos.forEach(pe=>{ if(pe.estado==='entregado' || (uid && pe._uid===uid)) return;
+      if(fechaHasta){ const f=fechaDeDia(pe.diaEntrega); if(!f || f>fechaHasta) return; }
       cargaRows(pe).forEach(r=>{
         m[r.key]=(m[r.key]||0)+(r.ref? r.ref.neto : r.cant);
         if(r.ref) m[r.ref.key]=(m[r.ref.key]||0)+r.ref.cant; }); });
@@ -12702,7 +12709,7 @@ function buildFilterTable(cfg){
      el comentario de `mapaComprometidoSinPedido`). */
   function chequeoSeco(pe, fEntrega){
     if(!fEntrega) return null;
-    const mapa=mapaComprometidoSinPedido(pe._uid);
+    const mapa=mapaComprometidoSinPedido(pe._uid, fEntrega);
     const problemas=[];
     (pe.items||[]).forEach(it=>{
       if(!it || !(it.producto||it.codigo) || !(num(it.cantidad)>0)) return;
@@ -13129,8 +13136,10 @@ function buildFilterTable(cfg){
   // fecha estimada salía mal (mismo bug que en `chequeoSeco`, ver ese comentario).
   function drawDisponibilidadPed(){
     const box=$('pp-disp'); if(!box) return;
-    const mapa=mapaComprometidoSinPedido(editPed._uid);
     const fEntrega=fechaDeDia(editPed.diaEntrega);
+    // Con fecha elegida, compiten solo los pedidos de ese día o anteriores (asignación por orden de
+    // viaje, ver mapaComprometidoSinPedido); sin fecha aún, contra todos los demás (conservador).
+    const mapa=mapaComprometidoSinPedido(editPed._uid, fEntrega);
     const lineas=(editPed.items||[]).filter(it=>it && (it.producto||it.codigo) && num(it.cantidad)>0).map(it=>{
       const p=resolverProd(it.producto,it.codigo); if(!p) return '';
       const d=disponibilidadDe(p, num(it.cantidad), mapa);
