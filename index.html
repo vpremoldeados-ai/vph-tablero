@@ -592,6 +592,12 @@
       <p class="note"><b>Por qué se ajusta por mix:</b> las ventas mayoristas (corralones, constructoras, pedidos grandes) tienen precio menor y por lo tanto menor contribución marginal por peso vendido; las minoristas aportan más margen. El PE se recalcula con la contribución estimada del mes (costo de materia prima por kg del último mes cerrado × kg vendidos). Un mes muy mayorista necesita facturar MÁS para cubrir los mismos costos fijos. Mejora pendiente: separar la contribución real por canal (mayorista/minorista) usando la lista de precios de cada venta, y tomar el costo por unidad del <b>Costeo por producto</b> en vez del promedio del último cierre.</p>
     </section>
 
+    <section>
+      <h2><span class="dot" style="background:var(--accent)"></span>Mix de ventas — mes en curso</h2>
+      <div class="asof" id="asof-mix-ventas"></div>
+      <div id="mix-ventas"></div>
+    </section>
+
     <div class="grid2">
       <section>
         <h2><span class="dot"></span>Ingresos vs. Egresos y Resultado</h2>
@@ -1936,7 +1942,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -2009,6 +2015,70 @@ window.__pintarPE = function(){
     '</div>';
 };
 window.__pintarPE();
+
+/* ================= MIX DE VENTAS — EN VIVO ================= */
+// Cuatro cortes del mes en curso contra el mes anterior, en puntos porcentuales. Los datos salen de
+// __mixVentas(), que vive en el módulo Ventas: acá NO se recalcula nada, así no puede contradecirlo.
+// ⚠️ El módulo Ventas se carga DESPUÉS que este script, así que en el primer pintado __mixVentas
+// todavía no existe; lo repinta __refreshAlertas cuando llegan los datos (mismo patrón que __pintarPE).
+window.__pintarMixVentas = function(){
+  const cont=document.getElementById('mix-ventas'); if(!cont) return;
+  const asof=document.getElementById('asof-mix-ventas');
+  if(!window.__mixVentas){ if(asof) asof.textContent='Esperando los datos de Ventas…'; return; }
+  // esc() no existe en este módulo (cada IIFE tiene sus propios helpers): los nombres de medio de
+  // cobro los escribe el usuario, así que hay que escaparlos sí o sí.
+  const e = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const h=new Date();
+  const per = h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0');
+  const pAnt = new Date(h.getFullYear(), h.getMonth()-1, 1);
+  const perAnt = pAnt.getFullYear()+'-'+String(pAnt.getMonth()+1).padStart(2,'0');
+  const M = window.__mixVentas(per), A = window.__mixVentas(perAnt);
+  const COL=['#2f6fb2','#38b26a','#e8a33d','#d64541','#5aa9c9','#7d6bb0','#95a5b8'];
+  const sum = o => Object.values(o||{}).reduce((a,x)=>a+x.monto,0);
+
+  const bloque = (titulo, obj, objAnt) => {
+    const ent = Object.entries(obj||{}).filter(([,x])=>x.monto>0).sort((a,b)=>b[1].monto-a[1].monto);
+    const tot = ent.reduce((a,[,x])=>a+x.monto,0);
+    if(!tot) return '<div><div style="font-size:12px;font-weight:700;margin-bottom:5px">'+titulo+'</div>'+
+                    '<div class="asof">Sin datos este mes</div></div>';
+    const totA = sum(objAnt);
+    const barra = ent.map(([k,x],i)=>'<i style="width:'+(x.monto/tot*100).toFixed(2)+'%;background:'+COL[i%COL.length]+'" title="'+e(k)+'"></i>').join('');
+    const filas = ent.map(([k,x],i)=>{
+      const p = x.monto/tot*100;
+      // Comparación en PUNTOS porcentuales contra el mes anterior. Si el mes anterior no tuvo ventas
+      // no hay contra qué comparar y se deja en blanco (mostrar "+100 pts" sería ruido).
+      const pa = totA>0 ? ((objAnt&&objAnt[k]) ? objAnt[k].monto/totA*100 : 0) : null;
+      const d  = pa==null ? '' : ((p-pa>=0?'+':'')+(p-pa).toFixed(1)+' pts');
+      const col= pa==null ? 'var(--muted)' : (Math.abs(p-pa)<3 ? 'var(--muted)' : (p>pa?'var(--green)':'var(--red)'));
+      return '<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;padding:2px 0">'+
+        '<span style="width:9px;height:9px;border-radius:2px;background:'+COL[i%COL.length]+';flex:none"></span>'+
+        '<span style="flex:1;min-width:0">'+e(k)+'</span>'+
+        '<b style="flex:none">'+p.toFixed(1)+'%</b>'+
+        '<span style="flex:none;width:92px;text-align:right;color:var(--muted)">'+fmt$(x.monto)+'</span>'+
+        '<span style="flex:none;width:58px;text-align:right;color:'+col+'">'+d+'</span></div>';
+    }).join('');
+    return '<div><div style="font-size:12px;font-weight:700;margin-bottom:5px">'+titulo+'</div>'+
+      '<div class="progress" style="height:14px;display:flex">'+barra+'</div>'+
+      '<div style="margin-top:5px">'+filas+'</div></div>';
+  };
+
+  if(asof) asof.textContent = M.periodo+': '+fmt$(M.total)+' en '+M.cantVentas+' ventas (con IVA) · '+
+    (A.cantVentas ? 'la columna de la derecha compara en puntos porcentuales contra '+A.periodo+' ('+fmt$(A.total)+' en '+A.cantVentas+')'
+                  : 'sin ventas en '+A.periodo+' para comparar')+' · EN VIVO';
+
+  let avisos='';
+  if(M.listaFacturadaSinEmitir>0) avisos +=
+    '<div class="asof" style="color:var(--amber);margin-top:10px">⚠️ '+fmt$(M.listaFacturadaSinEmitir)+
+    ' se cotizó con una lista CON factura pero la venta no tiene comprobante emitido. Puede ser una factura pendiente de emitir o que falte cargar el tipo de comprobante.</div>';
+
+  cont.innerHTML = '<div class="grid2">'+
+      bloque('Canal', M.canal, A.canal) +
+      bloque('Facturación', M.facturacion, A.facturacion) +
+      bloque('Medio de cobro', M.medioCobro, A.medioCobro) +
+      bloque('Forma de pago acordada', M.financiacion, A.financiacion) +
+    '</div>' + avisos;
+};
+window.__pintarMixVentas();
 
 /* ================= METAS — EN VIVO desde los módulos (antes: foto del cierre) ================= */
 window.__pintarMetas = function(){
@@ -6949,6 +7019,38 @@ function buildFilterTable(cfg){
       });
     });
     return { periodo:per, base:round2(base), flete:round2(flete), cantVentas:n };
+  };
+
+  // --- Mix de ventas del mes (lo consume la Vista Diaria) ---
+  // Cuatro cortes sobre las MISMAS ventas: canal, facturación, forma de pago acordada y medio de cobro.
+  // Los montos van CON IVA porque es lo que la empresa factura y cobra. calc() ya devuelve el total con
+  // el signo de la Nota de Crédito aplicado, así que acá NO hay que volver a multiplicarlo (hacerlo
+  // convertiría una NC en una venta positiva).
+  window.__mixVentas = periodo=>{
+    const per = String(periodo||'').slice(0,7);
+    const canal={}, facturacion={}, financiacion={}, medioCobro={};
+    const acum = (o,k,m) => { (o[k] = o[k] || {monto:0,n:0}); o[k].monto += m; o[k].n++; };
+    let total=0, cantVentas=0, listaFactSinEmitir=0;
+    (DB.ventas||[]).forEach(v=>{
+      if(String(v.fecha||'').slice(0,7)!==per) return;
+      const q=calc(v), tot=q.total, signo=q.signo||1;
+      total+=tot; cantVentas++;
+      const L=String(v.listaPrecios||''), tc=String(v.tipoComprobante||'');
+      acum(canal, /mayorista/i.test(L)?'Mayorista' : /minorista/i.test(L)?'Minorista' : 'Sin canal', tot);
+      // Manda el comprobante REALMENTE emitido, no la lista con la que se cotizó: son cosas distintas
+      // y no siempre coinciden (por eso se informa aparte listaFacturadaSinEmitir).
+      const emitio = /^Factura/i.test(tc);
+      acum(facturacion, emitio?'Facturado':'Sin facturar', tot);
+      if(!emitio && !/sin facturar/i.test(L)) listaFactSinEmitir += tot;
+      acum(financiacion, num(v.finCuotas)>0 ? (num(v.finCuotas)+' cuotas') : 'Contado', tot);
+      (v.cobros||[]).forEach(c=>{
+        if(c.chequeRechazado) return;   // un cheque que rebotó no es plata cobrada (mismo criterio que calc)
+        const m=String(c.medio||'').trim();
+        acum(medioCobro, /cheq/i.test(m) ? 'Cheque / E-Cheq' : (m||'Sin especificar'), num(c.monto)*signo);
+      });
+    });
+    return { periodo:per, total:round2(total), cantVentas, canal, facturacion, financiacion, medioCobro,
+             listaFacturadaSinEmitir:round2(listaFactSinEmitir) };
   };
 
   // --- API para la conciliación con ARCA (la usa el módulo Libro IVA, archivo de Emitidos) ---
