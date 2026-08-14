@@ -12707,6 +12707,7 @@ function buildFilterTable(cfg){
                   {desde:5, cls:'',       t:'Sin fecha de entrega'} ];
     let bandaPuesta=-1;
     const sugerencias=[];   // una entrada por viaje con botón de "Aplicar división" (índice = data-viaje-idx)
+    const solosPed=[];      // pedidos que solos ya se pasan de la capacidad → botón "Partir pedido" (índice = data-partir-idx)
     cont.innerHTML = viajes.map(v=>{
       let banda='';
       const b=[...BANDA].reverse().find(x=>v.c>=x.desde);
@@ -12719,6 +12720,9 @@ function buildFilterTable(cfg){
       s.bins.slice(1).forEach((b,i)=>{ const fecha=fmtF(addDiasHabiles(s.fBase,i+1));
         b.peds.forEach(p=>{ p.diaEntrega=fecha; persistPed(p); }); });
       render();
+    });
+    cont.querySelectorAll('button[data-partir-idx]').forEach(btn=> btn.onclick=()=>{
+      const p=solosPed[+btn.dataset.partirIdx]; if(p) abrirPartirPedido(p);
     });
     function trjViaje(v){
       const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
@@ -12734,7 +12738,11 @@ function buildFilterTable(cfg){
         const hayQueMover = bins.length>1 || solos.length;
         if(hayQueMover){
           let bloques = bins.map((b,i)=> '<div>'+(i===0?'Viaje 1 (queda igual)':'Viaje '+(i+1)+(v.f?' → '+fmtF(addDiasHabiles(v.f,i)):''))+': <b>'+b.pallets+' pal</b> — '+b.peds.map(p=>esc(p.cliente||'—')).join(', ')+'</div>').join('');
-          let avisoSolos = solos.length ? '<div style="color:var(--red);margin-top:4px">⚠️ '+solos.map(p=>esc(p.cliente||'—')+' ('+totCarga(p).pallets+' pal en UN solo pedido)').join(', ')+': no entra en ningún camión completo — hay que partirlo en una entrega parcial a mano, esto no lo hace la sugerencia.</div>' : '';
+          let avisoSolos = solos.length ? '<div style="color:var(--red);margin-top:4px">⚠️ no entra en ningún camión completo, hay que partir el pedido:'+
+            solos.map(p=>{ const idxP=solosPed.length; solosPed.push(p);
+              return '<div style="display:flex;align-items:center;gap:8px;margin-top:3px"><span style="flex:1">'+esc(p.cliente||'—')+' ('+totCarga(p).pallets+' pal en UN solo pedido)</span>'+
+                '<button class="cmp-rowbtn" data-partir-idx="'+idxP+'">✂️ Partir pedido</button></div>'; }).join('')+
+            '</div>' : '';
           const idx=sugerencias.length;
           if(v.f && bins.length>1) sugerencias.push({bins, fBase:v.f, tr:v.tr});
           sugerenciaHtml = '<div style="margin-top:8px;padding:8px 10px;border:1px dashed '+col+';border-radius:8px;font-size:12px;background:rgba(0,0,0,.02)">'+
@@ -12784,6 +12792,7 @@ function buildFilterTable(cfg){
       '<td data-label="" class="pe-col-acc">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
         '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
         '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
+        (pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="partir" data-id="'+esc(pe._uid)+'" title="Partir en 2 viajes">✂️ Partir</button>':'')+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
     $('pe-tabla-ped').innerHTML=html; window.__ordenable('pe-tabla-ped');
@@ -12792,6 +12801,7 @@ function buildFilterTable(cfg){
       else if(a==='del'){ if(confirm('¿Eliminar el pedido de '+(pe.cliente||'—')+'?')) delPed(pe._uid); }
       else if(a==='remito') imprimirRemito(pe);
       else if(a==='wa') menuWaPedido(pe);
+      else if(a==='partir') abrirPartirPedido(pe);
       else if(a==='entregar') marcarEntregado(pe); });
   }
   // ---------- WhatsApp del pedido + programa del transportista (usa window.__wa) ----------
@@ -12870,6 +12880,90 @@ function buildFilterTable(cfg){
     window.__imprimir.remitoDatos(window.__remitoPedidoObj(pe));
   }
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
+  /* ---------- Partir un pedido en 2 viajes (13/08, pedido de Marcelo tras usar la sugerencia de
+     división: un cliente como Corralón San Miguel pide TODO en un solo pedido de 10 pallets y el
+     camión entra 8 — la sugerencia automática no puede resolverlo sola (nunca parte un pedido, ver
+     `sugerirDivision`), así que hace falta partir el PEDIDO en dos, a mano, producto por producto
+     (decisión de Marcelo: prefiere elegir él cuánto va en cada camión antes que un reparto ciego).
+     El pedido TODAVÍA NO se entregó (no hay botón de "Partir" para uno ya entregado): no se toca
+     stock ni remitos, solo se reparten cantidades entre el pedido original y uno NUEVO. Cada uno
+     arma su plan de pallets solo (se borra el `pe.plan` guardado del producto tocado — si no,
+     `cargaRows` seguiría usando el armado viejo, pensado para la cantidad ANTES de partir), y de
+     ahí en más cada pedido sigue el camino normal (remito, entrega) sin ningún caso especial. */
+  function abrirPartirPedido(pe){
+    const rows=filasParaPartir(pe);
+    if(rows.length<1){ alert('Este pedido no tiene productos para partir (¿es solo un servicio/flete?).'); return; }
+    const totPal=rows.reduce((a,r)=>a+r.pallets,0);
+    let ov=document.getElementById('pe-partir-modal');
+    if(!ov){ ov=document.createElement('div'); ov.id='pe-partir-modal';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px';
+      document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
+    const fSug=fechaDeDia(pe.diaEntrega); const fechaSugerida=fSug?fmtF(addDiasHabiles(fSug,1)):'';
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:min(560px,96vw);max-height:92vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 4px;font-size:15px">✂️ Partir pedido — '+esc(pe.cliente||'—')+'</h3>'+
+      '<div style="font-size:11.5px;color:#666;margin-bottom:10px">Elegí cuánto de cada producto va al 2do viaje. Lo que no muevas queda en este mismo pedido.</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><tr style="text-align:left;color:#666"><th>Producto</th><th style="text-align:right">Total</th><th style="text-align:right;width:110px">Al 2do viaje</th></tr>'+
+      rows.map((r,i)=>'<tr style="border-top:1px solid #eee"><td style="padding:4px 0">'+esc(r.nombre)+'</td>'+
+        '<td style="text-align:right">'+r.cant+'</td>'+
+        '<td style="text-align:right"><input type="number" min="0" max="'+r.cant+'" step="1" value="0" data-psp-mov="'+i+'" style="width:80px;text-align:right;padding:3px 6px;border:1px solid #ccc;border-radius:6px"></td></tr>').join('')+
+      '</table>'+
+      '<div id="pe-partir-resumen" style="margin-top:10px;font-size:12.5px;font-weight:700"></div>'+
+      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
+        '<div class="cmp-field" style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Fecha del 2do viaje</label><input id="pe-partir-fecha" value="'+esc(fechaSugerida)+'" placeholder="dd/mm/aa" style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:6px"></div>'+
+        '<div class="cmp-field" style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Transporte del 2do viaje</label><select id="pe-partir-transp" style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:6px">'+
+          (window.__transportes?window.__transportes():['Sánchez']).map(t=>'<option'+(t===pe.transporte?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>'+
+      '</div>'+
+      '<div style="display:flex;gap:8px;margin-top:14px">'+
+        '<button id="pe-partir-ok" class="cmp-btn cmp-btn-primary">Partir pedido</button>'+
+        '<button id="pe-partir-x" class="cmp-btn">Cancelar</button>'+
+      '</div></div>';
+    const resumen=()=>{
+      let pal1=0, pal2=0;
+      rows.forEach((r,i)=>{ const mov=Math.max(0,Math.min(r.cant,Math.round(num(ov.querySelector('[data-psp-mov="'+i+'"]').value))));
+        pal1+=planStd(r.cant-mov, r.ud).length; pal2+=mov>0?planStd(mov, r.ud).length:0; });
+      ov.querySelector('#pe-partir-resumen').textContent = 'Viaje 1 (este pedido): '+pal1+' pallet'+(pal1!==1?'s':'')+'  ·  Viaje 2 (nuevo pedido): '+pal2+' pallet'+(pal2!==1?'s':'')+' de '+totPal+' totales';
+    };
+    ov.querySelectorAll('[data-psp-mov]').forEach(inp=> inp.oninput=resumen);
+    resumen();
+    ov.querySelector('#pe-partir-x').onclick=()=>ov.remove();
+    ov.querySelector('#pe-partir-ok').onclick=()=>{
+      const movs=rows.map((r,i)=> Math.max(0,Math.min(r.cant,Math.round(num(ov.querySelector('[data-psp-mov="'+i+'"]').value)))));
+      if(!movs.some(m=>m>0)){ alert('Poné una cantidad mayor a 0 en al menos un producto para partir el pedido.'); return; }
+      const fecha2=ov.querySelector('#pe-partir-fecha').value.trim();
+      if(!fecha2){ alert('Falta la fecha del 2do viaje.'); return; }
+      const transp2=ov.querySelector('#pe-partir-transp').value;
+      if(!confirm('Vas a crear un pedido nuevo para '+(pe.cliente||'—')+' con lo que muevas, fechado '+fecha2+' ('+transp2+'). El pedido original se queda con el resto. ¿Confirmar?')) return;
+      const nuevoItems=[];
+      rows.forEach((r,i)=>{ const mov=movs[i]; if(mov<=0) return;
+        nuevoItems.push({ producto:r.it.producto||'', codigo:r.it.codigo||'', cantidad:mov });
+        r.it.cantidad = r.cant - mov;
+        if(pe.plan) delete pe.plan[r.key];    // el armado viejo era para la cantidad de ANTES de partir
+      });
+      pe.items = (pe.items||[]).filter(it=> it && num(it.cantidad)>0);
+      pe.mixtos = [];   // pudo quedar referenciando tandas que ya no existen tras el reparto
+      persistPed(pe);
+      const nuevo = Object.assign(blankPed(), {
+        cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
+        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, nota:pe.nota||'',
+        items:nuevoItems, diaEntrega:fecha2, transporte:transp2, estado:pe.estado==='programado'?'programado':'pendiente'
+      });
+      persistPed(nuevo);
+      ov.remove(); render();
+    };
+  }
+  // cargaRows emparejado con el ítem crudo (pe.items[idx]) para poder MOVER cantidad — cargaRows solo
+  // devuelve el cálculo, no el ítem que hay que editar. Mismo patrón de emparejado por (key,j) que usa
+  // __remitoPedidoObj para no confundir dos renglones del mismo producto (11/08).
+  function filasParaPartir(pe){
+    const rows=cargaRows(pe), occ={};
+    return (pe.items||[]).map(it=>{
+      if(!it||!(it.producto||it.codigo)||!(num(it.cantidad)>0)) return null;
+      const key=keyDe(it.codigo,it.producto), j=occ[key]||0; occ[key]=j+1;
+      const r=rows.find(x=>x.key===key && x.j===j);
+      if(!r) return null;   // servicio/flete: no se parte
+      return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length };
+    }).filter(Boolean);
+  }
   function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
   function marcarEntregado(pe){
     const c=fb(); if(!c||!c.db) return;
