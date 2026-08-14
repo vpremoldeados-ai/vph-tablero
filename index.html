@@ -1951,6 +1951,27 @@ setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 4200);
 // (ej. marca un costo fijo como pagado), la alerta se actualiza sola sin esperar a un click de nav.
 setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
 
+// --- Días hábiles del mes en curso, a la fecha de HOY: lun-vie MENOS los feriados ---
+// UNA sola implementación para el Punto de Equilibrio y las Metas. Estaba duplicada y ninguna de las
+// dos descontaba los feriados: agosto/26 mostraba 21 días hábiles cuando son 20 (el 17 es San Martín).
+// El feriado alarga el mes de mentira: baja el ritmo diario necesario del PE y afloja el avance
+// esperado de las Metas.
+// ⚠️ __esFeriado vive en el módulo Producción, que carga DESPUÉS de este script: en el primer pintado
+// todavía no existe y se cuentan todos los lun-vie. __refreshAlertas repinta cuando llegan los
+// feriados y ahí se corrige solo (mismo patrón que el resto de los widgets en vivo).
+function diasHabilesMes(){
+  const h=new Date(), y=h.getFullYear(), m=h.getMonth(), last=new Date(y,m+1,0).getDate();
+  let tot=0, tra=0;
+  for(let d=1; d<=last; d++){
+    const wd=new Date(y,m,d).getDay(); if(wd<1||wd>5) continue;
+    const iso=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    let feriado=false; try{ feriado = !!(window.__esFeriado && window.__esFeriado(iso)); }catch(e){}
+    if(feriado) continue;
+    tot++; if(d<=h.getDate()) tra++;
+  }
+  return { tot, tra };
+}
+
 // --- Widget Punto de Equilibrio del mes en curso ---
 // El PE en $ depende del MIX mayorista/minorista: PE = Costos Fijos / % contribución marginal.
 // Estimamos la contribución del mes en curso con el costo de MP por kg del último mes cerrado
@@ -1979,9 +2000,8 @@ window.__pintarPE = function(){
   // contribución. Antes se comparaba el total CON IVA contra un PE derivado del neto: la barra
   // mostraba más avance del real (en julio, $3,7 M de más).
   const v = rm ? (rm.netoVendido || rm.ventas) : mesEnCurso.ventas;      // facturado NETO, EN VIVO
-  // Días hábiles (lun-vie) del mes, calculados a la fecha de HOY (antes venían congelados del cierre).
-  const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
-  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
+  // Días hábiles del mes a la fecha de HOY, sin feriados (ver diasHabilesMes).
+  const _dh=diasHabilesMes(), _tot=_dh.tot, _tra=_dh.tra;
   const pct = Math.min(v/pe*100, 100);
   const falta = Math.max(pe - v, 0);
   const dTrans = rm ? _tra : mesEnCurso.diasHabilesTranscurridos, dTot = rm ? _tot : mesEnCurso.diasHabilesTotales, dRest = dTot - dTrans;
@@ -2084,9 +2104,8 @@ window.__pintarMixVentas();
 window.__pintarMetas = function(){
   if(!document.getElementById('tabla-metas') || !Array.isArray(METAS)) return;
   const fmtVal = (v,u) => u==='$' ? fmt$(v) : u==='kg' ? Math.round(v).toLocaleString('es-AR')+' kg' : u==='%' ? (+v).toFixed(1).replace('.0','')+'%' : u==='x' ? (+v).toFixed(2) : Math.round(v).toLocaleString('es-AR');
-  // Días hábiles (lun-vie) del mes calculados a HOY (antes venían congelados del cierre).
-  const _h=new Date(), _y=_h.getFullYear(), _m=_h.getMonth(), _last=new Date(_y,_m+1,0).getDate();
-  let _tot=0,_tra=0; for(let d=1;d<=_last;d++){ const wd=new Date(_y,_m,d).getDay(); if(wd>=1&&wd<=5){ _tot++; if(d<=_h.getDate())_tra++; } }
+  // Días hábiles del mes a HOY, sin feriados (misma fuente que el Punto de Equilibrio).
+  const _dh=diasHabilesMes(), _tot=_dh.tot, _tra=_dh.tra;
   const avanceMes = _tot>0 ? _tra/_tot : (mesEnCurso.diasHabilesTranscurridos/mesEnCurso.diasHabilesTotales);
 
   // Valor EN VIVO de cada meta desde los módulos (null = sin fuente en vivo → queda el del cierre).
