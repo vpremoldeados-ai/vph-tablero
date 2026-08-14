@@ -6128,7 +6128,13 @@ function buildFilterTable(cfg){
     // venta asociada del formulario del remito y no queden dos redacciones distintas en el papel.
     const ref = window.__refComprobante ? window.__refComprobante(v)
               : ((v.tipoComprobante||'Venta')+' '+(v.nroFactura?((v.puntoVenta?v.puntoVenta+'-':'')+v.nroFactura):('N° '+(v.nroInterno||''))));
-    return { numero:'', fecha:hoyISO, transportista:transportista||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items,
+    // Si la venta ya tiene su pedido en Producción, el remito propone el DÍA DEL VIAJE programado y
+    // su transporte (pedido de Marcelo, 14/08) — antes proponía siempre HOY y había que corregirla.
+    const pe = window.__pedidoDeVenta ? window.__pedidoDeVenta(v._uid) : null;
+    let fViaje=''; if(pe && pe.diaEntrega){ const m=String(pe.diaEntrega).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if(m){ let a=+m[3]; if(a<100)a+=2000; const d=new Date(a,+m[2]-1,+m[1]); if(d.getMonth()===+m[2]-1) fViaje=a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); } }
+    // Teléfono: la ficha del cliente casi nunca lo tiene cargado; el lead del CRM sí (__telefonoLead).
+    const tel = cli.telefono || (window.__telefonoLead?window.__telefonoLead(v.cliente):'') || '';
+    return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items,
       ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
@@ -11334,6 +11340,19 @@ function buildFilterTable(cfg){
     if(!map.zona && (datos.destination||datos.destino)){ const z=String(datos.destination||datos.destino); if(['retiro','capital','cercanas','mati','particular','brio'].includes(z)) map.zona=z; }
     const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; aplicarAutoSeguimiento(l,null); persist(l); return l; };
 
+  // Teléfono cargado en el LEAD de un cliente, buscado por nombre. Respaldo para los remitos
+  // (pedido de Marcelo, 14/08): la ficha de vph_clientes casi nunca tiene el teléfono (3 de 13 al
+  // 07/08), pero el lead del CRM sí llega con el WhatsApp — sin esto, el campo "Teléfono de
+  // contacto" del remito salía vacío aunque el dato estuviera cargado en el sistema.
+  // Si hay varios leads del mismo cliente, gana el más nuevo con teléfono (el dato más fresco).
+  window.__telefonoLead = function(nombre){
+    const norm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    const n=norm(nombre); if(!n) return '';
+    const cand=(DB.leads||[]).filter(x=>norm(x.cliente)===n && String(x.telefono||'').trim())
+      .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+    return cand.length?String(cand[0].telefono).trim():'';
+  };
+
   // ---------- Herramientas para la Bandeja WhatsApp (convertir una conversación en lead) ----------
   // Viven ACÁ y no en la bandeja para reusar catProd/ALIAS_PROD/m2PorUnidadInfo/MERMA_RECORTES —
   // una sola fuente (ver §3 CLAUDE.md sobre el dolor de las copias). La bandeja las llama en click.
@@ -12931,16 +12950,20 @@ function buildFilterTable(cfg){
       // acá se manda el plan crudo y la columna Observaciones queda libre.
       return { codigo:it.codigo||'', desc:it.producto||'', cant:num(it.cantidad), pallets:(r?r.pallets:null) };
     });
-    // ⚠️ La fecha del remito es la de la ENTREGA: si el pedido ya se entregó, esa; si no, la fecha
-    // requerida por el cliente; y si no hay ninguna, HOY. Nunca `pe.fecha`, que es cuándo se cargó
-    // el pedido. Igual se confirma en el formulario de datos de entrega antes de imprimir.
+    // ⚠️ La fecha del remito es la de la ENTREGA: si el pedido ya se entregó, esa; si no, el DÍA DEL
+    // VIAJE programado (`diaEntrega`, pedido de Marcelo 14/08: es el día en que el papel se firma);
+    // después la fecha requerida por el cliente; y si no hay ninguna, HOY. Nunca `pe.fecha`, que es
+    // cuándo se cargó el pedido. Igual se confirma en el formulario de datos de entrega antes de imprimir.
     // `numero` vacío: lo asigna el módulo Remitos al emitir. `ventaUid` es la venta que originó el
     // pedido (si vino de una): el formulario del remito la deja cambiar antes de imprimir.
     // Pallets mixtos del pedido, resueltos a código+tanda para que el remito pueda descontar los
     // compartidos del Total Bultos y mostrar la composición de cada uno.
     const mixtos=mixtosDe(pe, rows).map(g=>({ m:g.map(y=>({ codigo:y.row.codigo||'', desc:y.row.nombre||'', j:y.j, i:y.i, u:y.u })) }));
-    return { numero:'', fecha:fecha||pe.fechaEntregado||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
-      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:dom, items:items, mixtos:mixtos,
+    const fViaje=fechaDeDia(pe.diaEntrega);   // texto dd/mm/aa → ISO para el <input type="date">
+    // Teléfono: la ficha del cliente casi nunca lo tiene; el lead del CRM sí (ver __telefonoLead).
+    const tel=cli.telefono || (window.__telefonoLead?window.__telefonoLead(pe.cliente):'') || '';
+    return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
+      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
       pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'' };
   };
   function imprimirRemito(pe){
