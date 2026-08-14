@@ -14650,12 +14650,20 @@ function buildFilterTable(cfg){
     }
     // Numera (correlativo, atómico) y registra el remito antes de imprimirlo. Si el módulo de remitos
     // no está o la escritura falla, NO se traba la salida del camión: se ofrece imprimir sin número.
+    // ⚠️ "Quota exceeded" NO es un problema del remito ni de la venta (una venta puede tener VARIOS
+    // remitos, uno por viaje — eso siempre estuvo permitido): es Firebase avisando que se agotó el
+    // cupo gratuito de operaciones del día. Pasó el 14/08 y el mensaje crudo hacía creer que el
+    // sistema estaba bloqueando el segundo remito — por eso acá se traduce a qué hacer.
     function emitirEImprimir(o, ov, btn){
       const salir=x=>{ ov.remove(); try{ window.__imprimir.remito(x); }catch(e){ alert('Error al generar el documento: '+e.message); } };
       if(!window.__remitoEmitir){ salir(o); return; }
       window.__remitoEmitir(o).then(salir).catch(e=>{
         if(btn){ btn.disabled=false; btn.textContent='🚚 Generar remito'; }
-        if(confirm('No se pudo numerar el remito: '+e.message+'\n\n¿Imprimirlo SIN número igual?')) salir(o);
+        const esQuota=/quota|resource-?exhausted/i.test(String(e&&e.message||''));
+        const msg = esQuota
+          ? 'La base de datos (Firebase) agotó el cupo GRATUITO de operaciones de hoy — NO es un problema del remito ni de la venta, y no hay nada mal cargado.\n\nEl cupo se renueva solo a la medianoche de California (≈ 4-5 AM hora argentina). Opciones:\n• Esperá un rato y volvé a tocar "Generar remito" (a veces se libera antes).\n• O imprimilo SIN número ahora para que salga el camión, y mañana emitilo de nuevo con número.'
+          : 'No se pudo numerar el remito: '+e.message;
+        if(confirm(msg+'\n\n¿Imprimirlo SIN número igual?')) salir(o);
       });
     }
     obj.fecha = isoOk(obj.fecha) || hoyDoc();
