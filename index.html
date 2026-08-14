@@ -6300,6 +6300,7 @@ function buildFilterTable(cfg){
       '<div class="tbl-wrap"><table class="cmp-items-tbl"><thead><tr><th style="width:34%">Producto / Servicio</th><th>Cant.</th><th>Precio unit.</th><th>Desc. %</th><th>IVA</th><th>Subtotal</th><th>Total</th><th></th></tr></thead><tbody id="vf-items"></tbody></table></div>'+
       '<button class="cmp-addline" id="vf-addline">+ Agregar ítem</button>'+ datalistProd() +
       '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Tip: escribí el nombre o código de un producto del catálogo y trae precio (según la lista) e IVA automáticamente.</div>'+
+      '<div id="vf-disp" style="margin-top:8px"></div>'+
       '<div class="grid2" style="margin-top:14px">'+
         '<div>'+ field('Nota para el cliente','','<textarea id="vf-notacli" rows="2" placeholder="Aparece en la factura...">'+esc(v.notaCliente)+'</textarea>') +
           field('Nota interna','','<textarea id="vf-nota" rows="2" placeholder="Uso interno...">'+esc(v.nota)+'</textarea>') +
@@ -6401,6 +6402,21 @@ function buildFilterTable(cfg){
       (num(editing.intereses)?'<div class="cmp-tot-row"><span>Intereses</span><b>'+money(num(editing.intereses))+'</b></div>':'')+
       '<div class="cmp-tot-row big"><span>Total Venta'+(num(editing.finCuotas)?' ('+num(editing.finCuotas)+' cuotas)':'')+'</span><span>'+money(kk.total)+'</span></div>'+
       (num(editing.finCuotas)?'<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Bruto financiado en <b>'+num(editing.finCuotas)+' cuotas de '+money(kk.total/num(editing.finCuotas))+'</b> (perfil '+esc(PERFIL_LBL(perfilVta(editing)))+'). Se factura y se cobra por VIUMI por este total.</div>':'');
+    drawDisponibilidad();
+  }
+  // Disponibilidad de stock por ítem (semáforo: inmediata / en curado / hay que fabricar). Pedido de
+  // Marcelo (13/08): en Presupuestos ya existía (pf-disp/drawDisponibilidad); Ventas no la tenía, así
+  // que una venta cargada directo (sin pasar por un presupuesto antes) no avisaba nada de disponibilidad.
+  function drawDisponibilidad(){
+    const box=$('vf-disp'); if(!box) return;
+    if(typeof window.__disponibilidadProducto!=='function'){ box.innerHTML=''; return; }
+    const lineas=(editing.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0).map(it=>{
+      const d=window.__disponibilidadProducto(it.codigo||it.desc, num(it.cant));
+      if(!d) return '';
+      const col=d.inmediata?'#0a7d3f':'#b45309';
+      return '<div style="font-size:12px;color:'+col+';padding:2px 0">• <b>'+esc(it.desc||it.codigo)+'</b> ('+num(it.cant)+' u): '+d.texto+'</div>';
+    }).filter(Boolean);
+    box.innerHTML = lineas.length ? '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:#f8fafc"><div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:2px">DISPONIBILIDAD DE STOCK</div>'+lineas.join('')+'</div>' : '';
   }
   let _onSaved=null;   // callback opcional (ej. marcar un presupuesto como convertido SOLO si se guarda la venta)
   // ---------- Número interno de las ventas SIN FACTURA ----------
@@ -12652,6 +12668,22 @@ function buildFilterTable(cfg){
     });
     return { bins, solos:solos.map(x=>x.p) };
   }
+  /* ---------- ¿Va a estar SECO (curado) para la fecha del viaje? -----------------------------------
+     Pedido de Marcelo (13/08): "cuando armo los camiones voy teniendo en cuenta la disponibilidad
+     para entregar con las losetas totalmente secas" — la tabla de "Stock y faltantes" NO sirve para
+     esto (su columna Disponible es físico−comprometido, sin curado, ver CLAUDE.md). Acá sí se puede
+     comparar bien porque ya hay una fecha de viaje (`v.f`) contra la cual chequear cada producto con
+     el mismo criterio que usa Sofía al vender (`__disponibilidadProducto`, stock CURADO). */
+  function chequeoSeco(pe, fEntrega){
+    if(!fEntrega || typeof window.__disponibilidadProducto!=='function') return null;
+    const problemas=[];
+    (pe.items||[]).forEach(it=>{
+      if(!it || !(it.producto||it.codigo) || !(num(it.cantidad)>0)) return;
+      const d=window.__disponibilidadProducto(it.codigo||it.producto, num(it.cantidad));
+      if(d && !d.inmediata && d.fecha && d.fecha>fEntrega) problemas.push((it.producto||it.codigo)+' recién el '+fmtF(d.fecha));
+    });
+    return problemas.length ? problemas : null;
+  }
   /* ---------- La FECHA del viaje ----------------------------------------------------------------
      `diaEntrega` es un campo de texto libre, pero en la práctica Sofía lo carga siempre como
      dd/mm/aa (verificado contra los 25 pedidos del backup del 09/08). Hasta ahora los viajes se
@@ -12762,8 +12794,9 @@ function buildFilterTable(cfg){
         '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)">'+estado+
           (v.peso>0?'<span>· '+(Math.round(v.peso/100)/10)+' t</span>':'')+
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
-        '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p);
-          return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'; }).join('')+'</div>'+
+        '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
+          return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'+
+            (seco?'<div style="color:var(--red);font-size:11px;padding:0 0 3px">⚠️ no va a estar seco para ese día: '+esc(seco.join(' · '))+'</div>':''); }).join('')+'</div>'+
         sugerenciaHtml+
       '</div>';
     }
@@ -13014,6 +13047,7 @@ function buildFilterTable(cfg){
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Productos del pedido</h4><div id="pp-items"></div>'+prodOpts+
       '<button class="cmp-addline" id="pp-add">+ Agregar producto</button>'+
+      '<div id="pp-disp" style="margin-top:8px"></div>'+
       '<div style="margin-top:14px"><h4 style="margin:8px 0 6px;font-size:13px">🚚 Plan de carga · pallets Arlog 1×1,20 m</h4>'+
         '<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px">Cómo se apilan los productos sobre el camión. Editá las cantidades por pallet para repartir el peso.</p>'+
         '<div id="pp-plan"></div></div>'+
@@ -13021,7 +13055,8 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pp-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pp-save">Guardar pedido</button></div>';
     drawPedItems();
     drawPlanCarga();
-    [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; }); });
+    drawDisponibilidadPed();
+    [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; if(id==='pp-dia') drawDisponibilidadPed(); }); });
     $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; });
     // "Día de entrega" se guarda como texto dd/mm/aa (así lo carga Sofía, es lo que entiende
     // fechaDeDia() en Coordinar entregas) — el calendario es solo un ATAJO para escribirlo: al
@@ -13030,8 +13065,8 @@ function buildFilterTable(cfg){
     { const fIni=fechaDeDia(pe.diaEntrega); if(fIni) $('pp-dia-cal').value=isoDeF(fIni);
       $('pp-dia-cal').addEventListener('change',()=>{ const v=$('pp-dia-cal').value; if(!v) return;
         const [y,m,d]=v.split('-'); const val=d+'/'+m+'/'+y.slice(2);
-        $('pp-dia').value=val; editPed.diaEntrega=val; }); }
-    $('pp-add').onclick=()=>{ editPed.items.push({producto:'',codigo:'',cantidad:1}); drawPedItems(); };
+        $('pp-dia').value=val; editPed.diaEntrega=val; drawDisponibilidadPed(); }); }
+    $('pp-add').onclick=()=>{ editPed.items.push({producto:'',codigo:'',cantidad:1}); drawPedItems(); drawDisponibilidadPed(); };
     // Tarjetas para el transportista: Gustavo carga esto DESDE EL CELULAR y un desplegable de Android
     // abre una hoja modal que come dos toques; la tarjeta se resuelve con uno. Además alimenta el
     // planificador de viajes, así que ver los transportes juntos ayuda a elegir el camión con lugar.
@@ -13052,10 +13087,28 @@ function buildFilterTable(cfg){
     $('pp-items').innerHTML=editPed.items.map((it,i)=>'<div class="pe-qty"><div style="flex:1"><input class="txt" data-pi="'+i+'" data-pk="producto" list="pe-ped-prod-dl" value="'+esc(it.producto)+'" placeholder="Producto" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px"></div>'+
       '<div class="pe-stepper"><button data-pstep="-1" data-i="'+i+'">−</button><input data-pqi="'+i+'" inputmode="numeric" value="'+it.cantidad+'"><button data-pstep="1" data-i="'+i+'">+</button></div>'+
       (editPed.items.length>1?'<button class="cmp-rowbtn" data-pdel="'+i+'">✕</button>':'')+'</div>').join('');
-    $('pp-items').querySelectorAll('input[data-pk="producto"]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.pi; editPed.items[i].producto=el.value; const p=resolverProd(el.value,''); editPed.items[i].codigo=p?(p.codigo||''):''; drawPlanCarga(); }));
-    $('pp-items').querySelectorAll('input[data-pqi]').forEach(el=> el.addEventListener('input',()=>{ editPed.items[+el.dataset.pqi].cantidad=num(el.value); drawPlanCarga(); }));
-    $('pp-items').querySelectorAll('button[data-pstep]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.i; editPed.items[i].cantidad=Math.max(0,num(editPed.items[i].cantidad)+num(b.dataset.pstep)); drawPedItems(); drawPlanCarga(); });
-    $('pp-items').querySelectorAll('button[data-pdel]').forEach(b=> b.onclick=()=>{ editPed.items.splice(+b.dataset.pdel,1); drawPedItems(); drawPlanCarga(); });
+    $('pp-items').querySelectorAll('input[data-pk="producto"]').forEach(el=> el.addEventListener('input',()=>{ const i=+el.dataset.pi; editPed.items[i].producto=el.value; const p=resolverProd(el.value,''); editPed.items[i].codigo=p?(p.codigo||''):''; drawPlanCarga(); drawDisponibilidadPed(); }));
+    $('pp-items').querySelectorAll('input[data-pqi]').forEach(el=> el.addEventListener('input',()=>{ editPed.items[+el.dataset.pqi].cantidad=num(el.value); drawPlanCarga(); drawDisponibilidadPed(); }));
+    $('pp-items').querySelectorAll('button[data-pstep]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.i; editPed.items[i].cantidad=Math.max(0,num(editPed.items[i].cantidad)+num(b.dataset.pstep)); drawPedItems(); drawPlanCarga(); drawDisponibilidadPed(); });
+    $('pp-items').querySelectorAll('button[data-pdel]').forEach(b=> b.onclick=()=>{ editPed.items.splice(+b.dataset.pdel,1); drawPedItems(); drawPlanCarga(); drawDisponibilidadPed(); });
+  }
+  // Disponibilidad de stock por ítem del PEDIDO (mismo semáforo de Presupuestos/Ventas, pedido de
+  // Marcelo 13/08: "cuando lo paso a producción, ¿dónde lo veo?"). Compara además contra el "Día de
+  // entrega" YA elegido del pedido — para eso sirve acá, a diferencia de Presupuestos/Ventas: cuando
+  // Sofía arma el camión necesita saber si esa fecha alcanza para que la mercadería esté seca.
+  function drawDisponibilidadPed(){
+    const box=$('pp-disp'); if(!box) return;
+    if(typeof window.__disponibilidadProducto!=='function'){ box.innerHTML=''; return; }
+    const fEntrega=fechaDeDia(editPed.diaEntrega);
+    const lineas=(editPed.items||[]).filter(it=>it && (it.producto||it.codigo) && num(it.cantidad)>0).map(it=>{
+      const d=window.__disponibilidadProducto(it.codigo||it.producto, num(it.cantidad));
+      if(!d) return '';
+      const col=d.inmediata?'#0a7d3f':'#b45309';
+      const tarde = !d.inmediata && d.fecha && fEntrega && d.fecha>fEntrega;
+      const aviso = tarde ? ' <b style="color:var(--red)">⚠️ el día de entrega elegido ('+fmtF(fEntrega)+') es ANTES de que esté lista</b>' : '';
+      return '<div style="font-size:12px;color:'+(tarde?'var(--red)':col)+';padding:2px 0">• <b>'+esc(it.producto||it.codigo)+'</b> ('+num(it.cantidad)+' u): '+d.texto+aviso+'</div>';
+    }).filter(Boolean);
+    box.innerHTML = lineas.length ? '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:#f8fafc"><div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:2px">DISPONIBILIDAD DE STOCK</div>'+lineas.join('')+'</div>' : '';
   }
   // ---------- Editor del plan de carga (pallets) ----------
   function drawPlanCarga(){
