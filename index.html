@@ -12012,11 +12012,17 @@ function buildFilterTable(cfg){
   // ---------- Disponibilidad para presupuestar (Sofía) ----------
   // Dada una cantidad a vender: ¿entrega inmediata, espera de curado, o hay que fabricar?
   // Disponibilidad de UN producto suelto, sin considerar el refuerzo de base (la usa disponibilidadDe).
-  function dispoSimple(p, cantidad){
+  // `comprometidoMap` es OPCIONAL: por defecto usa s.comprometido (TODOS los pedidos pendientes, el
+  // comportamiento de siempre — lo que llaman Presupuestos/Ventas para una venta NUEVA, que todavía
+  // no está en `pedidos` y por lo tanto no está adentro de ese comprometido). Ver `chequeoSeco` para
+  // por qué hace falta poder pasar un mapa distinto.
+  function dispoSimple(p, cantidad, comprometidoMap){
     const s=stockDe(p); cantidad=Math.ceil(num(cantidad)); if(cantidad<=0) return null;
-    if(s.disponible>=cantidad) return { inmediata:true, disponible:s.disponible, texto:'✅ Entrega inmediata ('+nf(s.disponible)+' disponibles)' };
-    let falta=cantidad-s.disponible;   // si disponible es negativo, incluye el faltante previo (la venta nueva va al final de la cola)
-    for(const l of s.lotes){ falta-=l.cantidad; if(falta<=0) return { inmediata:false, fecha:l.el, texto:'⏳ En curado: entrega posible desde el '+fmtF(l.el)+(s.disponible>0?(' ('+nf(s.disponible)+' de '+nf(cantidad)+' ya disponibles)'):'') }; }
+    const comprometido = comprometidoMap ? num(comprometidoMap[s.k]) : s.comprometido;
+    const disp = s.curado - comprometido;
+    if(disp>=cantidad) return { inmediata:true, disponible:disp, texto:'✅ Entrega inmediata ('+nf(disp)+' disponibles)' };
+    let falta=cantidad-disp;   // si disp es negativo, incluye el faltante previo (la venta nueva va al final de la cola)
+    for(const l of s.lotes){ falta-=l.cantidad; if(falta<=0) return { inmediata:false, fecha:l.el, texto:'⏳ En curado: entrega posible desde el '+fmtF(l.el)+(disp>0?(' ('+nf(disp)+' de '+nf(cantidad)+' ya disponibles)'):'') }; }
     const peso=pesoDe(s.k); const ritmo=ritmoKgDia();
     const kg=falta*peso;
     const diasFab=Math.max(1, peso>0? Math.ceil(kg/ritmo) : 1);
@@ -12025,11 +12031,11 @@ function buildFilterTable(cfg){
   }
   // Disponibilidad REAL: si el producto lleva refuerzo de base, manda el PEOR de los dos. De nada sirve
   // tener 300 losetas si faltan las bases — antes contestaba "entrega inmediata" y era mentira.
-  function disponibilidadDe(p, cantidad){
+  function disponibilidadDe(p, cantidad, comprometidoMap){
     const cant=Math.ceil(num(cantidad)); if(cant<=0) return null;
     const r=splitRefuerzo(p, planStd(cant, num(p&&p.udPorPallet)), cant);
-    if(!r) return dispoSimple(p, cant);
-    const a=dispoSimple(p, r.neto), b=dispoSimple(r.pr2, r.cant);
+    if(!r) return dispoSimple(p, cant, comprometidoMap);
+    const a=dispoSimple(p, r.neto, comprometidoMap), b=dispoSimple(r.pr2, r.cant, comprometidoMap);
     if(!a) return b; if(!b) return a;
     if(a.inmediata && b.inmediata)
       return { inmediata:true, disponible:Math.min(a.disponible,b.disponible),
@@ -12043,6 +12049,22 @@ function buildFilterTable(cfg){
   }
   // API para Presupuestos/Ventas: window.__disponibilidadProducto('LC60'|'Loseta...', 46) → {inmediata, fecha?, texto}
   window.__disponibilidadProducto = function(ref, cantidad){ const p=resolverProd(ref,ref); if(!p||(p.tipo||'')==='Servicio') return null; return disponibilidadDe(p,cantidad); };
+  // 🔴 Comprometido de TODOS los pedidos pendientes MENOS uno puntual. Hace falta para chequear la
+  // disponibilidad de un pedido CONTRA SÍ MISMO (Coordinar entregas, el pedido en edición): como
+  // `mapaComprometido()` ya reserva la cantidad de ESE pedido (es uno de los `pedidos` pendientes),
+  // preguntarle a `disponibilidadDe` por esa misma cantidad la contaba DOS VECES — una metida adentro
+  // de `comprometido` (empujando `disponible` para abajo) y otra como el `cantidad` pedido, lo que
+  // corría la fecha estimada mucho más tarde de la real (pasó en producción, 13/08: un pedido con
+  // stock curando desde el 15/08 mostraba "recién el 24/08" porque se estaba haciendo cola detrás de
+  // SU PROPIA reserva). Mismo reparto padre/refuerzo que mapaComprometido — ver ese comentario.
+  function mapaComprometidoSinPedido(uid){
+    const m={};
+    pedidos.forEach(pe=>{ if(pe.estado==='entregado' || (uid && pe._uid===uid)) return;
+      cargaRows(pe).forEach(r=>{
+        m[r.key]=(m[r.key]||0)+(r.ref? r.ref.neto : r.cant);
+        if(r.ref) m[r.ref.key]=(m[r.ref.key]||0)+r.ref.cant; }); });
+    return m;
+  }
   // Resumen EN VIVO para la Vista Diaria (antes esos KPIs salían de la foto congelada del cierre —
   // producción y stock ya NO se importan de ningún sistema externo, se calculan desde vph_produccion/entregas/pedidos).
   window.__resumenProduccion = function(){
@@ -12673,13 +12695,19 @@ function buildFilterTable(cfg){
      para entregar con las losetas totalmente secas" — la tabla de "Stock y faltantes" NO sirve para
      esto (su columna Disponible es físico−comprometido, sin curado, ver CLAUDE.md). Acá sí se puede
      comparar bien porque ya hay una fecha de viaje (`v.f`) contra la cual chequear cada producto con
-     el mismo criterio que usa Sofía al vender (`__disponibilidadProducto`, stock CURADO). */
+     el mismo criterio que usa Sofía al vender (`disponibilidadDe`, stock CURADO).
+     🔴 Usa `mapaComprometidoSinPedido(pe._uid)`, NO `window.__disponibilidadProducto` a secas — este
+     pedido YA está reservando su propia cantidad dentro del comprometido general; sin excluirlo, la
+     cuenta lo hacía competir contra sí mismo y corría la fecha semanas para adelante (bug real, ver
+     el comentario de `mapaComprometidoSinPedido`). */
   function chequeoSeco(pe, fEntrega){
-    if(!fEntrega || typeof window.__disponibilidadProducto!=='function') return null;
+    if(!fEntrega) return null;
+    const mapa=mapaComprometidoSinPedido(pe._uid);
     const problemas=[];
     (pe.items||[]).forEach(it=>{
       if(!it || !(it.producto||it.codigo) || !(num(it.cantidad)>0)) return;
-      const d=window.__disponibilidadProducto(it.codigo||it.producto, num(it.cantidad));
+      const p=resolverProd(it.producto,it.codigo); if(!p) return;
+      const d=disponibilidadDe(p, num(it.cantidad), mapa);
       if(d && !d.inmediata && d.fecha && d.fecha>fEntrega) problemas.push((it.producto||it.codigo)+' recién el '+fmtF(d.fecha));
     });
     return problemas.length ? problemas : null;
@@ -13096,12 +13124,16 @@ function buildFilterTable(cfg){
   // Marcelo 13/08: "cuando lo paso a producción, ¿dónde lo veo?"). Compara además contra el "Día de
   // entrega" YA elegido del pedido — para eso sirve acá, a diferencia de Presupuestos/Ventas: cuando
   // Sofía arma el camión necesita saber si esa fecha alcanza para que la mercadería esté seca.
+  // 🔴 Usa `mapaComprometidoSinPedido(editPed._uid)`: este pedido ya reserva su cantidad guardada
+  // dentro del comprometido general — sin excluirla, se hacía cola detrás de su propia reserva y la
+  // fecha estimada salía mal (mismo bug que en `chequeoSeco`, ver ese comentario).
   function drawDisponibilidadPed(){
     const box=$('pp-disp'); if(!box) return;
-    if(typeof window.__disponibilidadProducto!=='function'){ box.innerHTML=''; return; }
+    const mapa=mapaComprometidoSinPedido(editPed._uid);
     const fEntrega=fechaDeDia(editPed.diaEntrega);
     const lineas=(editPed.items||[]).filter(it=>it && (it.producto||it.codigo) && num(it.cantidad)>0).map(it=>{
-      const d=window.__disponibilidadProducto(it.codigo||it.producto, num(it.cantidad));
+      const p=resolverProd(it.producto,it.codigo); if(!p) return '';
+      const d=disponibilidadDe(p, num(it.cantidad), mapa);
       if(!d) return '';
       const col=d.inmediata?'#0a7d3f':'#b45309';
       const tarde = !d.inmediata && d.fecha && fEntrega && d.fecha>fEntrega;
