@@ -3519,6 +3519,20 @@ function buildFilterTable(cfg){
   // `totalTodo` sigue siendo la suma de TODO lo cargado, para cuando hace falta la foto completa.
   // `fijosNeto` es el fijo SIN IVA: el Punto de Equilibrio lo compara contra ventas netas, así los dos
   // lados de la cuenta están en la misma moneda (antes mezclaba fijos con IVA contra margen sobre neto).
+  // IVA CRÉDITO fiscal de un mes (AAAA-MM). Lo consume la tarjeta de IVA del módulo Ventas, para
+  // poder mostrar débito vs. crédito sin que Ventas tenga que leer las compras por su cuenta.
+  // Usa el mismo criterio que el KPI de Compras (`ivaCredito` de calc(): IVA discriminado + la
+  // percepción de IVA) y el PERÍODO CONTABLE de la compra, que es el de imputación fiscal — con la
+  // fecha como respaldo si el registro no lo tiene. Las notas de crédito ya vienen en negativo.
+  // ⚠️ Sigue abierta la consulta al contador sobre si la percepción va acá (ver §Pendiente del
+  // CLAUDE.md): si se decide que no, hay que sacarla de los DOS lugares a la vez.
+  window.__ivaCreditoMes = periodo => {
+    const p = String(periodo||'').slice(0,7);
+    if(!p || !DB.compras) return 0;
+    return round2(DB.compras
+      .filter(c => String(c.periodo || String(c.fecha||'').slice(0,7)).slice(0,7) === p)
+      .reduce((a,c) => a + calc(c).ivaCredito, 0));
+  };
   window.__resumenCompras = ()=>{
     if(!DB.compras || !DB.compras.length) return null;
     const meses={};
@@ -6090,15 +6104,32 @@ function buildFilterTable(cfg){
 
   function renderKpis(all){
     const per = filtro.periodo ? all.filter(x=>x.v.periodo===filtro.periodo) : all;
-    const total=per.reduce((a,x)=>a+x.k.total,0);
+    // "Total ventas" y el IVA van SIEMPRE por el MES EN CURSO, sin importar cómo esté el filtro
+    // (pedido de Marcelo, 10/08): son el pulso del mes, no del listado. Desde que el filtro arranca
+    // en "Todos los períodos", si dependieran de él mostrarían el histórico, que para estas dos
+    // tarjetas no dice nada. "A cobrar" y "Vencido" sí siguen el filtro: son saldos del listado.
+    const mesAct = hoyISO.slice(0,7);
+    const delMes = all.filter(x=>String(x.v.periodo||String(x.v.fecha||'').slice(0,7)).slice(0,7)===mesAct);
+    const totalMes = delMes.reduce((a,x)=>a+x.k.total,0);
     const aCobrar=per.filter(x=>x.k.estado==='acobrar'||x.k.estado==='parcial').reduce((a,x)=>a+x.k.saldo,0);
     const vencido=per.filter(x=>x.k.estado==='vencido').reduce((a,x)=>a+x.k.saldo,0);
-    const ivaDeb=per.reduce((a,x)=>a+x.k.ivaDebito,0);
+    // IVA del mes: débito (lo facturado a clientes) contra crédito (el de las compras del mismo mes).
+    // La diferencia es la posición de IVA: positiva = a pagar, negativa = saldo a favor.
+    const ivaDeb = delMes.reduce((a,x)=>a+x.k.ivaDebito,0);
+    const hayCred = typeof window.__ivaCreditoMes === 'function';
+    const ivaCred = hayCred ? num(window.__ivaCreditoMes(mesAct)) : 0;
+    const saldoIva = round2(ivaDeb - ivaCred);
+    const ivaSub = hayCred
+      ? ('Déb. '+money(ivaDeb)+' − Créd. '+money(ivaCred)+' · '+labelPeriodo(mesAct))
+      : ('IVA facturado a clientes · '+labelPeriodo(mesAct));
     $('vnt-kpis').innerHTML =
-      k('Total ventas','good', money(total), per.length+' ventas · '+(filtro.periodo?labelPeriodo(filtro.periodo):'histórico')) +
-      k('A cobrar','warn', money(aCobrar), 'Saldo pendiente (no vencido)') +
-      k('Vencido','bad', money(vencido), 'Saldo con vencimiento pasado') +
-      k('IVA débito','info', money(ivaDeb), 'IVA facturado a clientes');
+      k('Total ventas','good', money(totalMes), delMes.length+' ventas · '+labelPeriodo(mesAct)) +
+      k('A cobrar','warn', money(aCobrar), 'Saldo pendiente (no vencido)'+(filtro.periodo?' · '+labelPeriodo(filtro.periodo):'')) +
+      k('Vencido','bad', money(vencido), 'Saldo con vencimiento pasado'+(filtro.periodo?' · '+labelPeriodo(filtro.periodo):'')) +
+      (hayCred
+        ? k('IVA — débito vs. crédito', saldoIva>0?'warn':'good',
+            money(Math.abs(saldoIva)), (saldoIva>0?'A pagar':'A favor')+' · '+ivaSub)
+        : k('IVA débito','info', money(ivaDeb), ivaSub));
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
 
