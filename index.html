@@ -316,6 +316,14 @@
   .pe-ins-prov td{background:var(--bg,#f2f5f9);font-size:12px;padding:7px 11px;border-bottom:2px solid var(--border)}
   .pe-ins-provh{background:var(--bg,#f2f5f9);border-radius:8px;padding:7px 10px;font-size:12.5px;font-weight:800;margin:14px 0 6px}
   .pe-ins-provh:first-of-type{margin-top:4px}
+  /* Filas de "✏️ Editar lista" (insumos): edición directa estilo planilla, apta celular (flex-wrap) */
+  .pe-el-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px dashed var(--border)}
+  .pe-el-row input{padding:8px;border:1px solid var(--border);border-radius:8px;font-size:13.5px}
+  .pe-el-mv{display:flex;flex-direction:column;gap:2px}
+  .pe-el-mv button{width:26px;height:19px;border:1px solid var(--border);border-radius:5px;background:#eef2f7;font-size:9px;cursor:pointer;color:#3c4c63;line-height:1;padding:0}
+  .pe-el-row button[data-del]{width:32px;height:32px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--red);font-weight:800;cursor:pointer}
+  .pe-el-borrar input{opacity:.4;text-decoration:line-through}
+  .pe-el-borrar{background:var(--red-bg);border-radius:8px;padding-left:4px;padding-right:4px}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
   /* Celular de Gustavo: tablas densas (Plan, Conteo, movimientos) pasan de filas horizontales a tarjetas apiladas.
      DOS excepciones, las dos a propósito:
@@ -863,6 +871,7 @@
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
           <h2 style="margin:0"><span class="dot" style="background:var(--amber)"></span>Materias primas e insumos</h2>
           <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="cmp-btn" id="pe-btn-editlista" title="Editar toda la lista de una: nombres, mínimos, proveedores, orden (▲▼) y bajas">✏️ Editar lista</button>
             <button class="cmp-btn" id="pe-btn-recepcion" title="Registrar lo que llegó de un pedido: suma al stock y saca el ítem de 'en camino'">📦 Llegó un pedido</button>
             <button class="cmp-btn" id="pe-btn-pedircompra">🛒 Armar pedido de compra</button>
           </div>
@@ -12601,6 +12610,9 @@ function buildFilterTable(cfg){
   }
   const insDiasStock=x=>{ const cons=num(x.consumoDiario); return cons>0 ? Math.floor(num(x.stock)/cons) : null; };
   const provDe=x=> String(x.proveedor||'').trim() || 'Sin proveedor';
+  // Orden MANUAL dentro del grupo (lo mueve Marcelo/Gustavo con ▲▼ en "✏️ Editar lista").
+  // Sin `orden` cargado cae al alfabético — así los ítems viejos no saltan de lugar.
+  const ordenIns=(a,b)=> (num(a.orden)||9999)-(num(b.orden)||9999) || String(a.nombre||'').localeCompare(String(b.nombre||''));
   // ---------- Vista MENSUAL: matriz productos × días (fabricado/entregado) + total kg ----------
   function renderMensual(){
     const mesInp=$('pe-mes'); if(!mesInp) return;
@@ -12655,7 +12667,9 @@ function buildFilterTable(cfg){
     let html='<tr><th>Insumo / MP</th><th class="num">Stock</th><th class="num">Mínimo</th><th class="num">Demora</th><th>Últ. conteo</th><th>Estado</th><th></th></tr>';
     if(!insumos.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px">Sin insumos cargados. Agregalos con "🧱 Contar materias primas e insumos" o en Base de Datos.</td></tr>';
     provs.forEach(p=>{
-      const items=grupos[p].slice().sort((a,b)=> EST_ORD[insEstado(a)]-EST_ORD[insEstado(b)] || String(a.nombre||'').localeCompare(String(b.nombre||'')));
+      // Dentro del grupo manda el ORDEN MANUAL (▲▼ de "Editar lista"), no la urgencia: la urgencia
+      // ya se ve por el badge y el contador del grupo, y un orden que salta solo confunde al contar.
+      const items=grupos[p].slice().sort(ordenIns);
       const nPedir=items.filter(x=>{const e=insEstado(x); return e==='urgente'||e==='pedir';}).length;
       html+='<tr class="pe-ins-prov"><td colspan="7"><b>🏪 '+esc(p)+'</b> <span style="color:var(--muted);font-weight:400">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+(nPedir?' <span style="color:var(--red);font-weight:800">· '+nPedir+' para pedir</span>':'')+'</td></tr>';
       items.forEach(x=>{ const e=insEstado(x); const dias=insDiasStock(x);
@@ -12727,7 +12741,7 @@ function buildFilterTable(cfg){
     const grupos={};
     insumos.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
     const provs=Object.keys(grupos).sort((a,b)=>a.localeCompare(b));
-    const list=[]; provs.forEach(p=> grupos[p].sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''))).forEach(x=>list.push(x)));
+    const list=[]; provs.forEach(p=> grupos[p].sort(ordenIns).forEach(x=>list.push(x)));
     let cuerpo='';
     provs.forEach(p=>{
       cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p)+'</div>';
@@ -12802,6 +12816,73 @@ function buildFilterTable(cfg){
       c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), {...cur, nombre:nom, proveedor:($('pe-ie-prov').value||'').trim(), unidad:($('pe-ie-unidad').value||'').trim(),
         stockMinimo:num($('pe-ie-min').value), demoraDias:num($('pe-ie-dem').value), consumoDiario:num($('pe-ie-cons').value)});
       $('pe-modal-ins').classList.remove('open'); };
+    $('pe-modal-ins').classList.add('open');
+  }
+  /* ---------- ✏️ EDITAR LA LISTA entera de una (18/08, pedido de Marcelo) ------------------------
+     El modelo mental es la planilla: ver TODO junto y tocar directo — nombre, mínimo, proveedor,
+     mover de lugar (▲▼), eliminar (✕) — sin abrir un modal por ítem. Nada se escribe hasta tocar
+     "Guardar cambios": ahí van SOLO los campos que cambiaron (setDoc merge), las eliminaciones se
+     confirman juntas, y el orden queda numerado de a 10 por grupo (orden) para poder intercalar.
+     Cambiar el proveedor de un ítem lo MUEVE de grupo en el próximo repintado. */
+  function openEditarLista(){
+    const grupos={};
+    insumos.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
+    const provs=Object.keys(grupos).sort((a,b)=>a.localeCompare(b));
+    let cuerpo='';
+    provs.forEach((p,gi)=>{
+      cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p)+'</div><div data-grp="'+gi+'">';
+      grupos[p].slice().sort(ordenIns).forEach(x=>{
+        cuerpo+='<div class="pe-el-row" data-uid="'+esc(x._uid)+'">'+
+          '<span class="pe-el-mv"><button data-mv="up" title="Subir">▲</button><button data-mv="dn" title="Bajar">▼</button></span>'+
+          '<input data-f="nombre" value="'+esc(x.nombre||'')+'" placeholder="Nombre" style="flex:2;min-width:150px">'+
+          '<input data-f="prov" value="'+esc(x.proveedor||'')+'" list="pe-el-provlist" placeholder="Proveedor" title="Cambiarlo lo mueve a ese grupo" style="flex:1;min-width:110px">'+
+          '<input data-f="min" inputmode="decimal" value="'+(num(x.stockMinimo)||'')+'" placeholder="mín" title="Stock mínimo" style="width:64px;text-align:center">'+
+          '<button data-del title="Eliminar de la lista">✕</button>'+
+        '</div>'; });
+      cuerpo+='</div>'; });
+    $('pe-form-ins').innerHTML =
+      '<h3 style="margin:0 0 4px;font-size:15px">✏️ Editar la lista de insumos</h3>'+
+      '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Tocá directo lo que quieras cambiar: <b>nombre</b>, <b>proveedor</b> (cambiarlo lo mueve a ese grupo), <b>mínimo</b>, ▲▼ para moverlo de lugar y ✕ para eliminarlo. Nada se guarda hasta tocar <b>Guardar cambios</b>. Para demora/consumo/unidad está el ✎ de cada fila.</p>'+
+      '<datalist id="pe-el-provlist">'+provs.filter(p=>p!=='Sin proveedor').map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>'+
+      cuerpo+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-el-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-el-save">Guardar cambios</button></div>';
+    const form=$('pe-form-ins');
+    form.querySelectorAll('button[data-mv]').forEach(b=> b.onclick=()=>{
+      const row=b.closest('.pe-el-row');
+      if(b.dataset.mv==='up'){ const prev=row.previousElementSibling; if(prev) row.parentNode.insertBefore(row,prev); }
+      else { const next=row.nextElementSibling; if(next) row.parentNode.insertBefore(next,row); } });
+    form.querySelectorAll('button[data-del]').forEach(b=> b.onclick=()=>{
+      const row=b.closest('.pe-el-row');
+      row.classList.toggle('pe-el-borrar');
+      b.textContent=row.classList.contains('pe-el-borrar')?'↩':'✕';
+      b.title=row.classList.contains('pe-el-borrar')?'Deshacer la eliminación':'Eliminar de la lista'; });
+    $('pe-el-cancel').onclick=()=>$('pe-modal-ins').classList.remove('open');
+    $('pe-el-save').onclick=()=>{
+      const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
+      const filas=[...form.querySelectorAll('.pe-el-row')];
+      const borrar=filas.filter(r=>r.classList.contains('pe-el-borrar'));
+      const vivas=filas.filter(r=>!r.classList.contains('pe-el-borrar'));
+      if(vivas.some(r=>!r.querySelector('[data-f="nombre"]').value.trim())){ alert('Hay un ítem con el nombre vacío. Completalo o eliminalo.'); return; }
+      if(borrar.length && !confirm('¿Eliminar '+borrar.length+' ítem'+(borrar.length!==1?'s':'')+' de la lista?\n\n'+borrar.map(r=>'• '+r.querySelector('[data-f="nombre"]').value).join('\n')+'\n\n(No toca compras ya hechas; solo salen de conteos y pedidos.)')) return;
+      let nCambios=0;
+      borrar.forEach(r=> c.FS.deleteDoc(c.FS.doc(c.db,'vph_insumos',r.dataset.uid)).catch(e=>console.error('del insumo:',e)));
+      form.querySelectorAll('[data-grp]').forEach(grp=>{
+        [...grp.querySelectorAll('.pe-el-row')].filter(r=>!r.classList.contains('pe-el-borrar')).forEach((r,idx)=>{
+          const x=insumos.find(z=>z._uid===r.dataset.uid); if(!x) return;
+          const upd={};
+          const nom=r.querySelector('[data-f="nombre"]').value.trim();
+          const prov=r.querySelector('[data-f="prov"]').value.trim();
+          const min=num(r.querySelector('[data-f="min"]').value);
+          const ord=(idx+1)*10;
+          if(nom!==String(x.nombre||'')) upd.nombre=nom;
+          if(prov!==String(x.proveedor||'').trim()) upd.proveedor=prov;
+          if(min!==num(x.stockMinimo)) upd.stockMinimo=min;
+          if(ord!==num(x.orden)) upd.orden=ord;
+          if(Object.keys(upd).length){ c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), upd, {merge:true}); nCambios++; }
+        }); });
+      $('pe-modal-ins').classList.remove('open');
+      alert((nCambios||borrar.length)? ('Listo: '+(nCambios?nCambios+' ítem'+(nCambios!==1?'s':'')+' actualizado'+(nCambios!==1?'s':''):'')+(borrar.length?((nCambios?' · ':'')+borrar.length+' eliminado'+(borrar.length!==1?'s':'')):'')) : 'No hubo cambios.');
+    };
     $('pe-modal-ins').classList.add('open');
   }
   /* ---------- Pedido de compra POR PROVEEDOR (18/08) --------------------------------------------
@@ -13737,6 +13818,7 @@ function buildFilterTable(cfg){
   $('pe-btn-conteo-ins').onclick=openConteoIns;
   $('pe-btn-pedircompra').onclick=pedidoCompra;
   { const b=$('pe-btn-recepcion'); if(b) b.onclick=openRecepcion; }
+  { const b=$('pe-btn-editlista'); if(b) b.onclick=openEditarLista; }
   { const fb2=$('pe-btn-feriados'); if(fb2) fb2.onclick=openFeriados; }
   { const fc=$('pe-fer-cerrar'); if(fc) fc.onclick=()=>$('pe-modal-fer').classList.remove('open'); }
   $('pe-prod-cerrar').onclick=()=>$('pe-modal-prod').classList.remove('open');
