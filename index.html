@@ -573,6 +573,7 @@
 
   <!-- ================= INICIO / VISTA DIARIA ================= -->
   <div class="page active" id="page-inicio">
+    <div style="text-align:right;margin-bottom:10px"><button class="cmp-btn" id="btn-msj-equipo" title="Arma el mensaje con los indicadores del mes para pegar en el grupo de WhatsApp de la empresa">📲 Mensaje para el equipo</button></div>
     <div class="kpis" id="kpis-inicio"></div>
     <div class="grid3">
       <section>
@@ -1918,6 +1919,34 @@ function pintarKpisInicio(){
     kpi('Kg fabricados '+META.mesEnCurso, _kgFab==null?'—':Math.round(_kgFab).toLocaleString('es-AR')+' kg', 'Producido en el mes'+(rp?' · en vivo':''), 'info') +
     kpi('Kg vendidos '+META.mesEnCurso, _kgVen==null?'—':Math.round(_kgVen).toLocaleString('es-AR')+' kg', 'Vendido/facturado en el mes'+(rm?' · en vivo':''), (_kgFab!=null&&_kgVen!=null&&_kgVen>_kgFab)?'warn':'info');
 }
+
+// --- Mensaje para el grupo de WhatsApp de la empresa (pedido de Marcelo, 18/08) ---
+// Los 3 indicadores de la tarjeta "Producción promedio" + "Kg vendidos", en un mensaje listo para
+// copiar y pegar. Felicita al equipo SOLO si el promedio del mes realmente llegó al objetivo — no
+// hardcodea el elogio, para no terminar felicitando por un mes flojo si esto se usa más adelante.
+// ⚠️ Esta función y su wiring van ANTES de `pintarKpisInicio();`: si esa llamada tira una excepción
+// (pasa en el modo local sin login, y podría pasar en producción si falta algún dato), el resto del
+// script se corta ahí — y el botón se quedaría sin `onclick` para siempre si el wiring fuera después.
+function armarMensajeEquipo(){
+  const rp = window.__resumenProduccion ? window.__resumenProduccion() : null;
+  const rm = window.__resumenMes ? window.__resumenMes() : null;
+  if(!rp || rm==null || rm.kgVendidos==null){ alert('Los datos en vivo todavía no cargaron. Probá de nuevo en un momento.'); return; }
+  const nf = n => Math.round(n).toLocaleString('es-AR');
+  const HOYd = new Date(); const mes = HOYd.toLocaleDateString('es-AR',{month:'long'}); const anio = HOYd.getFullYear();
+  const mesCap = mes.charAt(0).toUpperCase()+mes.slice(1);
+  const cumple = rp.diasConProduccionMes>0 && rp.promedioMesKgDia>=rp.objetivo;
+  const texto =
+    '🏭📈 *Balance de Producción — '+mesCap+' '+anio+'*\n\n'+
+    'Los números en lo que va de '+mes+':\n\n'+
+    '✅ *Promedio diario:* '+nf(rp.promedioMesKgDia)+' kg/día'+(cumple?' — por encima del objetivo de '+nf(rp.objetivo)+' kg/día 🎯':' (objetivo: '+nf(rp.objetivo)+' kg/día)')+'\n'+
+    '🏗️ *Total fabricado:* '+nf(rp.kgProducidosMes)+' kg\n'+
+    '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n\n'+
+    (cumple
+      ? 'Estamos cumpliendo el objetivo de producción día a día, y las ventas acompañan el ritmo. Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado.\n\n¡Vamos que se puede sostener así todo el mes! 💪👏'
+      : 'Todavía no llegamos al objetivo, pero vamos por buen camino. ¡Sigamos empujando entre todos para cerrar el mes arriba de la marca! 💪');
+  window.__wa.modal({ titulo:'Mensaje para el grupo del equipo', destino:'Copiá y pegá en el grupo de WhatsApp de la empresa', texto });
+}
+{ const b=document.getElementById('btn-msj-equipo'); if(b) b.onclick=armarMensajeEquipo; }
 pintarKpisInicio();
 
 function kpi(label, value, sub, cls){
