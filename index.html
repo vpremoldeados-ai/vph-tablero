@@ -1891,7 +1891,7 @@ function pintarKpisInicio(){
   const _resu = rm ? rm.resultado : mesEnCurso.resultado;
   // Producción y stock EN VIVO desde el módulo Producción y Logística (antes salían de la foto del cierre).
   const rp = (window.__resumenProduccion?window.__resumenProduccion():null);
-  const _promDia = rp ? rp.ritmoKgDia : Math.round(ult.producidoKg/ult.diasConDato);
+  const _promDia = rp ? rp.promedioMesKgDia : Math.round(ult.producidoKg/ult.diasConDato);
   const _objKg   = rp ? rp.objetivo   : META.objetivoKgDia;
   const _balKg   = rp ? rp.balanceKg  : (stockSnapshot.kgEnStock - stockSnapshot.kgVendidosNoEntregados);
   const _kgFab   = rp ? rp.kgProducidosMes : null;   // kg fabricados en el mes (Producción)
@@ -1907,7 +1907,13 @@ function pintarKpisInicio(){
       return kpi('Disponible (caja+bancos)', fmt$(finanzas.disponible), 'Cajas '+fmtM(finanzas.cajas)+' · Bancos '+fmtM(finanzas.bancos), finanzas.disponible < finanzas.aPagarVencido ? 'warn':'good') +
         kpi('Deuda vencida a proveedores', fmt$(finanzas.aPagarVencido), (finanzas.aPagarVencido/finanzas.aPagar*100).toFixed(0)+'% del total a pagar', 'bad');
     })() +
-    kpi('Producción promedio', _promDia.toLocaleString('es-AR')+' kg/día', (rp?'Ritmo real últimos 14 días · objetivo ':'Objetivo: ')+_objKg.toLocaleString('es-AR')+' kg/día'+(rp?' · en vivo':''), _promDia>=_objKg?'good':'warn') +
+    kpi('Producción promedio', _promDia.toLocaleString('es-AR')+' kg/día',
+      (rp
+        ? (rp.diasConProduccionMes>0
+            ? ('Promedio de '+META.mesEnCurso+' · '+rp.diasConProduccionMes+' día'+(rp.diasConProduccionMes!==1?'s':'')+' con producción · objetivo ')
+            : ('Sin producción cargada en '+META.mesEnCurso+' · objetivo '))
+        : 'Objetivo: ')+_objKg.toLocaleString('es-AR')+' kg/día'+(rp?' · en vivo':''),
+      _promDia>=_objKg?'good':'warn') +
     kpi('Balance stock (kg)', (_balKg>0?'+':'')+_balKg.toLocaleString('es-AR')+' kg', (rp?'Físico − comprometido · en vivo':'Stock vs pedidos comprometidos'), _balKg<0?'bad':'good') +
     kpi('Kg fabricados '+META.mesEnCurso, _kgFab==null?'—':Math.round(_kgFab).toLocaleString('es-AR')+' kg', 'Producido en el mes'+(rp?' · en vivo':''), 'info') +
     kpi('Kg vendidos '+META.mesEnCurso, _kgVen==null?'—':Math.round(_kgVen).toLocaleString('es-AR')+' kg', 'Vendido/facturado en el mes'+(rm?' · en vivo':''), (_kgFab!=null&&_kgVen!=null&&_kgVen>_kgFab)?'warn':'info');
@@ -12224,14 +12230,25 @@ function buildFilterTable(cfg){
     const filas=activos().map(p=>stockDe(p));
     const kgStock=filas.reduce((a,f)=>a+Math.max(0,f.fisico)*pesoDe(f.k),0);
     const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
-    const per=hoyISO.slice(0,7); let kgMes=0;
-    prod.forEach(x=>{ if(String(x.fecha||'').slice(0,10).slice(0,7)===per) kgMes+=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); });
+    const per=hoyISO.slice(0,7); let kgMes=0; const diasProdMes={};
+    prod.forEach(x=>{ const f=String(x.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
+      const w=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); kgMes+=w;
+      if(w>0) diasProdMes[f]=true; });
+    // Promedio del MES EN CURSO, contando solo los días que hubo producción de verdad (pedido de
+    // Marcelo, 12/08): a diferencia de ritmoKgDia() (ventana móvil de 14 días, la que usa el Plan de
+    // producción para estimar fechas), esta cuenta arranca de cero cada mes y no mezcla fines de
+    // semana/feriados sin producir contra días de fábrica — solo promedia entre los días que SÍ se
+    // fabricó. Sin datos todavía este mes, cae al objetivo (mismo criterio que ritmoKgDia).
+    const diasConProdMes = Object.keys(diasProdMes).length;
+    const promedioMesKgDia = diasConProdMes>0 ? kgMes/diasConProdMes : OBJ();
     // Cobertura: qué % de los kg comprometidos (pedidos no entregados) están cubiertos por stock curado.
     let compKg=0, cubKg=0;
     filas.forEach(f=>{ const pe=pesoDe(f.k); compKg+=f.comprometido*pe; cubKg+=Math.min(f.comprometido, Math.max(0,f.curado))*pe; });
     const sem=semanaKg();
     return {
-      ritmoKgDia: Math.round(ritmoKgDia()),          // kg/día hábil, ventana de 14 días (ritmo real)
+      ritmoKgDia: Math.round(ritmoKgDia()),          // kg/día hábil, ventana de 14 días — la usa el Plan de producción para estimar fechas
+      promedioMesKgDia: Math.round(promedioMesKgDia), // kg/día del MES EN CURSO, solo días con producción — lo muestra la Vista Diaria
+      diasConProduccionMes: diasConProdMes,
       semanaProm: Math.round(sem.prom),              // kg/día hábil de la semana en curso
       kgStock: Math.round(kgStock),                  // físico en planta
       kgComprometido: Math.round(kgComp),            // pedidos no entregados
