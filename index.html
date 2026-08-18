@@ -1997,21 +1997,43 @@ function kpi(label, value, sub, cls){
 // --- Alertas Inicio (re-ejecutable, con botón "Resolver →") ---
 const _escA = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 let _alertGo = [];
+// Ocultar una alerta es SOLO una preferencia de vista (localStorage, no Firestore): no cambia el
+// dato real ni lo ven Sofía/Gustavo en su sesión. Se guarda por texto (área+título), así que si la
+// alerta cambia (otro monto, otro cliente) ya es una alerta distinta y vuelve a aparecer. Expira
+// solo a la medianoche: es la "vista del día", no un "no mostrar nunca más" — si el problema real
+// sigue sin resolverse, mañana vuelve a aparecer.
+const DISM_ALERTAS_KEY = 'vph_alertas_ocultas_v1';
+function _dismAlertaKey(a){ return (a.area||'')+'|'+(a.t||''); }
+function _dismLeer(){
+  const hoy = new Date().toISOString().slice(0,10);
+  try{
+    const raw = localStorage.getItem(DISM_ALERTAS_KEY);
+    if(raw){ const o = JSON.parse(raw); if(o && o.fecha===hoy && Array.isArray(o.keys)) return o; }
+  }catch(e){}
+  return {fecha:hoy, keys:[]};
+}
+function _dismGuardar(o){ try{ localStorage.setItem(DISM_ALERTAS_KEY, JSON.stringify(o)); }catch(e){} }
 function pintarAlertas(){
   const cont = document.getElementById('alertas'); if(!cont) return;
   const orden = {bad:0, warn:1, info:2, ok:3};
   const icos = {bad:'⛔', warn:'⚠️', info:'ℹ️', ok:'✅'};
-  const ord = alertas.slice().sort((a,b)=>orden[a.sev]-orden[b.sev]);
+  const dism = _dismLeer();
+  const visibles = alertas.filter(a=> dism.keys.indexOf(_dismAlertaKey(a))===-1);
+  const ord = visibles.slice().sort((a,b)=>orden[a.sev]-orden[b.sev]);
   _alertGo = ord.map(a=>a.go||null);
   cont.innerHTML = ord.length ? ord.map((a,i)=>
     '<div class="alert '+a.sev+'" style="display:flex;align-items:center;gap:10px">'+
       '<span class="aico">'+icos[a.sev]+'</span>'+
       '<div style="flex:1;min-width:0"><b>['+_escA(a.area)+'] '+_escA(a.t)+'</b><div class="act">→ '+_escA(a.act)+'</div></div>'+
       (a.go?'<button class="cmp-btn cmp-btn-primary" data-goi="'+i+'" style="flex-shrink:0;white-space:nowrap">Resolver →</button>':'')+
+      '<button class="cmp-btn" data-dismi="'+i+'" title="Ocultar por hoy (vuelve mañana si sigue sin resolverse)" aria-label="Ocultar esta alerta" style="flex-shrink:0;padding:4px 10px">✕</button>'+
     '</div>').join('')
-    : '<div class="alert ok" style="display:flex;align-items:center;gap:10px"><span class="aico">✅</span><div><b>Todo en orden</b><div class="act">No hay alertas activas.</div></div></div>';
+    : (alertas.length
+        ? '<div class="alert ok" style="display:flex;align-items:center;gap:10px"><span class="aico">✅</span><div><b>Sin alertas pendientes por ahora</b><div class="act">Ocultaste las '+alertas.length+' de hoy — si siguen sin resolverse, vuelven a aparecer mañana.</div></div></div>'
+        : '<div class="alert ok" style="display:flex;align-items:center;gap:10px"><span class="aico">✅</span><div><b>Todo en orden</b><div class="act">No hay alertas activas.</div></div></div>');
   cont.querySelectorAll('button[data-goi]').forEach(b=> b.onclick=()=>{ const g=_alertGo[+b.dataset.goi]; if(!g) return; if(g.page) irAPagina(g.page); if(typeof g.run==='function'){ setTimeout(()=>{ try{ g.run(); }catch(e){ console.error('resolver:',e); } }, 260); } });
-  const nBad = alertas.filter(a=>a.sev==='bad').length, nWarn = alertas.filter(a=>a.sev==='warn').length;
+  cont.querySelectorAll('button[data-dismi]').forEach(b=> b.onclick=()=>{ const a=ord[+b.dataset.dismi]; if(!a) return; const d=_dismLeer(); const k=_dismAlertaKey(a); if(d.keys.indexOf(k)===-1) d.keys.push(k); _dismGuardar(d); pintarAlertas(); });
+  const nBad = visibles.filter(a=>a.sev==='bad').length, nWarn = visibles.filter(a=>a.sev==='warn').length;
   const ac=document.getElementById('alert-count'); if(ac) ac.textContent = nBad + ' críticas · ' + nWarn + ' de atención';
   // Pill en el nav (Vista Diaria)
   const it=[...document.querySelectorAll('#nav .nav-item')][0];
