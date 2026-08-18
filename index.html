@@ -5686,7 +5686,15 @@ function buildFilterTable(cfg){
     ]);
     AUTH=authM; FS=fsM;
     fbApp = appM.initializeApp(firebaseConfig);
-    fbAuth = authM.getAuth(fbApp); fbDb = fsM.getFirestore(fbApp);
+    fbAuth = authM.getAuth(fbApp);
+    // Caché local PERSISTENTE (IndexedDB) — 18/08. Sin esto, cada apertura o recarga del Tablero
+    // volvía a bajar la base ENTERA (~1.300 documentos × 22 suscripciones) y el 14 y el 18/08 se
+    // agotó la cuota diaria de lecturas de Firestore ("Quota exceeded" al numerar un presupuesto).
+    // Con la caché, al recargar se lee solo lo que cambió desde la última vez. Multi-pestaña
+    // (persistentMultipleTabManager) para que dos pestañas del Tablero no se peleen por la caché.
+    // Si el navegador no lo permite (modo incógnito, cuota de disco), cae al modo de siempre.
+    try{ fbDb = fsM.initializeFirestore(fbApp, { localCache: fsM.persistentLocalCache({ tabManager: fsM.persistentMultipleTabManager() }) }); }
+    catch(e){ console.warn('Sin caché persistente de Firestore, sigo sin caché:', e && e.message); fbDb = fsM.getFirestore(fbApp); }
     const fbStorage = stM ? stM.getStorage(fbApp) : null;
     window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth, ST:stM, storage:fbStorage };   // compartido con otros módulos (Ventas, etc.)
     buildLoginUI();
@@ -11985,11 +11993,29 @@ function buildFilterTable(cfg){
     $('wab-lista').querySelectorAll('button[data-cl]').forEach(b=> b.onclick=()=>abrirConvertir(b.dataset.cl));
   }
 
+  // Días de historial resuelto que se bajan de la nube (para "Ver resueltos también" y para el
+  // historial desplegable de cada contacto). Los PENDIENTES se bajan SIEMPRE, sin importar la fecha.
+  const DIAS_RESUELTOS = 30;
+  // Dos suscripciones acotadas en vez de la colección entera (18/08): la Bandeja tenía 671 mensajes
+  // (642 ya resueltos) y era MÁS DE LA MITAD de todo lo que el Tablero baja al abrirse — y crece
+  // con cada WhatsApp que entra. Fue una de las causas del "Quota exceeded" del 14 y el 18/08.
+  //   (a) estado == 'pendiente'                    → lo que hay que atender, siempre completo;
+  //   (b) creadoEn >= hace DIAS_RESUELTOS días     → resueltos recientes + contexto de conversación.
+  // Se juntan por _uid (un pendiente reciente aparece en las dos). Cada una es un filtro sobre UN
+  // solo campo, así que no hace falta índice compuesto ni tocar las reglas de Firestore.
+  const partes={ pend:[], rec:[] };
+  function juntar(){ const m=new Map(); partes.rec.forEach(x=>m.set(x._uid,x)); partes.pend.forEach(x=>m.set(x._uid,x)); DB.pendientes=Array.from(m.values()); render(); }
   function startSync(){
-    const c=fb(); if(!c||!c.db) return; if(unsub) unsub();
-    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.pendientes=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('wa_pendientes:',err));
+    const c=fb(); if(!c||!c.db) return; stopSync();
+    const col=c.FS.collection(c.db,COL);
+    const desde=c.FS.Timestamp.fromDate(new Date(Date.now()-DIAS_RESUELTOS*86400000));
+    const mapa=snap=>snap.docs.map(d=>({...d.data(),_uid:d.id}));
+    unsub=[
+      c.FS.onSnapshot(c.FS.query(col, c.FS.where('estado','==','pendiente')), snap=>{ partes.pend=mapa(snap); juntar(); }, err=>console.error('wa_pendientes (pendientes):',err)),
+      c.FS.onSnapshot(c.FS.query(col, c.FS.where('creadoEn','>=',desde)), snap=>{ partes.rec=mapa(snap); juntar(); }, err=>console.error('wa_pendientes (recientes):',err)),
+    ];
   }
-  function stopSync(){ if(unsub){unsub();unsub=null;} }
+  function stopSync(){ if(unsub){ unsub.forEach(u=>{ try{u();}catch(e){} }); unsub=null; } partes.pend=[]; partes.rec=[]; }
   function boot(){
     window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
     window.__afterLogin.push(startSync);
