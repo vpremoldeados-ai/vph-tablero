@@ -166,6 +166,24 @@
   .progress i{display:block;height:100%;border-radius:6px;transition:width .6s ease}
   footer{font-size:11px;color:var(--muted);text-align:center;padding:10px 0 0}
   @media(max-width:820px){aside{width:64px}.logo .vph{font-size:15px}.logo small,.nav-item .txt,.sidebar-foot{display:none}main{margin-left:64px;padding:0 14px 30px}}
+  /* Celular (pedido de Marcelo, 18/08): el menú de módulos pasa a una FILA horizontal desplazable
+     ARRIBA, para no comerse ancho de visión — la columna de 64px era el 17% de un teléfono de 375px.
+     Cada módulo va como ícono + nombre corto (solo íconos no se distinguen: hay 14 módulos).
+     La barra queda fija arriba (z-index 100, abajo de los modales que van en 500+) y el <main>
+     compensa con padding-top. Pisa a la regla de 820px de arriba por venir después con la misma
+     especificidad. */
+  @media(max-width:640px){
+    aside{width:100%;right:0;bottom:auto;height:auto;flex-direction:row;align-items:stretch;box-shadow:0 2px 10px rgba(10,18,30,.35)}
+    .logo{padding:0 10px;border-bottom:none;border-right:1px solid rgba(255,255,255,.08);display:flex;align-items:center;flex-shrink:0}
+    .logo .vph{font-size:15px}
+    nav{flex:1;display:flex;flex-direction:row;gap:2px;padding:5px 8px;overflow-y:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    nav::-webkit-scrollbar{display:none}
+    .nav-item{position:relative;flex-direction:column;gap:2px;width:auto;flex-shrink:0;padding:5px 9px;margin-bottom:0;align-items:center;justify-content:center}
+    .nav-item .txt{display:block;font-size:8.5px;font-weight:700;max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .nav-item .ico{width:auto;font-size:16px}
+    .nav-item .pill{position:absolute;top:0;right:0;margin-left:0}
+    main{margin-left:0;padding:58px 12px 30px}
+  }
 
   /* ---------- MÓDULO COMPRAS ---------- */
   .cmp-btn{background:#eef2f7;color:#3c4c63;border:1px solid var(--border);padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;transition:.15s}
@@ -1804,7 +1822,10 @@ window.__construirNav = function(){
     const b=document.createElement('button');
     b.className='nav-item'+(i===0?' active':'');
     b.innerHTML='<span class="ico">'+p.ico+'</span><span class="txt">'+p.nombre+'</span>';
-    b.onclick=()=>{ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active')); b.classList.add('active'); document.querySelectorAll('.page').forEach(x=>x.classList.remove('active')); const pg=document.getElementById('page-'+p.id); if(pg)pg.classList.add('active'); document.getElementById('page-title').textContent=p.nombre; window.scrollTo({top:0}); if(p.id==='inicio' && window.__refreshAlertas) window.__refreshAlertas(); };
+    b.onclick=()=>{ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active')); b.classList.add('active'); document.querySelectorAll('.page').forEach(x=>x.classList.remove('active')); const pg=document.getElementById('page-'+p.id); if(pg)pg.classList.add('active'); document.getElementById('page-title').textContent=p.nombre; window.scrollTo({top:0});
+      // Celular: el menú es una fila horizontal — centrar el módulo tocado para que se vean los vecinos
+      if(window.matchMedia && matchMedia('(max-width:640px)').matches){ try{ b.scrollIntoView({inline:'center',block:'nearest'}); }catch(e){} }
+      if(p.id==='inicio' && window.__refreshAlertas) window.__refreshAlertas(); };
     nav.appendChild(b);
   });
   if(visibles[0]){ document.querySelectorAll('.page').forEach(x=>x.classList.remove('active')); const pg=document.getElementById('page-'+visibles[0].id); if(pg)pg.classList.add('active'); const t=document.getElementById('page-title'); if(t)t.textContent=visibles[0].nombre; }
