@@ -292,6 +292,12 @@
   .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
   .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
   .pe-est.ruta{background:var(--blue-bg);color:var(--blue)} .pe-est.comprado{background:#ede9fe;color:#6d28d9}
+  /* Chips de filtro de la tabla de insumos (ver solo lo que hay que comprar) */
+  .pe-chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 9px}
+  .pe-chip{border:1px solid var(--border);background:var(--card,#fff);color:var(--text);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;line-height:1.3}
+  .pe-chip b{color:var(--muted);font-weight:800;margin-left:2px}
+  .pe-chip.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .pe-chip.on b{color:#fff;opacity:.85}
   /* Ruta de compra: cada parada es una tarjeta con su número, sus ítems y su botón de "ya compré" */
   .pe-ruta{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
   .pe-ruta-h{display:flex;align-items:center;gap:8px;background:var(--bg,#f2f5f9);padding:8px 10px;font-size:12.5px;font-weight:800;border-bottom:1px solid var(--border)}
@@ -922,6 +928,7 @@
           </div>
         </div>
         <div class="asof" id="pe-ins-asof"></div>
+        <div class="pe-chips" id="pe-ins-filtros"></div>
         <div class="tbl-wrap"><table id="pe-tabla-insumos"></table></div>
         <p class="note">Agrupado por <b>proveedor</b>, que es como se pide. El stock es el del <b>último conteo</b> más lo que llegó con 📦. Estados: <b style="color:var(--red)">🔴 PEDIR YA</b> = el stock que queda no cubre la <b>demora de entrega</b> del proveedor (o ya está en cero) — pedirlo hoy; <b style="color:var(--amber)">PEDIR</b> = bajo el mínimo; <b style="color:var(--blue)">📦 PEDIDO</b> = ya se pidió y está en camino (se cierra registrando la llegada). <b style="color:var(--blue)">🧭 EN LA RUTA</b> = está en la lista de proveedores a visitar; <b style="color:#6d28d9">🛻 COMPRADO</b> = Marcelo ya lo compró y lo trae, <b>todavía no está en el stock</b>. El ✎ de cada fila edita nombre, proveedor, mínimo, demora y consumo por día. Dos caminos, el mismo final: <b>contar → 🚚 ruta de compra (lo va a buscar Marcelo) o 🛒 pedir por WhatsApp (lo entrega el proveedor) → 📦 ingreso a fábrica</b>. El stock sube <b>solo</b> con el ingreso a fábrica: hasta que Gustavo no lo tiene en planta, no se puede usar.</p>
       </section>
@@ -12677,6 +12684,9 @@ function buildFilterTable(cfg){
 
   // ---------- Conteo semanal (Gustavo): teórico vs real + insumos/MP ----------
   const insBajo=x=> num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo);
+  // Filtro de la tabla de insumos: 'todos' | 'comprar' | 'ruta' | 'comprado' | 'pedido'.
+  // Es preferencia de pantalla (no se guarda en Firestore) y arranca mostrando todo.
+  let insFiltro='todos';
   /* ---------- Estado de un insumo, con la DEMORA de reaprovisionamiento adentro (18/08) -------------
      El pedido de Marcelo: que no haya faltantes de extrema urgencia, porque hay insumos que tardan
      días en llegar. Regla clásica de punto de pedido: si el stock que queda, al ritmo de consumo,
@@ -12793,13 +12803,39 @@ function buildFilterTable(cfg){
       ruta:'<span class="pe-est ruta">🧭 EN LA RUTA</span>', comprado:'<span class="pe-est comprado">🛻 COMPRADO</span>',
       ok:'<span class="pe-est ok">OK</span>' };
     const EST_ORD={ urgente:0, pedir:1, ruta:2, comprado:3, pedido:4, ok:5 };
+    /* ---------- Filtro por estado (19/08, pedido de Marcelo: "ver solo los que tengo que comprar")
+       Con 60 ítems en 16 proveedores, la lista entera no sirve para salir a comprar: lo que hay que
+       comprar queda enterrado entre lo que está OK. Los chips filtran la MISMA tabla; los contadores
+       se calculan siempre sobre TODOS los insumos, así el chip dice cuántos hay aunque no esté
+       elegido (si contara sobre lo filtrado, "Para comprar" siempre mostraría el total de la vista).
+       El filtro es preferencia de pantalla, no un dato: vive en memoria y arranca en "Todos". */
+    const cuentas={ todos:insumos.length, comprar:insPedibles().length, ruta:insEnRuta().length,
+      comprado:insComprados().length, pedido:insEnCamino().length };
+    // Los tres del circuito (ruta/comprado/en camino) se vacían solos —se compró, se entregó— y su
+    // chip desaparece: quedarse ahí dejaría la pantalla en blanco sin nada que tocar, así que vuelve
+    // a Todos. "Para comprar" NO: es un destino elegido a propósito y su chip nunca se va; si no hay
+    // nada, tiene que DECIRLO en verde. Rebotar en silencio parecería que el filtro no anduvo.
+    if(cuentas[insFiltro]===0 && insFiltro!=='todos' && insFiltro!=='comprar') insFiltro='todos';
+    const pasaFiltro=x=>{ const e=insEstado(x);
+      return insFiltro==='todos' ? true : insFiltro==='comprar' ? (e==='urgente'||e==='pedir') : e===insFiltro; };
+    const CHIPS=[['todos','Todos'],['comprar','🛒 Para comprar'],['ruta','🧭 En la ruta'],['comprado','🛻 Comprado'],['pedido','📦 En camino']];
+    const fbox=$('pe-ins-filtros');
+    if(fbox){
+      // "Todos" y "Para comprar" están siempre (aunque den 0: que diga 0 ES la información).
+      // Los tres del circuito de compra aparecen solo cuando hay algo, para no llenar de chips vacíos.
+      fbox.innerHTML=CHIPS.filter(([k])=> k==='todos'||k==='comprar'||cuentas[k]>0)
+        .map(([k,t])=>'<button class="pe-chip'+(insFiltro===k?' on':'')+'" data-insf="'+k+'">'+t+' <b>'+cuentas[k]+'</b></button>').join('');
+      fbox.querySelectorAll('button[data-insf]').forEach(b=> b.onclick=()=>{ insFiltro=b.dataset.insf; renderConteo(); });
+    }
     const grupos={};
-    insumos.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
+    insumos.filter(pasaFiltro).forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
     const provs=Object.keys(grupos).sort((a,b)=>{
       const ua=Math.min(...grupos[a].map(x=>EST_ORD[insEstado(x)])), ub=Math.min(...grupos[b].map(x=>EST_ORD[insEstado(x)]));
       return ua-ub || a.localeCompare(b); });
     let html='<tr><th>Insumo / MP</th><th class="num">Stock</th><th class="num">Mínimo</th><th class="num">Demora</th><th>Últ. conteo</th><th>Estado</th><th></th></tr>';
     if(!insumos.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px">Sin insumos cargados. Agregalos con "🧱 Contar materias primas e insumos" o en Base de Datos.</td></tr>';
+    else if(!provs.length) html+='<tr><td colspan="7" style="text-align:center;padding:18px;color:'+(insFiltro==='comprar'?'var(--green)':'var(--muted)')+'">'+
+      (insFiltro==='comprar' ? '✅ No hay nada para comprar: ningún insumo está bajo el mínimo ni urgente.' : 'Nada en este estado. Tocá <b>Todos</b> para ver la lista completa.')+'</td></tr>';
     provs.forEach(p=>{
       // Dentro del grupo manda el ORDEN MANUAL (▲▼ de "Editar lista"), no la urgencia: la urgencia
       // ya se ve por el badge y el contador del grupo, y un orden que salta solo confunde al contar.
