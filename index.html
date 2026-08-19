@@ -277,6 +277,12 @@
   .crm-tbl .est-sel{appearance:none;-webkit-appearance:none;-moz-appearance:none;display:inline-block;padding:3px 20px 3px 9px;border:none;border-radius:10px;font-size:11px;font-weight:800;color:#fff;white-space:nowrap;cursor:pointer;font-family:inherit;max-width:170px}
   .crm-tbl .est-sel:focus{outline:2px solid var(--accent);outline-offset:1px}
   .crm-tbl .est-sel option{color:#111;background:#fff;font-weight:700}
+  /* Próximo contacto: se elige con el calendario del navegador desde el mismo listado. */
+  .crm-tbl .segui-fecha{border:1px solid var(--border);border-radius:8px;padding:3px 5px;font-size:11.5px;font-weight:700;color:var(--blue);font-family:inherit;background:#fff;cursor:pointer;max-width:132px}
+  .crm-tbl .segui-fecha.venc{border-color:var(--red);color:var(--red)}
+  .crm-tbl .segui-fecha.hoy{border-color:var(--amber);color:var(--amber)}
+  .crm-tbl .segui-fecha:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .crm-tbl .segui-nota{font-size:10.5px;font-weight:800;margin-top:2px}
   .crm-tbl .acts{display:flex;gap:5px;flex-wrap:wrap}
 
   /* ---------- PRODUCCIÓN / ENTREGAS (mobile-first) ---------- */
@@ -11209,6 +11215,13 @@ function buildFilterTable(cfg){
           if(window.__presupuestoImprimir) window.__presupuestoImprimir(p);   // abre la vista previa para descargar/imprimir el PDF
         }); } });
     root.querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ const prev=l.estado; l.estado=sel.value; aplicarAutoSeguimiento(l,prev); persist(l); } });
+    // Fecha del próximo contacto editada a mano. Se sella `seguiAgendado` para que la franja de
+    // "leads sin seguimiento" no lo vuelva a ofrecer, igual que cuando se agendan en lote.
+    // ⚠️ Una fecha puesta a mano la puede pisar aplicarAutoSeguimiento si DESPUÉS se cambia el
+    // estado del lead: ahí el plazo del estado nuevo vuelve a mandar (es como funciona desde antes).
+    root.querySelectorAll('input[data-segui]').forEach(inp=> inp.onchange=()=>{
+      const l=DB.leads.find(x=>x._uid==inp.dataset.segui); if(!l) return;
+      l.proximoSeguimiento=inp.value||''; l.seguiAgendado=hoyISO; persist(l); });
   }
   function drawBoard(leads){
     $('crm-board').innerHTML = ESTADOS.map(e=>{
@@ -11249,7 +11262,13 @@ function buildFilterTable(cfg){
         '<td>'+esc(l.lugar||'—')+'</td>'+
         '<td data-sortval="'+(pr?pr.total:num(l.monto))+'">'+montoCel+'</td>'+
         '<td>'+esc(l.origen||'—')+'</td>'+
-        '<td>'+seguiBadge(l)+'</td>'+
+        // El PRÓXIMO CONTACTO se edita desde el listado con el calendario del navegador (pedido de
+        // Marcelo), sin abrir Editar. Vacío = sin seguimiento agendado, igual que antes.
+        // ⚠️ data-sortval: la celda ya no tiene texto que ordenar (es un <input>). Va como NÚMERO
+        // AAAAMMDD y no como fecha ISO: __ordenable detecta el tipo muestreando el texto, y de
+        // "2026-08-28" se quedaba con el 2026 — las tres fechas del mismo año empataban y la columna
+        // no ordenaba. Los leads sin seguimiento van al final (99999999).
+        '<td data-sortval="'+(l.proximoSeguimiento? l.proximoSeguimiento.replace(/-/g,'') : '99999999')+'">'+seguiCel(l)+'</td>'+
         '<td class="acts">'+
           '<button class="cmp-rowbtn" data-act="edit" data-id="'+l._uid+'">Editar</button>'+
           '<button class="cmp-rowbtn" data-act="pdf" data-id="'+l._uid+'" style="border-color:var(--accent);color:var(--accent);font-weight:800;white-space:nowrap" title="Calcula el presupuesto (precios + flete), lo guarda en Presupuestos y abre el PDF">⚡ Presupuesto</button>'+
@@ -11273,6 +11292,17 @@ function buildFilterTable(cfg){
     $('crm-tabla-wrap').style.display = v==='lista' ? '' : 'none';
     render(); }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
+  // Celda de seguimiento del LISTADO: el calendario para cambiar la fecha y, debajo, el aviso solo
+  // cuando urge (vencido / hoy). Para una fecha futura la propia fecha ya lo dice todo.
+  function seguiCel(l){
+    const f=l.proximoSeguimiento||'';
+    const venc=!!f && f<hoyISO, hoy=f===hoyISO;
+    const cls=venc?' venc':(hoy?' hoy':'');
+    const nota=venc?'<div class="segui-nota" style="color:var(--red)">⚠ vencido</div>'
+      : hoy?'<div class="segui-nota" style="color:var(--amber)">es hoy</div>' : '';
+    return '<input type="date" class="segui-fecha'+cls+'" data-segui="'+l._uid+'" value="'+esc(f)+'" '+
+      'title="Próximo contacto — cambialo acá mismo; vacío = sin seguimiento agendado">'+nota;
+  }
   function seguiBadge(l){ if(!l.proximoSeguimiento) return '';
     const venc=l.proximoSeguimiento<hoyISO, hoy=l.proximoSeguimiento===hoyISO;
     const col=venc?'var(--red)':(hoy?'var(--amber)':'var(--blue)');
