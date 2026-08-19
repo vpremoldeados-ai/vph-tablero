@@ -298,6 +298,9 @@
   .pe-chip b{color:var(--muted);font-weight:800;margin-left:2px}
   .pe-chip.on{background:var(--blue);border-color:var(--blue);color:#fff}
   .pe-chip.on b{color:#fff;opacity:.85}
+  /* Qué hay que comprarle a cada proveedor, adentro del botón de elegirlo */
+  .pe-prov-items{font-size:11.5px;color:var(--muted);font-weight:600;margin-top:4px;line-height:1.5;white-space:normal}
+  .pe-prov-items b{color:var(--text);font-weight:800}
   /* Ruta de compra: cada parada es una tarjeta con su número, sus ítems y su botón de "ya compré" */
   .pe-ruta{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
   .pe-ruta-h{display:flex;align-items:center;gap:8px;background:var(--bg,#f2f5f9);padding:8px 10px;font-size:12.5px;font-weight:800;border-bottom:1px solid var(--border)}
@@ -13126,11 +13129,18 @@ function buildFilterTable(cfg){
       // ---- B) Agregar paradas
       if(provPend.length){
         h+='<div style="font-size:12.5px;font-weight:800;margin:14px 0 6px">'+(paradas.length?'＋ Agregar otra parada':'¿A qué proveedores hay que ir?')+'</div>';
-        provPend.forEach((p,i)=>{ const items=pend[p]; const urg=items.filter(x=>insEstado(x)==='urgente').length;
-          h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">'+
-            '<button class="cmp-btn" data-add="'+esc(p)+'" style="flex:1;min-width:180px;text-align:left'+(urg?';border-color:var(--red)':'')+'">'+
-              '🚗 <b>'+esc(p)+'</b> · '+items.length+' ítem'+(items.length!==1?'s':'')+(urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+'</button>'+
-            '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp">📱</button></div>'; });
+        provPend.forEach((p,i)=>{ const items=pend[p].slice().sort(ordenIns); const urg=items.filter(x=>insEstado(x)==='urgente').length;
+          h+='<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;flex-wrap:nowrap">'+
+            '<button class="cmp-btn" data-add="'+esc(p)+'" style="flex:1;min-width:0;text-align:left;display:block'+(urg?';border-color:var(--red)':'')+'">'+
+              '<div>🚗 <b>'+esc(p)+'</b> <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+                (urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+'</div>'+
+              // Qué hay que comprar, no solo a quién (19/08, pedido de Marcelo): con el nombre y la
+              // cantidad sugerida se decide si vale el viaje sin tener que abrir nada.
+              '<div class="pe-prov-items">'+items.map(x=>
+                '<div>'+(insEstado(x)==='urgente'?'<span style="color:var(--red)">🔴</span> ':'• ')+esc(x.nombre||'')+
+                ' <b>'+nf(insPedirSugerido(x))+(x.unidad?' '+esc(x.unidad):'')+'</b></div>').join('')+'</div>'+
+            '</button>'+
+            '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp" style="flex:none">📱</button></div>'; });
         h+='<div style="font-size:11px;color:var(--muted);margin:-2px 0 4px">🚗 = lo vas a buscar vos · 📱 = se lo pedís por WhatsApp para que lo entreguen.</div>';
       } else if(!paradas.length && !camioneta.length){
         h+='<p style="color:var(--green);font-size:13px;padding:10px 0">✅ No hay nada para comprar: ningún insumo está bajo el mínimo ni urgente.</p>';
@@ -13208,9 +13218,14 @@ function buildFilterTable(cfg){
     $('pe-form-ins').innerHTML =
       '<h3 style="margin:0 0 4px;font-size:15px">🛒 ¿A qué proveedor le pedís?</h3>'+
       '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Un mensaje por proveedor. Los que tienen algo urgente van primero.</p>'+
-      provs.map((p,i)=>{ const items=grupos[p]; const urg=items.filter(x=>insEstado(x)==='urgente').length;
-        return '<button class="cmp-btn" data-pprov="'+i+'" style="display:flex;width:100%;text-align:left;margin-bottom:6px;align-items:center;gap:8px'+(urg?';border-color:var(--red)':'')+'">'+
-          '<span style="flex:1"><b>'+esc(p)+'</b> · '+items.length+' ítem'+(items.length!==1?'s':'')+(urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+'</span><span>→</span></button>'; }).join('')+
+      provs.map((p,i)=>{ const items=grupos[p].slice().sort(ordenIns); const urg=items.filter(x=>insEstado(x)==='urgente').length;
+        return '<button class="cmp-btn" data-pprov="'+i+'" style="display:block;width:100%;text-align:left;margin-bottom:6px'+(urg?';border-color:var(--red)':'')+'">'+
+          '<div><b>'+esc(p)+'</b> <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+            (urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+' <span style="float:right">→</span></div>'+
+          // Qué se le va a pedir a cada uno, para no tener que abrir el mensaje para saberlo
+          '<div class="pe-prov-items">'+items.map(x=>
+            '<div>'+(insEstado(x)==='urgente'?'<span style="color:var(--red)">🔴</span> ':'• ')+esc(x.nombre||'')+
+            ' <b>'+nf(insPedirSugerido(x))+(x.unidad?' '+esc(x.unidad):'')+'</b></div>').join('')+'</div></button>'; }).join('')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-pp-cancel">Cancelar</button></div>';
     $('pe-form-ins').querySelectorAll('button[data-pprov]').forEach(b=> b.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); pedirA(provs[+b.dataset.pprov]); });
     $('pe-pp-cancel').onclick=()=>$('pe-modal-ins').classList.remove('open');
