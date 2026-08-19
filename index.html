@@ -271,6 +271,12 @@
   .crm-tbl th{background:#f7f9fc;color:#54637a;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;position:sticky;top:0}
   .crm-tbl tbody tr:hover{background:#f7f9fc}
   .crm-tbl .est-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;color:#fff;white-space:nowrap}
+  /* Mismo chip, pero desplegable: el estado se cambia desde el listado sin abrir el lead. */
+  .crm-tbl .est-pick{position:relative;display:inline-block}
+  .crm-tbl .est-pick::after{content:'▾';position:absolute;right:7px;top:50%;transform:translateY(-50%);color:#fff;font-size:10px;pointer-events:none}
+  .crm-tbl .est-sel{appearance:none;-webkit-appearance:none;-moz-appearance:none;display:inline-block;padding:3px 20px 3px 9px;border:none;border-radius:10px;font-size:11px;font-weight:800;color:#fff;white-space:nowrap;cursor:pointer;font-family:inherit;max-width:170px}
+  .crm-tbl .est-sel:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .crm-tbl .est-sel option{color:#111;background:#fff;font-weight:700}
   .crm-tbl .acts{display:flex;gap:5px;flex-wrap:wrap}
 
   /* ---------- PRODUCCIÓN / ENTREGAS (mobile-first) ---------- */
@@ -11232,7 +11238,13 @@ function buildFilterTable(cfg){
       return '<tr>'+
         '<td><b>'+esc(l.cliente||'(sin nombre)')+'</b>'+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700">✓</span>':'')+
           (l.telefono?'<div style="color:var(--muted);font-size:11px">'+(wa?'<a href="'+wa+'" target="_blank" rel="noopener" style="color:var(--green)">📞 '+esc(l.telefono)+'</a>':esc(l.telefono))+'</div>':'')+'</td>'+
-        '<td><span class="est-chip" style="background:'+e.c+'">'+e.l+'</span></td>'+
+        // El estado se cambia DESDE EL LISTADO (pedido de Marcelo): antes había que entrar a Editar
+        // lead por lead. Es el mismo `select[data-move]` que el kanban, así que lo engancha el mismo
+        // handler de bindAcciones() y reprograma el seguimiento igual (aplicarAutoSeguimiento).
+        // ⚠️ data-sortval: sin esto __ordenable leería TODAS las opciones del select juntas
+        // ("NuevoCotizadoReconsulta 1…") y la columna Estado ordenaría cualquier cosa.
+        '<td data-sortval="'+esc(e.l)+'"><span class="est-pick"><select class="est-sel" data-move="'+l._uid+'" style="background-color:'+e.c+'" title="Cambiar el estado del lead">'+
+          ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===e.k?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></span></td>'+
         '<td>'+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</td>'+
         '<td>'+esc(l.lugar||'—')+'</td>'+
         '<td data-sortval="'+(pr?pr.total:num(l.monto))+'">'+montoCel+'</td>'+
