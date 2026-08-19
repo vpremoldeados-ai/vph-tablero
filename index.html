@@ -291,6 +291,13 @@
   .pe-stepper input{width:70px;height:40px;text-align:center;font-size:17px;font-weight:800;border:1px solid var(--border);border-radius:10px;color:var(--text)}
   .pe-est{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
   .pe-est.ok{background:var(--green-bg);color:var(--green)} .pe-est.bajo{background:var(--amber-bg);color:var(--amber)} .pe-est.falta{background:var(--red-bg);color:var(--red)}
+  .pe-est.ruta{background:var(--blue-bg);color:var(--blue)} .pe-est.comprado{background:#ede9fe;color:#6d28d9}
+  /* Ruta de compra: cada parada es una tarjeta con su número, sus ítems y su botón de "ya compré" */
+  .pe-ruta{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
+  .pe-ruta-h{display:flex;align-items:center;gap:8px;background:var(--bg,#f2f5f9);padding:8px 10px;font-size:12.5px;font-weight:800;border-bottom:1px solid var(--border)}
+  .pe-ruta-n{background:var(--blue);color:#fff;border-radius:999px;min-width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+  .pe-ruta-body{padding:9px 10px 10px}
+  .pe-ruta-body .pe-qty{padding:9px 11px;margin-bottom:6px}
   .pe-cod-mini{display:none}   /* el código debajo del nombre: SOLO en el celular (en la PC ya está su columna) */
   .pe-fis-ok{font-size:10.5px;font-weight:700;color:var(--green);line-height:1.3;margin-top:3px}   /* "el físico ya llegó al mínimo" en el Plan de producción */
   .pe-prio-mini{display:none}  /* el puesto (1º URGENTE) dentro de la celda del producto: SOLO en el celular */
@@ -909,13 +916,14 @@
           <h2 style="margin:0"><span class="dot" style="background:var(--amber)"></span>Materias primas e insumos</h2>
           <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
             <button class="cmp-btn" id="pe-btn-editlista" title="Editar toda la lista de una: nombres, mínimos, proveedores, orden (▲▼) y bajas">✏️ Editar lista</button>
-            <button class="cmp-btn" id="pe-btn-recepcion" title="Registrar lo que llegó de un pedido: suma al stock y saca el ítem de 'en camino'">📦 Llegó un pedido</button>
-            <button class="cmp-btn" id="pe-btn-pedircompra">🛒 Armar pedido de compra</button>
+            <button class="cmp-btn" id="pe-btn-recepcion" title="Registrar lo que entró a fábrica (lo que trajo el proveedor o lo que compró Marcelo): suma al stock">📦 Ingreso a fábrica</button>
+            <button class="cmp-btn" id="pe-btn-ruta" title="Armar la lista de proveedores a visitar, marcar lo que vas comprando y entregarlo en fábrica">🚚 Ruta de compra</button>
+            <button class="cmp-btn" id="pe-btn-pedircompra" title="Mandarle el pedido por WhatsApp al proveedor para que lo entregue">🛒 Pedir por WhatsApp</button>
           </div>
         </div>
         <div class="asof" id="pe-ins-asof"></div>
         <div class="tbl-wrap"><table id="pe-tabla-insumos"></table></div>
-        <p class="note">Agrupado por <b>proveedor</b>, que es como se pide. El stock es el del <b>último conteo</b> más lo que llegó con 📦. Estados: <b style="color:var(--red)">🔴 PEDIR YA</b> = el stock que queda no cubre la <b>demora de entrega</b> del proveedor (o ya está en cero) — pedirlo hoy; <b style="color:var(--amber)">PEDIR</b> = bajo el mínimo; <b style="color:var(--blue)">📦 PEDIDO</b> = ya se pidió y está en camino (se cierra registrando la llegada). El ✎ de cada fila edita nombre, proveedor, mínimo, demora y consumo por día. Circuito: contar → 🛒 pedir por proveedor → 📦 registrar lo que llegó.</p>
+        <p class="note">Agrupado por <b>proveedor</b>, que es como se pide. El stock es el del <b>último conteo</b> más lo que llegó con 📦. Estados: <b style="color:var(--red)">🔴 PEDIR YA</b> = el stock que queda no cubre la <b>demora de entrega</b> del proveedor (o ya está en cero) — pedirlo hoy; <b style="color:var(--amber)">PEDIR</b> = bajo el mínimo; <b style="color:var(--blue)">📦 PEDIDO</b> = ya se pidió y está en camino (se cierra registrando la llegada). <b style="color:var(--blue)">🧭 EN LA RUTA</b> = está en la lista de proveedores a visitar; <b style="color:#6d28d9">🛻 COMPRADO</b> = Marcelo ya lo compró y lo trae, <b>todavía no está en el stock</b>. El ✎ de cada fila edita nombre, proveedor, mínimo, demora y consumo por día. Dos caminos, el mismo final: <b>contar → 🚚 ruta de compra (lo va a buscar Marcelo) o 🛒 pedir por WhatsApp (lo entrega el proveedor) → 📦 ingreso a fábrica</b>. El stock sube <b>solo</b> con el ingreso a fábrica: hasta que Gustavo no lo tiene en planta, no se puede usar.</p>
       </section>
       <section>
         <h2><span class="dot" style="background:var(--blue)"></span>Ajustes por conteo (productos)</h2>
@@ -12680,14 +12688,50 @@ function buildFilterTable(cfg){
        🟢 OK        — nada que hacer.
      consumoDiario y demoraDias son opcionales por ítem: sin ellos el estado cae a la regla del
      mínimo, como siempre. PEDIDO pisa a PEDIR/PEDIR YA: ya está en camino, no hay que pedirlo de
-     nuevo — el remedio si no llega es reclamar, y la fecha del pedido queda a la vista para eso. */
+     nuevo — el remedio si no llega es reclamar, y la fecha del pedido queda a la vista para eso.
+
+     ---------- RUTA DE COMPRA (19/08, pedido de Marcelo) -------------------------------------------
+     Marcelo es el que compra, y muchas veces NO le pide al proveedor que entregue: sale con la
+     camioneta a buscar los insumos. Ese camino tiene dos momentos más, y cada uno es un estado:
+       🧭 EN LA RUTA — está en la lista de paradas de hoy (rutaFecha + rutaOrden = nº de parada).
+       🛻 COMPRADO   — ya lo compró y lo tiene en la camioneta (compraFecha + compraCant).
+     El circuito cierra cuando se lo ENTREGA A GUSTAVO en fábrica: ahí recién SUMA al stock y, si
+     queda por encima del mínimo, deja de figurar como faltante.
+     🔴 El stock sube SOLO al entregarlo en fábrica, NUNCA al comprarlo. Mientras está en la
+     camioneta no está en planta: Gustavo no lo puede usar y su conteo no cerraría. Si el stock
+     subiera al comprar, el faltante desaparecería de la pantalla con la mercadería todavía arriba
+     del vehículo — que es exactamente el error que este circuito viene a evitar.
+     COMPRADO y EN LA RUTA pisan a PEDIR/PEDIR YA por el mismo motivo que PEDIDO: ya está resuelto,
+     no hay que volver a pedirlo. */
   function insEstado(x){
     const st=num(x.stock), min=num(x.stockMinimo), cons=num(x.consumoDiario), dem=num(x.demoraDias);
+    if(x.compraFecha) return 'comprado';
     if(x.pedidoFecha) return 'pedido';
+    if(x.rutaFecha) return 'ruta';
     if(min>0 && st<=0) return 'urgente';
     if(cons>0 && dem>0 && st/cons<=dem) return 'urgente';
     if(insBajo(x)) return 'pedir';
     return 'ok';
+  }
+  // Los tres tramos del camino de compra, cada uno con su pantalla.
+  const insEnRuta=()=> insumos.filter(x=> x.rutaFecha && !x.compraFecha);
+  const insComprados=()=> insumos.filter(x=> x.compraFecha);              // en la camioneta, sin entregar
+  const insEnCamino=()=> insumos.filter(x=> x.pedidoFecha && !x.compraFecha); // los trae el proveedor
+  // Nº de parada de un proveedor = el menor rutaOrden de sus ítems (todos comparten el número).
+  const ordParada=items=> Math.min.apply(null, items.map(x=> num(x.rutaOrden)||9999));
+  /* Lo que se escribe al ENTREGAR en fábrica. Función aparte y pura para poder testearla: acá se
+     mueve stock de verdad. Devuelve solo los campos a mergear (nunca el documento entero, así no
+     pisa lo que Gustavo pueda estar tocando en paralelo). Los campos que se "borran" van como ''
+     porque todo el módulo los mira por verdadero/falso y '' no obliga a usar deleteField(). */
+  function insEntregaUpd(cur, lleg, hoy){
+    const pedido=num(cur.pedidoCant)||num(cur.compraCant);
+    const resto=Math.max(0, pedido-lleg);
+    const upd={ stock:num(cur.stock)+lleg, ultimaRecepcion:hoy, compraFecha:'', compraCant:'', rutaFecha:'', rutaOrden:'' };
+    // Llegó parcial: sigue en camino por el resto (solo aplica al pedido que trae el proveedor;
+    // lo que Marcelo fue a buscar y compró se entrega entero por definición).
+    if(resto>0.001 && cur.pedidoFecha && !cur.compraFecha){ upd.pedidoCant=resto; }
+    else { upd.pedidoFecha=''; upd.pedidoCant=''; }
+    return upd;
   }
   const insPedibles=()=> insumos.filter(x=>{ const e=insEstado(x); return e==='urgente'||e==='pedir'; });
   // Cuánto pedir: alcanzar el mínimo Y cubrir lo que se consume mientras el pedido viaja.
@@ -12745,8 +12789,10 @@ function buildFilterTable(cfg){
     // Insumos / materias primas — AGRUPADOS POR PROVEEDOR (así se piden: un mensaje por proveedor).
     // Dentro del grupo, lo urgente arriba. Los proveedores con algo para pedir van primero.
     const EST_BADGE={ urgente:'<span class="pe-est falta">🔴 PEDIR YA</span>', pedir:'<span class="pe-est bajo">PEDIR</span>',
-      pedido:'<span class="pe-est" style="background:var(--blue-bg);color:var(--blue)">📦 PEDIDO</span>', ok:'<span class="pe-est ok">OK</span>' };
-    const EST_ORD={ urgente:0, pedir:1, pedido:2, ok:3 };
+      pedido:'<span class="pe-est" style="background:var(--blue-bg);color:var(--blue)">📦 PEDIDO</span>',
+      ruta:'<span class="pe-est ruta">🧭 EN LA RUTA</span>', comprado:'<span class="pe-est comprado">🛻 COMPRADO</span>',
+      ok:'<span class="pe-est ok">OK</span>' };
+    const EST_ORD={ urgente:0, pedir:1, ruta:2, comprado:3, pedido:4, ok:5 };
     const grupos={};
     insumos.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
     const provs=Object.keys(grupos).sort((a,b)=>{
@@ -12761,7 +12807,9 @@ function buildFilterTable(cfg){
       const nPedir=items.filter(x=>{const e=insEstado(x); return e==='urgente'||e==='pedir';}).length;
       html+='<tr class="pe-ins-prov"><td colspan="7"><b>🏪 '+esc(p)+'</b> <span style="color:var(--muted);font-weight:400">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+(nPedir?' <span style="color:var(--red);font-weight:800">· '+nPedir+' para pedir</span>':'')+'</td></tr>';
       items.forEach(x=>{ const e=insEstado(x); const dias=insDiasStock(x);
-        const detalle = e==='pedido' ? '<div style="font-size:10px;color:var(--blue)">pedido el '+fmtFecha(x.pedidoFecha)+(num(x.pedidoCant)>0?' ('+nf(num(x.pedidoCant))+(x.unidad?' '+esc(x.unidad):'')+')':'')+'</div>'
+        const detalle = e==='comprado' ? '<div style="font-size:10px;color:#6d28d9;font-weight:700">comprado el '+fmtFecha(x.compraFecha)+(num(x.compraCant)>0?' ('+nf(num(x.compraCant))+(x.unidad?' '+esc(x.unidad):'')+')':'')+' — falta entregarlo en fábrica</div>'
+          : e==='ruta' ? '<div style="font-size:10px;color:var(--blue)">en la ruta de compra del '+fmtFecha(x.rutaFecha)+' · parada '+(num(x.rutaOrden)||'?')+'</div>'
+          : e==='pedido' ? '<div style="font-size:10px;color:var(--blue)">pedido el '+fmtFecha(x.pedidoFecha)+(num(x.pedidoCant)>0?' ('+nf(num(x.pedidoCant))+(x.unidad?' '+esc(x.unidad):'')+')':'')+'</div>'
           : (e==='urgente'&&dias!=null) ? '<div style="font-size:10px;color:var(--red)">quedan ~'+dias+' día'+(dias!==1?'s':'')+' de stock y la entrega tarda '+nf(num(x.demoraDias))+'</div>' : '';
         html+='<tr><td data-label="Insumo/MP"><b>'+esc(x.nombre||'')+'</b>'+(x.unidad?'<div style="font-size:10px;color:var(--muted)">'+esc(x.unidad)+'</div>':'')+'</td>'+
           '<td class="num" data-label="Stock" style="font-weight:800;color:'+(e==='urgente'?'var(--red)':e==='pedir'?'var(--amber)':'var(--text)')+'">'+nf(num(x.stock))+'</td>'+
@@ -12774,10 +12822,13 @@ function buildFilterTable(cfg){
     $('pe-tabla-insumos').innerHTML=html;
     $('pe-tabla-insumos').querySelectorAll('button[data-insedit]').forEach(b=> b.onclick=()=>{ const x=insumos.find(z=>z._uid===b.dataset.insedit); if(x) openEditIns(x); });
     // sin __ordenable a propósito: reordenar rompería los grupos por proveedor
-    const nUrg=insumos.filter(x=>insEstado(x)==='urgente').length, nPed=insPedibles().length, nEnCamino=insumos.filter(x=>insEstado(x)==='pedido').length;
+    const nUrg=insumos.filter(x=>insEstado(x)==='urgente').length, nPed=insPedibles().length, nEnCamino=insEnCamino().length;
+    const nRuta=insEnRuta().length, nComp=insComprados().length;
     const ultIns=insumos.map(x=>x.fechaConteo||'').sort().reverse()[0]||'';
     $('pe-ins-asof').textContent=(ultIns?('Último conteo: '+fmtFecha(ultIns)+' · '):'')+insumos.length+' ítems'
-      +(nUrg?(' · 🔴 '+nUrg+' URGENTE'+(nUrg!==1?'S':'')):'')+(nPed?(' · '+nPed+' para pedir → 🛒'):'')+(nEnCamino?(' · 📦 '+nEnCamino+' en camino'):'');
+      +(nUrg?(' · 🔴 '+nUrg+' URGENTE'+(nUrg!==1?'S':'')):'')+(nPed?(' · '+nPed+' para pedir → 🛒'):'')
+      +(nRuta?(' · 🧭 '+nRuta+' en la ruta'):'')+(nComp?(' · 🛻 '+nComp+' comprado'+(nComp!==1?'s':'')+' SIN ENTREGAR'):'')
+      +(nEnCamino?(' · 📦 '+nEnCamino+' en camino'):'');
     // Ajustes por conteo de productos (últimos 25)
     const ajs=ajustes.slice().sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,25);
     let ah='<tr><th>Fecha</th><th>Producto</th><th class="num">Teórico</th><th class="num">Contado</th><th class="num">Ajuste</th><th>Usuario</th></tr>';
@@ -12973,12 +13024,132 @@ function buildFilterTable(cfg){
     };
     $('pe-modal-ins').classList.add('open');
   }
+  /* ---------- 🚚 RUTA DE COMPRA (19/08, pedido de Marcelo) --------------------------------------
+     Hasta ahora el único camino era mandarle el pedido por WhatsApp al proveedor y esperar que lo
+     entregue. Pero Marcelo casi siempre sale a buscar los insumos él: necesita la lista de a qué
+     proveedores ir, en qué orden, marcar sobre la marcha lo que va comprando, y al volver marcar
+     que se lo entregó a Gustavo en fábrica (ahí recién entra al stock).
+     Una sola pantalla con los tres bloques del recorrido:
+       B) ¿A quién hay que ir?  →  A) La ruta de hoy, parada por parada  →  C) En la camioneta.
+     Todo vive en el documento del insumo (vph_insumos): no hay colección nueva, no hay regla nueva
+     de Firestore que publicar, y Gustavo ve el estado de cada cosa en la tabla de siempre.
+     El pedido por WhatsApp NO se saca: los dos caminos conviven y terminan en el mismo lugar
+     (entregado en fábrica → suma al stock). Hay proveedores que entregan y otros a los que se va. */
+  function openRuta(){
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    const box=$('pe-form-ins');
+    const vivo=x=> insumos.find(z=>z._uid===x._uid)||x;
+    // Escritura de SOLO los campos que cambian (merge): no pisa lo que Gustavo pueda estar contando
+    // en paralelo. La copia local optimista es para que la pantalla responda en el acto — el
+    // snapshot la reconfirma enseguida con lo mismo (§ escritura asíncrona del CLAUDE.md).
+    const wr=(x,campos)=>{ const cur=vivo(x); Object.assign(cur,campos);
+      c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), campos, {merge:true}).catch(e=>alert('No se pudo guardar: '+e.message)); };
+    const qtyRow=(x,val,extra)=>
+      '<div class="pe-qty"><div><div class="nm">'+esc(x.nombre||'')+(insEstado(x)==='urgente'?' <span style="color:var(--red);font-size:11px">🔴</span>':'')+'</div>'+
+        '<div class="cd">'+(x.unidad?esc(x.unidad)+' · ':'')+'stock '+nf(num(x.stock))+(num(x.stockMinimo)>0?' de '+nf(num(x.stockMinimo))+' mín':'')+(extra||'')+'</div></div>'+
+        '<input data-ri="'+esc(x._uid)+'" inputmode="decimal"'+(val?' value="'+val+'"':'')+' placeholder="cant." style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>';
+
+    function pintar(){
+      // A) paradas ya armadas
+      const gr={}; insEnRuta().forEach(x=>{ const p=provDe(x); (gr[p]=gr[p]||[]).push(x); });
+      const paradas=Object.keys(gr).sort((a,b)=> ordParada(gr[a])-ordParada(gr[b]) || a.localeCompare(b));
+      // B) proveedores con algo para pedir que todavía no están en la ruta (insPedibles ya excluye
+      //    lo que está en ruta, comprado o pedido: esos estados pisan a PEDIR/PEDIR YA)
+      const pend={}; insPedibles().forEach(x=>{ const p=provDe(x); (pend[p]=pend[p]||[]).push(x); });
+      const provPend=Object.keys(pend).sort((a,b)=>
+        (pend[b].some(x=>insEstado(x)==='urgente')?1:0)-(pend[a].some(x=>insEstado(x)==='urgente')?1:0) || a.localeCompare(b));
+      const camioneta=insComprados();
+
+      let h='<h3 style="margin:0 0 4px;font-size:15px">🚚 Ruta de compra</h3>'+
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 12px">Armá las paradas, marcá lo que vas comprando y al volver entregalo en fábrica. '+
+        '<b>El stock sube recién cuando lo entregás</b>, no al comprarlo.</p>';
+
+      // ---- A) La ruta de hoy
+      if(paradas.length){
+        h+='<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">🧭 Tu ruta ('+paradas.length+' parada'+(paradas.length!==1?'s':'')+')</div>';
+        paradas.forEach((p,i)=>{
+          const items=gr[p].slice().sort(ordenIns);
+          const otros=insumos.filter(z=> provDe(z)===p && !z.rutaFecha && !z.compraFecha).sort(ordenIns);
+          const urg=items.filter(x=>insEstado(x)==='urgente').length;
+          h+='<div class="pe-ruta" data-parada="'+esc(p)+'">'+
+            '<div class="pe-ruta-h"><span class="pe-ruta-n">'+(i+1)+'</span><span style="flex:1">🏪 '+esc(p)+
+              ' <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+              (urg?' <span style="color:var(--red)">· '+urg+' urgente'+(urg!==1?'s':'')+'</span>':'')+'</span>'+
+              '<span class="pe-qty-move"><button data-up="'+i+'"'+(i===0?' disabled':'')+' title="Ir antes">▲</button>'+
+              '<button data-down="'+i+'"'+(i===paradas.length-1?' disabled':'')+' title="Ir después">▼</button></span>'+
+              '<button class="cmp-rowbtn" data-quitar="'+esc(p)+'" title="Sacar esta parada de la ruta">✕</button></div>'+
+            '<div class="pe-ruta-body">'+
+              items.map(x=> qtyRow(x, nf(insPedirSugerido(x)), ' · sugerido '+nf(insPedirSugerido(x)))).join('')+
+              (otros.length? '<details style="margin:2px 0 8px"><summary style="font-size:11.5px;color:var(--muted);cursor:pointer">＋ Otros '+otros.length+' ítem'+(otros.length!==1?'s':'')+' de este proveedor (por si aprovechás el viaje)</summary><div style="margin-top:6px">'+
+                otros.map(x=> qtyRow(x,'')).join('')+'</div></details>' : '')+
+              '<button class="cmp-btn cmp-btn-primary" data-comprar="'+esc(p)+'" style="width:100%">✅ Ya compré en '+esc(p)+'</button>'+
+              '<div style="font-size:11px;color:var(--muted);margin-top:5px">Cargá lo que <b>realmente</b> compraste. Lo que dejes vacío o en 0 queda en la ruta para otro día.</div>'+
+            '</div></div>'; });
+      }
+
+      // ---- B) Agregar paradas
+      if(provPend.length){
+        h+='<div style="font-size:12.5px;font-weight:800;margin:14px 0 6px">'+(paradas.length?'＋ Agregar otra parada':'¿A qué proveedores hay que ir?')+'</div>';
+        provPend.forEach((p,i)=>{ const items=pend[p]; const urg=items.filter(x=>insEstado(x)==='urgente').length;
+          h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">'+
+            '<button class="cmp-btn" data-add="'+esc(p)+'" style="flex:1;min-width:180px;text-align:left'+(urg?';border-color:var(--red)':'')+'">'+
+              '🚗 <b>'+esc(p)+'</b> · '+items.length+' ítem'+(items.length!==1?'s':'')+(urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+'</button>'+
+            '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp">📱</button></div>'; });
+        h+='<div style="font-size:11px;color:var(--muted);margin:-2px 0 4px">🚗 = lo vas a buscar vos · 📱 = se lo pedís por WhatsApp para que lo entreguen.</div>';
+      } else if(!paradas.length && !camioneta.length){
+        h+='<p style="color:var(--green);font-size:13px;padding:10px 0">✅ No hay nada para comprar: ningún insumo está bajo el mínimo ni urgente.</p>';
+      }
+
+      // ---- C) En la camioneta
+      if(camioneta.length){
+        h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px;color:#6d28d9">🛻 En la camioneta — comprado y sin entregar ('+camioneta.length+')</div>'+
+          '<div style="border:1px solid #ddd6fe;background:#faf5ff;border-radius:12px;padding:10px">'+
+          camioneta.map(x=>'<div style="font-size:12.5px;padding:3px 0"><b>'+esc(x.nombre||'')+'</b> · '+nf(num(x.compraCant))+(x.unidad?' '+esc(x.unidad):'')+
+            ' <span style="color:var(--muted)">— comprado el '+fmtFecha(x.compraFecha)+' en '+esc(provDe(x))+'</span></div>').join('')+
+          '<button class="cmp-btn cmp-btn-primary" id="pe-ruta-entregar" style="width:100%;margin-top:8px">📦 Entregar en fábrica (suma al stock)</button>'+
+          '<div style="font-size:11px;color:var(--muted);margin-top:5px">Esto es lo que le dejás a Gustavo. Recién ahí entra al stock y deja de figurar como faltante.</div></div>';
+      }
+
+      h+='<div class="cmp-form-foot"><button class="cmp-btn" id="pe-ruta-cerrar">Cerrar</button></div>';
+      box.innerHTML=h;
+
+      // ---- acciones
+      box.querySelectorAll('button[data-add]').forEach(b=> b.onclick=()=>{
+        const p=b.dataset.add; const orden=(paradas.length+1)*10;
+        pend[p].forEach(x=> wr(x,{rutaFecha:hoyISO, rutaOrden:orden})); setTimeout(pintar,120); });
+      box.querySelectorAll('button[data-quitar]').forEach(b=> b.onclick=()=>{
+        const p=b.dataset.quitar; gr[p].forEach(x=> wr(x,{rutaFecha:'', rutaOrden:''})); setTimeout(pintar,120); });
+      box.querySelectorAll('button[data-wa]').forEach(b=> b.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); pedidoCompra(b.dataset.wa); });
+      // ▲▼: se intercambia el nº de parada entre las dos, y se reescribe en TODOS los ítems de cada
+      // una (el número vive en cada insumo, no hay documento de "ruta" aparte).
+      const mover=(i,j)=>{ if(j<0||j>=paradas.length) return;
+        const a=gr[paradas[i]], b2=gr[paradas[j]], oa=ordParada(a), ob=ordParada(b2);
+        a.forEach(x=> wr(x,{rutaOrden:ob})); b2.forEach(x=> wr(x,{rutaOrden:oa})); setTimeout(pintar,120); };
+      box.querySelectorAll('button[data-up]').forEach(b=> b.onclick=()=> mover(+b.dataset.up, +b.dataset.up-1));
+      box.querySelectorAll('button[data-down]').forEach(b=> b.onclick=()=> mover(+b.dataset.down, +b.dataset.down+1));
+      // "Ya compré acá": pasa a 🛻 COMPRADO lo que tenga cantidad. NO toca el stock — eso pasa al
+      // entregarlo en fábrica.
+      box.querySelectorAll('button[data-comprar]').forEach(b=> b.onclick=()=>{
+        const cont=b.closest('.pe-ruta'); let n=0;
+        cont.querySelectorAll('input[data-ri]').forEach(el=>{ const v=num(el.value); if(!(v>0)) return;
+          const x=insumos.find(z=>z._uid===el.dataset.ri); if(!x) return;
+          wr(x,{compraFecha:hoyISO, compraCant:v, rutaFecha:'', rutaOrden:''}); n++; });
+        if(!n){ alert('Cargá la cantidad de lo que compraste en al menos un ítem.'); return; }
+        setTimeout(pintar,150); });
+      const ent=$('pe-ruta-entregar'); if(ent) ent.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); openRecepcion(); };
+      $('pe-ruta-cerrar').onclick=()=>$('pe-modal-ins').classList.remove('open');
+    }
+    pintar();
+    $('pe-modal-ins').classList.add('open');
+  }
   /* ---------- Pedido de compra POR PROVEEDOR (18/08) --------------------------------------------
      Antes era un solo mensaje con todo mezclado; pero los pedidos se hacen proveedor por proveedor.
      Ahora: elegís el proveedor (botones con el conteo de ítems), sale SU mensaje, y al copiarlo/
      mandarlo cada ítem queda marcado 📦 PEDIDO (pedidoFecha + pedidoCant) hasta que se registre la
      llegada con "📦 Llegó un pedido". La cantidad sugerida cubre mínimo + consumo durante la demora. */
-  function pedidoCompra(){
+  // `soloProv` (opcional): saltea la pantalla de elegir proveedor y va derecho al mensaje de ese.
+  // Lo usa el botón 📱 de la Ruta de compra, donde el proveedor ya está elegido.
+  function pedidoCompra(soloProv){
     const pedibles=insPedibles();
     if(!pedibles.length){ alert('No hay insumos para pedir. Nada bajo mínimo ni urgente 🎉'); return; }
     const grupos={};
@@ -12995,6 +13166,7 @@ function buildFilterTable(cfg){
         c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), {...cur, pedidoFecha:hoyISO, pedidoCant:insPedirSugerido(x), pedidoAvisado:hoyISO}); }); };
       if(window.__wa) window.__wa.modal({ titulo:'🛒 Pedido a '+prov, destino:'Copiá y pegá al proveedor o a Sofía. Al copiar, los ítems quedan marcados 📦 PEDIDO.', texto:armarMsg(prov,items), alConfirmar:marcar });
       else { try{ navigator.clipboard.writeText(armarMsg(prov,items)); alert('Pedido copiado.'); marcar(); }catch(e){ alert(armarMsg(prov,items)); } } };
+    if(soloProv && grupos[soloProv]){ pedirA(soloProv); return; }
     if(provs.length===1){ pedirA(provs[0]); return; }
     // Varios proveedores con faltantes: elegir a cuál pedirle (un mensaje por proveedor)
     $('pe-form-ins').innerHTML =
@@ -13014,20 +13186,26 @@ function buildFilterTable(cfg){
      semanal ya corrige cualquier diferencia. Lo que llegue incompleto se puede registrar parcial:
      sigue en PEDIDO por el resto. */
   function openRecepcion(){
-    const enCamino=insumos.filter(x=>x.pedidoFecha);
-    if(!enCamino.length){ alert('No hay pedidos en camino. Primero armá uno con 🛒.'); return; }
+    // Las DOS puertas de entrada a la fábrica: lo que trae el proveedor (pedidoFecha) y lo que
+    // Marcelo fue a buscar y entrega en mano (compraFecha). Terminan igual: suma al stock.
+    const enCamino=insumos.filter(x=> x.pedidoFecha || x.compraFecha);
+    if(!enCamino.length){ alert('No hay nada para ingresar: ni pedidos en camino ni compras sin entregar.\nArmá un pedido con 🛒 o una salida a comprar con 🚚.'); return; }
     const grupos={};
     enCamino.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
-    const provs=Object.keys(grupos).sort((a,b)=>a.localeCompare(b));
+    // Lo comprado por Marcelo va primero: está en la camioneta esperando que alguien lo descargue.
+    const provs=Object.keys(grupos).sort((a,b)=>
+      (grupos[b].some(x=>x.compraFecha)?1:0)-(grupos[a].some(x=>x.compraFecha)?1:0) || a.localeCompare(b));
     const list=[]; provs.forEach(p=> grupos[p].forEach(x=>list.push(x)));
     let cuerpo='';
     provs.forEach(p=>{ cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p)+'</div>';
-      grupos[p].forEach(x=>{ const i=list.indexOf(x);
-        cuerpo+='<div class="pe-qty"><div><div class="nm">'+esc(x.nombre)+'</div><div class="cd">pedido el '+fmtFecha(x.pedidoFecha)+(num(x.pedidoCant)>0?' · '+nf(num(x.pedidoCant))+(x.unidad?' '+esc(x.unidad):''):'')+' · stock actual '+nf(num(x.stock))+'</div></div>'+
-          '<input data-rci="'+i+'" inputmode="decimal" placeholder="'+(num(x.pedidoCant)>0?nf(num(x.pedidoCant)):'cant.')+'" style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>'; }); });
+      grupos[p].forEach(x=>{ const i=list.indexOf(x); const cant=num(x.compraCant)||num(x.pedidoCant);
+        const orig = x.compraFecha ? '<span style="color:#6d28d9;font-weight:700">🛻 comprado el '+fmtFecha(x.compraFecha)+'</span>'
+                                   : 'pedido el '+fmtFecha(x.pedidoFecha);
+        cuerpo+='<div class="pe-qty"><div><div class="nm">'+esc(x.nombre)+'</div><div class="cd">'+orig+(cant>0?' · '+nf(cant)+(x.unidad?' '+esc(x.unidad):''):'')+' · stock actual '+nf(num(x.stock))+'</div></div>'+
+          '<input data-rci="'+i+'" inputmode="decimal"'+(x.compraFecha&&cant>0?' value="'+nf(cant)+'"':'')+' placeholder="'+(cant>0?nf(cant):'cant.')+'" style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>'; }); });
     $('pe-form-ins').innerHTML =
-      '<h3 style="margin:0 0 4px;font-size:15px">📦 Llegó un pedido</h3>'+
-      '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Anotá cuánto llegó de cada cosa: <b>se SUMA al stock</b> y el ítem sale de "en camino". Si llegó menos de lo pedido, cargá lo que llegó y el resto queda pedido. Lo que dejes vacío no se toca.</p>'+
+      '<h3 style="margin:0 0 4px;font-size:15px">📦 Ingreso a fábrica</h3>'+
+      '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Anotá cuánto entró de cada cosa: <b>se SUMA al stock</b> y el ítem sale de "en camino". Acá va tanto lo que entregó el proveedor como lo que trajo Marcelo (🛻). Si llegó menos de lo pedido, cargá lo que llegó y el resto queda pedido. Lo que dejes vacío no se toca.</p>'+
       cuerpo+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-rc-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-rc-save">Registrar llegada</button></div>';
     $('pe-rc-cancel').onclick=()=>$('pe-modal-ins').classList.remove('open');
@@ -13037,13 +13215,11 @@ function buildFilterTable(cfg){
       list.forEach((x,i)=>{ const el=$('pe-form-ins').querySelector('input[data-rci="'+i+'"]'); if(!el||el.value.trim()==='') return;
         const lleg=num(el.value); if(lleg<0){ return; }
         const cur=insumos.find(z=>z._uid===x._uid)||x;
-        const resto=Math.max(0, num(cur.pedidoCant)-lleg);
-        const upd={...cur, stock:num(cur.stock)+lleg, ultimaRecepcion:hoyISO, usuario:usuario()};
-        if(resto>0.001){ upd.pedidoCant=resto; }               // llegó parcial: sigue en camino por el resto
-        else { delete upd.pedidoFecha; delete upd.pedidoCant; } // llegó todo: vuelve al circuito normal
-        c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), upd); n++; });
+        const upd=insEntregaUpd(cur, lleg, hoyISO); upd.usuario=usuario();
+        Object.assign(cur, upd);   // copia optimista (la escritura es asíncrona: el snapshot la reconfirma)
+        c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), upd, {merge:true}).catch(e=>alert('No se pudo guardar: '+e.message)); n++; });
       $('pe-modal-ins').classList.remove('open');
-      alert(n? ('Llegada registrada: '+n+' ítem'+(n!==1?'s':'')+'. El stock ya se actualizó.') : 'No cargaste ninguna cantidad.');
+      alert(n? ('Ingreso registrado: '+n+' ítem'+(n!==1?'s':'')+'. El stock ya se actualizó.') : 'No cargaste ninguna cantidad.');
     };
     $('pe-modal-ins').classList.add('open');
   }
@@ -13897,6 +14073,10 @@ function buildFilterTable(cfg){
     const insBajos=insumos.filter(x=>insEstado(x)==='pedir');
     if(insUrg.length) A.push({sev:'bad', area:'Logística', t:'🔴 PEDIR YA '+insUrg.length+' insumo'+(insUrg.length>1?'s':'')+': '+insUrg.slice(0,3).map(x=>x.nombre).join(', ')+(insUrg.length>3?'…':'')+' — el stock no cubre la demora de entrega', act:'Armar el pedido de compra HOY (🛒 en Conteo semanal).', go:{page:'Producción y Logística'}});
     if(insBajos.length) A.push({sev:'warn', area:'Logística', t:insBajos.length+' insumo/MP bajo el mínimo: '+insBajos.slice(0,3).map(x=>x.nombre).join(', ')+(insBajos.length>3?'…':''), act:'Armar el pedido de compra.', go:{page:'Producción y Logística'}});
+    // Comprado y sin entregar: la plata ya salió pero la fábrica no lo tiene. Mientras no se
+    // registre el ingreso, el stock sigue mostrando el faltante y Gustavo no lo puede usar.
+    const insComp=insComprados();
+    if(insComp.length) A.push({sev:'warn', area:'Logística', t:'🛻 '+insComp.length+' insumo'+(insComp.length>1?'s':'')+' comprado'+(insComp.length>1?'s':'')+' sin entregar en fábrica: '+insComp.slice(0,3).map(x=>x.nombre).join(', ')+(insComp.length>3?'…':''), act:'Descargarlo y registrarlo con 📦 Ingreso a fábrica — recién ahí entra al stock.', go:{page:'Producción y Logística'}});
     const sem=semanaKg(); if(sem.kg>0 && sem.prom<OBJ()) A.push({sev:'warn', area:'Producción', t:'Producción por debajo del objetivo: '+nf(sem.prom)+' kg/día vs '+nf(OBJ())+' objetivo (semana en curso)', act:'Revisar con Gustavo cuellos de botella: mesas, moldes, cuadrilla.', go:{page:'Producción y Logística'}});
     return A; });
   $('pe-btn-prod').onclick=openProd;
@@ -13904,7 +14084,8 @@ function buildFilterTable(cfg){
   $('pe-btn-deshacer').onclick=deshacerUltimaCarga;
   $('pe-btn-conteo-prod').onclick=openConteoProd;
   $('pe-btn-conteo-ins').onclick=openConteoIns;
-  $('pe-btn-pedircompra').onclick=pedidoCompra;
+  $('pe-btn-pedircompra').onclick=()=>pedidoCompra();
+  { const b=$('pe-btn-ruta'); if(b) b.onclick=openRuta; }
   { const b=$('pe-btn-recepcion'); if(b) b.onclick=openRecepcion; }
   { const b=$('pe-btn-editlista'); if(b) b.onclick=openEditarLista; }
   { const fb2=$('pe-btn-feriados'); if(fb2) fb2.onclick=openFeriados; }
@@ -14032,7 +14213,8 @@ function buildFilterTable(cfg){
     });
     // 8) Insumos bajo mínimo → pedido de compra. Los que ya están 📦 PEDIDOS (pedidoFecha, en camino)
     // no se vuelven a ofrecer. El mensaje va agrupado por proveedor, que es como se pide de verdad.
-    const bajos=insumos.filter(x=> insBajo(x) && !x.pedidoFecha && (!x.pedidoAvisado || x.pedidoAvisado<=isoMenos(7)));
+    // Ya resuelto = pedido al proveedor, en la ruta de compra de Marcelo, o comprado y sin entregar.
+    const bajos=insumos.filter(x=> insBajo(x) && !x.pedidoFecha && !x.rutaFecha && !x.compraFecha && (!x.pedidoAvisado || x.pedidoAvisado<=isoMenos(7)));
     if(bajos.length){ T.push({ ico:'🛒', titulo:'Pedido de compra: '+bajos.length+' insumo'+(bajos.length!==1?'s':'')+' bajo mínimo', detalle:bajos.map(x=>x.nombre).slice(0,4).join(', ')+(bajos.length>4?'…':''),
       prim:{l:'▶ Armar pedido', run(){ let out='Pedido de compra VPH ('+fmtFecha(hoyISO)+'):\n';
         const g={}; bajos.forEach(x=>{ const p=String(x.proveedor||'').trim()||'Sin proveedor'; (g[p]=g[p]||[]).push(x); });
