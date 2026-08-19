@@ -12532,7 +12532,13 @@ function buildFilterTable(cfg){
 
   // ---------- Render principal ----------
   function render(){
-    const aPedir=insumos.filter(x=>num(x.stockMinimo)>0 && num(x.stock)<num(x.stockMinimo)).length;
+    /* El contador de la pestaña usa `insPedibles()` — LA MISMA definición que el chip 🛒 "Para
+       comprar" y que la Ruta de compra. Antes contaba crudo lo que estaba bajo mínimo, así que
+       seguía diciendo "(3 a pedir)" cuando esos 3 ya estaban comprados en la camioneta o pedidos al
+       proveedor: el número que Marcelo ve PRIMERO en el celular contradecía a la pantalla de al
+       lado. También suma ahora los urgentes por demora (stock arriba del mínimo pero que no llega
+       hasta que el proveedor entrega), que antes no aparecían acá. */
+    const aPedir=insPedibles().length;
     $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
