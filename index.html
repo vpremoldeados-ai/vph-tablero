@@ -13718,7 +13718,7 @@ function buildFilterTable(cfg){
   // el remito sale igual desde los dos lados. `fecha` permite imprimirlo con la de la entrega.
   window.__remitoPedidoObj = function(pe, fecha){
     const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
-    const cli=cs.find(c=>(c.nombre||'').trim().toUpperCase()===String(pe.cliente||'').trim().toUpperCase())||{};
+    const cli=cs.find(c=>norm(c.nombre)===norm(pe.cliente))||{};   // norm(): mismo criterio que snapCliente, tolera tildes y espacios de más
     const dom=dirPed(pe) || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
     const rows=cargaRows(pe);
     // El mismo producto puede venir en DOS renglones: cada renglón se empareja con SU fila (misma
@@ -13744,9 +13744,11 @@ function buildFilterTable(cfg){
     const mixtos=mixtosDe(pe, rows).map(g=>({ m:g.map(y=>({ codigo:y.row.codigo||'', desc:y.row.nombre||'', j:y.j, i:y.i, u:y.u })) }));
     const fViaje=fechaDeDia(pe.diaEntrega);   // texto dd/mm/aa → ISO para el <input type="date">
     // Teléfono: la ficha del cliente casi nunca lo tiene; el lead del CRM sí (ver __telefonoLead).
-    const tel=cli.telefono || (window.__telefonoLead?window.__telefonoLead(pe.cliente):'') || '';
+    const tel=cli.telefono || pe.clienteTel || (window.__telefonoLead?window.__telefonoLead(pe.cliente):'') || '';
     return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
-      clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
+      // La ficha VIVA manda (es la más fresca); el snapshot del pedido es el que salva la sesión de
+      // Gustavo, que no puede leer vph_clientes.
+      clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
       pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'' };
   };
   function imprimirRemito(pe){
@@ -13838,7 +13840,25 @@ function buildFilterTable(cfg){
       return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length };
     }).filter(Boolean);
   }
-  function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
+  // 🔴 SNAPSHOT de los datos fiscales del cliente DENTRO del pedido. Gustavo (rol 'produccion') NO
+  // puede leer vph_clientes —se lo niegan las DOS capas: la regla de Firestore (esAdmin) y el
+  // startSync del módulo Base de Datos—, así que al imprimir el remito desde la fábrica
+  // __catalogoClientes() le viene VACÍO y el papel salía sin CUIT ni condición de IVA.
+  // Es el mismo criterio que ya se usaba para la dirección de entrega, que viaja copiada en el
+  // pedido justamente por esto (ver __pedidoDesdeVenta).
+  // ⚠️ Solo COMPLETA, nunca borra: si el catálogo no está disponible (sesión de Gustavo) o el
+  // cliente no matchea, se respeta lo que el pedido ya tenía. Sin esta guarda, que Gustavo tocara
+  // "Entregado" vaciaría el snapshot que había dejado Sofía y el remito volvería a salir pelado.
+  function snapCliente(pe){
+    const cs = window.__catalogoClientes ? window.__catalogoClientes() : [];
+    if(!cs.length) return pe;                       // sin catálogo (rol produccion) no se toca nada
+    const cli = cs.find(c=>norm(c.nombre)===norm(pe.cliente)) || {};
+    pe.clienteCuit    = cli.cuit     || pe.clienteCuit    || '';
+    pe.clienteCondIva = cli.condIva  || pe.clienteCondIva || '';
+    pe.clienteTel     = cli.telefono || pe.clienteTel     || '';
+    return pe;
+  }
+  function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); snapCliente(pe); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
   function marcarEntregado(pe){
     const c=fb(); if(!c||!c.db) return;
     // Los pallets NO se recalculan acá: se usan los del plan REAL del pedido (cargaRows), que es el mismo
@@ -14254,7 +14274,7 @@ function buildFilterTable(cfg){
           // todavía no cargó, se arma acá el objeto mínimo y el PDF calcula los pallets con el catálogo.
           if(window.__remitoPedidoObj){ window.__imprimir.remitoDatos(window.__remitoPedidoObj(pe, pe.fechaEntregado||pe.fecha)); return; }
           const cs=(window.__catalogoClientes?window.__catalogoClientes():[]); const nc=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); const cli=cs.find(c=>nc(c.nombre)===nc(pe.cliente))||{};
-          window.__imprimir.remitoDatos({ numero:'', fecha:pe.fechaEntregado||pe.fecha, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||'', clienteCondIva:cli.condIva||'', clienteTel:cli.telefono||'', domicilioEntrega:[pe.direccion,pe.ciudad].filter(Boolean).join(' - ')||[cli.direccion,cli.localidad].filter(Boolean).join(' - '), items:(pe.items||[]).filter(it=>it&&it.producto&&num(it.cantidad)>0).map(it=>({codigo:it.codigo||'',desc:it.producto,cant:num(it.cantidad)})) }); }},
+          window.__imprimir.remitoDatos({ numero:'', fecha:pe.fechaEntregado||pe.fecha, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'', clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:cli.telefono||pe.clienteTel||'', domicilioEntrega:[pe.direccion,pe.ciudad].filter(Boolean).join(' - ')||[cli.direccion,cli.localidad].filter(Boolean).join(' - '), items:(pe.items||[]).filter(it=>it&&it.producto&&num(it.cantidad)>0).map(it=>({codigo:it.codigo||'',desc:it.producto,cant:num(it.cantidad)})) }); }},
         omit:{run(){ marcar('vph_pedidos',pe,'avisoEnt'); }} });
     });
     // 6) Cobros vencidos (recuerda cada 7 días)
