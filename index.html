@@ -13623,6 +13623,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-partir-idx]').forEach(btn=> btn.onclick=()=>{
       const p=solosPed[+btn.dataset.partirIdx]; if(p) abrirPartirPedido(p);
     });
+    bindAccionesPedido(cont);   // los 🖨️ Remito de cada cliente del viaje
     function trjViaje(v){
       const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
       const excede=cap>0&&v.pallets>cap;
@@ -13662,7 +13663,11 @@ function buildFilterTable(cfg){
           (v.peso>0?'<span>· '+(Math.round(v.peso/100)/10)+' t</span>':'')+
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
-          return '<div style="display:flex;gap:8px;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span></div>'+
+          return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1;min-width:130px">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
+            // 🖨️ Remito POR CLIENTE del viaje armado (pedido de Marcelo, 20/08): Gustavo imprime mirando
+            // el viaje que va a cargar, no la tabla de abajo. Va con el MISMO data-pact que la tabla, así
+            // que lo toma bindAccionesPedido y no hay una segunda copia de la lógica de impresión.
+            '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(p._uid)+'" title="Imprimir el remito de '+esc(p.cliente||'')+'" style="flex:0 0 auto">🖨️ Remito</button></div>'+
             (seco?'<div style="color:var(--red);font-size:11px;padding:0 0 3px">⚠️ no va a estar seco para ese día: '+esc(seco.join(' · '))+'</div>':''); }).join('')+'</div>'+
         sugerenciaHtml+
       '</div>';
@@ -13696,7 +13701,13 @@ function buildFilterTable(cfg){
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
     $('pe-tabla-ped').innerHTML=html; window.__ordenable('pe-tabla-ped');
-    $('pe-tabla-ped').querySelectorAll('button[data-pact]').forEach(b=> b.onclick=()=>{ const pe=pedidos.find(x=>x._uid==b.dataset.id); if(!pe)return; const a=b.dataset.pact;
+    bindAccionesPedido($('pe-tabla-ped'));
+  }
+  // Un SOLO handler para las acciones de un pedido, compartido por la tabla "Entregas a coordinar" y
+  // por las tarjetas de 🚚 Viajes armados. Antes estaba atado a mano a 'pe-tabla-ped', así que un
+  // botón puesto en cualquier otro lado quedaba MUERTO. Si se agrega una acción, aparece en los dos.
+  function bindAccionesPedido(cont){ if(!cont) return;
+    cont.querySelectorAll('button[data-pact]').forEach(b=> b.onclick=()=>{ const pe=pedidos.find(x=>x._uid==b.dataset.id); if(!pe)return; const a=b.dataset.pact;
       if(a==='edit') openPed(pe);
       else if(a==='del'){ if(confirm('¿Eliminar el pedido de '+(pe.cliente||'—')+'?')) delPed(pe._uid); }
       else if(a==='remito') imprimirRemito(pe);
