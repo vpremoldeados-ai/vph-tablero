@@ -10586,10 +10586,23 @@ function buildFilterTable(cfg){
     return []; });
 
   // ---------- Sync ----------
-  function startSync(){ if(window.__rol!=='admin') return;   // solo admin sincroniza datos financieros/comerciales
+  // Qué le sincronizamos al rol `produccion`. Marcelo autorizó (20/08) que Gustavo vea los datos del
+  // cliente, para que el remito le salga con CUIT y condición de IVA desde la fábrica.
+  // ⚠️ SOLO `vph_clientes`, y por dos motivos distintos:
+  //   · `vph_proveedores` sigue siendo admin-only — suscribirlo le llenaría la consola de
+  //     permission-denied y no lo necesita para nada.
+  //   · `vph_productos` y `vph_insumos` SÍ los puede leer, pero el módulo Producción ya los baja por
+  //     su cuenta: volver a suscribirlos acá duplicaría lecturas de Firestore sin ganar nada, y la
+  //     cuota ya se agotó una vez (18/08).
+  // 🔴 Esto va de la mano con la regla de Firestore (`vph_clientes` read: esProdOAdmin). Las dos
+  // cosas o ninguna: sin la regla, la suscripción falla; sin esto, la regla no alcanza.
+  const COLS_PRODUCCION = ['vph_clientes'];
+  function startSync(){ const rol=window.__rol;
+    if(rol!=='admin' && rol!=='produccion') return;   // el resto de los datos financieros/comerciales, solo admin
     const c=fb(); if(!c||!c.db)return;
     // Una suscripción por COLECCIÓN, no por pestaña: "Materia Prima" e "Insumos" comparten vph_insumos.
-    [...new Set(Object.values(ENT).map(e=>e.col))].forEach(col=>{ if(unsub[col]) unsub[col]();
+    const todas=[...new Set(Object.values(ENT).map(e=>e.col))];
+    (rol==='admin' ? todas : todas.filter(x=>COLS_PRODUCCION.includes(x))).forEach(col=>{ if(unsub[col]) unsub[col]();
       unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ store[col]=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('bd '+col+':',err)); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){
