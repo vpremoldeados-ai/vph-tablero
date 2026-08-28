@@ -1679,6 +1679,7 @@
         <div style="display:flex;gap:10px;align-items:center;margin:14px 0 10px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="sue-btn-pagoq">💵 Pagar la quincena</button>
           <button class="cmp-btn" id="sue-btn-adel">+ Registrar adelanto</button>
+          <button class="cmp-btn" id="sue-btn-prorr">⚖️ Repartir un monto</button>
           <div id="sue-adel-barra" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap"></div>
         </div>
         <div id="sue-adel-nota" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
@@ -17358,17 +17359,7 @@ function buildFilterTable(cfg){
     if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))){ alert('Cargá la fecha en que le diste el adelanto.'); return; }
     if(fecha>hoyISO && !confirm('La fecha del adelanto ('+fmtFecha(fecha)+') es futura. La caja va a mostrar esa salida recién ese día.\n\n¿Es correcto?')) return;
     if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
-    // La compra de ESE empleado tiene que existir para colgarle el pago. Si la quincena todavía no se
-    // confirmó, se crea con su devengado de ahora y se actualiza sola al confirmar.
-    // Si ya tiene una compra VINCULADA (cargada a mano), el adelanto va ahí: crear otra duplicaría
-    // el sueldo, que es justo lo que la vinculación evita.
-    const fEmp=filaDe(L,emp);
-    const dev=liquidarFila(fEmp, emp, L.quincena).devengado;
-    const uid=fEmp.compraUid || window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
-      empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:fechaCostoDe(L,emp),
-      vencimiento:fechaPagoDe(L,emp),
-      detalle: esMensual(emp) ? ('Sueldo de '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
-      nota:'Generado por el módulo Sueldos.' });
+    const uid=compraParaAdelanto(L, emp, monto);
     const idPago=window.__registrarPagoCompra(uid, { fecha, monto, medio:$('sue-a-medio').value, cuenta:$('sue-a-cuenta').value,
       sueEsAdelanto:true, sueEmpUid:empUid, sueEmpNombre:emp.nombre||'', sueNota:String($('sue-a-nota').value||'').trim() });
     // 🔴 Si no se pudo registrar, NO cerrar el modal como si nada: eso es lo que hacía que un adelanto
@@ -17376,6 +17367,164 @@ function buildFilterTable(cfg){
     if(!idPago){ alert('No se pudo registrar el adelanto.\n\nNo se guardó nada: volvé a intentar en unos segundos. Si sigue pasando, cargalo desde Compras.'); return; }
     $('sue-modal-adel').classList.remove('open');
     render();
+  }
+
+  // La compra de ESE empleado tiene que existir para colgarle el pago. Si la quincena todavía no se
+  // confirmó, se crea con su devengado de ahora y se actualiza sola al confirmar.
+  // Si ya tiene una compra VINCULADA (cargada a mano), el adelanto va ahí: crear otra duplicaría
+  // el sueldo, que es justo lo que la vinculación evita.
+  function compraParaAdelanto(L, emp, monto){
+    const fEmp=filaDe(L,emp);
+    const dev=liquidarFila(fEmp, emp, L.quincena).devengado;
+    return fEmp.compraUid || window.__upsertCompraSueldo({ periodo:L.periodo, quincena:L.quincena, empUid:emp._uid,
+      empNombre:emp.nombre, cuil:emp.cuil||'', monto:Math.max(dev, monto), fecha:fechaCostoDe(L,emp),
+      vencimiento:fechaPagoDe(L,emp),
+      detalle: esMensual(emp) ? ('Sueldo de '+MESES[mesLiquidado(sel).mes-1]+' '+mesLiquidado(sel).anio+' (mensual, a mes vencido)') : ('Sueldo '+etiquetaQ(sel)),
+      nota:'Generado por el módulo Sueldos.' });
+  }
+
+  // ---------- REPARTIR UN MONTO EN ADELANTOS ----------
+  // Pedido de Marcelo (28/08): "poner el dinero que tengo disponible para adelantos y que me calcule
+  // de forma equitativa teniendo en cuenta los sueldos" — ej. darle a todos el 30% de la quincena.
+  // Equitativo = a TODOS el mismo porcentaje de SU quincena (proporcional al devengado), con TOPE en
+  // lo que a cada uno le falta cobrar: el excedente del que ya casi cobró todo (por adelantos previos)
+  // se redistribuye entre los demás manteniendo la proporción. Redondea al millar para poder pagar en
+  // efectivo, pero el TOTAL repartido da EXACTO el disponible.
+  // Función PURA (no toca DOM ni Firestore) y expuesta en window.__sueProrrateoAdelanto para
+  // testearla en node — misma razón que __sueValores y compañía (§5 del CLAUDE.md).
+  function prorrateoAdelanto(disponible, filas, redondeo){
+    const R=redondeo==null?1000:Math.max(1,num(redondeo)||1);
+    const disp=Math.max(0,num(disponible));
+    const fs=(filas||[]).map(f=>({ empUid:f.empUid, nombre:f.nombre||'',
+      devengado:Math.max(0,num(f.devengado)), falta:Math.max(0,num(f.falta)), monto:0, tope:false }));
+    const totDev=round2(fs.reduce((a,f)=>a+f.devengado,0));
+    const totFalta=round2(fs.reduce((a,f)=>a+f.falta,0));
+    const listo=(pctLibre)=>{ fs.forEach(f=>{ delete f._crudo; f.monto=round2(f.monto); });
+      const repartido=round2(fs.reduce((a,f)=>a+f.monto,0));
+      return { filas:fs, repartido, sobra:round2(disp-repartido), totDev, totFalta,
+        pct: totDev>0?round2(100*repartido/totDev):0, pctLibre:pctLibre==null?null:round2(pctLibre) }; };
+    if(!(disp>0)||!fs.length) return listo(null);
+    // Si la plata alcanza para saldar la quincena entera, cada uno cobra EXACTO lo que le falta
+    // (sin redondear: es el pago final, no un adelanto a cuenta) y el resto queda como sobrante.
+    if(disp>=totFalta-0.005){ fs.forEach(f=>{ f.monto=f.falta; f.tope=f.falta>0; }); return listo(null); }
+    // Un mismo factor sobre el devengado para todos, con tope en lo que falta: el que llega a su
+    // tope cobra su falta completa y el resto se re-reparte entre los demás (misma proporción,
+    // otra pasada). A lo sumo N pasadas: en cada una se capea al menos uno o se termina.
+    let rem=disp, factor=0;
+    let libres=fs.filter(f=>f.devengado>0&&f.falta>0);
+    for(let v=0; v<=fs.length && libres.length; v++){
+      const base=libres.reduce((a,f)=>a+f.devengado,0); if(base<=0) break;
+      factor=rem/base;
+      const capeados=libres.filter(f=>f.devengado*factor>=f.falta-0.005);
+      if(!capeados.length){ libres.forEach(f=>{ f.monto=f.devengado*factor; }); break; }
+      capeados.forEach(f=>{ f.monto=f.falta; f.tope=true; rem=round2(rem-f.falta); });
+      libres=libres.filter(f=>!f.tope);
+    }
+    // Redondeo al millar SOLO de los que no tocaron su tope, conservando el TOTAL exacto: se baja
+    // cada uno al millar y la diferencia se devuelve de a $1.000 empezando por el que más perdió al
+    // redondear; si a alguno no le entra sin pasarse de su falta, sigue con el próximo.
+    const abiertos=fs.filter(f=>!f.tope&&f.monto>0);
+    if(R>1&&abiertos.length){
+      abiertos.forEach(f=>{ f._crudo=f.monto; f.monto=Math.floor(f.monto/R)*R; });
+      let resto=round2(disp-fs.reduce((a,f)=>a+f.monto,0));
+      const orden=abiertos.slice().sort((a,b)=>(b._crudo-b.monto)-(a._crudo-a.monto));
+      let k=0, sinLugar=0;
+      while(resto>0.005&&sinLugar<orden.length){
+        const f=orden[k%orden.length]; k++;
+        const paso=Math.min(R, resto, round2(f.falta-f.monto));
+        if(paso>0.005){ f.monto=round2(f.monto+paso); resto=round2(resto-paso); sinLugar=0; }
+        else sinLugar++;
+      }
+    }
+    return listo(fs.some(f=>!f.tope&&f.monto>0)?100*factor:null);
+  }
+  window.__sueProrrateoAdelanto=prorrateoAdelanto;
+
+  function abrirProrrateo(){
+    const L=liqOCrear(sel);
+    // Mismo criterio que abrirAdelanto: solo los que se liquidan en ESTA quincena.
+    const emps=liquidanEn(sel);
+    if(!emps.length){ alert(EMP.length ? 'En esta quincena no se liquida a nadie, así que no hay a quién adelantarle.' : 'Primero cargá los legajos en la solapa 👤 Empleados.'); return; }
+    // La foto sobre la que se reparte: el devengado de HOY y lo que falta cobrar de cada uno.
+    const filas=emps.map(emp=>{ const dev=liquidarFila(filaDe(L,emp), emp, L.quincena).devengado;
+      return { empUid:emp._uid, nombre:emp.nombre||'', devengado:dev, falta:faltaDeEmp(sel, emp, dev) }; })
+      .filter(f=>f.devengado>0);
+    if(!filas.length){ alert('Nadie tiene devengado todavía en '+etiquetaQ(sel)+'.'); return; }
+    const totDev=round2(filas.reduce((a,f)=>a+f.devengado,0));
+    const totFalta=round2(filas.reduce((a,f)=>a+f.falta,0));
+    const cuentas=(window.__cajaCuentas?window.__cajaCuentas():[]);
+    const medios=['Efectivo','Transferencia'];
+    let plan=null;   // el último prorrateo calculado — es LO QUE SE REGISTRA al confirmar
+    $('sue-adel-title').textContent='Repartir un monto en adelantos';
+    $('sue-adel-form').innerHTML=
+      '<p style="margin:0 0 12px;font-size:13px;color:var(--muted)">Cargá la plata disponible y se reparte como adelanto de la <b>'+esc(etiquetaQ(sel))+'</b> en proporción al sueldo: a todos les toca el <b>mismo porcentaje</b> de su quincena. A nadie se le adelanta más de lo que le falta cobrar (en total falta pagar '+money0(totFalta)+').</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+        '<div class="cmp-field"><label>Monto disponible ($)</label><input type="number" id="sue-pr-monto" step="1000" min="0" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px">'+
+          '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--muted)">o un % de la quincena:</span>'+
+          [10,20,30,40,50].map(p=>'<button type="button" class="cmp-rowbtn" data-pct="'+p+'">'+p+'%</button>').join('')+'</div></div>'+
+        '<div class="cmp-field"><label>Fecha en que se los das</label><input type="date" id="sue-pr-fecha" value="'+esc(hoyISO)+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+        '<div class="cmp-field"><label>Medio</label><select id="sue-pr-medio" class="cmp-select" style="width:100%">'+medios.map(m=>'<option>'+esc(m)+'</option>').join('')+'</select></div>'+
+        '<div class="cmp-field"><label>¿De qué cuenta sale?</label><select id="sue-pr-cuenta" class="cmp-select" style="width:100%">'+
+          (cuentas.length?cuentas.map(c=>'<option>'+esc(c)+'</option>').join(''):'<option value="">—</option>')+'</select></div>'+
+        '<div class="cmp-field" style="grid-column:1/-1"><label>Nota (opcional, va en todos)</label><input id="sue-pr-nota" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
+      '</div>'+
+      '<div id="sue-pr-resumen" style="font-size:12.5px;margin:10px 0 6px;color:var(--muted)">Cargá el monto disponible arriba.</div>'+
+      '<div class="tbl-wrap"><table id="sue-pr-tabla"></table></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="sue-pr-cancel">Cancelar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="sue-pr-save" disabled>Registrar los adelantos</button></div>';
+    const recalc=()=>{
+      plan=prorrateoAdelanto(num($('sue-pr-monto').value), filas);
+      const conMonto=plan.filas.filter(f=>f.monto>0);
+      let html='<tr><th>Empleado</th><th class="n">Le falta</th><th class="n">Adelanto</th></tr>';
+      plan.filas.forEach(f=>{ html+='<tr><td>'+esc(f.nombre)+'</td><td class="n">'+money0(f.falta)+'</td>'+
+        '<td class="n"><b>'+money0(f.monto)+'</b>'+(f.tope&&f.monto>0?' <span style="font-size:10.5px;color:var(--amber)">le saldás todo</span>':'')+'</td></tr>'; });
+      html+='<tr class="total"><td><b>TOTAL</b></td><td class="n">'+money0(plan.totFalta)+'</td><td class="n"><b>'+money0(plan.repartido)+'</b></td></tr>';
+      $('sue-pr-tabla').innerHTML=html;
+      const pctTxt=plan.pctLibre!=null?plan.pctLibre:plan.pct;
+      $('sue-pr-resumen').innerHTML = plan.repartido>0
+        ? ('Cada uno recibe el <b>'+(Math.round(pctTxt*10)/10)+'%</b> de su quincena'+
+           (plan.filas.some(f=>f.tope&&f.monto>0)?' (los marcados quedan saldados y su parte se repartió entre los demás)':'')+'.'+
+           (plan.sobra>0.5?' ⚠️ Sobran <b>'+money0(plan.sobra)+'</b>: con eso ya les pagás todo lo que falta.':''))
+        : 'Cargá el monto disponible arriba.';
+      $('sue-pr-save').disabled=!(plan.repartido>0);
+      $('sue-pr-save').textContent = plan.repartido>0 ? ('Registrar '+conMonto.length+' adelantos ('+money0(plan.repartido)+')') : 'Registrar los adelantos';
+    };
+    $('sue-pr-monto').oninput=recalc;
+    $('sue-adel-form').querySelectorAll('button[data-pct]').forEach(b=> b.onclick=()=>{
+      $('sue-pr-monto').value=Math.round(totDev*num(b.dataset.pct)/100/1000)*1000; recalc(); });
+    if(window.__tarjetas){ window.__tarjetas('sue-pr-medio'); window.__tarjetas('sue-pr-cuenta'); }
+    $('sue-pr-cancel').onclick=()=>{ $('sue-modal-adel').classList.remove('open'); $('sue-adel-title').textContent='Registrar adelanto'; };
+    $('sue-pr-save').onclick=()=>{
+      if(!plan || !(plan.repartido>0)) return;
+      const fecha=$('sue-pr-fecha').value;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))){ alert('Cargá la fecha de los adelantos.'); return; }
+      if(fecha>hoyISO && !confirm('La fecha ('+fmtFecha(fecha)+') es futura. La caja va a mostrar esas salidas recién ese día.\n\n¿Es correcto?')) return;
+      if(!window.__upsertCompraSueldo || !window.__registrarPagoCompra){ alert('El módulo Compras no está disponible.'); return; }
+      const aCargar=plan.filas.filter(f=>f.monto>0);
+      if(!confirm('Se registran '+aCargar.length+' adelantos por '+money0(plan.repartido)+' en total:\n\n'+
+        aCargar.map(f=>'· '+f.nombre+': '+money0(f.monto)).join('\n')+'\n\n¿Seguimos?')) return;
+      const medio=$('sue-pr-medio').value, cuenta=$('sue-pr-cuenta').value, nota=String($('sue-pr-nota').value||'').trim();
+      const fallidos=[];
+      aCargar.forEach(f=>{
+        const emp=EMP.find(x=>x._uid===f.empUid);
+        if(!emp){ fallidos.push(f.nombre); return; }
+        const uid=compraParaAdelanto(L, emp, f.monto);
+        const idPago=uid && window.__registrarPagoCompra(uid, { fecha, monto:f.monto, medio, cuenta,
+          sueEsAdelanto:true, sueEmpUid:emp._uid, sueEmpNombre:emp.nombre||'', sueNota:nota });
+        if(!idPago) fallidos.push(f.nombre);
+      });
+      // 🔴 Un fallo NO se tapa (misma regla que guardarAdelanto). Los que sí entraron ya quedaron
+      // registrados, así que acá NO se reintenta todo junto — se avisa exactamente quiénes faltan
+      // para cargar SOLO esos de a uno y no pagar dos veces a los demás.
+      if(fallidos.length){
+        alert('Se registraron '+(aCargar.length-fallidos.length)+' de '+aCargar.length+' adelantos.\n\nNO se pudo registrar el de:\n'+
+          fallidos.map(n=>'· '+n).join('\n')+'\n\nCargalos de a uno con "+ Registrar adelanto" (la tabla ya muestra los que entraron).');
+      }
+      $('sue-modal-adel').classList.remove('open');
+      $('sue-adel-title').textContent='Registrar adelanto';
+      render();
+    };
+    $('sue-modal-adel').classList.add('open');
   }
 
   // ---------- Vista VACACIONES ----------
@@ -17573,6 +17722,7 @@ function buildFilterTable(cfg){
     if($('sue-pago-cerrar')) $('sue-pago-cerrar').onclick=()=>$('sue-modal-pago').classList.remove('open');
     if($('sue-btn-nuevo')) $('sue-btn-nuevo').onclick=()=>abrirLegajo(null);
     if($('sue-btn-adel')) $('sue-btn-adel').onclick=abrirAdelanto;
+    if($('sue-btn-prorr')) $('sue-btn-prorr').onclick=abrirProrrateo;
     if($('sue-btn-pagoq')) $('sue-btn-pagoq').onclick=abrirPagoQuincena;
     if($('sue-emp-buscar')) $('sue-emp-buscar').addEventListener('input',()=>{ filtroEmp.q=$('sue-emp-buscar').value; renderEmp(); });
     if($('sue-emp-bajas')) $('sue-emp-bajas').addEventListener('change',()=>{ filtroEmp.bajas=$('sue-emp-bajas').checked; renderEmp(); });
