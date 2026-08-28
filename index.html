@@ -16479,6 +16479,12 @@ function buildFilterTable(cfg){
       ' style="'+inpBase+'padding:2px 4px;font-size:10px;margin-top:2px">';
 
     const hayComision = emps.some(e=>num(e.comisionPct)>0);
+    // La columna Pres. solo si aplica (mismo criterio que la comisión): desde el 28/08 el presentismo
+    // está INTEGRADO al básico de todos (cobraPresentismo:false en los 8 legajos) y la columna quedaba
+    // ocupando 42px muertos en cada quincena nueva. En las quincenas VIEJAS las filas guardadas tienen
+    // su tilde y la columna se sigue mostrando — el cálculo no cambia en ningún caso, solo se esconde
+    // el checkbox cuando nadie lo usa.
+    const hayPres = emps.some(e=> num((filaDe(L,e)||{}).presentismo)>0 || e.cobraPresentismo!==false);
     // Ancho de cada columna, en un solo lugar. Las de CANTIDAD (sábados, horas, faltas) llevan números
     // de 1 o 2 dígitos, así que no necesitan más de 46px; las de PLATA tienen que entrar "$ 2.290.476".
     // Los encabezados van abreviados a propósito: con auto-layout el título es lo que más empuja el
@@ -16487,24 +16493,26 @@ function buildFilterTable(cfg){
       (tit?' title="'+esc(tit)+'"':'')+'>'+esc(txt)+'</th>';
     // ⚠️ Con table-layout:fixed TODAS las columnas necesitan ancho, incluida la primera: si se le deja
     // "auto" y las demás ya suman el ancho del contenedor, el navegador le da CERO y los nombres se
-    // pisan entre sí. La suma da ~1.330px; si la pantalla es más angosta, el contenedor scrollea
+    // pisan entre sí. Si la pantalla es más angosta que la suma, el contenedor scrollea
     // (tbl-wrap tiene overflow-x:auto), que es preferible a que el contenido se monte.
     // El botón de imprimir ya no tiene columna propia: va al lado del nombre. Una columna entera para
     // un ícono son ~42px que le hacen falta a los importes.
-    // Las de IMPORTE tienen que dar para 9-10 dígitos ("250890.12") sin recortar: ~86px. Las de
-    // CANTIDAD llevan 1 o 2 dígitos y con 44px sobra. Si la suma no entra en la pantalla, scrollea
-    // (min-width abajo) — preferible a comprimir y que los números queden cortados.
-    const ANCHOS=[155,88,84,44,44,44].concat(hayComision?[80]:[]).concat([86,86,88,46,44,48,88,88,84,84]);
+    // Apretados el 28/08 (pedido de Marcelo: que la quincena entre sin scroll a la derecha — con la
+    // suma anterior, ~1.200px, scrolleaba en una pantalla de 1280). Los de PLATA se midieron con la
+    // nómina real: un campo con "1464055.01" pide ~72px a 12px + los padding, así que 80-84 alcanza;
+    // "$ 1.464.055" pintado pide ~76. Las de CANTIDAD llevan 1-2 dígitos: 40. Si algo no entra, el
+    // que decide es el MEDIDO en navegador (inputs con scrollWidth>clientWidth), no el ojo.
+    const ANCHOS=[144,84,80,40,40,40].concat(hayComision?[76]:[]).concat([82,82,84]).concat(hayPres?[42]:[]).concat([40,42,84,80,80,80]);
     const anchoTotal=ANCHOS.reduce((a,b)=>a+b,0);
-    let html='<tr><th style="width:155px">Empleado</th>'+
-      th('Básico',88,'Básico mensual')+th('A liquid.',84,'Lo que se liquida en esta quincena')+
-      th('Sáb',44,'Sábados trabajados')+th('H.ext',44,'Horas extras')+th('Fer',44,'Feriados trabajados')+
-      (hayComision?th('Comis.',80,'Comisión por ventas'):'')+
-      th('P.vac',86,'Plus vacacional')+th('SAC',86,'SAC / Medio aguinaldo')+th('Bono',88,'Bono, con su concepto')+
-      th('Pres.',46,'Presentismo',true)+
-      th('H.aus',44,'Horas de ausentismo')+th('Faltas',48,'Días de falta')+th('Otros',88,'Otros descuentos, con su concepto')+
-      th('Devengado',88)+th('Pagado',84,'Adelantos y pagos ya imputados a su compra')+
-      th('Falta',84,'Lo que todavía hay que pagarle: el saldo de su compra')+'</tr>';
+    let html='<tr><th style="width:144px">Empleado</th>'+
+      th('Básico',84,'Básico mensual')+th('A liquid.',80,'Lo que se liquida en esta quincena')+
+      th('Sáb',40,'Sábados trabajados')+th('H.ext',40,'Horas extras')+th('Fer',40,'Feriados trabajados')+
+      (hayComision?th('Comis.',76,'Comisión por ventas'):'')+
+      th('P.vac',82,'Plus vacacional')+th('SAC',82,'SAC / Medio aguinaldo')+th('Bono',84,'Bono, con su concepto')+
+      (hayPres?th('Pres.',42,'Presentismo',true):'')+
+      th('H.aus',40,'Horas de ausentismo')+th('Faltas',42,'Días de falta')+th('Otros',84,'Otros descuentos, con su concepto')+
+      th('Devengado',84)+th('Pagado',80,'Adelantos y pagos ya imputados a su compra')+
+      th('Falta',80,'Lo que todavía hay que pagarle: el saldo de su compra')+'</tr>';
     // Se separan los QUINCENALES de la fábrica de los MENSUALES: cobran en fechas distintas, el costo
     // se imputa a meses distintos y el recibo dice otra cosa. Verlos mezclados confunde.
     const grupos=[
@@ -16520,7 +16528,7 @@ function buildFilterTable(cfg){
             ' · el costo se imputa a '+(esPeriodoMes(sel)? MESES[sel.mes-1]+' '+sel.anio
                                                         : MESES[sel.mes%12]+' '+(sel.mes===12?sel.anio+1:sel.anio)) }
     ].filter(g=>g.emps.length);
-    const nCols=hayComision?17:16, colMedio=hayComision?13:12;
+    const nCols=16+(hayComision?1:0)-(hayPres?0:1), colMedio=nCols-4;
     const separar=grupos.length>1;   // con un solo grupo no hace falta encabezarlo
 
     let tDev=0, tAde=0, tFalta=0, hayDelMes=false;
@@ -16574,7 +16582,7 @@ function buildFilterTable(cfg){
         '<td class="n">'+nIn(round2(num(f.sac)),'sue-i',e._uid,'sac','0.01')+'</td>'+
         '<td class="n">'+nIn(round2(num(f.bonos)),'sue-i',e._uid,'bonos','0.01')+
           tIn(f.bonosDesc,e._uid,'bonosDesc','Concepto')+'</td>'+
-        '<td style="text-align:center"><input type="checkbox"'+(f.presentismo?' checked':'')+dis+' data-euid="'+esc(e._uid)+'" data-campo="presentismo" class="sue-chk"></td>'+
+        (hayPres?'<td style="text-align:center"><input type="checkbox"'+(f.presentismo?' checked':'')+dis+' data-euid="'+esc(e._uid)+'" data-campo="presentismo" class="sue-chk"></td>':'')+
         '<td class="n">'+nIn(num(f.horasAusencia),'sue-i',e._uid,'horasAusencia','0.5')+'</td>'+
         '<td class="n">'+nIn(num(f.diasFalta),'sue-i',e._uid,'diasFalta','0.5')+'</td>'+
         '<td class="n">'+nIn(round2(num(f.otrosDesc)),'sue-i',e._uid,'otrosDesc','0.01')+
