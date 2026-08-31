@@ -3139,6 +3139,121 @@ function buildFilterTable(cfg){
     for(let i=0;i<q;i++) arr.push(i===0 ? prim : habilSigISO(addDiasISO(prim, paso*i)));
     return arr;
   }
+
+  // ---------- ¿La caja aguanta estos e-cheqs? (pedido de Marcelo, 31/08) ----------
+  // Un e-cheq se debita SIEMPRE de la chequera, así que el día del vencimiento la pregunta no es
+  // "¿tengo plata?" sino "¿tengo plata EN ESA CUENTA?". La curva la da Caja (__cajaCurvaCuenta), que
+  // es la dueña del saldo: acá solo se le restan los e-cheqs que se están por emitir.
+  // ⚠️ Lo que Caja imputa a una cuenta son SOLO los eventos con cuenta cierta (cheques, plataformas,
+  // débitos de la VISA). Una compra a pagar NO está ahí — por eso sumar estos e-cheqs no cuenta la
+  // salida dos veces, y por eso el número responde "¿me alcanza para lo ya comprometido?" y no
+  // "cuánto voy a tener". El colchón (Parámetros → Finanzas) es el que cubre esa diferencia.
+  // Devuelve null si todavía no se declaró ningún saldo en Caja: sin ancla no se inventa una respuesta.
+  function simularCajaEcheqs(filas){
+    const curva = window.__cajaCurvaCuenta ? window.__cajaCurvaCuenta('') : null;
+    if(!curva) return null;
+    const S=(filas||[]).map((f,i)=>({ i, fecha:String(f.fecha||'').slice(0,10), monto:num(f.monto) }))
+      .filter(s=>s.fecha && s.monto>0);
+    if(!S.length) return null;
+    // Se acumula en orden CRONOLÓGICO, pero el resultado vuelve en el orden en que vinieron las filas:
+    // el usuario puede editar las fechas a mano y dejarlas desordenadas, y la fila i del aviso tiene
+    // que seguir siendo la fila i de la grilla.
+    const ord=S.slice().sort((a,b)=> a.fecha.localeCompare(b.fecha) || a.i-b.i);
+    const out=new Array(S.length); let saldo=curva.hoy, k=0;
+    ord.forEach((s,pos)=>{
+      while(k<curva.puntos.length && curva.puntos[k].fecha<=s.fecha){ saldo=round2(saldo+curva.puntos[k].delta); k++; }
+      const antes=round2(saldo); saldo=round2(saldo-s.monto);
+      out[pos]={ idx:s.i, fecha:s.fecha, monto:s.monto, antes, saldo,
+                 alcanza: saldo>=curva.colchon, falta: saldo>=curva.colchon?round2(0):round2(curva.colchon-saldo) };
+    });
+    return { cuenta:curva.cuenta, hoy:curva.hoy, colchon:curva.colchon, filas:out };
+  }
+
+  // Corre cada e-cheq al primer día HÁBIL en que la chequera aguanta pagarlo dejando el colchón.
+  // 🔴 ARRANCA DE LA FECHA QUE YA TENÍA y solo la EMPUJA hacia adelante: el escalonamiento (el
+  // "un e-cheq cada N días", que sale del plazo del proveedor) manda, y la caja solo corre lo que no
+  // entra. Buscar a secas "el primer día que alcanza" amontonaba los 4 e-cheqs en días consecutivos
+  // — la cuenta daba bien y el plazo de pago no existía. Tampoco los adelanta: pagar antes de lo
+  // acordado es regalar días de caja.
+  // Los e-cheqs salen siempre en orden y nunca dos el mismo día. Si a uno no le encuentra fecha en un
+  // año, lo devuelve marcado en `sinFondos` con su fecha ideal: inventar una fecha buena que no
+  // existe sería peor que decir que no la hay.
+  function proponerFechasCaja(montos, desdeISO, cadaDias){
+    const curva = window.__cajaCurvaCuenta ? window.__cajaCurvaCuenta('') : null;
+    if(!curva) return null;
+    const M=(montos||[]).map(m=>num(m)).filter(m=>m>0);
+    if(!M.length) return null;
+    const TOPE=370;   // más de un año no es un plazo de pago, es otra cosa
+    const paso=Math.max(0, Math.round(num(cadaDias)));
+    // El 1er vencimiento que ya está puesto manda, salvo que sea del pasado (un e-cheq no se puede
+    // emitir con fecha anterior a hoy).
+    const prim0=String(desdeISO||hoyISO).slice(0,10);
+    const prim= prim0<hoyISO ? hoyISO : prim0;
+    let saldo=curva.hoy, k=0, piso=prim; const fechas=[], sinFondos=[];
+    M.forEach((monto,idx)=>{
+      const ideal=addDiasISO(prim, paso*idx);
+      let cand= ideal<piso ? piso : ideal;   // nunca antes que el e-cheq anterior
+      let elegida='';
+      for(let d=0; d<=TOPE; d++){
+        const f=addDiasISO(cand,d);
+        // saldo y k avanzan sin retroceder: las fechas candidatas solo van hacia adelante.
+        while(k<curva.puntos.length && curva.puntos[k].fecha<=f){ saldo=round2(saldo+curva.puntos[k].delta); k++; }
+        if(esDiaHabil(f) && round2(saldo-monto)>=curva.colchon){ elegida=f; saldo=round2(saldo-monto); break; }
+      }
+      if(!elegida){ sinFondos.push(idx); elegida=habilSigISO(cand); saldo=round2(saldo-monto); }
+      fechas.push(elegida);
+      piso=addDiasISO(elegida,1);
+    });
+    return { fechas, sinFondos, colchon:curva.colchon, cuenta:curva.cuenta };
+  }
+
+  // El aviso que se pinta debajo de la grilla, en los DOS formularios de pago (la factura puntual y el
+  // pago a proveedor). Uno solo, para que no puedan decir cosas distintas.
+  function avisoCajaHtml(filas){
+    const sim=simularCajaEcheqs(filas);
+    if(!sim) return '';
+    const malas=sim.filas.filter(f=>!f.alcanza);
+    const col=malas.length?'var(--red)':'var(--green)';
+    const det=sim.filas.slice().sort((a,b)=>a.idx-b.idx).map(f=>
+      '<tr><td style="padding:3px 6px 3px 0;white-space:nowrap">'+(f.idx+1)+'</td>'+
+      '<td style="padding:3px 6px 3px 0;white-space:nowrap">'+fmtFecha(f.fecha)+'</td>'+
+      '<td style="padding:3px 6px 3px 0;text-align:right;white-space:nowrap">− '+money(f.monto)+'</td>'+
+      '<td style="padding:3px 0;text-align:right;white-space:nowrap;font-weight:700;color:'+(f.alcanza?'var(--text)':'var(--red)')+'">'+money(f.saldo)+'</td>'+
+      '<td style="padding:3px 0 3px 8px;font-size:11px;white-space:nowrap">'+(f.alcanza
+        ? '<span style="color:var(--green)">✓</span>'
+        : '<span style="color:var(--red)">faltan '+money(f.falta)+'</span>')+'</td></tr>').join('');
+    return '<div style="margin-top:10px;border:1px dashed '+col+';border-radius:10px;padding:10px 12px;background:var(--bg,#f8fafc)">'+
+      '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">'+
+        '¿Alcanza en '+esc(sim.cuenta)+'? · hoy '+money(sim.hoy)+'</div>'+
+      '<div class="tbl-wrap"><table style="font-size:12px;border-collapse:collapse;width:100%">'+
+        '<thead><tr style="color:var(--muted);font-size:10.5px;text-transform:uppercase">'+
+        '<th style="text-align:left;padding:0 6px 3px 0">#</th><th style="text-align:left;padding:0 6px 3px 0">Vence</th>'+
+        '<th style="text-align:right;padding:0 6px 3px 0">E-cheq</th><th style="text-align:right;padding:0 0 3px">Queda</th>'+
+        '<th style="padding:0 0 3px 8px"></th></tr></thead><tbody>'+det+'</tbody></table></div>'+
+      (malas.length
+        ? '<p style="color:var(--red);font-size:11.5px;margin:8px 0 0">⚠️ '+(malas.length===1?'Un e-cheq deja':malas.length+' e-cheqs dejan')+
+          ' la cuenta por debajo del colchón de '+money(sim.colchon)+'. Corré las fechas o dividí el pago en más e-cheqs.</p>'
+        : '<p style="color:var(--green);font-size:11.5px;margin:8px 0 0">✓ En todas las fechas queda al menos el colchón de '+money(sim.colchon)+'.</p>')+
+      '<button type="button" class="cmp-btn" data-cajaprop style="margin-top:8px;font-size:12px">📅 Proponer fechas que la caja aguante</button>'+
+      '<p style="color:var(--muted);font-size:10.5px;margin:6px 0 0;line-height:1.35">Solo cuenta lo que ya tiene cuenta y fecha ciertas en esa cuenta (cheques, acreditaciones de VIUMI, débitos de la VISA). Las compras a pagar y las ventas a cobrar no se imputan a ninguna cuenta hasta que se concretan, así que esto responde <i>¿me alcanza para lo ya comprometido?</i> — para eso está el colchón, que se edita en Parámetros → Finanzas.</p>'+
+      '</div>';
+  }
+  // Engancha el botón "proponer fechas". `aplicar(fechas)` lo pone cada formulario, porque cada uno
+  // guarda las fechas en su propio array (chFilas / ppFilas) y repinta a su manera. Recibe el array
+  // COMPLETO —no una fecha por vez— para que el formulario repinte UNA sola vez al final.
+  // `o={desde, cada}`: la fecha del 1er e-cheq y cada cuántos días van los siguientes — los mismos
+  // dos campos que el usuario ya completó arriba. Sin eso, proponer ignoraría el plazo acordado.
+  function bindProponerCaja(cont, filas, aplicar, o){
+    const b=cont.querySelector('[data-cajaprop]'); if(!b) return;
+    b.onclick=()=>{
+      const p=proponerFechasCaja((filas||[]).map(f=>f.monto), (o&&o.desde)||hoyISO, (o&&o.cada)!=null?o.cada:30);
+      if(!p){ alert('Para proponer fechas hace falta el saldo de caja declarado.\nCargalo en Caja → 💰 Declarar saldo real.'); return; }
+      aplicar(p.fechas);
+      if(p.sinFondos.length) alert('Ojo: '+(p.sinFondos.length===1?'a un e-cheq':'a '+p.sinFondos.length+' e-cheqs')+
+        ' no le encontré ninguna fecha en el próximo año en que la chequera aguante el pago dejando el colchón de '+money(p.colchon)+'.\n\n'+
+        'Le puse una fecha tentativa, pero el problema no es la fecha: o el importe es muy grande para la caja proyectada, o hay que dividirlo en más e-cheqs.');
+    };
+  }
   // Cuenta de la que se debita la VISA (Parámetros → Finanzas). Solo si está declarada en Caja:
   // si el nombre no matchea ninguna cuenta, se devuelve '' para no inventar una que no existe.
   const tarjCuentaDef = ()=>{ const q=String(window.__param?window.__param('tarjetaCuenta','Banco Macro VPH'):'Banco Macro VPH').trim().toLowerCase();
@@ -5186,9 +5301,12 @@ function buildFilterTable(cfg){
     // Rearma montos y fechas desde los 4 campos de arriba (monto, 1er vencimiento, cantidad, cada).
     // El N° se auto-incrementa solo si el primero es un número (las chequeras vienen correlativas);
     // si está vacío o tiene letras, las filas quedan libres para tipear el número que dé el banco.
+    // El 1er vencimiento vigente del formulario (lo usan recalcEcheqs y el botón de proponer fechas,
+    // que tiene que partir del plazo acordado y no de hoy).
+    const chVenc = ()=> ($('p-ch-venc')&&$('p-ch-venc').value) || vencProp || hoyISO;
     function recalcEcheqs(){
       const n=Math.max(1, Math.min(12, Math.round(num($('p-ch-n')?$('p-ch-n').value:1))||1));
-      const base=armarEcheqs(num($('p-monto').value), n, ($('p-ch-venc')&&$('p-ch-venc').value)||vencProp||hoyISO, num($('p-ch-cada')?$('p-ch-cada').value:30));
+      const base=armarEcheqs(num($('p-monto').value), n, chVenc(), num($('p-ch-cada')?$('p-ch-cada').value:30));
       const n0=String($('p-ch-num')?$('p-ch-num').value:'').trim(), corr=/^\d+$/.test(n0);
       chFilas=base.map((b,i)=>({ monto:b.monto, fecha:b.fecha,
         num: (chFilas[i]&&chFilas[i].num!=null) ? chFilas[i].num : (corr ? String(+n0+i) : (i===0?n0:'')),
@@ -5197,7 +5315,14 @@ function buildFilterTable(cfg){
     }
     function drawEcheqs(){
       const cont=$('p-ch-grid'); if(!cont) return;
-      if(chFilas.length<2){ cont.innerHTML=''; return; }
+      // Con UN solo e-cheq no hay grilla que mostrar, pero el aviso de caja sí corresponde: es
+      // justamente el caso en que un importe grande se debita de una sola vez.
+      if(chFilas.length<2){ cont.innerHTML=avisoCajaHtml(chFilas);
+        // Con un solo e-cheq la fecha vive en el campo "1er vencimiento": se escribe ahí y se rearma,
+        // así el campo de arriba y la fecha real no quedan diciendo cosas distintas.
+        bindProponerCaja(cont, chFilas, fs=>{ if(fs[0] && $('p-ch-venc')){ $('p-ch-venc').value=fs[0]; chFilas=[]; recalcEcheqs(); } },
+          { desde: chVenc(), cada: num($('p-ch-cada')?$('p-ch-cada').value:30) });
+        return; }
       const tot=chFilas.reduce((s,f)=>s+num(f.monto),0), esperado=num($('p-monto').value);
       const dif=round2(esperado-tot);
       cont.innerHTML='<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Los '+chFilas.length+' e-cheqs</div>'+
@@ -5213,7 +5338,10 @@ function buildFilterTable(cfg){
         (Math.abs(dif)>0.5
           ? '<p style="color:var(--red);font-size:11.5px;margin:6px 0 0">⚠️ Los e-cheqs suman '+money(tot)+' y el pago es de '+money(esperado)+': '+(dif>0?'faltan ':'sobran ')+money(Math.abs(dif))+'. Corregí un importe o cambiá el monto del pago.</p>'
           : '<p style="color:var(--muted);font-size:11.5px;margin:6px 0 0">Se van a registrar '+chFilas.length+' pagos de esta factura, uno por e-cheq, y '+chFilas.length+' cheques emitidos en el módulo Cheques. La Caja proyecta cada salida en su fecha.</p>')+
-        avisoVencPasado(chFilas.map(f=>f.fecha), $('p-fecha')?$('p-fecha').value:'');
+        avisoVencPasado(chFilas.map(f=>f.fecha), $('p-fecha')?$('p-fecha').value:'')+
+        avisoCajaHtml(chFilas);
+      bindProponerCaja(cont, chFilas, fs=>{ fs.forEach((f,i)=>{ if(chFilas[i]) chFilas[i].fecha=f; }); drawEcheqs(); },
+        { desde: chVenc(), cada: num($('p-ch-cada')?$('p-ch-cada').value:30) });
       cont.querySelectorAll('input[data-ef]').forEach(e=> e.addEventListener('change',()=>{ chFilas[+e.dataset.ef].fecha=e.value; drawEcheqs(); }));
       cont.querySelectorAll('input[data-em]').forEach(e=> e.addEventListener('input',()=>{ chFilas[+e.dataset.em].monto=num(e.value); drawEcheqs(); }));
       cont.querySelectorAll('input[data-en]').forEach(e=> e.addEventListener('input',()=>{ chFilas[+e.dataset.en].num=e.value; }));
@@ -5527,8 +5655,14 @@ function buildFilterTable(cfg){
       const gs=gruposEcheq(dist, q, ppCortes);
       const fechas=fechasEcheqs(gs.length, ($('pp-ch-venc')&&$('pp-ch-venc').value)||hoyISO, num($('pp-ch-cada')?$('pp-ch-cada').value:30));
       const n0=String($('pp-ch-num')?$('pp-ch-num').value:'').trim(), corr=/^\d+$/.test(n0);
-      if(gs.length<2){ cont.innerHTML = pedido>dist.length
-        ? '<p style="color:var(--amber);font-size:11.5px;margin:0">Estás pagando '+dist.length+' factura'+(dist.length>1?'s':'')+', así que no se puede dividir en '+pedido+' e-cheqs (cada e-cheq cubre facturas enteras). Para partir UNA factura en varios e-cheqs, usá el botón <b>Pagar</b> de esa factura.</p>' : '';
+      if(gs.length<2){
+        // Un solo e-cheq no arma grilla, pero el aviso de caja corresponde igual (ver drawEcheqs).
+        const una=gs.length?[{ fecha:(ppFilas[0]&&ppFilas[0].fecha)||fechas[0], monto:gs[0].monto }]:[];
+        cont.innerHTML = (pedido>dist.length
+          ? '<p style="color:var(--amber);font-size:11.5px;margin:0">Estás pagando '+dist.length+' factura'+(dist.length>1?'s':'')+', así que no se puede dividir en '+pedido+' e-cheqs (cada e-cheq cubre facturas enteras). Para partir UNA factura en varios e-cheqs, usá el botón <b>Pagar</b> de esa factura.</p>' : '')
+          + avisoCajaHtml(una);
+        bindProponerCaja(cont, una, fs=>{ if(fs[0] && $('pp-ch-venc')){ $('pp-ch-venc').value=fs[0]; ppFilas=[]; drawEcheqsProv(); } },
+          { desde: ($('pp-ch-venc')&&$('pp-ch-venc').value)||hoyISO, cada: num($('pp-ch-cada')?$('pp-ch-cada').value:30) });
         return; }
       cont.innerHTML='<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Los '+gs.length+' e-cheqs · cada uno cancela facturas enteras</div>'+
         '<div class="tbl-wrap"><table style="width:100%;font-size:12px;border-collapse:collapse">'+
@@ -5547,7 +5681,13 @@ function buildFilterTable(cfg){
           '</td></tr>'; }).join('')+
         '</tbody><tfoot><tr style="font-weight:700"><td colspan="3" style="padding:4px">Total</td><td style="text-align:right;padding:4px">'+money(gs.reduce((s,g)=>s+g.monto,0))+'</td><td colspan="3"></td></tr></tfoot></table></div>'+
         '<p style="color:var(--muted);font-size:11.5px;margin:6px 0 0">Con ◀ ▶ movés una factura de un e-cheq al otro (los importes se recalculan). Se van a emitir '+gs.length+' cheques y la Caja proyecta cada salida en su fecha.</p>'+
-        avisoVencPasado(gs.map((g,i)=>(ppFilas[i]&&ppFilas[i].fecha)||fechas[i]), pagoProv.fecha);
+        avisoVencPasado(gs.map((g,i)=>(ppFilas[i]&&ppFilas[i].fecha)||fechas[i]), pagoProv.fecha)+
+        avisoCajaHtml(gs.map((g,i)=>({ fecha:(ppFilas[i]&&ppFilas[i].fecha)||fechas[i], monto:g.monto })));
+      // Acá los importes los fija el agrupamiento de facturas (cada e-cheq cancela facturas enteras):
+      // proponer solo mueve las FECHAS, nunca parte un importe.
+      bindProponerCaja(cont, gs.map((g,i)=>({ fecha:(ppFilas[i]&&ppFilas[i].fecha)||fechas[i], monto:g.monto })),
+        fs=>{ fs.forEach((f,i)=>{ ppFilas[i]=ppFilas[i]||{}; ppFilas[i].fecha=f; }); drawEcheqsProv(); },
+        { desde: ($('pp-ch-venc')&&$('pp-ch-venc').value)||hoyISO, cada: num($('pp-ch-cada')?$('pp-ch-cada').value:30) });
       // Guardar los cortes efectivos para que mover uno no se pierda al repintar.
       ppCortes=gs.slice(0,-1).reduce((acc,g)=>{ acc.push((acc.length?acc[acc.length-1]:0)+g.items.length); return acc; },[]);
       cont.querySelectorAll('input[data-pf]').forEach(e=> e.addEventListener('change',()=>{ const i=+e.dataset.pf; ppFilas[i]=ppFilas[i]||{}; ppFilas[i].fecha=e.value; drawEcheqsProv(); }));
@@ -9020,6 +9160,39 @@ function buildFilterTable(cfg){
   // Salen del último saldo declarado, así hay UNA sola lista y no se desincroniza.
   window.__cajaCuentas = ()=>{ try{ return cuentasDe(ancla()).map(c=>c.nombre).filter(Boolean); }catch(e){ return CUENTAS_DEF.slice(); } };
 
+  // ---------- ¿Va a haber plata en ESTA cuenta el día del vencimiento? ----------
+  // La consume Compras para avisar, al armar un pago con e-cheqs propios, si la chequera va a tener
+  // fondos el día de cada vencimiento (y para proponer fechas que la caja aguante).
+  // Devuelve la CURVA de la cuenta —saldo de hoy + los deltas ya comprometidos, ordenados— en vez de
+  // un saldo puntual: así el que propone fechas la pide UNA vez y prueba cuantas fechas quiera sin
+  // recorrer la proyección entera en cada intento.
+  // ⚠️ MISMO CRITERIO que «¿Alcanza en cada cuenta?»: entran SOLO los eventos con cuenta cierta
+  // (cheques, acreditaciones de plataforma, débitos de la tarjeta). Una compra a pagar o una venta a
+  // cobrar NO se imputan, porque hasta que se concretan no se sabe por qué cuenta van a pasar. Dos
+  // consecuencias que hay que decirle al usuario, no esconder:
+  //   · no hay doble conteo al sumar los e-cheqs nuevos (la compra que se está pagando no está acá), y
+  //   · responde «¿me alcanza para lo ya comprometido?», NO «cuánto voy a tener»: hay salidas futuras
+  //     sin cuenta asignada que no figuran. Por eso el colchón es el que decide, no el cero.
+  // Devuelve null si todavía no se declaró ningún saldo (sin ancla no hay nada que proyectar).
+  window.__cajaCurvaCuenta = nombre=>{
+    try{
+      const d=disponibleHoy(); if(!d) return null;
+      const cuenta=String(nombre||'').trim() || chequera();
+      if(!cuenta) return null;
+      const c=porCuenta(d).find(x=>!x.sinAsignar && String(x.nombre||'').trim()===cuenta);
+      // Lo VENCIDO y todavía pendiente pesa HOY, igual que en la proyección general.
+      const puntos=eventosProyeccion()
+        .filter(e=> String(e.cuenta||'').trim()===cuenta)
+        .map(e=>({ fecha: e.fecha<hoyISO?hoyISO:e.fecha, delta: (e.signo>0?1:-1)*num(e.monto) }))
+        .sort((a,b)=> String(a.fecha).localeCompare(String(b.fecha)));
+      return { cuenta, hoy: round2(c?num(c.monto):0), desde:hoyISO, puntos, colchon: colchonCaja() };
+    }catch(e){ return null; }
+  };
+  // El colchón que tiene que quedar en la cuenta DESPUÉS de pagar (Parámetros → Finanzas).
+  const COLCHON_DEF=2000000;
+  function colchonCaja(){ const v=num(window.__param?window.__param('cajaColchon',COLCHON_DEF):COLCHON_DEF); return v>0?v:0; }
+  window.__cajaColchon = colchonCaja;
+
   // Alerta EN VIVO: caja proyectada en negativo
   window.__alertSources = window.__alertSources || [];
   window.__alertSources.push(()=>{ const A=[]; const d=disponibleHoy(); if(!d) return A;
@@ -10736,6 +10909,7 @@ function buildFilterTable(cfg){
     {g:'Finanzas', k:'viumiCom6',  l:'VIUMI: comisión 6 cuotas (%)',  def:13.19, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas', k:'viumiCom9',  l:'VIUMI: comisión 9 cuotas (%)',  def:18.49, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas', k:'viumiCom12', l:'VIUMI: comisión 12 cuotas (%)', def:22.59, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
+    {g:'Finanzas',   k:'cajaColchon', l:'Colchón mínimo de caja', def:2000000, t:'num', hint:'Cuánta plata querés que quede en la cuenta DESPUÉS de pagar un e-cheq. Al armar un pago con e-cheqs propios, el Tablero mira la cuenta de la chequera el día de cada vencimiento y avisa si el saldo queda por debajo de este número. Subilo en los meses cargados (sueldos, aguinaldo) y bajalo si te resulta muy conservador. En 0 solo avisa cuando la cuenta queda en rojo.'},
     {g:'Finanzas',   k:'cuentaChequera', l:'Cuenta de la que salen los cheques propios', def:'Banco Macro VPH', t:'txt', hint:'Un cheque propio se debita SIEMPRE de esta cuenta, así que el Tablero puede avisarte si ese día no va a haber fondos ahí. Se propone sola al cargar un cheque propio; si usás más de una chequera, cambiala a mano en cada cheque.'},
     {g:'Finanzas',   k:'tarjetaCuenta', l:'Cuenta de la que se debita la tarjeta VISA', def:'Banco Macro VPH', t:'txt', hint:'El resumen de la tarjeta se debita de esta cuenta. Al pagar una compra con «VISA / Tarjeta» se propone sola, junto con la fecha del débito (primer día hábil del mes siguiente) — las dos quedan editables en cada pago.'},
     // SUELDOS — los mismos divisores y factores que usa la planilla de liquidación. Están acá y no en
