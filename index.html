@@ -136,6 +136,10 @@
   /* Estado del CIRCUITO de una venta: los 3 pasos que vienen DESPUÉS de que el cliente confirma
      (facturar · cobrar · pasar a Producción). Verde = hecho · ámbar = falta · gris = no corresponde.
      Van juntos y chiquitos para poder barrer la lista con la vista y que salte lo que quedó a medias. */
+  /* El objetivo de kilos minoristas va RESALTADO arriba de todo: es el número que decide el mes.
+     Borde de acento + fondo apenas teñido para que se despegue del resto de las secciones. */
+  .objmin{border:2px solid var(--accent);box-shadow:0 2px 14px rgba(0,0,0,.10)}
+  .objmin .progress{height:22px}
   .circ{display:inline-flex;gap:3px;margin-top:4px}
   .circ i{font-style:normal;font-size:10px;font-weight:800;border-radius:6px;padding:1px 4px;white-space:nowrap;cursor:default}
   .circ i.ok{background:rgba(22,163,74,.13);color:var(--green)}
@@ -651,6 +655,11 @@
   <!-- ================= INICIO / VISTA DIARIA ================= -->
   <div class="page active" id="page-inicio">
     <div style="text-align:right;margin-bottom:10px"><button class="cmp-btn" id="btn-msj-equipo" title="Arma el mensaje con los indicadores del mes para pegar en el grupo de WhatsApp de la empresa">📲 Mensaje para el equipo</button></div>
+    <section id="objmin-sec" class="objmin" style="display:none">
+      <h2 style="margin-top:0"><span class="dot" style="background:var(--accent)"></span>🎯 Objetivo de kilos MINORISTAS <span id="objmin-mes"></span></h2>
+      <div class="asof" id="asof-objmin"></div>
+      <div id="objmin-widget"></div>
+    </section>
     <div class="kpis" id="kpis-inicio"></div>
     <div class="grid3">
       <section>
@@ -2097,7 +2106,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -2190,6 +2199,63 @@ window.__pintarPE = function(){
     '</div>';
 };
 window.__pintarPE();
+
+/* ================= OBJETIVO DE KILOS MINORISTAS — EN VIVO ================= */
+// El mes se decide por acá y no por el facturado total: un kilo minorista deja más del doble de
+// contribución que uno mayorista (agosto 2026: $181,71 contra $107,89), así que se puede facturar
+// mucho con un mix malo y no cubrir la estructura igual.
+// ⚠️ Los kilos salen de __resumenMes(), que vive en el módulo Ventas: acá NO se recalcula nada, así
+// este widget no puede contradecir al de "Mix de ventas" que está más abajo en la misma pantalla.
+// ⚠️ El módulo Ventas se carga DESPUÉS que este script, así que en el primer pintado __resumenMes
+// puede no existir todavía; lo repinta __refreshAlertas cuando llegan los datos (igual que __pintarPE).
+// El objetivo se edita en Base de Datos → ⚙️ Parámetros (clave objKgMinMes). En 0 el widget se oculta.
+// NO declarar acá un fmtKg propio: ya existe uno en este mismo scope (arriba) y redeclararlo tumba
+// el script entero. Se usa ese, redondeando antes de llamarlo.
+const MESES_ES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+window.__pintarObjMin = function(){
+  const sec=document.getElementById('objmin-sec'), cont=document.getElementById('objmin-widget');
+  if(!sec || !cont) return;
+  const obj = Math.round(Number(window.__param ? window.__param('objKgMinMes',75000) : 75000)) || 0;
+  if(obj<=0){ sec.style.display='none'; return; }
+  const rm = (window.__resumenMes ? window.__resumenMes() : null);
+  if(!rm || rm.kgMinorista==null){ sec.style.display='none'; return; }
+  sec.style.display='';
+  const hoy=new Date();
+  document.getElementById('objmin-mes').textContent = '— ' + MESES_ES[hoy.getMonth()] + ' ' + hoy.getFullYear();
+  const kg=rm.kgMinorista, pct = kg/obj*100, falta = Math.max(obj-kg, 0);
+  const _dh=diasHabilesMes(), dTot=_dh.tot, dTra=_dh.tra, dRest=Math.max(dTot-dTra,0);
+  const pctDias = dTot>0 ? dTra/dTot*100 : 0;
+  const ritmo = dTra>0 ? kg/dTra : 0;
+  const necesario = dRest>0 ? falta/dRest : 0;
+  const proy = ritmo*dTot;
+  const logrado = kg>=obj;
+  // "En camino" = el avance del objetivo le gana al avance del calendario.
+  const enCamino = pct >= pctDias;
+  const colBar = logrado ? 'var(--green)' : (enCamino ? 'var(--accent)' : (pct >= pctDias*0.7 ? 'var(--amber)' : 'var(--red)'));
+  const mixPct = rm.kgVendidos>0 ? kg/rm.kgVendidos*100 : 0;
+  document.getElementById('asof-objmin').textContent =
+    'Kilos vendidos con lista MINORISTA en el mes en curso, EN VIVO · objetivo ' + fmtKg(obj) +
+    ' (se edita en Base de Datos → ⚙️ Parámetros) · ' + dTra + ' de ' + dTot + ' días hábiles' +
+    ' · mix minorista del mes: ' + mixPct.toFixed(0) + '% de los ' + fmtKg(Math.round(rm.kgVendidos)) + ' vendidos';
+  cont.innerHTML =
+    '<div class="progress-wrap"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-bottom:6px;gap:10px;flex-wrap:wrap">' +
+      '<span>' + fmtKg(Math.round(kg)) + ' minoristas — <span style="color:' + colBar + '">' + pct.toFixed(0) + '% del objetivo</span></span>' +
+      '<span style="color:var(--muted)">Objetivo: ' + fmtKg(obj) + '</span></div>' +
+      '<div class="progress"><i style="width:' + Math.min(pct,100) + '%;background:' + colBar + '"></i></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:5px;gap:10px;flex-wrap:wrap">' +
+      '<span>Avance del mes: ' + pctDias.toFixed(0) + '% de los días hábiles</span>' +
+      (logrado ? '<span style="color:var(--green);font-weight:700">OBJETIVO ALCANZADO</span>'
+               : '<span>Faltan ' + fmtKg(Math.round(falta)) + ' en ' + dRest + ' días hábiles</span>') + '</div></div>' +
+    '<div class="kpis" style="margin-top:16px;margin-bottom:0">' +
+      kpi('Ritmo actual', fmtKg(Math.round(ritmo)) + '/día', dTra + ' días hábiles', enCamino?'good':'warn') +
+      (logrado ? kpi('Excedente', fmtKg(Math.round(kg-obj)), 'Por encima del objetivo', 'good')
+               : kpi('Ritmo necesario', fmtKg(Math.round(necesario)) + '/día', 'Para llegar a fin de mes', necesario>ritmo?'warn':'good')) +
+      kpi('Proyección fin de mes', fmtKg(Math.round(proy)), 'Ritmo actual × ' + dTot + ' días', proy>=obj?'good':'bad') +
+      kpi('Estado', logrado ? 'LOGRADO' : (proy>=obj ? 'EN CAMINO' : 'EN RIESGO'),
+          logrado ? 'Son los kilos que más margen dejan' : 'Según proyección al ritmo actual', logrado||proy>=obj?'good':'bad') +
+    '</div>';
+};
+window.__pintarObjMin();
 
 /* ================= MIX DE VENTAS — EN VIVO ================= */
 // Cuatro cortes del mes en curso contra el mes anterior, en puntos porcentuales. Los datos salen de
@@ -7394,7 +7460,7 @@ function buildFilterTable(cfg){
       const q=calc(v), tot=q.total, signo=q.signo||1;
       total+=tot; cantVentas++;
       const L=String(v.listaPrecios||''), tc=String(v.tipoComprobante||'');
-      acum(canal, /mayorista/i.test(L)?'Mayorista' : /minorista/i.test(L)?'Minorista' : 'Sin canal', tot);
+      acum(canal, canalVenta(v), tot);
       // Manda el comprobante REALMENTE emitido, no la lista con la que se cotizó: son cosas distintas
       // y no siempre coinciden (por eso se informa aparte listaFacturadaSinEmitir).
       const emitio = /^Factura/i.test(tc);
@@ -9521,6 +9587,22 @@ function buildFilterTable(cfg){
   // ventas y compras REALES del mes cargadas en el Tablero. Devuelve null si aún no llegaron los datos.
   // `periodo` opcional (AAAA-MM): sin él, el mes en curso. Lo usa __resultadoPorMes() para armar el
   // Estado de Resultados mes a mes SIN duplicar la lógica del margen (que es delicada y ya tuvo bugs).
+  // Canal de una venta: Minorista / Mayorista / Sin canal. UNA sola definición para todo el módulo —
+  // la usan __mixVentas (que reparte por MONTO) y __resumenMes (que reparte por KILOS), así los dos
+  // widgets de la Vista Diaria no pueden contradecirse. Manda la LISTA DE PRECIOS, que es con la que
+  // realmente se cotizó; si la venta no la tiene cargada se mira la categoría, que es el otro lugar
+  // donde queda escrito a quién se le vendió.
+  const canalVenta = v => {
+    const L=String(v&&v.listaPrecios||'');
+    if(/mayorista/i.test(L)) return 'Mayorista';
+    if(/minorista/i.test(L)) return 'Minorista';
+    const C=String(v&&v.categoria||'');
+    if(/mayorista/i.test(C)) return 'Mayorista';
+    if(/minorista/i.test(C)) return 'Minorista';
+    return 'Sin canal';
+  };
+  window.__canalVenta = canalVenta;
+
   window.__resumenMes = (periodo)=>{
     if(!ventas.length && !compras.length) return null;
     const per=periodo || hoyISO.slice(0,7);
@@ -9538,15 +9620,17 @@ function buildFilterTable(cfg){
     const pC={}, pCn={}; cat.forEach(p=>{ const c=num(p.costo); if(!(c>0)) return;
       if(p.codigo) pC[String(p.codigo).trim().toUpperCase()]=c; if(p.nombre) pCn[normP(p.nombre)]=c; });
     const costoItem = it => pC[String(it.codigo||'').trim().toUpperCase()] || pCn[normP(it.desc)] || 0;
-    let vTot=0, vCant=0, cTot=0, kgV=0; const porCli={};
+    let vTot=0, vCant=0, cTot=0, kgV=0, kgMin=0, kgMay=0; const porCli={};
     // Margen de contribución: se suma APARTE el neto de los ítems que SÍ tienen costo cargado. Lo que no
     // tiene costo (ej. el Flete) queda FUERA del cálculo — nunca se cuenta como si fuera 100% de margen,
     // porque eso mostraría una rentabilidad mejor que la real. "cobertura" dice qué % del neto se pudo costear.
     let netoCon=0, costoVar=0, netoTot=0;
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
       const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
-      const fd=1-num(v.descGeneral)/100;
-      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it); if(w>0) kgV+=w*num(it.cant);
+      const fd=1-num(v.descGeneral)/100, _canal=canalVenta(v);
+      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it);
+        if(w>0){ const _k=w*num(it.cant); kgV+=_k;
+          if(_canal==='Minorista') kgMin+=_k; else if(_canal==='Mayorista') kgMay+=_k; }
         if(!it.desc && !it.codigo) return;
         const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*fd;   // neto del renglón
         if(!(base>0)) return;
@@ -9569,6 +9653,7 @@ function buildFilterTable(cfg){
     const margenContrib = netoCon>0 ? (1-costoVar/netoCon) : null;   // null = sin costos cargados, no se puede
     return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, comprasNoOper:cNoOper,
       resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV,
+      kgMinorista:kgMin, kgMayorista:kgMay, kgSinCanal:Math.max(kgV-kgMin-kgMay,0),
       netoVendido:netoTot, costoVariable:costoVar, coberturaCosto:cobertura, margenContribucion:margenContrib };
   };
   // Ventas mes a mes EN VIVO — lo consume el gráfico "Ingresos vs Egresos" de la Vista Diaria, que antes
@@ -10870,6 +10955,10 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
+    // El objetivo se fija en KILOS MINORISTAS y no en pesos facturados a propósito: un kilo minorista
+    // deja más del doble de contribución que uno mayorista, así que se puede facturar mucho con mix
+    // malo y no cubrir la estructura igual. Lo muestra el widget de arriba de todo en la Vista Diaria.
+    {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
     {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
