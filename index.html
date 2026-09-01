@@ -678,6 +678,14 @@
       <div class="asof" id="asof-objmin"></div>
       <div id="objmin-widget"></div>
     </section>
+    <!-- Kilos DISPONIBLES para vender: curado − comprometido (pedido de Marcelo, 01/09). Se pinta con
+         __pintarStockDisp desde __resumenProduccion(); oculto hasta que Producción cargue. -->
+    <section id="stkdisp-sec" style="display:none">
+      <h2><span class="dot" style="background:var(--accent2)"></span>📦 Kilos disponibles para vender HOY</h2>
+      <div class="asof" id="asof-stkdisp"></div>
+      <div class="kpis" id="stkdisp-kpis" style="margin-bottom:12px"></div>
+      <div class="tbl-wrap"><table id="stkdisp-tabla"></table></div>
+    </section>
     <div class="kpis" id="kpis-inicio"></div>
     <div class="grid3">
       <section>
@@ -2124,7 +2132,7 @@ function pintarAlertas(){
   if(it){ let s=it.querySelector('.pill'); if(nBad){ if(!s){ s=document.createElement('span'); s.className='pill'; it.appendChild(s);} s.textContent=nBad; } else if(s){ s.remove(); } }
 }
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
-window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
+window.__refreshAlertas = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); try{ pintarKpisInicio(); }catch(e){} try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} try{ if(window.__pintarStockDisp) window.__pintarStockDisp(); }catch(e){} try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
 window.__refreshAlertas();
 // Reintentos cortos: los datos en vivo (ventas/pedidos/producción/leads) llegan por streaming tras el login.
 setTimeout(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 1800);
@@ -2276,6 +2284,56 @@ window.__pintarObjMin = function(){
     '</div>';
 };
 window.__pintarObjMin();
+
+/* ================= KILOS DISPONIBLES PARA VENDER — EN VIVO ================= */
+// Pedido de Marcelo (01/09): seguir en la Vista Diaria los kilos en stock que se pueden VENDER —
+// curados y sin comprometer —, no el balance físico. Para cerrar ventas hace falta stock mínimo
+// listo, porque el cliente pide entrega en menos de 10 días (justo lo que tarda el curado).
+// ⚠️ No recalcula nada: consume __resumenProduccion() (módulo Producción y Logística), que es la
+// misma cuenta que usa `__disponibilidadProducto` cuando Sofía pregunta "¿hay para entregar ya?".
+// Producción carga DESPUÉS de este script: en el primer pintado puede no existir y el widget queda
+// oculto; __refreshAlertas lo repinta cuando llegan los datos (igual que __pintarObjMin).
+// El mínimo por producto se edita en Base de Datos → Productos (campo "Stock mínimo").
+window.__pintarStockDisp = function(){
+  const sec=document.getElementById('stkdisp-sec'), kp=document.getElementById('stkdisp-kpis'), tb=document.getElementById('stkdisp-tabla');
+  if(!sec || !kp || !tb) return;
+  const rp = (window.__resumenProduccion ? window.__resumenProduccion() : null);
+  if(!rp || rp.kgDisponible==null || !Array.isArray(rp.porProducto)){ sec.style.display='none'; return; }
+  sec.style.display='';
+  const nf = n => Math.round(n).toLocaleString('es-AR');
+  const dm = iso => iso ? iso.slice(8,10)+'/'+iso.slice(5,7) : '';
+  const nBajo = rp.productosBajoMinimo||0;
+  const cubreMin = rp.kgMinimo>0 ? rp.kgDisponible>=rp.kgMinimo : rp.kgDisponible>0;
+  document.getElementById('asof-stkdisp').textContent =
+    'Curado y sin comprometer: lo que se puede entregar YA, producto por producto · en vivo · ' +
+    'el mínimo de cada producto se edita en Base de Datos → Productos';
+  kp.innerHTML =
+    kpi('Disponible para vender', fmtKg(rp.kgDisponible),
+        nBajo>0 ? (nBajo+' producto'+(nBajo!==1?'s':'')+' por debajo del mínimo') : 'Todos los productos sobre el mínimo',
+        nBajo>0 ? (cubreMin?'warn':'bad') : 'good') +
+    kpi('En curado', fmtKg(rp.kgEnCurado), 'Fabricado, listo en los próximos días', 'info') +
+    kpi('Comprometido', fmtKg(rp.kgComprometido), 'Pedidos sin entregar, ya descontados', 'info') +
+    kpi('Mínimo para vender', fmtKg(rp.kgMinimo), 'Suma de los mínimos por producto', rp.kgMinimo>0?'info':'warn');
+  const orden = { falta:0, bajo:1, ok:2 };
+  const filas = rp.porProducto.slice().sort((a,b)=> (orden[a.estadoVenta]-orden[b.estadoVenta]) || (b.kgDisponible-a.kgDisponible));
+  tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En curado (u)</th><th>Estado</th></tr>' +
+    filas.map(f=>{
+      const falta = f.estadoVenta==='falta', bajo = f.estadoVenta==='bajo';
+      const lote = f.proxLote ? 'próximo lote '+dm(f.proxLote.fecha)+' ('+nf(f.proxLote.cantidad)+' u)' : '';
+      const badge = falta ? '<span class="badge red">FALTAN '+nf(-f.disponible)+' u</span>'
+                  : bajo  ? '<span class="badge amber">Bajo mínimo</span>'
+                          : '<span class="badge green">OK</span>';
+      const col = falta ? 'var(--red)' : (bajo ? 'var(--amber)' : 'var(--green)');
+      return '<tr><td><b>'+_escA(f.codigo)+'</b> <span style="color:var(--muted)">'+_escA(f.nombre)+'</span></td>'+
+        '<td class="num" style="color:'+col+';font-weight:800">'+nf(f.disponible)+'</td>'+
+        '<td class="num">'+(f.minimo>0?nf(f.minimo):'—')+'</td>'+
+        '<td class="num">'+nf(f.kgDisponible)+'</td>'+
+        '<td class="num">'+nf(f.enCurado)+'</td>'+
+        '<td>'+badge+((falta||bajo)&&lote ? '<span style="display:block;font-size:11px;color:var(--muted)">'+_escA(lote)+'</span>' : '')+'</td></tr>';
+    }).join('');
+  try{ if(window.__ordenable) window.__ordenable(tb); }catch(e){}
+};
+window.__pintarStockDisp();
 
 /* ================= MIX DE VENTAS — EN VIVO ================= */
 // Cuatro cortes del mes en curso contra el mes anterior, en puntos porcentuales. Los datos salen de
@@ -12743,9 +12801,29 @@ function buildFilterTable(cfg){
   // producción y stock ya NO se importan de ningún sistema externo, se calculan desde vph_produccion/entregas/pedidos).
   window.__resumenProduccion = function(){
     if(!prods.length) return null;
-    const filas=activos().map(p=>stockDe(p));
+    const acts=activos();
+    const filas=acts.map(p=>stockDe(p));
     const kgStock=filas.reduce((a,f)=>a+Math.max(0,f.fisico)*pesoDe(f.k),0);
     const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
+    // Kilos DISPONIBLES PARA VENDER (pedido de Marcelo, 01/09): lo que está CURADO y NO comprometido,
+    // producto por producto — un faltante de losetas no se compensa con un sobrante de topes, por eso
+    // se suma solo lo positivo de cada uno. Es el número que le sirve a Ventas para prometer "entrega
+    // esta semana"; el balance físico−comprometido de arriba es el de Gustavo (qué fabricar). El
+    // criterio de "bajo mínimo" acá compara el DISPONIBLE contra el stockMinimo del producto (en
+    // Base de Datos → Productos), no el físico: si está curando todavía no se puede vender.
+    const isoDe=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    let kgDisp=0, kgCur=0, kgMin=0, nBajoMin=0;
+    const porProducto=filas.map((f,i)=>{ const p=acts[i]; const pe=pesoDe(f.k);
+      const disp=f.disponible, min=Math.max(0,f.min);
+      kgDisp+=Math.max(0,disp)*pe; kgCur+=Math.max(0,f.enCurado)*pe; kgMin+=min*pe;
+      const estadoVenta = disp<0 ? 'falta' : (min>0 && disp<min ? 'bajo' : 'ok');
+      if(estadoVenta!=='ok') nBajoMin++;
+      const l0=(f.lotes&&f.lotes[0])||null;
+      return { codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe,
+        disponible:Math.round(disp), minimo:Math.round(min), comprometido:Math.round(f.comprometido),
+        enCurado:Math.round(f.enCurado), kgDisponible:Math.round(Math.max(0,disp)*pe),
+        estadoVenta, proxLote: l0 ? { fecha: isoDe(l0.el), cantidad: Math.round(l0.cantidad) } : null };
+    });
     const per=hoyISO.slice(0,7); let kgMes=0; const diasProdMes={};
     prod.forEach(x=>{ const f=String(x.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
       const w=num(x.cantidad)*pesoDe(keyDe(x.codigo,x.producto)); kgMes+=w;
@@ -12769,6 +12847,11 @@ function buildFilterTable(cfg){
       kgStock: Math.round(kgStock),                  // físico en planta
       kgComprometido: Math.round(kgComp),            // pedidos no entregados
       balanceKg: Math.round(kgStock-kgComp),         // físico − comprometido
+      kgDisponible: Math.round(kgDisp),              // curado − comprometido, solo lo positivo de cada producto — lo que se puede VENDER hoy
+      kgEnCurado: Math.round(kgCur),                 // fabricado que todavía no cumplió el curado (sale en los próximos días)
+      kgMinimo: Math.round(kgMin),                   // suma de los stockMinimo por producto, en kg
+      productosBajoMinimo: nBajoMin,                 // productos con disponible < mínimo (o en falta)
+      porProducto,                                   // detalle por producto para el widget de la Vista Diaria
       kgProducidosMes: Math.round(kgMes),
       coberturaPct: compKg>0 ? Math.round(cubKg/compKg*1000)/10 : 100,  // % de comprometido cubierto por stock
       // Un único problema físico (no alcanzan las losetas de un pedido) no debe contar como DOS faltantes
