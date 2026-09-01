@@ -947,7 +947,7 @@
         <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
         <div class="tbl-wrap"><table id="pe-tabla-stock" class="pe-tbl-planilla"></table></div>
         <div id="pe-bases-2h" style="margin-top:10px"></div>
-        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En curado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto.</p>
+        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En curado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>P/ vender</b> = curado − comprometido: <b>lo que se puede entregar YA</b> (rojo si no alcanza para los pedidos, ámbar si queda por debajo del mínimo). Un producto puede estar OK para fabricar y en rojo para vender: es que el lote todavía está curando.</p>
       </section>
       <section>
         <h2><span class="dot" style="background:var(--amber)"></span>🏭 Plan de producción</h2>
@@ -12819,7 +12819,7 @@ function buildFilterTable(cfg){
       const estadoVenta = disp<0 ? 'falta' : (min>0 && disp<min ? 'bajo' : 'ok');
       if(estadoVenta!=='ok') nBajoMin++;
       const l0=(f.lotes&&f.lotes[0])||null;
-      return { codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe,
+      return { k:f.k, codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe,
         disponible:Math.round(disp), minimo:Math.round(min), comprometido:Math.round(f.comprometido),
         enCurado:Math.round(f.enCurado), kgDisponible:Math.round(Math.max(0,disp)*pe),
         estadoVenta, proxLote: l0 ? { fecha: isoDe(l0.el), cantidad: Math.round(l0.cantidad) } : null };
@@ -12979,12 +12979,21 @@ function buildFilterTable(cfg){
     const kgStock=filas.reduce((a,f)=>a+Math.max(0,f.fisico)*pesoDe(f.k),0);
     const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
     const clsSem = sem.prom>=OBJ()?'good':(sem.prom>=OBJ()*0.8?'warn':'bad');
+    // Kilos que se pueden VENDER hoy (curado − comprometido, solo lo positivo de cada producto): la
+    // MISMA cuenta que el widget de la Vista Diaria, sacada de __resumenProduccion() para que los dos
+    // números no puedan contradecirse. Pedido de Marcelo (01/09): Gustavo decide qué fabricar y tiene
+    // que ver también lo que Sofía puede prometer con entrega en menos de 10 días.
+    const rp = window.__resumenProduccion ? window.__resumenProduccion() : null;
+    const nBajoV = rp ? (rp.productosBajoMinimo||0) : 0;
+    const clsVend = !rp ? 'info' : (nBajoV>0 ? (rp.kgDisponible>=rp.kgMinimo?'warn':'bad') : 'good');
     $('pe-kpis').innerHTML =
       k('Productos con faltante', faltan?'bad':'good', String(faltan), faltan?'Comprometido supera al físico en planta':(bajos?bajos+' bajo mínimo':'Todo cubierto')) +
       k('Pedidos a entregar','warn', String(pend), 'Pendientes de coordinar/entregar') +
       k('Producido hoy', kgHoy>=OBJ()?'good':'info', nf(kgHoy)+' kg', nf(prodHoy)+' u · objetivo '+nf(OBJ())+' kg/día') +
       k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' ('+({lunvie:'lun–vie',lunsab:'lun–sáb',todos:'todos los días'}[modoProd()]||'lun–vie')+')') +
       k('Kg en stock','info', nf(kgStock)+' kg', 'Físico en planta · comprometidos '+nf(kgComp)+' kg') +
+      k('Disponible para VENDER hoy', clsVend, nf(rp?rp.kgDisponible:0)+' kg',
+        'Curado − comprometido · en curado '+nf(rp?rp.kgEnCurado:0)+' kg'+(nBajoV>0 ? ' · '+nBajoV+' producto'+(nBajoV!==1?'s':'')+' bajo mínimo p/ vender' : ' · todos sobre el mínimo')) +
       k('Entregado hoy','info', nf(entHoy)+' u', fmtFecha(hoyISO));
   }
 
@@ -12999,9 +13008,18 @@ function buildFilterTable(cfg){
     // Producto fija a la izquierda (clase .pe-tbl-planilla en el <table>). Por eso las celdas de
     // Código y Producto llevan clase: en el celular se esconde la columna Código y el código sale
     // en el renglón chico .pe-cod-mini debajo del nombre.
-    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En curado</th><th class="num">Compr.</th><th class="num">Disponible</th><th class="num">Mín</th><th>Estado</th></tr>';
-    if(!rows.length) html+='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
+    // "P/ vender" = curado − comprometido, con su propio estado (falta/bajo/ok contra el mínimo). Sale
+    // de __resumenProduccion().porProducto — la misma cuenta que la Vista Diaria — y NO se recalcula
+    // acá. Es la columna que le dice a Gustavo qué puede prometer Sofía HOY, aunque el Disponible
+    // (físico) diga OK porque el lote todavía está curando.
+    const rpS = window.__resumenProduccion ? window.__resumenProduccion() : null;
+    const vendPor = {}; (rpS && Array.isArray(rpS.porProducto) ? rpS.porProducto : []).forEach(x=>{ vendPor[x.k]=x; });
+    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En curado</th><th class="num">Compr.</th><th class="num">Disponible</th><th class="num" title="Curado − comprometido: lo que se puede entregar YA">P/ vender</th><th class="num">Mín</th><th>Estado</th></tr>';
+    if(!rows.length) html+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
+      const v = vendPor[s.k] || null;
+      const colV = !v ? 'var(--muted)' : v.estadoVenta==='falta'?'var(--red)':v.estadoVenta==='bajo'?'var(--amber)':'var(--green)';
+      const vend = v ? nf(v.disponible) : '—';
       const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
       html+='<tr><td class="pe-col-cod" data-label="Código">'+esc(p.codigo||'')+'</td>'+
         // data-sortval: sin esto __ordenable leería "Loseta Cribada RectangularULC60" y, al sacarle
@@ -13011,9 +13029,10 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="En curado" style="color:var(--blue)">'+cur+'</td>'+
         '<td class="num" data-label="Compr." style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
         '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.dispReal)+'</td>'+
+        '<td class="num" data-label="P/ vender" title="Curado − comprometido: lo que se puede entregar YA" style="color:'+colV+';font-weight:700">'+vend+'</td>'+
         '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
-    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · disponible = físico − comprometido (la fecha de entrega según curado la ve Sofía al vender)';
+    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · Disponible = físico − comprometido (qué FABRICAR) · P/ vender = curado − comprometido (qué puede PROMETER Sofía hoy)';
     // Indicador de bases de doble hierro (criterio de Marcelo): pallets de LC60 = físico ÷ 70 (el
     // pallet lleno son 70 comunes + 5 de doble hierro de base) → con el físico de LC60 2H ÷ 5 se sabe
     // para cuántos pallets alcanzan las bases. Si hay más pallets que bases, hay que fabricar LC60 2H.
