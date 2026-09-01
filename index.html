@@ -521,6 +521,24 @@
   window.__alertSources = window.__alertSources || [];
   window.__refreshAlertas = window.__refreshAlertas || function(){};   // lo reemplaza el motor de alertas tras el login
 
+  // Canal de una venta: Minorista / Mayorista / Sin canal. UNA sola definición para TODA la app —
+  // la usan __mixVentas (módulo Ventas, que reparte por MONTO) y __resumenMes (módulo Finanzas, que
+  // reparte por KILOS), así los dos widgets de la Vista Diaria no pueden contradecirse.
+  // ⚠️ Va acá, en el script global, y NO dentro de un módulo: Ventas y Finanzas son IIFE distintas y
+  // una no ve las variables de la otra. Definida dentro de Finanzas, Ventas tiraba
+  // "canalVenta is not defined" y se caía el widget de Mix de ventas (pasó en producción el 01/09).
+  // Manda la LISTA DE PRECIOS, que es con la que realmente se cotizó; si la venta no la tiene
+  // cargada se mira la categoría, que es el otro lugar donde queda escrito a quién se le vendió.
+  window.__canalVenta = function(v){
+    const L=String(v&&v.listaPrecios||'');
+    if(/mayorista/i.test(L)) return 'Mayorista';
+    if(/minorista/i.test(L)) return 'Minorista';
+    const C=String(v&&v.categoria||'');
+    if(/mayorista/i.test(C)) return 'Mayorista';
+    if(/minorista/i.test(C)) return 'Minorista';
+    return 'Sin canal';
+  };
+
   /* ---------- Tarjetas cliqueables en vez de listas desplegables ----------
      Convierte un <select> YA EXISTENTE en tarjetas, sin tocar nada de la lógica que lo usa:
      el <select> NO se saca del DOM (queda oculto) y se mantiene sincronizado — al tocar una tarjeta se
@@ -7462,7 +7480,7 @@ function buildFilterTable(cfg){
       const q=calc(v), tot=q.total, signo=q.signo||1;
       total+=tot; cantVentas++;
       const L=String(v.listaPrecios||''), tc=String(v.tipoComprobante||'');
-      acum(canal, canalVenta(v), tot);
+      acum(canal, window.__canalVenta(v), tot);
       // Manda el comprobante REALMENTE emitido, no la lista con la que se cotizó: son cosas distintas
       // y no siempre coinciden (por eso se informa aparte listaFacturadaSinEmitir).
       const emitio = /^Factura/i.test(tc);
@@ -9589,22 +9607,6 @@ function buildFilterTable(cfg){
   // ventas y compras REALES del mes cargadas en el Tablero. Devuelve null si aún no llegaron los datos.
   // `periodo` opcional (AAAA-MM): sin él, el mes en curso. Lo usa __resultadoPorMes() para armar el
   // Estado de Resultados mes a mes SIN duplicar la lógica del margen (que es delicada y ya tuvo bugs).
-  // Canal de una venta: Minorista / Mayorista / Sin canal. UNA sola definición para todo el módulo —
-  // la usan __mixVentas (que reparte por MONTO) y __resumenMes (que reparte por KILOS), así los dos
-  // widgets de la Vista Diaria no pueden contradecirse. Manda la LISTA DE PRECIOS, que es con la que
-  // realmente se cotizó; si la venta no la tiene cargada se mira la categoría, que es el otro lugar
-  // donde queda escrito a quién se le vendió.
-  const canalVenta = v => {
-    const L=String(v&&v.listaPrecios||'');
-    if(/mayorista/i.test(L)) return 'Mayorista';
-    if(/minorista/i.test(L)) return 'Minorista';
-    const C=String(v&&v.categoria||'');
-    if(/mayorista/i.test(C)) return 'Mayorista';
-    if(/minorista/i.test(C)) return 'Minorista';
-    return 'Sin canal';
-  };
-  window.__canalVenta = canalVenta;
-
   window.__resumenMes = (periodo)=>{
     if(!ventas.length && !compras.length) return null;
     const per=periodo || hoyISO.slice(0,7);
@@ -9629,7 +9631,7 @@ function buildFilterTable(cfg){
     let netoCon=0, costoVar=0, netoTot=0;
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
       const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
-      const fd=1-num(v.descGeneral)/100, _canal=canalVenta(v);
+      const fd=1-num(v.descGeneral)/100, _canal=window.__canalVenta(v);
       (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it);
         if(w>0){ const _k=w*num(it.cant); kgV+=_k;
           if(_canal==='Minorista') kgMin+=_k; else if(_canal==='Mayorista') kgMay+=_k; }
