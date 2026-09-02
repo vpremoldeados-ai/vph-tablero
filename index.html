@@ -394,6 +394,16 @@
   .pe-el-borrar input{opacity:.4;text-decoration:line-through}
   .pe-el-borrar{background:var(--red-bg);border-radius:8px;padding-left:4px;padding-right:4px}
   @media(max-width:760px){ .pe-bigbtn{font-size:16px;padding:18px} .cmp-dialog-body{padding:16px 14px} }
+  /* Stock y faltantes en la PC: con 10 columnas el nowrap global de th,td (padding 9x11) pedía más
+     ancho del que hay y aparecía el scroll lateral. Se recupera partiendo los ENCABEZADOS en dos
+     renglones (son el texto más largo de casi todas las columnas: "Disponible" pide 96 px para datos
+     de 40) y bajando el padding. Los DATOS siguen con nowrap: un número partido se lee mal. */
+  #pe-tabla-stock th,#pe-tabla-stock td{padding:8px 7px}
+  #pe-tabla-stock th{font-size:10.5px;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:bottom}
+  #pe-tabla-stock .pe-col-prod{white-space:normal;line-height:1.25;min-width:150px}
+  #pe-tabla-stock .pe-col-cod{font-size:11.5px;color:var(--muted)}
+  #pe-tabla-stock .pe-m2-sub{font-size:10px;color:var(--muted);font-weight:400}
+
   /* Celular de Gustavo: tablas densas (Plan, Conteo, movimientos) pasan de filas horizontales a tarjetas apiladas.
      DOS excepciones, las dos a propósito:
        .pe-tbl-matriz   → grilla mensual día×producto: se lee mejor con scroll horizontal + columna fija.
@@ -445,7 +455,8 @@
     #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-col-prod{position:sticky;left:0;z-index:2;background:inherit;white-space:normal;line-height:1.2;min-width:104px;max-width:124px;box-shadow:1px 0 0 var(--border)}
     #page-prodent .tbl-wrap table.pe-tbl-planilla th.pe-col-prod{z-index:3}
     #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-est{padding:2px 7px;font-size:10px}
-    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-cur-desde{display:none}   /* la fecha de curado la usa Sofía al vender, no Gustavo en la planilla */
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-cur-desde,
+    #page-prodent .tbl-wrap table.pe-tbl-planilla .pe-m2-sub{display:none}   /* la fecha de curado y el m² del físico los usa Sofía al vender, no Gustavo en la planilla */
   }
 </style>
 </head>
@@ -947,7 +958,7 @@
         <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
         <div class="tbl-wrap"><table id="pe-tabla-stock" class="pe-tbl-planilla"></table></div>
         <div id="pe-bases-2h" style="margin-top:10px"></div>
-        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En curado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>P/ vender</b> = curado − comprometido: <b>lo que se puede entregar YA</b> (rojo si no alcanza para los pedidos, ámbar si queda por debajo del mínimo). Un producto puede estar OK para fabricar y en rojo para vender: es que el lote todavía está curando.</p>
+        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En curado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>P/ vender</b> = curado − comprometido: <b>lo que se puede entregar YA</b> (rojo si no alcanza para los pedidos, ámbar si queda por debajo del mínimo). Un producto puede estar OK para fabricar y en rojo para vender: es que el lote todavía está curando. <b>m² p/ vender</b> = esa misma cantidad pasada a metros cuadrados (solo losetas y greens; los topes, el listón y el cordón se venden por unidad o metro lineal). Las unidades por m² se cargan en Base de Datos → Productos.</p>
       </section>
       <section>
         <h2><span class="dot" style="background:var(--amber)"></span>🏭 Plan de producción</h2>
@@ -12999,6 +13010,9 @@ function buildFilterTable(cfg){
 
   // ---------- Vista STOCK ----------
   function renderStock(){
+    // Los m² no se pueden redondear a entero como las unidades: 0,4 m² no es 0. Un decimal hasta
+    // 100 m² y entero de ahí para arriba, que es como se cotiza.
+    const nm2 = v => (v||0).toLocaleString('es-AR',{minimumFractionDigits:0, maximumFractionDigits: Math.abs(v)<100?1:0});
     const filas=activos().map(p=>({p, s:stockDe(p)}));
     let rows=filas;
     if(q){ const s=q.toLowerCase(); rows=rows.filter(f=>(f.p.nombre+' '+f.p.codigo).toLowerCase().includes(s)); }
@@ -13014,12 +13028,21 @@ function buildFilterTable(cfg){
     // (físico) diga OK porque el lote todavía está curando.
     const rpS = window.__resumenProduccion ? window.__resumenProduccion() : null;
     const vendPor = {}; (rpS && Array.isArray(rpS.porProducto) ? rpS.porProducto : []).forEach(x=>{ vendPor[x.k]=x; });
-    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En curado</th><th class="num">Compr.</th><th class="num">Disponible</th><th class="num" title="Curado − comprometido: lo que se puede entregar YA">P/ vender</th><th class="num">Mín</th><th>Estado</th></tr>';
-    if(!rows.length) html+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
+    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En curado</th><th class="num">Compr.</th><th class="num">Disponible</th><th class="num" title="Curado − comprometido: lo que se puede entregar YA">P/ vender</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden vender hoy = P/ vender ÷ unidades por m². Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
+    if(!rows.length) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
       const v = vendPor[s.k] || null;
       const colV = !v ? 'var(--muted)' : v.estadoVenta==='falta'?'var(--red)':v.estadoVenta==='bajo'?'var(--amber)':'var(--green)';
       const vend = v ? nf(v.disponible) : '—';
+      // m² SOLO de lo que tiene "unidades por m²" cargado en Base de Datos (losetas y greens). Los
+      // topes, el listón y el cordón se venden por unidad o por metro lineal: ahí va "—", NUNCA 0,
+      // que se leería como "no hay". Se convierten los MISMOS números de las columnas de al lado,
+      // no se recalcula stock acá.
+      const uxm2 = num(p.unidadesPorM2);
+      const m2v = (uxm2>0 && v) ? v.disponible/uxm2 : null;   // lo que se puede vender hoy
+      const m2f = (uxm2>0) ? s.dispReal/uxm2 : null;          // el físico − comprometido, de respaldo
+      const m2Cel = m2v===null ? '<span style="color:var(--muted);font-weight:400">—</span>'
+        : nm2(m2v)+' m²'+((m2f!==null && Math.abs(m2f-m2v)>=0.05) ? '<div class="pe-m2-sub">físico '+nm2(m2f)+' m²</div>' : '');
       const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
       html+='<tr><td class="pe-col-cod" data-label="Código">'+esc(p.codigo||'')+'</td>'+
         // data-sortval: sin esto __ordenable leería "Loseta Cribada RectangularULC60" y, al sacarle
@@ -13030,7 +13053,10 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Compr." style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
         '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.dispReal)+'</td>'+
         '<td class="num" data-label="P/ vender" title="Curado − comprometido: lo que se puede entregar YA" style="color:'+colV+';font-weight:700">'+vend+'</td>'+
-        '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td></tr>'; });
+        '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td>'+
+        // data-sortval numérico: sin esto __ordenable leería "219,9 m² físico 165 m²" y ordenaría
+        // cualquier cosa. Los que no se venden por m² van a -1, así quedan al final.
+        '<td class="num pe-col-m2" data-label="m² p/ vender" data-sortval="'+(m2v===null?-1:m2v)+'" style="color:'+colV+';font-weight:700">'+m2Cel+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · Disponible = físico − comprometido (qué FABRICAR) · P/ vender = curado − comprometido (qué puede PROMETER Sofía hoy)';
     // Indicador de bases de doble hierro (criterio de Marcelo): pallets de LC60 = físico ÷ 70 (el
