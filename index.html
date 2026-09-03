@@ -11617,6 +11617,19 @@ function buildFilterTable(cfg){
   }
   // Vista Lista: una fila por lead, sin scroll horizontal (columnas acotadas a lo esencial, el resto
   // queda a un clic en "Editar"), pensada para leer rápido el embudo completo de un vistazo.
+  // Detectar mayoristas sin actividad reciente
+  function indicadorInactividad(l){
+    const isMay=String(l.categoria||'').toUpperCase().includes('MAYORISTA');
+    if(!isMay) return '';
+    const diasInactividad=20;
+    const haceNDias=new Date(HOY.getTime()-diasInactividad*24*60*60*1000).getFullYear()+'-'+p2(new Date(HOY.getTime()-diasInactividad*24*60*60*1000).getMonth()+1)+'-'+p2(new Date(HOY.getTime()-diasInactividad*24*60*60*1000).getDate());
+    const ultActividad=(l.seguimiento||[]).filter(a=>!a.resuelta).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')))[0];
+    if(!ultActividad || (ultActividad.fecha||'') < haceNDias){
+      const diasSin = ultActividad ? Math.floor((new Date(hoyISO)-new Date(ultActividad.fecha||hoyISO))/86400000) : (l.fecha?Math.floor((new Date(hoyISO)-new Date(l.fecha||hoyISO))/86400000):0);
+      return '<span style="background:#fff6e0;color:#c98a06;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;margin-left:4px" title="Sin actividad hace '+diasSin+' días">⚠ inactivo</span>';
+    }
+    return '';
+  }
   function drawTabla(leads){
     const rows=leads.slice().sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))).map(l=>{ try{
       const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
@@ -11634,6 +11647,7 @@ function buildFilterTable(cfg){
             : '—');
       return '<tr>'+
         '<td><b>'+esc(l.cliente||'(sin nombre)')+'</b>'+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700">✓</span>':'')+
+          indicadorInactividad(l)+
           (l.telefono?'<div style="color:var(--muted);font-size:11px">'+(wa?'<a href="'+wa+'" target="_blank" rel="noopener" style="color:var(--green)">📞 '+esc(l.telefono)+'</a>':esc(l.telefono))+'</div>':'')+'</td>'+
         // El estado se cambia DESDE EL LISTADO (pedido de Marcelo): antes había que entrar a Editar
         // lead por lead. Es el mismo `select[data-move]` que el kanban, así que lo engancha el mismo
@@ -12162,12 +12176,22 @@ function buildFilterTable(cfg){
     return {items, lugar, zona};
   };
 
-  // Fuente de alertas EN VIVO: leads nuevos sin contactar + seguimientos vencidos/hoy
+  // Fuente de alertas EN VIVO: leads nuevos sin contactar + seguimientos vencidos/hoy + mayoristas sin actividad
   window.__alertSources.push(()=>{ const A=[];
     const nuevos=DB.leads.filter(l=>(l.estado||'nuevo')==='nuevo' && l.estado!=='contactado' && !l.contactado);
     if(nuevos.length) A.push({sev:'warn', area:'Comercial', t:nuevos.length+' lead'+(nuevos.length>1?'s':'')+' sin contactar', act:'Primer contacto por WhatsApp (un toque en el Asistente o abrí el CRM).', go:{page:'CRM / Leads'}});
     const segui=DB.leads.filter(l=>l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO && ACTIVOS.includes(l.estado||'nuevo'));
     if(segui.length) A.push({sev:'warn', area:'Comercial', t:segui.length+' seguimiento'+(segui.length>1?'s':'')+' de lead pendiente'+(segui.length>1?'s':'')+' (vencido u hoy)', act:'Retomar el contacto prometido antes de que se enfríe.', go:{page:'CRM / Leads'}});
+    // Mayoristas inactivos: sin actividades registradas en los últimos 20 días (relaciones dormidas)
+    const diasInactividad=20;
+    const haceNDias=new Date(HOY.getTime()-diasInactividad*24*60*60*1000).getFullYear()+'-'+p2(new Date(HOY.getTime()-diasInactividad*24*60*60*1000).getMonth()+1)+'-'+p2(new Date(HOY.getTime()-diasInactividad*24*60*60*1000).getDate());
+    const mayoristasInactivos=DB.leads.filter(l=>{
+      const isMay=String(l.categoria||'').toUpperCase().includes('MAYORISTA');
+      if(!isMay || !ACTIVOS.includes(l.estado||'nuevo')) return false;
+      const ultActividad=(l.seguimiento||[]).filter(a=>!a.resuelta).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')))[0];
+      return !ultActividad || (ultActividad.fecha||'') < haceNDias;
+    });
+    if(mayoristasInactivos.length) A.push({sev:'info', area:'Comercial', t:mayoristasInactivos.length+' mayorista'+(mayoristasInactivos.length>1?'s':'')+' sin actividad hace '+diasInactividad+' días', act:'Reactivar el contacto: llamada, envío de listado de precios o consulta de stock.', go:{page:'CRM / Leads'}});
     return A; });
   $('crm-view-lista').onclick=()=>setView('lista');
   $('crm-view-tablero').onclick=()=>setView('tablero');
