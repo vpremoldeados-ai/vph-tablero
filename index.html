@@ -11376,13 +11376,16 @@ function buildFilterTable(cfg){
     const est = l.estado||'nuevo';
     if(est===estadoPrevio) return;
     if(SIN_SEGUIMIENTO.includes(est)){ l.proximoSeguimiento=''; return; }
-    // Para mayoristas: si hay actividades sin resolver, el próximo seguimiento es 7 días desde la última.
+    // Para mayoristas: si hay actividades sin resolver, el próximo seguimiento depende del tipo.
+    // Presupuestos: 3 días (igual que minoristas). Otras actividades: 15 días.
     const isMayorista = String(l.categoria||'').toUpperCase().includes('MAYORISTA');
     if(isMayorista){
       const actividades = (l.seguimiento||[]).filter(a=>!a.resuelta).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
       if(actividades.length>0){
         const ultFecha = actividades[0].fecha||hoyISO;
-        l.proximoSeguimiento = addDiasHabiles(ultFecha, 7);
+        const ultTipo = actividades[0].tipo||'otra';
+        const dias = ultTipo==='presupuesto' ? 3 : 15;   // presupuestos = 3 días (minorista), otras = 15 días
+        l.proximoSeguimiento = addDiasHabiles(ultFecha, dias);
         return;
       }
     }
