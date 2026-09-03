@@ -11376,6 +11376,16 @@ function buildFilterTable(cfg){
     const est = l.estado||'nuevo';
     if(est===estadoPrevio) return;
     if(SIN_SEGUIMIENTO.includes(est)){ l.proximoSeguimiento=''; return; }
+    // Para mayoristas: si hay actividades sin resolver, el próximo seguimiento es 7 días desde la última.
+    const isMayorista = String(l.categoria||'').toUpperCase().includes('MAYORISTA');
+    if(isMayorista){
+      const actividades = (l.seguimiento||[]).filter(a=>!a.resuelta).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+      if(actividades.length>0){
+        const ultFecha = actividades[0].fecha||hoyISO;
+        l.proximoSeguimiento = addDiasHabiles(ultFecha, 7);
+        return;
+      }
+    }
     const dias = HORARIO_SEGUIMIENTO()[est];
     // "nuevo" cuenta desde que ENTRÓ el lead (plazo para el 1er contacto); el resto, desde hoy.
     if(dias>0) l.proximoSeguimiento = addDiasHabiles(est==='nuevo' ? (l.fecha||hoyISO) : hoyISO, dias);
@@ -11426,6 +11436,16 @@ function buildFilterTable(cfg){
   const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Teléfono','Referido','Manual'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
+  // Tipos de actividades para mayoristas — cada uno con un emoji y color
+  const TIPOS_ACTIVIDAD = [
+    {k:'llamada', l:'📞 Llamada', color:'#2f6fb2'},
+    {k:'email', l:'📧 Email', color:'#38b26a'},
+    {k:'presupuesto', l:'📄 Presupuesto', color:'#c98a06'},
+    {k:'stock', l:'📦 Consulta stock', color:'#d64541'},
+    {k:'listado_precios', l:'📋 Listado precios', color:'#0e1726'},
+    {k:'marketing', l:'🎯 Marketing', color:'#8a5cc0'},
+    {k:'otra', l:'📝 Otra actividad', color:'#7a8699'}
+  ];
   const LISTAS=window.__listasPrecio();   // fuente única (script 1) — no duplicar el array acá
   // Normaliza por el número de lista: los registros viejos guardaron el nombre anterior ("0 Minorista Responsable
   // Inscripto"), así que se remapean al nombre actual sin perder la lista elegida.
@@ -11833,8 +11853,14 @@ function buildFilterTable(cfg){
       '<h4 style="margin:14px 0 6px;font-size:13px">Seguimiento</h4>'+
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:2px"><label style="font-size:12.5px;color:var(--muted);font-weight:700;white-space:nowrap">📅 Próximo seguimiento</label><input type="date" id="cf-proxsegui" value="'+esc(l.proximoSeguimiento||'')+'" style="max-width:170px;padding:7px 10px;border:1px solid var(--border);border-radius:8px">'+(l.proximoSeguimiento?'<button class="cmp-rowbtn" id="cf-proxsegui-clear">Quitar</button>':'')+'</div>'+
       '<p class="note" style="margin:0 0 10px">Se reprograma solo: 3 días hábiles al crear el lead, y 5 días hábiles más cada vez que pasás a Reconsulta 1 o 2. Podés ajustarlo a mano acá.</p>'+
-      '<div id="cf-segui" style="font-size:12.5px;margin-bottom:8px"></div>'+
-      '<div style="display:flex;gap:8px"><input id="cf-nuevanota" placeholder="Agregar nota de seguimiento..." style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px"><button class="cmp-btn" id="cf-addnota">Agregar</button></div>'+
+      '<div id="cf-segui" style="font-size:12.5px;margin-bottom:10px;background:var(--bg);padding:8px;border-radius:8px"></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 120px auto;gap:8px;align-items:flex-start">'+
+        '<input id="cf-nuevanota" placeholder="Registrar actividad..." style="padding:8px 10px;border:1px solid var(--border);border-radius:8px">'+
+        '<select id="cf-tipo-actividad" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px">'+
+          TIPOS_ACTIVIDAD.map(t=>'<option value="'+t.k+'">'+t.l+'</option>').join('')+
+        '</select>'+
+        '<button class="cmp-btn" id="cf-addnota">Agregar</button>'+
+      '</div>'+
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
@@ -11850,7 +11876,15 @@ function buildFilterTable(cfg){
       drawItems();   // repinta renglones, subtotales, el selector de productos y la caja del flete
     });
     $('cf-addline').onclick=()=>{ editing.items.push({producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
-    $('cf-addnota').onclick=()=>{ const t=$('cf-nuevanota').value.trim(); if(t){ editing.seguimiento.push({fecha:hoyISO, texto:t}); $('cf-nuevanota').value=''; drawSegui(); } };
+    $('cf-addnota').onclick=()=>{
+      const texto=$('cf-nuevanota').value.trim();
+      const tipo=$('cf-tipo-actividad')?$('cf-tipo-actividad').value:'otra';
+      if(texto){
+        editing.seguimiento.push({fecha:hoyISO, tipo:tipo, texto:texto, resuelta:false});
+        $('cf-nuevanota').value='';
+        drawSegui();
+      }
+    };
     if($('cf-proxsegui-clear')) $('cf-proxsegui-clear').onclick=()=>{ editing.proximoSeguimiento=''; drawForm(); };
     // Tarjetas: origen del lead, etapa del pipeline (con el color de su columna del kanban) y la zona de
     // flete (al tocarla se recalcula la cotización en vivo, igual que en Presupuestos).
@@ -12004,7 +12038,17 @@ function buildFilterTable(cfg){
     if($('cf-pallets-auto')) $('cf-pallets-auto').onclick=()=>{ editing.palletsFlete=0; drawFleteBox(); };
   }
   function drawSegui(){
-    $('cf-segui').innerHTML = (editing.seguimiento||[]).filter(Boolean).length ? editing.seguimiento.filter(Boolean).slice().reverse().map(s=>'<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b style="color:var(--muted)">'+esc(s.fecha)+':</b> '+esc(s.texto)+'</div>').join('') : '<span style="color:var(--muted)">Sin notas de seguimiento.</span>';
+    const actividades=(editing.seguimiento||[]).filter(Boolean).slice().reverse();
+    if(!actividades.length){ $('cf-segui').innerHTML='<span style="color:var(--muted)">Sin actividades registradas.</span>'; return; }
+    const tipoInfo=k=>TIPOS_ACTIVIDAD.find(t=>t.k===k)||{k:'otra',l:'📝 Otra',color:'#7a8699'};
+    $('cf-segui').innerHTML = actividades.map(a=>{
+      const t=tipoInfo(a.tipo||'otra');
+      const badge='<span style="display:inline-block;background:'+t.color+';color:#fff;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-right:6px">'+esc(t.l)+'</span>';
+      return '<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'+
+        '<div style="flex:1">'+badge+'<b style="color:var(--muted);font-size:11px">'+esc(a.fecha)+':</b> '+esc(a.texto)+'</div>'+
+        (a.resuelta?'<span style="color:var(--green);font-size:12px;font-weight:700">✓</span>':'')+
+      '</div>';
+    }).join('');
   }
 
   function exportJSON(){ const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='VPH_leads_'+hoyISO+'.json'; a.click(); URL.revokeObjectURL(a.href); }
