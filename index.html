@@ -14117,10 +14117,21 @@ function buildFilterTable(cfg){
       const nv=p.numeroViaje||1;  // número de viaje: 1, 2, 3... dentro de cada día+transportista
       const k=dia+'||'+tr+'||'+nv; g[k]=g[k]||{dia, tr, nv, peds:[], pallets:0, peso:0};
       const t=totCarga(p); g[k].peds.push(p); g[k].pallets+=t.pallets; g[k].peso+=t.peso; });
-    // Normalizar números de viaje: para cada día+transportista, renumerar a 1, 2, 3... sin gaps
+    // Consolidar/normalizar viajes: si caben en 1 solo camión, consolidar a viaje 1; si no, renumerar sin gaps
     const porDiaTransporte={};
     Object.values(g).forEach(v=>{ const k=v.dia+'||'+v.tr; if(!porDiaTransporte[k]) porDiaTransporte[k]=[]; porDiaTransporte[k].push(v); });
-    Object.values(porDiaTransporte).forEach(grupo=>{ grupo.forEach((v,i)=>{ v.nv=i+1; }); });
+    Object.values(porDiaTransporte).forEach(grupo=>{
+      const cap=capacidadDe(grupo[0].tr), totalPal=grupo.reduce((a,v)=>a+v.pallets,0);
+      if(cap>0 && totalPal<=cap) {
+        // Caben todos en 1 viaje: poner todos en viaje 1 y consolidar peds
+        const v1={dia:grupo[0].dia, tr:grupo[0].tr, nv:1, peds:[], pallets:0, peso:0};
+        grupo.forEach(v=>{ v1.peds.push(...v.peds); v1.pallets+=v.pallets; v1.peso+=v.peso; });
+        grupo.splice(0, grupo.length, v1);  // reemplazar grupo con solo v1
+      } else {
+        // No caben o sin capacidad: renumerar a 1, 2, 3... sin gaps
+        grupo.forEach((v,i)=>{ v.nv=i+1; });
+      }
+    });
     // Semana EN CURSO = lunes a domingo. Es lo único que Gustavo necesita mirar; el resto va abajo.
     const hoy0=new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate());
     const dsem=hoy0.getDay();                                        // 0 = domingo
