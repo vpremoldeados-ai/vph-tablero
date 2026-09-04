@@ -14114,7 +14114,8 @@ function buildFilterTable(cfg){
     const pend=pedidos.filter(p=>p.estado!=='entregado');
     const g={};
     pend.forEach(p=>{ const dia=String(p.diaEntrega||'').trim()||'Sin fecha'; const tr=String(p.transporte||'').trim()||'Sin asignar';
-      const k=dia+'||'+tr; g[k]=g[k]||{dia, tr, peds:[], pallets:0, peso:0};
+      const nv=p.numeroViaje||1;  // número de viaje: 1, 2, 3... dentro de cada día+transportista
+      const k=dia+'||'+tr+'||'+nv; g[k]=g[k]||{dia, tr, nv, peds:[], pallets:0, peso:0};
       const t=totCarga(p); g[k].peds.push(p); g[k].pallets+=t.pallets; g[k].peso+=t.peso; });
     // Semana EN CURSO = lunes a domingo. Es lo único que Gustavo necesita mirar; el resto va abajo.
     const hoy0=new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate());
@@ -14195,7 +14196,7 @@ function buildFilterTable(cfg){
       return '<div class="pe-viaje '+CHIP[v.c].k+'" style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
           chipDia(v)+
-          '<div style="font-weight:800;font-size:14px">🚚 '+esc(v.tr)+'</div>'+
+          '<div style="font-weight:800;font-size:14px">🚚 '+esc(v.tr)+(v.nv>1?' · Viaje '+v.nv:'')+' </div>'+
           '<div style="margin-left:auto;font-weight:800;font-size:14px;color:'+col+'">'+v.pallets+(cap>0?(' / '+cap):'')+' pallet'+(v.pallets!==1?'s':'')+'</div>'+
         '</div>'+
         (cap>0?'<div class="progress" style="height:10px;margin:6px 0"><i style="width:'+pct+'%;background:'+col+'"></i></div>':'<div style="height:6px"></div>')+
@@ -14439,7 +14440,23 @@ function buildFilterTable(cfg){
     pe.clienteTel     = cli.telefono || pe.clienteTel     || '';
     return pe;
   }
-  function persistPed(pe){ if(!pe._uid) pe._uid='ped_'+uniq(); snapCliente(pe); const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message)); else alert('Iniciá sesión.'); }
+  function persistPed(pe){
+    if(!pe._uid) pe._uid='ped_'+uniq();
+    snapCliente(pe);
+    // Calcular numeroViaje: secuencia dentro del día+transportista (1, 2, 3...).
+    // En un test o contexto sin `pedidos`, asignar 1 por defecto (no fallar).
+    const dia=String(pe.diaEntrega||'').trim(); const tr=String(pe.transporte||'').trim();
+    if(typeof pedidos!=='undefined' && Array.isArray(pedidos)){
+      const otros=pedidos.filter(p=>p._uid!==pe._uid && String(p.diaEntrega||'').trim()===dia && String(p.transporte||'').trim()===tr);
+      const proximoNum = otros.length>0 ? Math.max(...otros.map(p=>p.numeroViaje||1))+1 : 1;
+      // Recalcular si cambió día/transportista, o si es nuevo y no tiene número
+      if(!pe.numeroViaje || (dia && pe.diaEntrega!==pe._diaPrevio || tr && pe.transporte!==pe._trPrevio)) pe.numeroViaje=proximoNum;
+    } else if(!pe.numeroViaje) pe.numeroViaje=1;  // contexto sin pedidos: default
+    pe._diaPrevio=dia; pe._trPrevio=tr;  // memorizar para el próximo guardado
+    const c=fb();
+    if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message));
+    else alert('Iniciá sesión.');
+  }
   function marcarEntregado(pe){
     const c=fb(); if(!c||!c.db) return;
     // Los pallets NO se recalculan acá: se usan los del plan REAL del pedido (cargaRows), que es el mismo
