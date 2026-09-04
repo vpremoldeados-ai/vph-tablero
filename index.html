@@ -14117,6 +14117,10 @@ function buildFilterTable(cfg){
       const nv=p.numeroViaje||1;  // número de viaje: 1, 2, 3... dentro de cada día+transportista
       const k=dia+'||'+tr+'||'+nv; g[k]=g[k]||{dia, tr, nv, peds:[], pallets:0, peso:0};
       const t=totCarga(p); g[k].peds.push(p); g[k].pallets+=t.pallets; g[k].peso+=t.peso; });
+    // Normalizar números de viaje: para cada día+transportista, renumerar a 1, 2, 3... sin gaps
+    const porDiaTransporte={};
+    Object.values(g).forEach(v=>{ const k=v.dia+'||'+v.tr; if(!porDiaTransporte[k]) porDiaTransporte[k]=[]; porDiaTransporte[k].push(v); });
+    Object.values(porDiaTransporte).forEach(grupo=>{ grupo.forEach((v,i)=>{ v.nv=i+1; }); });
     // Semana EN CURSO = lunes a domingo. Es lo único que Gustavo necesita mirar; el resto va abajo.
     const hoy0=new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate());
     const dsem=hoy0.getDay();                                        // 0 = domingo
