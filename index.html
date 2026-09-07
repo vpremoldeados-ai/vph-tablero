@@ -10509,13 +10509,16 @@ function buildFilterTable(cfg){
     const lista = window.__listaDefecto.mayorista;
     const items = modelos.map(idx=>{
       const m = MODELOS_COMP[idx];
-      const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase());
-      if(!prod){ alert('Producto '+m.codigo+' no está en el catálogo.'); return null; }
+      // Match por NOMBRE primero (matchProducto ya existe y es la fuente de verdad de todo el
+      // Tablero): el código documentado en CLAUDE.md puede no coincidir 1 a 1 con el código real
+      // cargado en Firestore (ej. el catálogo real puede llevar prefijo "U", el del §4 no).
+      const prod = matchProducto(m.nombre) || prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase());
+      if(!prod){ alert('Producto "'+m.nombre+'" no está en el catálogo (Base de Datos → Productos). Revisá que el nombre coincida exactamente.'); return null; }
       const udM2 = num(prod.unidadesPorM2)||1;
       // Mismo criterio que el CRM (recalcUnidades, MERMA_RECORTES): +5% por recortes/roturas.
       const cant = Math.ceil(m2 * udM2 * 1.05);
       const precio = precioLista(prod, lista) || num(prod.precioMayorista) || num(prod.precioMinorista) || 0;
-      return { desc: m.nombre, codigo: m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
+      return { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
     }).filter(Boolean);
     if(items.length===0) return;
     const flete = calcFlete(items, zona);
