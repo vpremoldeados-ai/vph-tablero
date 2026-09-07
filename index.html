@@ -12446,7 +12446,7 @@ function buildFilterTable(cfg){
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
   const topesAlEnviar=row=> (row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row;
-  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='';
+  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFormAbierto=false;
   function topesLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function topesSaveLocal(){ try{ localStorage.setItem(TOPES_KEY, JSON.stringify(TOPES)); }catch(e){} }
   // Guarda el array ENTERO (documento chico, mismo criterio que PLANT/PREG) — no hay forma de tocar
@@ -12483,6 +12483,23 @@ function buildFilterTable(cfg){
         '<button class="filter-btn'+(!topesFiltroRubro?' active':'')+'" data-topesf-r="">Todos los rubros</button>'+
         rubros.map(r=>'<button class="filter-btn'+(topesFiltroRubro===r?' active':'')+'" data-topesf-r="'+esc(r)+'">'+esc(r)+'</button>').join('')+
       '</div>' : '')+
+      '<div style="margin-bottom:10px"><button class="cmp-btn" id="topes-agregar-btn">'+(topesFormAbierto?'✕ Cancelar':'+ Agregar prospecto')+'</button></div>'+
+      (topesFormAbierto ? (
+        '<div style="margin-bottom:14px;padding:12px;border:1px dashed var(--border);border-radius:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
+          '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Lugar *</label>'+
+            '<input type="text" id="topes-new-nombre" placeholder="Nombre del lugar" style="width:200px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px"></div>'+
+          '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Rubro</label>'+
+            '<input type="text" id="topes-new-rubro" list="topes-rubros-dl" placeholder="Ej: Club deportivo" style="width:150px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px">'+
+            '<datalist id="topes-rubros-dl">'+rubros.map(r=>'<option value="'+esc(r)+'">').join('')+'</datalist></div>'+
+          '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Zona / referencia</label>'+
+            '<input type="text" id="topes-new-zona" placeholder="Barrio, calle..." style="width:180px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px"></div>'+
+          '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Teléfono</label>'+
+            '<input type="text" id="topes-new-tel" placeholder="351..." style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px"></div>'+
+          '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Email</label>'+
+            '<input type="text" id="topes-new-email" placeholder="—" style="width:170px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px"></div>'+
+          '<button class="cmp-btn cmp-btn-primary" id="topes-guardar-nuevo">Agregar</button>'+
+        '</div>'
+      ) : '')+
       '<div class="tbl-wrap"><table><tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email</th><th style="text-align:center">Estado</th><th>Enviar</th><th>Foto a adjuntar</th><th>Nota</th><th></th></tr>';
     if(!filas.length) h+='<tr><td colspan="10" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach(({t,i})=>{
@@ -12510,6 +12527,28 @@ function buildFilterTable(cfg){
     body.innerHTML=h;
     body.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
     body.querySelectorAll('button[data-topesf-r]').forEach(b=>b.onclick=()=>{ topesFiltroRubro=b.dataset.topesfR; drawTopes(); });
+    // Alta manual — pedido de Marcelo, 08/09: además de la carga inicial por investigación, poder
+    // sumar un prospecto suelto sin tener que editar el JSON a mano. Solo pide el nombre; el resto
+    // (rubro, zona, teléfono, email) es opcional y se completa después como cualquier fila existente.
+    const btnAgregar=body.querySelector('#topes-agregar-btn');
+    if(btnAgregar) btnAgregar.onclick=()=>{ topesFormAbierto=!topesFormAbierto; drawTopes(); };
+    const btnGuardarNuevo=body.querySelector('#topes-guardar-nuevo');
+    if(btnGuardarNuevo) btnGuardarNuevo.onclick=()=>{
+      const nombre=(body.querySelector('#topes-new-nombre').value||'').trim();
+      if(!nombre){ alert('Cargá al menos el nombre del lugar.'); return; }
+      const nuevo={
+        nombre,
+        rubro:(body.querySelector('#topes-new-rubro').value||'').trim(),
+        zona:(body.querySelector('#topes-new-zona').value||'').trim(),
+        telefono:(body.querySelector('#topes-new-tel').value||'').trim(),
+        email:(body.querySelector('#topes-new-email').value||'').trim(),
+        estado:'pendiente',
+        nota:''
+      };
+      const list=TOPES.slice(); list.push(nuevo);
+      topesFormAbierto=false;
+      topesSave(list); drawTopes();
+    };
     body.querySelectorAll('button[data-topes-est]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesEst; const list=TOPES.slice();
       list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente')}; topesSave(list); drawTopes(); });
     body.querySelectorAll('input[data-topes-tel]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesTel; const list=TOPES.slice();
