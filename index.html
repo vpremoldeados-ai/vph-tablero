@@ -1289,6 +1289,7 @@
         <span id="pre-periodo-lbl" style="font-size:12px;color:var(--muted)"></span>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="pre-nuevo">+ Nuevo Presupuesto</button>
+          <button class="cmp-btn" id="pre-comparativo">📋 Comparativo de modelos</button>
           <button class="cmp-btn" id="pre-export">Exportar JSON</button>
           <button class="cmp-btn" id="pre-import">Importar JSON</button>
           <input type="file" id="pre-import-file" accept="application/json" style="display:none">
@@ -1314,6 +1315,47 @@
         <button class="cmp-x" id="pre-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="pre-form"></div>
+    </div>
+  </div>
+
+  <!-- ================= GENERADOR COMPARATIVO DE MODELOS ================= -->
+  <div class="cmp-overlay" id="pre-comp-modal">
+    <div class="cmp-dialog" style="max-width:600px">
+      <div class="cmp-dialog-head">
+        <h3>📋 Comparativo de modelos</h3>
+        <button class="cmp-x" id="pre-comp-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body">
+        <div style="padding:14px;font-size:12px;color:var(--muted);margin-bottom:10px">Carga m² totales, elige la zona de flete y selecciona hasta 3 modelos. El comparativo se genera sin guardar en la base de datos.</div>
+        <div class="cmp-field">
+          <label>m² totales</label>
+          <input type="number" id="pre-comp-m2" value="100" min="1" step="0.1">
+        </div>
+        <div class="cmp-field">
+          <label>Zona de flete</label>
+          <select id="pre-comp-zona">
+            <option value="">— Sin definir —</option>
+            <option value="retiro">1 Retira en fábrica</option>
+            <option value="capital">2 Córdoba Capital</option>
+            <option value="cercanas">3 Hasta 30km de Av. de Circunvalación</option>
+            <option value="mati">4 Interior con Mati</option>
+            <option value="particular">5 Transporte Particular</option>
+            <option value="brio">6 Brio</option>
+          </select>
+        </div>
+        <div class="cmp-field">
+          <label>Modelos a comparar (marca hasta 3)</label>
+          <div id="pre-comp-modelos" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:6px 0"></div>
+        </div>
+        <div class="cmp-field">
+          <label>Cliente (opcional)</label>
+          <input type="text" id="pre-comp-cliente" placeholder="Nombre del cliente">
+        </div>
+        <div class="cmp-form-foot">
+          <button class="cmp-btn" id="pre-comp-cancel">Cancelar</button>
+          <button class="cmp-btn cmp-btn-primary" id="pre-comp-generar">Generar PDF</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -10428,7 +10470,86 @@ function buildFilterTable(cfg){
     const venc=DB.presupuestos.filter(p=>estadoEf(p)==='vencido');
     if(venc.length) A.push({sev:'info', area:'Comercial', t:venc.length+' presupuesto'+(venc.length>1?'s':'')+' vencido'+(venc.length>1?'s':'')+' sin cerrar', act:'Reconfirmar precio y renovar la validez, o marcarlos rechazados.', go:{page:'Presupuestos'}});
     return A; });
+
+  // ===== Generador comparativo de modelos =====
+  const MODELOS_COMP = [
+    {codigo:'LC60', nombre:'Loseta Cribada Rectangular'},
+    {codigo:'LC40', nombre:'Loseta Cribada Cuadrada'},
+    {codigo:'GB35', nombre:'Green Block 35×35×6'},
+    {codigo:'GR35', nombre:'Green Rombo 35×35×6'},
+    {codigo:'GC35', nombre:'Green Círculo 35×35×6'},
+    {codigo:'TET50', nombre:'Tope Trapecio 15×12×50'},
+    {codigo:'TEC50', nombre:'Tope Circular 18×12×50'},
+    {codigo:'TET100', nombre:'Tope Trapecio 15×12×100'},
+    {codigo:'TEC100', nombre:'Tope Cuadrado 15×15×100'},
+    {codigo:'L60', nombre:'Listón 60×8×6'},
+    {codigo:'CC10', nombre:'Cordón Confinamiento 40×9×10'}
+  ];
+  function openComparativoModal(){
+    const cont=$('pre-comp-modelos'); if(!cont)return;
+    cont.innerHTML = MODELOS_COMP.map((m,i)=>'<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-comp-mod="'+i+'" value="'+esc(m.codigo)+'"> '+esc(m.nombre)+'</label>').join('');
+    $('pre-comp-cliente').value='';
+    $('pre-comp-m2').value='100';
+    $('pre-comp-zona').value='capital';
+    $('pre-comp-modal').classList.add('open');
+  }
+  function closeComparativoModal(){ $('pre-comp-modal').classList.remove('open'); }
+  function generarComparativo(){
+    const m2 = num($('pre-comp-m2').value); if(m2<=0){ alert('Ingresá m² positivos.'); return; }
+    const zona = $('pre-comp-zona').value; if(!zona){ alert('Elegí una zona de flete.'); return; }
+    const modelos = Array.from($('pre-comp-modelos').querySelectorAll('input[type="checkbox"]:checked')).map(cb=>+cb.dataset.compMod);
+    if(modelos.length===0 || modelos.length>3){ alert('Selecciona 1 a 3 modelos.'); return; }
+    const cliente = $('pre-comp-cliente').value || 'Cliente';
+    const prods = catProductos();
+    const lista = window.__listaDefecto.mayorista;
+    const items = modelos.map(idx=>{
+      const m = MODELOS_COMP[idx];
+      const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase());
+      if(!prod){ alert('Producto '+m.codigo+' no está en el catálogo.'); return null; }
+      const udM2 = num(prod.unidadesPorM2)||1;
+      const cant = Math.ceil(m2 * udM2);
+      const precio = precioLista(prod, lista) || num(prod.precioMayorista) || num(prod.precioMinorista) || 0;
+      return { desc: m.nombre, codigo: m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
+    }).filter(Boolean);
+    if(items.length===0) return;
+    const flete = calcFlete(items, zona);
+    const pallets = Math.max(flete.pallets, 1);
+    const compDoc = {
+      numero: '(Comparativo)',
+      fecha: hoyISO,
+      validezDias: 15,
+      cliente: cliente,
+      cuit: '',
+      condIva: 'A',
+      categoria: 'MAYORISTA',
+      vendedor: '',
+      listaPrecios: lista,
+      domicilioEntrega: '',
+      zona: zona,
+      palletsFlete: 0,
+      items: items,
+      descGeneral: 0,
+      notaCliente: '** Opciones: elegí la que mejor se adapta a tu proyecto. Todos incluyen flete. **',
+      nota: 'Presupuesto comparativo generado desde el Tablero',
+      estado: 'borrador',
+      tipoComprobante: 'Presupuesto',
+      nroFactura: '(Comparativo)',
+      puntoVenta: '',
+      vencimiento: hoyISO,
+      esComparativo: true,
+      cantModelos: items.length
+    };
+    if(window.__imprimir&&window.__imprimir.presupuesto){
+      try{ window.__imprimir.presupuesto(compDoc); }catch(e){ alert('Error al generar el PDF: '+e.message); }
+    } else alert('Módulo de Documentos no disponible.');
+    closeComparativoModal();
+  }
+
   $('pre-nuevo').onclick=()=>openForm(null);
+  $('pre-comparativo').onclick=openComparativoModal;
+  $('pre-comp-cerrar').onclick=closeComparativoModal;
+  $('pre-comp-cancel').onclick=closeComparativoModal;
+  $('pre-comp-generar').onclick=generarComparativo;
   $('pre-cerrar').onclick=closeForm;
   $('pre-export').onclick=exportJSON;
   $('pre-import').onclick=()=>$('pre-import-file').click();
@@ -15549,6 +15670,43 @@ function buildFilterTable(cfg){
   window.__fotoProducto = codigo => { const img=IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()]; return img?('Productos/'+img):''; };
   // ---------- Detalle de Venta / Presupuesto ----------
   function detalle(v, esPresupuesto){
+    // ===== COMPARATIVO DE MODELOS =====
+    if(v.esComparativo===true && Array.isArray(v.items) && v.items.length>0){
+      const cli=buscarCliente(v.cliente,v.cuit)||{};
+      const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
+      const headerHTML = '<div style="page-break-after:always;padding:20px;font-family:Arial,sans-serif">'+
+        '<div style="font-size:18px;font-weight:700;margin-bottom:12px;border-bottom:3px solid #1a7c3f;padding-bottom:8px">PRESUPUESTO COMPARATIVO DE MODELOS</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:16px;font-size:12px">'+
+          '<div><b>Cliente:</b> '+esc(v.cliente||'—')+'<br><b>Domicilio:</b> '+esc(dom||'—')+'</div>'+
+          '<div><b>CUIT:</b> '+esc(v.cuit||cli.cuit||'—')+'<br><b>Cond. IVA:</b> '+esc(v.condIva||cli.condIva||'—')+'</div>'+
+        '</div>';
+      const fleteTotal = num(zonaCosto(v.zona||''));
+      const itemsNeto = (v.items||[]).map((it,i)=>{
+        const base = num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100);
+        const al = (it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
+        const subtotal = base*(1+al/100);
+        const fletePorItem = fleteTotal * Math.max(1, Math.ceil(num(it.cant)/(num(it.udM2)>0 ? Math.ceil(it.m2total*it.udM2) / num(it.cant) : 1))) / v.items.length;
+        return {desc:it.desc, m2:it.m2total, cant:it.cant, precioUnit:num(it.precioUnit)*(1+(al||0)/100), subtotal:subtotal, flete:fletePorItem, total:subtotal+fletePorItem};
+      });
+      const tablaHTML = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px">'+
+        '<tr style="background:#f5f5f5;border-bottom:2px solid #333"><th style="text-align:left;padding:6px">Modelo</th>'+
+        '<th style="text-align:right;padding:6px">m²</th><th style="text-align:right;padding:6px">Unidades</th>'+
+        '<th style="text-align:right;padding:6px">Precio unit.</th><th style="text-align:right;padding:6px">Mercadería</th>'+
+        '<th style="text-align:right;padding:6px">Flete</th><th style="text-align:right;padding:6px;border-right:0"><b>Total</b></th></tr>'+
+        itemsNeto.map(it=>'<tr style="border-bottom:1px solid #ddd"><td style="padding:6px">'+esc(it.desc)+'</td>'+
+          '<td style="text-align:right;padding:6px">'+nf(it.m2)+'</td><td style="text-align:right;padding:6px">'+nf(it.cant)+'</td>'+
+          '<td style="text-align:right;padding:6px">'+money(it.precioUnit)+'</td><td style="text-align:right;padding:6px">'+money(it.subtotal)+'</td>'+
+          '<td style="text-align:right;padding:6px">'+money(it.flete)+'</td>'+
+          '<td style="text-align:right;padding:6px;border-right:0;font-weight:700;color:#1a7c3f">'+money(it.total)+'</td></tr>').join('')+
+        '</table>';
+      const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
+        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(zonaLabel(v.zona)||'la zona seleccionada')+'.'+
+        '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
+        '</div></div>';
+      return headerHTML + tablaHTML + footerHTML;
+    }
+    // ===== FIN COMPARATIVO =====
+
     // Renglones SIEMPRE a contado en el papel (estrategia 11/08): un presupuesto del flujo viejo
     // (renglones al precio de lista, 28/07) se normaliza acá, venga de donde venga la impresión.
     // Las VENTAS no se tocan: sus renglones tienen que coincidir con lo facturado y cobrado.
