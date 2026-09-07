@@ -1125,6 +1125,18 @@
       <div class="kb-board" id="crm-board"></div>
       <div class="tbl-wrap" id="crm-tabla-wrap" style="display:none"><table class="crm-tbl" id="crm-tabla"></table></div>
       <p class="note">Cada lead lleva el pedido, el teléfono con <b>link directo a WhatsApp</b> y el seguimiento. Cuando se confirma, <b>"→ Venta"</b> abre la venta ya cargada con el cliente y los productos (trayendo precios del catálogo). Pensado para recibir automáticamente lo que arma el cotizador de la web (próxima etapa).</p>
+      <!-- ================= TOPES DE ESTACIONAMIENTO (prospección de playas) =================
+           Lista APARTE del embudo de leads: universidades, shoppings, clubes, etc. con playa propia,
+           a quién ofrecerles los topes. Vive en su propio documento (vph_config/crm_topes_prospectos),
+           no en vph_leads — recién se vuelve un Lead real cuando alguien responde. Panel INLINE (no
+           overlay) para no taparle a Sofía el resto de la pantalla mientras lo tiene abierto. -->
+      <div id="crm-topes-panel" style="display:none;margin-top:14px;border:1px solid var(--border);border-radius:12px;padding:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <h3 style="margin:0">🔩 Topes de estacionamiento — playas de Córdoba</h3>
+          <button class="cmp-x" id="crm-topes-cerrar" style="margin-left:auto" title="Ocultar la lista de topes">✕</button>
+        </div>
+        <div id="crm-topes-body"></div>
+      </div>
     </section>
   </div>
 
@@ -1193,20 +1205,6 @@
         <button class="cmp-x" id="crm-cartel-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="crm-cartel-body"></div>
-    </div>
-  </div>
-
-  <!-- ================= TOPES DE ESTACIONAMIENTO (prospección de playas) =================
-       Lista APARTE del embudo de leads: universidades, shoppings, clubes, etc. con playa propia,
-       a quién ofrecerles los topes. Vive en su propio documento (vph_config/crm_topes_prospectos),
-       no en vph_leads — recién se vuelve un Lead real cuando alguien responde. -->
-  <div class="cmp-overlay" id="crm-topes-modal">
-    <div class="cmp-dialog" style="max-width:920px">
-      <div class="cmp-dialog-head">
-        <h3>🔩 Topes de estacionamiento — playas de Córdoba</h3>
-        <button class="cmp-x" id="crm-topes-cerrar">✕</button>
-      </div>
-      <div class="cmp-dialog-body" id="crm-topes-body"></div>
     </div>
   </div>
 
@@ -12337,7 +12335,7 @@ function buildFilterTable(cfg){
   function topesSubscribe(){ if(!window.__usaNube){ TOPES=topesLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(topesUnsub)topesUnsub();
     topesUnsub=c.FS.onSnapshot(c.FS.doc(c.db,TOPES_COL,TOPES_DOC), snap=>{ const d=snap.exists()?snap.data():null; TOPES=(d&&Array.isArray(d.prospectos))?d.prospectos:[];
       const btn=$('crm-topes-abrir'); if(btn){ const n=TOPES.filter(t=>t.estado&&t.estado!=='pendiente').length; btn.textContent='🔩 Topes ('+n+'/'+TOPES.length+')'; }
-      if($('crm-topes-modal').classList.contains('open')) drawTopes(); }, err=>console.error('topes:',err)); }
+      if($('crm-topes-panel').style.display!=='none') drawTopes(); }, err=>console.error('topes:',err)); }
   // {nombre} lo llena fillPreg (ya definida arriba); el texto sale de la plantilla "Topes de
   // estacionamiento" — si todavía no existe en PLANT (instalación nueva, nadie la tocó todavía),
   // cae al texto de PLANT_DEFAULT para que el botón nunca quede roto.
@@ -12407,20 +12405,26 @@ function buildFilterTable(cfg){
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); }
       const list=TOPES.slice(); list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); });
     body.querySelectorAll('button[data-topes-lead]').forEach(b=>b.onclick=()=>{ const t=TOPES[+b.dataset.topesLead];
-      $('crm-topes-modal').classList.remove('open');
+      $('crm-topes-panel').style.display='none';
       openForm(); editing.cliente=t.nombre||''; editing.telefono=t.telefono||''; editing.email=t.email||'';
       editing.origen='Prospección topes'; editing.lugar=t.zona||''; editing.nota='Rubro: '+(t.rubro||'')+(t.nota?(' · '+t.nota):'');
       drawForm();
     });
   }
+  // Panel INLINE (no overlay) — pedido de Marcelo, 07/09: la lista de topes no debe tapar el resto
+  // de la pantalla como una ventana superpuesta. El botón alterna mostrar/ocultar el panel dentro
+  // de la misma página del CRM, igual que "Ver archivados" o los filtros.
   const topesAbrirBtn=$('crm-topes-abrir');
-  if(topesAbrirBtn){ topesAbrirBtn.onclick=()=>{ $('crm-topes-modal').classList.add('open'); drawTopes(); };
+  if(topesAbrirBtn){ topesAbrirBtn.onclick=()=>{ const panel=$('crm-topes-panel');
+      const abrir = panel.style.display==='none';
+      panel.style.display = abrir ? '' : 'none';
+      if(abrir) drawTopes();
+    };
     if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>topesSubscribe()); }
     else topesSubscribe();
   }
   const topesCerrarBtn=$('crm-topes-cerrar');
-  if(topesCerrarBtn) topesCerrarBtn.onclick=()=>$('crm-topes-modal').classList.remove('open');
-  $('crm-topes-modal').addEventListener('click',e=>{ if(e.target===$('crm-topes-modal')) $('crm-topes-modal').classList.remove('open'); });
+  if(topesCerrarBtn) topesCerrarBtn.onclick=()=>$('crm-topes-panel').style.display='none';
 
   boot();
 })();
