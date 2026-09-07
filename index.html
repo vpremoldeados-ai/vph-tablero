@@ -10481,18 +10481,22 @@ function buildFilterTable(cfg){
     return A; });
 
   // ===== Generador comparativo de modelos =====
+  // Códigos y nombres EXACTOS como están cargados en vph_productos (verificado en producción el
+  // 07/09: la tabla del catálogo del §4 de CLAUDE.md documenta nombres "descriptivos" que NO
+  // coinciden con los reales — los de acá son los que hay que usar). Ojo con el prefijo "U": lo
+  // llevan las losetas/greens/listón/cordón pero NO los topes.
   const MODELOS_COMP = [
-    {codigo:'LC60', nombre:'Loseta Cribada Rectangular'},
-    {codigo:'LC40', nombre:'Loseta Cribada Cuadrada'},
-    {codigo:'GB35', nombre:'Green Block 35×35×6'},
-    {codigo:'GR35', nombre:'Green Rombo 35×35×6'},
-    {codigo:'GC35', nombre:'Green Círculo 35×35×6'},
-    {codigo:'TET50', nombre:'Tope Trapecio 15×12×50'},
-    {codigo:'TEC50', nombre:'Tope Circular 18×12×50'},
-    {codigo:'TET100', nombre:'Tope Trapecio 15×12×100'},
-    {codigo:'TEC100', nombre:'Tope Cuadrado 15×15×100'},
-    {codigo:'L60', nombre:'Listón 60×8×6'},
-    {codigo:'CC10', nombre:'Cordón Confinamiento 40×9×10'}
+    {codigo:'ULC60', nombre:'Loseta Cribada 60x40'},
+    {codigo:'ULC40', nombre:'Loseta Cribada 40x40'},
+    {codigo:'UGB35', nombre:'Green Block 35x35'},
+    {codigo:'UGR35', nombre:'Green Rombo 35x35'},
+    {codigo:'UGC35', nombre:'Green Círculo 35x35'},
+    {codigo:'TET50', nombre:'Tope Estacionamiento Trapecio 50'},
+    {codigo:'TEC50', nombre:'Tope Estacionamiento Circular'},
+    {codigo:'TET100', nombre:'Tope Estacionamiento Trapecio 100'},
+    {codigo:'TEC100', nombre:'Tope Estacionamiento Cuadrado 15x15 x 100cm'},
+    {codigo:'UL60', nombre:'Listón'},
+    {codigo:'UCC10', nombre:'Cordón Confinamiento'}
   ];
   // defaults opcional: {cliente, zona, m2} — lo usa el botón "Comparativo" de la ficha del lead (CRM),
   // que vive en OTRO módulo (IIFE aparte) y no puede llamar a esta función directo (§3 CLAUDE.md).
@@ -10520,7 +10524,7 @@ function buildFilterTable(cfg){
       // Match por NOMBRE primero (matchProducto ya existe y es la fuente de verdad de todo el
       // Tablero): el código documentado en CLAUDE.md puede no coincidir 1 a 1 con el código real
       // cargado en Firestore (ej. el catálogo real puede llevar prefijo "U", el del §4 no).
-      const prod = matchProducto(m.nombre) || prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase());
+      const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
       if(!prod){ alert('Producto "'+m.nombre+'" no está en el catálogo (Base de Datos → Productos). Revisá que el nombre coincida exactamente.'); return null; }
       const udM2 = num(prod.unidadesPorM2)||1;
       // Mismo criterio que el CRM (recalcUnidades, MERMA_RECORTES): +5% por recortes/roturas.
