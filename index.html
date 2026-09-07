@@ -2915,8 +2915,6 @@ window.__pintarResultado = function(){
   cont.innerHTML=h;
 
   // Notas: lo que NO entra en el resultado, y el movimiento de stock.
-  const durables = m.porCat['INSUMOS']||0;
-  const noOperResto = (m.noOper||0) - durables;
   let n='';
   if(m.revisar){
     n+='<div class="alert bad" style="margin:0 0 10px"><span class="aico">⚠️</span><div><b>Este mes tiene datos para revisar</b>'+
@@ -2925,8 +2923,7 @@ window.__pintarResultado = function(){
   }
   if(m.noOper>0){
     n+='<div class="alert info" style="margin:0 0 10px"><span class="aico">ℹ️</span><div><b>Fuera del resultado: '+fmt$(m.noOper)+'</b>'+
-       '<div class="act">'+(durables>0?('Durables (INSUMOS) '+fmt$(durables)+' — se compran una vez y duran años. '):'')+
-       (noOperResto>0?('No operativas '+fmt$(noOperResto)+' — no son de la operación de la fábrica.'):'')+'</div></div></div>';
+       '<div class="act">Bienes de uso, ajustes de apertura y comprobantes que no son de la operación de la fábrica.</div></div></div>';
   }
   if(Math.abs(m.movStock)>1){
     const construyo = m.movStock>0;
@@ -3083,25 +3080,19 @@ function buildFilterTable(cfg){
   // que superar TODOS los meses. Sin la marca, una reparación grande te sube el PE de ese mes y
   // parece que el negocio empeoró, cuando en realidad fue un gasto que no se repite.
   const CAT_DEFAULT = [
-    {n:'MATERIAS PRIMAS',      fijo:false, varb:true,  pe:true, inv:true },
-    {n:'COSTOS DE VENTA',      fijo:false, varb:true,  pe:true, inv:false},
-    {n:'CONSUMO DE FABRICA',   fijo:false, varb:true,  pe:true, inv:false},
-    {n:'SUELDOS',              fijo:true,  varb:false, pe:true },
-    {n:'ESTRUCTURA',           fijo:true,  varb:false, pe:true },
-    {n:'EVENTUALES',           fijo:true,  varb:false, pe:false},
-    {n:'INSUMOS',              fijo:false, varb:false, pe:true },
-    {n:'COSTO FIJO',           fijo:true,  varb:false, pe:true },
-    {n:'Mano de Obra',         fijo:true,  varb:false, pe:true },
-    {n:'Productos Terminados', fijo:false, varb:true,  pe:true },
-    {n:'BIENES DE USO',        fijo:false, varb:false, pe:true },
-    {n:'gastos varios',        fijo:false, varb:false, pe:true }
+    {n:'MATERIAS PRIMAS',             fijo:false, varb:true,  pe:true, inv:true },
+    {n:'COSTOS VARIABLES',            fijo:false, varb:true,  pe:true, inv:false},
+    {n:'SUELDOS',                     fijo:true,  varb:false, pe:true, inv:false},
+    {n:'ESTRUCTURA',                  fijo:true,  varb:false, pe:true, inv:false},
+    {n:'MANTENIMIENTO Y CONSUMIBLES', fijo:true,  varb:false, pe:true, inv:false},
+    {n:'NO OPERATIVAS',               fijo:false, varb:false, pe:true, inv:false}
   ];
   // Config vieja (guardada antes de que existiera "varb"): se infiere de los nombres de siempre, así
   // una config ya guardada en la nube no deja el bloque de variables en cero al actualizar la app.
-  // ⚠️ INSUMOS quedó FUERA de esta lista a propósito: desde el 06/08 es el cajón de durables y no
-  // cuenta para los indicadores (ver CAT_DEFAULT). Si estuviera acá, una config guardada antes del
-  // cambio lo revivería como variable y los moldes volverían a hundir el mes en que se compran.
-  const VARB_LEGACY = ['MATERIAS PRIMAS','COSTOS DE VENTA','CONSUMO DE FABRICA','Productos Terminados'];
+  // ⚠️ Solo van acá las que son costo VARIABLE. Una categoría que NO cuenta para los indicadores
+  // (bienes de uso, ajustes de apertura, comprobantes ajenos) tiene que quedar afuera: si estuviera,
+  // una config sin la marca la reviviría como variable y hundiría el mes en que se compra.
+  const VARB_LEGACY = ['MATERIAS PRIMAS','COSTOS VARIABLES','COSTOS DE VENTA','CONSUMO DE FABRICA','Productos Terminados'];
   // ⚠️ `inv` = el costo de esta categoría YA ESTÁ dentro del costo por unidad del catálogo (la receta
   // del producto). Distingue dos variables que se contabilizan MUY distinto:
   //   · inv=true  (materia prima): comprarla no es gasto, es stock. Se convierte en costo cuando se
@@ -3705,11 +3696,11 @@ function buildFilterTable(cfg){
   // debe a cada uno, que es como las venía cargando a mano). Id DETERMINÍSTICO
   // sue_<AAAA-MM>_Q<n>_<empUid>: reconfirmar una quincena ACTUALIZA las mismas compras en vez de
   // duplicarlas, y cada adelanto se cuelga de la compra de SU empleado.
-  // La categoría es un parámetro: 'Mano de Obra' separa los sueldos del resto de los costos fijos en
-  // el resumen de Costos; quien prefiera 'COSTO FIJO' (como estaban cargados a mano) lo cambia ahí.
-  const SUE_CAT_DEF='Mano de Obra';
+  // La categoría es un parámetro (⚙️ Parámetros → sueCategoria) y tiene que ser una que EXISTA y
+  // esté tildada como costo fijo: si apunta a una que no está en la lista, los sueldos se caen de
+  // Costos Fijos y del Punto de Equilibrio sin que nada avise.
+  const SUE_CAT_DEF='SUELDOS';
   const catSueldos = ()=> String((window.__param?window.__param('sueCategoria',SUE_CAT_DEF):SUE_CAT_DEF)||SUE_CAT_DEF);
-  const SUE_CAT=SUE_CAT_DEF;   // lo sigue usando __comprasManoObraDe
   // quincena: 1 · 2 · 3 = el período MES de los mensuales, que liquida el mes anterior (ver Sueldos).
   const uidSueldo = (periodo, quincena, empUid)=>
     'sue_'+String(periodo||'').slice(0,7)+'_Q'+(num(quincena)===3?3:(num(quincena)===2?2:1))+'_'+String(empUid||'').replace(/[^A-Za-z0-9_-]/g,'');
@@ -3800,12 +3791,6 @@ function buildFilterTable(cfg){
         total:calc(c).total, saldo:calc(c).saldo, empleado:mejor, seguro:max>=2 });
     });
     return out;
-  };
-  // Compat: se sigue exponiendo la versión vieja (mira solo la categoría Mano de Obra).
-  window.__comprasManoObraDe = (periodo, exceptUid)=>{
-    const per=String(periodo||'').slice(0,7); if(!per) return [];
-    return DB.compras.filter(c=> c._uid!==exceptUid && String(c.categoria||'')===SUE_CAT && String(c.fecha||'').slice(0,7)===per)
-      .map(c=>({ uid:c._uid, proveedor:c.proveedor||'', fecha:c.fecha||'', total:calc(c).total }));
   };
   // Agrega un renglón a una compra ya cargada (lo usa Sueldos para sumarle un aumento que no estaba).
   window.__agregarItemCompra = (uid, item)=>{
