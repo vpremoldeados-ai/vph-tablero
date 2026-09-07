@@ -12314,6 +12314,12 @@ function buildFilterTable(cfg){
   // Vive en UN documento (mismo patrón que PLANT/PREG: un array, editado y guardado entero), no en
   // vph_leads — recién se carga como Lead real cuando alguien responde (botón "→ Lead" de cada fila).
   const TOPES_COL='vph_config', TOPES_DOC='crm_topes_prospectos', TOPES_KEY='vph_crm_topes_v1';
+  // Fotos reales de catálogo (08/09, pedido de Marcelo: "solo la 06 y 07" — nada de 100 cm, sin un
+  // criterio para diferenciar más). Viven en Drive, no en el Tablero — este mapa solo le recuerda a
+  // Sofía CUÁL adjuntar a mano, porque WhatsApp no permite mandar una imagen desde un link (§1).
+  // Carpeta: "IMAGENES Y VIDEOS DE PRODUCTOS\WHATSAPP\".
+  const FOTOS_TOPE={ '06-tope-trapecio-50cm-catalogo.jpg':'Trapecio 50 cm', '07-tope-circular-50cm-catalogo.jpg':'Circular 50 cm' };
+  const FOTO_TOPE_DEFAULT='06-tope-trapecio-50cm-catalogo.jpg';   // el más vendido: Vial A, Acceso Sur, Alto Parque
   const TOPES_ESTADOS=[{k:'pendiente',l:'Pendiente',c:'#95a5b8'},{k:'contactado',l:'Contactado',c:'#c98a06'},{k:'interesado',l:'Interesado',c:'#1e9e5a'},{k:'sin-interes',l:'Sin interés',c:'#8a94a3'}];
   const topesSig=k=>{ const i=TOPES_ESTADOS.findIndex(e=>e.k===k); return TOPES_ESTADOS[(i+1)%TOPES_ESTADOS.length].k; };
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
@@ -12356,11 +12362,12 @@ function buildFilterTable(cfg){
         '<button class="filter-btn'+(!topesFiltroRubro?' active':'')+'" data-topesf-r="">Todos los rubros</button>'+
         rubros.map(r=>'<button class="filter-btn'+(topesFiltroRubro===r?' active':'')+'" data-topesf-r="'+esc(r)+'">'+esc(r)+'</button>').join('')+
       '</div>' : '')+
-      '<div class="tbl-wrap"><table><tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email</th><th style="text-align:center">Estado</th><th>Enviar</th><th>Nota</th><th></th></tr>';
-    if(!filas.length) h+='<tr><td colspan="9" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
+      '<div class="tbl-wrap"><table><tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email</th><th style="text-align:center">Estado</th><th>Enviar</th><th>Foto a adjuntar</th><th>Nota</th><th></th></tr>';
+    if(!filas.length) h+='<tr><td colspan="10" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach(({t,i})=>{
       const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
       const tel=waLink(t.telefono); const texto=topesTexto(t.nombre);
+      const foto=t.foto||FOTO_TOPE_DEFAULT;
       h+='<tr><td>'+esc(t.nombre||'—')+'</td><td style="color:var(--muted);font-size:12px">'+esc(t.rubro||'')+'</td>'+
         '<td style="color:var(--muted);font-size:12px">'+esc(t.zona||'')+'</td>'+
         '<td><input type="text" data-topes-tel="'+i+'" value="'+esc(t.telefono||'')+'" placeholder="351..." style="width:110px;padding:5px 7px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
@@ -12371,6 +12378,9 @@ function buildFilterTable(cfg){
               :'<button class="cmp-rowbtn" data-topes-copiar="'+i+'" title="Sin teléfono cargado: copiá el texto y pegalo en un chat nuevo">📋 Copiar</button>')+
           (t.email?' <a class="kb-mail" href="'+mailtoLink(t.email,'Topes de estacionamiento para '+(t.nombre||''),texto)+'" data-topes-envio="'+i+'">Mail</a>':'')+
         '</td>'+
+        '<td><select data-topes-foto="'+i+'" style="padding:4px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px" title="Sofía la adjunta a mano en el chat — WhatsApp no manda una imagen desde un link">'+
+          Object.entries(FOTOS_TOPE).map(([arch,lbl])=>'<option value="'+esc(arch)+'"'+(foto===arch?' selected':'')+'>'+esc(lbl)+'</option>').join('')+
+        '</select></td>'+
         '<td><input type="text" data-topes-nota="'+i+'" value="'+esc(t.nota||'')+'" placeholder="—" style="width:120px;padding:5px 7px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
         '<td><button class="cmp-rowbtn" data-topes-lead="'+i+'" title="Ya respondió: pasarlo al pipeline de leads">→ Lead</button></td>'+
       '</tr>';
@@ -12383,6 +12393,8 @@ function buildFilterTable(cfg){
       list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente')}; topesSave(list); drawTopes(); });
     body.querySelectorAll('input[data-topes-tel]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesTel; const list=TOPES.slice();
       list[i]={...list[i], telefono:inp.value.trim()}; topesSave(list); drawTopes(); }));
+    body.querySelectorAll('select[data-topes-foto]').forEach(sel=>sel.addEventListener('change',()=>{ const i=+sel.dataset.topesFoto; const list=TOPES.slice();
+      list[i]={...list[i], foto:sel.value}; topesSave(list); }));
     body.querySelectorAll('input[data-topes-email]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesEmail; const list=TOPES.slice();
       list[i]={...list[i], email:inp.value.trim()}; topesSave(list); drawTopes(); }));
     body.querySelectorAll('input[data-topes-nota]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNota; const list=TOPES.slice();
