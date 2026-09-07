@@ -1356,6 +1356,13 @@
           <input type="number" id="pre-comp-m2" value="100" min="1" step="0.1">
         </div>
         <div class="cmp-field">
+          <label>Categoría (define la lista de precios)</label>
+          <select id="pre-comp-categoria">
+            <option value="MAYORISTA">Mayorista</option>
+            <option value="MINORISTA">Minorista</option>
+          </select>
+        </div>
+        <div class="cmp-field">
           <label>Zona de flete</label>
           <select id="pre-comp-zona">
             <option value="">— Sin definir —</option>
@@ -10498,14 +10505,16 @@ function buildFilterTable(cfg){
     {codigo:'UL60', nombre:'Listón'},
     {codigo:'UCC10', nombre:'Cordón Confinamiento'}
   ];
-  // defaults opcional: {cliente, zona, m2} — lo usa el botón "Comparativo" de la ficha del lead (CRM),
-  // que vive en OTRO módulo (IIFE aparte) y no puede llamar a esta función directo (§3 CLAUDE.md).
+  // defaults opcional: {cliente, zona, m2, categoria} — lo usa el botón "Comparativo" de la ficha
+  // del lead (CRM), que vive en OTRO módulo (IIFE aparte) y no puede llamar a esta función directo
+  // (§3 CLAUDE.md). Sin categoría del lead, MAYORISTA es el uso más común del comparativo.
   function openComparativoModal(defaults){
     const d=defaults||{};
     const cont=$('pre-comp-modelos'); if(!cont)return;
     cont.innerHTML = MODELOS_COMP.map((m,i)=>'<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-comp-mod="'+i+'" value="'+esc(m.codigo)+'"> '+esc(m.nombre)+'</label>').join('');
     $('pre-comp-cliente').value=d.cliente||'';
     $('pre-comp-m2').value=d.m2||'100';
+    $('pre-comp-categoria').value=/minorista/i.test(d.categoria||'')?'MINORISTA':'MAYORISTA';
     $('pre-comp-zona').value=d.zona||'capital';
     $('pre-comp-modal').classList.add('open');
   }
@@ -10517,8 +10526,12 @@ function buildFilterTable(cfg){
     const modelos = Array.from($('pre-comp-modelos').querySelectorAll('input[type="checkbox"]:checked')).map(cb=>+cb.dataset.compMod);
     if(modelos.length===0 || modelos.length>4){ alert('Selecciona 1 a 4 modelos.'); return; }
     const cliente = $('pre-comp-cliente').value || 'Cliente';
+    const categoria = $('pre-comp-categoria').value || 'MAYORISTA';
     const prods = catProductos();
-    const lista = window.__listaDefecto.mayorista;
+    // Mismo criterio que Presupuestos/CRM (listaDeCategoria): mayorista y minorista tienen precios
+    // muy distintos — comparar un lead minorista contra precios mayoristas da un total que no le
+    // corresponde y no coincide con lo que después se le va a facturar.
+    const lista = listaDeCategoria(categoria) || (categoria==='MINORISTA' ? window.__listaDefecto.minorista : window.__listaDefecto.mayorista);
     const items = modelos.map(idx=>{
       const m = MODELOS_COMP[idx];
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
@@ -10526,8 +10539,8 @@ function buildFilterTable(cfg){
       const udM2 = num(prod.unidadesPorM2)||1;
       // Mismo criterio que el CRM (recalcUnidades, MERMA_RECORTES): +5% por recortes/roturas.
       const cant = Math.ceil(m2 * udM2 * 1.05);
-      const precio = precioLista(prod, lista) || num(prod.precioMayorista) || num(prod.precioMinorista) || 0;
-      const it = { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
+      const it = { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: 0, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
+      aplicarProducto(it, prod, lista);   // misma función que usan Ventas/Presupuestos/CRM: neteo e IVA correctos según el producto y la lista (sin facturar no se netea)
       // Cada modelo es una OPCIÓN INDEPENDIENTE (el cliente elige UNA, no las 4 juntas), así que el
       // flete de cada renglón se calcula SOLO — nunca consolidado entre modelos distintos como haría
       // un presupuesto normal (calcFlete junta pallets de varios ítems porque ahí SÍ viajan juntos).
@@ -10544,7 +10557,7 @@ function buildFilterTable(cfg){
       cliente: cliente,
       cuit: '',
       condIva: 'A',
-      categoria: 'MAYORISTA',
+      categoria: categoria,
       vendedor: '',
       listaPrecios: lista,
       domicilioEntrega: '',
@@ -12067,7 +12080,7 @@ function buildFilterTable(cfg){
       if(!cliente){ alert('Cargá primero el nombre del cliente.'); return; }
       if(!window.__abrirComparativo){ alert('Módulo de Presupuestos no disponible.'); return; }
       const m2Lead = (editing.items||[]).reduce((a,it)=>a+num(it.m2),0);   // si el lead ya tiene m² cargados en el pedido, los usa de arranque
-      window.__abrirComparativo({ cliente, zona: editing.zona||'', m2: m2Lead>0?m2Lead:100 });
+      window.__abrirComparativo({ cliente, zona: editing.zona||'', m2: m2Lead>0?m2Lead:100, categoria: editing.categoria||'' });
       closeForm();  // cierra la ficha del lead
     };
     $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } aplicarAutoSeguimiento(editing, estadoAlAbrir); persist(editing); closeForm(); };
