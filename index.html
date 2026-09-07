@@ -10486,14 +10486,18 @@ function buildFilterTable(cfg){
     {codigo:'L60', nombre:'Listón 60×8×6'},
     {codigo:'CC10', nombre:'Cordón Confinamiento 40×9×10'}
   ];
-  function openComparativoModal(){
+  // defaults opcional: {cliente, zona, m2} — lo usa el botón "Comparativo" de la ficha del lead (CRM),
+  // que vive en OTRO módulo (IIFE aparte) y no puede llamar a esta función directo (§3 CLAUDE.md).
+  function openComparativoModal(defaults){
+    const d=defaults||{};
     const cont=$('pre-comp-modelos'); if(!cont)return;
     cont.innerHTML = MODELOS_COMP.map((m,i)=>'<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-comp-mod="'+i+'" value="'+esc(m.codigo)+'"> '+esc(m.nombre)+'</label>').join('');
-    $('pre-comp-cliente').value='';
-    $('pre-comp-m2').value='100';
-    $('pre-comp-zona').value='capital';
+    $('pre-comp-cliente').value=d.cliente||'';
+    $('pre-comp-m2').value=d.m2||'100';
+    $('pre-comp-zona').value=d.zona||'capital';
     $('pre-comp-modal').classList.add('open');
   }
+  window.__abrirComparativo = openComparativoModal;
   function closeComparativoModal(){ $('pre-comp-modal').classList.remove('open'); }
   function generarComparativo(){
     const m2 = num($('pre-comp-m2').value); if(m2<=0){ alert('Ingresá m² positivos.'); return; }
@@ -10508,7 +10512,8 @@ function buildFilterTable(cfg){
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase());
       if(!prod){ alert('Producto '+m.codigo+' no está en el catálogo.'); return null; }
       const udM2 = num(prod.unidadesPorM2)||1;
-      const cant = Math.ceil(m2 * udM2);
+      // Mismo criterio que el CRM (recalcUnidades, MERMA_RECORTES): +5% por recortes/roturas.
+      const cant = Math.ceil(m2 * udM2 * 1.05);
       const precio = precioLista(prod, lista) || num(prod.precioMayorista) || num(prod.precioMinorista) || 0;
       return { desc: m.nombre, codigo: m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
     }).filter(Boolean);
@@ -10547,7 +10552,7 @@ function buildFilterTable(cfg){
   }
 
   $('pre-nuevo').onclick=()=>openForm(null);
-  $('pre-comparativo').onclick=openComparativoModal;
+  $('pre-comparativo').onclick=()=>openComparativoModal();
   $('pre-comp-cerrar').onclick=closeComparativoModal;
   $('pre-comp-cancel').onclick=closeComparativoModal;
   $('pre-comp-generar').onclick=generarComparativo;
@@ -12042,11 +12047,9 @@ function buildFilterTable(cfg){
     $('cf-comparativo').onclick=()=>{
       const cliente = String(editing.cliente||'').trim();
       if(!cliente){ alert('Cargá primero el nombre del cliente.'); return; }
-      // Llena el modal del comparativo (que ya existe) con el cliente y abre
-      $('pre-comp-cliente').value = cliente;
-      $('pre-comp-m2').value = '100';
-      $('pre-comp-zona').value = editing.zona || 'capital';
-      $('pre-comp-modal').classList.add('open');
+      if(!window.__abrirComparativo){ alert('Módulo de Presupuestos no disponible.'); return; }
+      const m2Lead = (editing.items||[]).reduce((a,it)=>a+num(it.m2),0);   // si el lead ya tiene m² cargados en el pedido, los usa de arranque
+      window.__abrirComparativo({ cliente, zona: editing.zona||'', m2: m2Lead>0?m2Lead:100 });
       closeForm();  // cierra la ficha del lead
     };
     $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } aplicarAutoSeguimiento(editing, estadoAlAbrir); persist(editing); closeForm(); };
