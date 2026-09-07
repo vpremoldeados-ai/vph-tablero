@@ -267,6 +267,7 @@
   .kb-card .monto{font-weight:800;color:var(--blue);font-size:12.5px;margin-top:4px}
   .kb-card .acts{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap;align-items:center}
   .kb-wa{background:#25d366;color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;gap:4px;align-items:center}
+  .kb-mail{background:#54637a;color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;gap:4px;align-items:center}
   .kb-move{font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 6px;background:#fff;color:#54637a;cursor:pointer}
   .kb-viewbtn{font-size:12px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:#fff;color:#54637a;cursor:pointer;font-weight:700}
   .kb-viewbtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -1106,6 +1107,7 @@
           <button class="cmp-btn" id="crm-preg-edit" title="Editar las preguntas rápidas de WhatsApp">💬 Preguntas rápidas</button>
           <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
           <button class="cmp-btn" id="crm-cartel-abrir" title="Marcelo va visitando los corralones para ver si tienen la cartelería de VPH">🪧 Cartelería</button>
+          <button class="cmp-btn" id="crm-topes-abrir" title="Prospección de playas de estacionamiento para ofrecerles los topes — lista aparte del embudo de leads">🔩 Topes</button>
           <button class="cmp-btn" id="crm-export">Exportar JSON</button>
           <button class="cmp-btn" id="crm-import">Importar JSON</button>
           <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -1191,6 +1193,20 @@
         <button class="cmp-x" id="crm-cartel-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="crm-cartel-body"></div>
+    </div>
+  </div>
+
+  <!-- ================= TOPES DE ESTACIONAMIENTO (prospección de playas) =================
+       Lista APARTE del embudo de leads: universidades, shoppings, clubes, etc. con playa propia,
+       a quién ofrecerles los topes. Vive en su propio documento (vph_config/crm_topes_prospectos),
+       no en vph_leads — recién se vuelve un Lead real cuando alguien responde. -->
+  <div class="cmp-overlay" id="crm-topes-modal">
+    <div class="cmp-dialog" style="max-width:920px">
+      <div class="cmp-dialog-head">
+        <h3>🔩 Topes de estacionamiento — playas de Córdoba</h3>
+        <button class="cmp-x" id="crm-topes-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="crm-topes-body"></div>
     </div>
   </div>
 
@@ -11421,7 +11437,7 @@ function buildFilterTable(cfg){
   // "Contactado" se quitó como columna del pipeline; ahora es un flag booleano en el lead (l.contactado).
   // Migración perezosa: cualquier lead viejo con estado 'contactado' vuelve a 'nuevo' marcado como contactado.
   function normalizarLeads(){ (DB.leads||[]).forEach(l=>{ if(l.estado==='contactado'){ l.estado='nuevo'; if(l.contactado===undefined) l.contactado=true; } }); }
-  const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Instagram','Teléfono','Referido','Manual'];
+  const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Instagram','Teléfono','Referido','Manual','Prospección topes'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
   // Tipos de actividades para mayoristas — cada uno con un emoji y color
@@ -11727,7 +11743,12 @@ function buildFilterTable(cfg){
     else { try{ localStorage.setItem(PREG_KEY, JSON.stringify(PREG)); }catch(e){} } }
   function pregSubscribe(){ if(!window.__usaNube){ PREG=pregLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(pregUnsub)pregUnsub();
     pregUnsub=c.FS.onSnapshot(c.FS.doc(c.db,PREG_COL,PREG_DOC), snap=>{ const d=snap.exists()?snap.data():null; PREG=(d&&Array.isArray(d.preguntas)&&d.preguntas.length)?d.preguntas:PREG_DEFAULT.slice(); if($('crm-preg-modal').classList.contains('open')&&!pregEditing) drawPreg(pregLead); }, err=>console.error('preg:',err)); }
-  const primerNombre=cli=>{ const w=String(cli||'').replace(/[.,].*/,'').trim().split(/\s+/)[0]||''; return w? ' '+w.charAt(0).toUpperCase()+w.slice(1).toLowerCase() : ''; };
+  // Una sigla que ya viene toda en mayúsculas (UNC, UCC, UTN...) se respeta tal cual — pensado
+  // originalmente para el nombre de pila de una persona (Título Case), pero desde que Topes de
+  // estacionamiento (07/09) saluda a instituciones, "UNC" no puede salir "Unc" en el mensaje.
+  const primerNombre=cli=>{ const w=String(cli||'').replace(/[.,].*/,'').trim().split(/\s+/)[0]||''; if(!w) return '';
+    if(w.length<=5 && w===w.toUpperCase() && w!==w.toLowerCase()) return ' '+w;
+    return ' '+w.charAt(0).toUpperCase()+w.slice(1).toLowerCase(); };
   const fillPreg=(txt,lead)=> String(txt||'').replace(/\{nombre\}/g, lead?primerNombre(lead.cliente):'');
   function fallbackCopy(t){ try{ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }catch(e){} }
   function openPreg(lead){ pregLead=lead||null; pregEditing=!lead; drawPreg(lead); $('crm-preg-modal').classList.add('open'); }
@@ -11766,7 +11787,8 @@ function buildFilterTable(cfg){
     {cat:'Tiempos de entrega', txt:'Te cuento cómo trabajamos los tiempos: si tenemos stock disponible, la entrega es inmediata; si hay que fabricar, el producto necesita además 10 días de curado antes de poder entregarse. Apenas me confirmes cantidades te digo la fecha estimada.'},
     {cat:'Postes', txt:'Los postes de hormigón los fabricamos en varias medidas. Contame para qué los necesitás (cerco, vid, alambrado) y la cantidad, así te confirmo medida, precio y disponibilidad.'},
     {cat:'Losetas', txt:'Las losetas las tenemos en distintos tamaños y terminaciones. Decime los m² o la cantidad de unidades que necesitás y te paso precio y disponibilidad.'},
-    {cat:'Forma de pago', txt:'Podés abonar por transferencia, efectivo o tarjeta en cuotas. Si pagás sin factura tenés un descuento adicional. ¿Cómo preferís abonar?'}
+    {cat:'Forma de pago', txt:'Podés abonar por transferencia, efectivo o tarjeta en cuotas. Si pagás sin factura tenés un descuento adicional. ¿Cómo preferís abonar?'},
+    {cat:'Topes de estacionamiento', txt:'Hola{nombre}, le escribo de VPH — Vassallo Premoldeados de Hormigón, fábrica en Toledo, Córdoba. Vimos que tienen playa de estacionamiento y queríamos ofrecerles nuestros topes de estacionamiento de hormigón, en dos medidas: 50 cm para auto y 100 cm para camioneta o colectivo. Contra el tope de goma tienen tres ventajas: pesan entre 15 y 50 kg así que no se corren ni se los roban, no se decoloran con el sol, y van anclados al piso para quedar fijos. ¿Le interesa que le pasemos precio y le coticemos la playa completa?'}
   ];
   let PLANT=PLANT_DEFAULT.slice(), plantUnsub=null, plantLead=null, plantEditing=false;
   function plantLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(PLANT_KEY)); if(Array.isArray(d)&&d.length) return d; }catch(e){} return PLANT_DEFAULT.slice(); }
@@ -12285,6 +12307,108 @@ function buildFilterTable(cfg){
   const cartelCerrarBtn=$('crm-cartel-cerrar');
   if(cartelCerrarBtn) cartelCerrarBtn.onclick=()=>$('crm-cartel-modal').classList.remove('open');
   $('crm-cartel-modal').addEventListener('click',e=>{ if(e.target===$('crm-cartel-modal')) $('crm-cartel-modal').classList.remove('open'); });
+
+  // ---------- TOPES DE ESTACIONAMIENTO (prospección de playas) ----------
+  // Lista APARTE del embudo de leads (pedido de Marcelo, 07/09): universidades, shoppings, clubes,
+  // súper, transporte, salud e industria de Córdoba con playa propia, a quién ofrecerles los topes.
+  // Vive en UN documento (mismo patrón que PLANT/PREG: un array, editado y guardado entero), no en
+  // vph_leads — recién se carga como Lead real cuando alguien responde (botón "→ Lead" de cada fila).
+  const TOPES_COL='vph_config', TOPES_DOC='crm_topes_prospectos', TOPES_KEY='vph_crm_topes_v1';
+  const TOPES_ESTADOS=[{k:'pendiente',l:'Pendiente',c:'#95a5b8'},{k:'contactado',l:'Contactado',c:'#c98a06'},{k:'interesado',l:'Interesado',c:'#1e9e5a'},{k:'sin-interes',l:'Sin interés',c:'#8a94a3'}];
+  const topesSig=k=>{ const i=TOPES_ESTADOS.findIndex(e=>e.k===k); return TOPES_ESTADOS[(i+1)%TOPES_ESTADOS.length].k; };
+  // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
+  // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
+  const topesAlEnviar=row=> (row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row;
+  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='';
+  function topesLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
+  function topesSaveLocal(){ try{ localStorage.setItem(TOPES_KEY, JSON.stringify(TOPES)); }catch(e){} }
+  // Guarda el array ENTERO (documento chico, mismo criterio que PLANT/PREG) — no hay forma de tocar
+  // un elemento suelto de un array en Firestore sin releer y reescribir todo.
+  function topesSave(list){ TOPES=list.slice();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,TOPES_COL,TOPES_DOC),{prospectos:TOPES},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else topesSaveLocal();
+  }
+  function topesSubscribe(){ if(!window.__usaNube){ TOPES=topesLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(topesUnsub)topesUnsub();
+    topesUnsub=c.FS.onSnapshot(c.FS.doc(c.db,TOPES_COL,TOPES_DOC), snap=>{ const d=snap.exists()?snap.data():null; TOPES=(d&&Array.isArray(d.prospectos))?d.prospectos:[];
+      const btn=$('crm-topes-abrir'); if(btn){ const n=TOPES.filter(t=>t.estado&&t.estado!=='pendiente').length; btn.textContent='🔩 Topes ('+n+'/'+TOPES.length+')'; }
+      if($('crm-topes-modal').classList.contains('open')) drawTopes(); }, err=>console.error('topes:',err)); }
+  // {nombre} lo llena fillPreg (ya definida arriba); el texto sale de la plantilla "Topes de
+  // estacionamiento" — si todavía no existe en PLANT (instalación nueva, nadie la tocó todavía),
+  // cae al texto de PLANT_DEFAULT para que el botón nunca quede roto.
+  function topesTexto(nombre){ const p=PLANT.find(x=>x.cat==='Topes de estacionamiento') || PLANT_DEFAULT.find(x=>x.cat==='Topes de estacionamiento');
+    return fillPreg(p?p.txt:'', {cliente:nombre}); }
+  function mailtoLink(email,asunto,cuerpo){ return 'mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent(asunto)+'&body='+encodeURIComponent(cuerpo); }
+  function drawTopes(){
+    const body=$('crm-topes-body'); if(!body) return;
+    const rubros=[...new Set(TOPES.map(t=>t.rubro).filter(Boolean))];
+    const filas = TOPES
+      .map((t,i)=>({t,i}))
+      .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro));
+    const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
+    const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
+    let h='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → contactado → interesado → sin interés</b>. '+
+      'Al mandar el WhatsApp o el mail se marca <b>Contactado</b> solo. Cargá el teléfono/email apenas los consigas en el primer llamado.</p>'+
+      '<div class="filter-bar" style="margin-bottom:6px">'+
+        chip('','Todos ('+TOPES.length+')', !topesFiltroEstado)+
+        TOPES_ESTADOS.map(e=>chip(e.k, e.l+' ('+n(e.k)+')', topesFiltroEstado===e.k)).join('')+
+      '</div>'+
+      (rubros.length ? '<div class="filter-bar" style="margin-bottom:10px">'+
+        '<button class="filter-btn'+(!topesFiltroRubro?' active':'')+'" data-topesf-r="">Todos los rubros</button>'+
+        rubros.map(r=>'<button class="filter-btn'+(topesFiltroRubro===r?' active':'')+'" data-topesf-r="'+esc(r)+'">'+esc(r)+'</button>').join('')+
+      '</div>' : '')+
+      '<div class="tbl-wrap"><table><tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email</th><th style="text-align:center">Estado</th><th>Enviar</th><th>Nota</th><th></th></tr>';
+    if(!filas.length) h+='<tr><td colspan="9" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
+    filas.forEach(({t,i})=>{
+      const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
+      const tel=waLink(t.telefono); const texto=topesTexto(t.nombre);
+      h+='<tr><td>'+esc(t.nombre||'—')+'</td><td style="color:var(--muted);font-size:12px">'+esc(t.rubro||'')+'</td>'+
+        '<td style="color:var(--muted);font-size:12px">'+esc(t.zona||'')+'</td>'+
+        '<td><input type="text" data-topes-tel="'+i+'" value="'+esc(t.telefono||'')+'" placeholder="351..." style="width:110px;padding:5px 7px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
+        '<td><input type="text" data-topes-email="'+i+'" value="'+esc(t.email||'')+'" placeholder="—" style="width:140px;padding:5px 7px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
+        '<td style="text-align:center"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 10px;font-size:12px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
+        '<td style="white-space:nowrap">'+
+          (tel?'<a class="kb-wa" href="'+tel+'?text='+encodeURIComponent(texto)+'" target="_blank" rel="noopener" data-topes-envio="'+i+'">WhatsApp</a>'
+              :'<button class="cmp-rowbtn" data-topes-copiar="'+i+'" title="Sin teléfono cargado: copiá el texto y pegalo en un chat nuevo">📋 Copiar</button>')+
+          (t.email?' <a class="kb-mail" href="'+mailtoLink(t.email,'Topes de estacionamiento para '+(t.nombre||''),texto)+'" data-topes-envio="'+i+'">Mail</a>':'')+
+        '</td>'+
+        '<td><input type="text" data-topes-nota="'+i+'" value="'+esc(t.nota||'')+'" placeholder="—" style="width:120px;padding:5px 7px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
+        '<td><button class="cmp-rowbtn" data-topes-lead="'+i+'" title="Ya respondió: pasarlo al pipeline de leads">→ Lead</button></td>'+
+      '</tr>';
+    });
+    h+='</table></div>';
+    body.innerHTML=h;
+    body.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
+    body.querySelectorAll('button[data-topesf-r]').forEach(b=>b.onclick=()=>{ topesFiltroRubro=b.dataset.topesfR; drawTopes(); });
+    body.querySelectorAll('button[data-topes-est]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesEst; const list=TOPES.slice();
+      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente')}; topesSave(list); drawTopes(); });
+    body.querySelectorAll('input[data-topes-tel]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesTel; const list=TOPES.slice();
+      list[i]={...list[i], telefono:inp.value.trim()}; topesSave(list); drawTopes(); }));
+    body.querySelectorAll('input[data-topes-email]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesEmail; const list=TOPES.slice();
+      list[i]={...list[i], email:inp.value.trim()}; topesSave(list); drawTopes(); }));
+    body.querySelectorAll('input[data-topes-nota]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNota; const list=TOPES.slice();
+      list[i]={...list[i], nota:inp.value.trim()}; topesSave(list); }));
+    // Al abrir WhatsApp o el mail: topesAlEnviar decide si corresponde pasar a "contactado".
+    body.querySelectorAll('[data-topes-envio]').forEach(a=>a.addEventListener('click',()=>{ const i=+a.dataset.topesEnvio; const list=TOPES.slice();
+      list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); }));
+    body.querySelectorAll('button[data-topes-copiar]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesCopiar; const txt=topesTexto(TOPES[i].nombre);
+      const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='📋 Copiar'; },1200); };
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); }
+      const list=TOPES.slice(); list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); });
+    body.querySelectorAll('button[data-topes-lead]').forEach(b=>b.onclick=()=>{ const t=TOPES[+b.dataset.topesLead];
+      $('crm-topes-modal').classList.remove('open');
+      openForm(); editing.cliente=t.nombre||''; editing.telefono=t.telefono||''; editing.email=t.email||'';
+      editing.origen='Prospección topes'; editing.lugar=t.zona||''; editing.nota='Rubro: '+(t.rubro||'')+(t.nota?(' · '+t.nota):'');
+      drawForm();
+    });
+  }
+  const topesAbrirBtn=$('crm-topes-abrir');
+  if(topesAbrirBtn){ topesAbrirBtn.onclick=()=>{ $('crm-topes-modal').classList.add('open'); drawTopes(); };
+    if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>topesSubscribe()); }
+    else topesSubscribe();
+  }
+  const topesCerrarBtn=$('crm-topes-cerrar');
+  if(topesCerrarBtn) topesCerrarBtn.onclick=()=>$('crm-topes-modal').classList.remove('open');
+  $('crm-topes-modal').addEventListener('click',e=>{ if(e.target===$('crm-topes-modal')) $('crm-topes-modal').classList.remove('open'); });
 
   boot();
 })();
@@ -18267,7 +18391,11 @@ function buildFilterTable(cfg){
     return '549'+t;
   }
   // Primer nombre para el saludo (editable en el modal si no es el de la persona)
-  function primerNombre(cliente){ const w=String(cliente||'').replace(/[.,].*$/,'').trim().split(/\s+/)[0]||''; return w? w.charAt(0).toUpperCase()+w.slice(1).toLowerCase() : ''; }
+  // Misma regla que la copia de CRM (07/09): una sigla que ya viene en mayúsculas (UNC, UCC...) se
+  // respeta tal cual en vez de convertirse en "Unc".
+  function primerNombre(cliente){ const w=String(cliente||'').replace(/[.,].*$/,'').trim().split(/\s+/)[0]||''; if(!w) return '';
+    if(w.length<=5 && w===w.toUpperCase() && w!==w.toLowerCase()) return w;
+    return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase(); }
 
   const DATOS_FISCALES = 'Razón social: VPH SAS\nCUIT: 30-71784004-2\nResponsable Inscripto\nIIBB: 287285892\nDirección: Bolivar 381, Toledo, Pcia. de Córdoba\nMail: vpremoldeados@gmail.com\nTeléfono: 0351 15-7605362';
   const COND_PAGO = 'Si abonás en efectivo o transferencia SIN factura, tenés un 10,5% extra.\nPagá en cuotas: con MACRO hasta 12 cuotas sin interés; con tarjetas bancarizadas 3 y 6 cuotas sin interés.';
