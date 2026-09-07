@@ -10521,20 +10521,22 @@ function buildFilterTable(cfg){
     const lista = window.__listaDefecto.mayorista;
     const items = modelos.map(idx=>{
       const m = MODELOS_COMP[idx];
-      // Match por NOMBRE primero (matchProducto ya existe y es la fuente de verdad de todo el
-      // Tablero): el código documentado en CLAUDE.md puede no coincidir 1 a 1 con el código real
-      // cargado en Firestore (ej. el catálogo real puede llevar prefijo "U", el del §4 no).
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
       if(!prod){ alert('Producto "'+m.nombre+'" no está en el catálogo (Base de Datos → Productos). Revisá que el nombre coincida exactamente.'); return null; }
       const udM2 = num(prod.unidadesPorM2)||1;
       // Mismo criterio que el CRM (recalcUnidades, MERMA_RECORTES): +5% por recortes/roturas.
       const cant = Math.ceil(m2 * udM2 * 1.05);
       const precio = precioLista(prod, lista) || num(prod.precioMayorista) || num(prod.precioMinorista) || 0;
-      return { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
+      const it = { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: Math.round(precio/1.21*100)/100, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
+      // Cada modelo es una OPCIÓN INDEPENDIENTE (el cliente elige UNA, no las 4 juntas), así que el
+      // flete de cada renglón se calcula SOLO — nunca consolidado entre modelos distintos como haría
+      // un presupuesto normal (calcFlete junta pallets de varios ítems porque ahí SÍ viajan juntos).
+      const f = calcFlete([it], zona);
+      it.fletePallets = f.pallets;
+      it.fleteCosto = f.costo;
+      return it;
     }).filter(Boolean);
     if(items.length===0) return;
-    const flete = calcFlete(items, zona);
-    const pallets = Math.max(flete.pallets, 1);
     const compDoc = {
       numero: '(Comparativo)',
       fecha: hoyISO,
@@ -10547,6 +10549,7 @@ function buildFilterTable(cfg){
       listaPrecios: lista,
       domicilioEntrega: '',
       zona: zona,
+      zonaTexto: zonaLabel(zona),   // el módulo Documentos es OTRA IIFE y no tiene zonaLabel/zonaCosto
       palletsFlete: 0,
       items: items,
       descGeneral: 0,
@@ -15888,12 +15891,14 @@ function buildFilterTable(cfg){
           '<div><b>Cliente:</b> '+esc(v.cliente||'—')+'<br><b>Domicilio:</b> '+esc(dom||'—')+'</div>'+
           '<div><b>CUIT:</b> '+esc(v.cuit||cli.cuit||'—')+'<br><b>Cond. IVA:</b> '+esc(v.condIva||cli.condIva||'—')+'</div>'+
         '</div>';
-      const fleteTotal = num(zonaCosto(v.zona||''));
+      // El flete de cada modelo ya viene calculado desde Presupuestos (generarComparativo): cada
+      // renglón es una opción INDEPENDIENTE (el cliente elige UNA), con sus propios pallets — no se
+      // reparte un flete consolidado entre modelos que en la práctica no viajan juntos.
       const itemsNeto = (v.items||[]).map((it,i)=>{
         const base = num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100);
         const al = (it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
         const subtotal = base*(1+al/100);
-        const fletePorItem = fleteTotal * Math.max(1, Math.ceil(num(it.cant)/(num(it.udM2)>0 ? Math.ceil(it.m2total*it.udM2) / num(it.cant) : 1))) / v.items.length;
+        const fletePorItem = num(it.fleteCosto);
         return {desc:it.desc, m2:it.m2total, cant:it.cant, precioUnit:num(it.precioUnit)*(1+(al||0)/100), subtotal:subtotal, flete:fletePorItem, total:subtotal+fletePorItem};
       });
       const tablaHTML = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px">'+
@@ -15908,7 +15913,7 @@ function buildFilterTable(cfg){
           '<td style="text-align:right;padding:6px;border-right:0;font-weight:700;color:#1a7c3f">'+money(it.total)+'</td></tr>').join('')+
         '</table>';
       const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
-        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(zonaLabel(v.zona)||'la zona seleccionada')+'.'+
+        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
         '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
         '</div></div>';
       return headerHTML + tablaHTML + footerHTML;
