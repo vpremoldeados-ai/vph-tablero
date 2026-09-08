@@ -7412,10 +7412,16 @@ function buildFilterTable(cfg){
     h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px">＋ Agregar a la ruta — ventas con saldo pendiente</div>';
     if(fueraRuta.length){
       h+='<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
+        // El campo de fecha por fila deja asignar el día YA coordinado con ese cliente sin tocar el
+        // selector de arriba (que solo cambia qué ruta se está mirando). Precargado con la fecha que
+        // ya tenga (si estaba en otra ruta) o si no con la que se está viendo, para no forzar a
+        // retipearla en el caso más común (agregar al día de hoy).
         '<div id="rc-lista-agregar">'+fueraRuta.map(v=>{ const k=calc(v);
-          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px" data-nombre="'+esc((v.cliente||'').toUpperCase())+'">'+
+          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px" data-nombre="'+esc((v.cliente||'').toUpperCase())+'">'+
             '<span style="font-size:12.5px">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+(v.cobranzaFecha?' · en ruta del '+fmtFecha(v.cobranzaFecha):'')+'</span></span>'+
-            '<span style="display:flex;gap:4px"><button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
+            '<span style="display:flex;gap:4px;align-items:center">'+
+            '<input type="date" class="rc-fecha-fila" data-uid="'+esc(v._uid)+'" value="'+esc(v.cobranzaFecha||rutaFechaSel)+'" title="Día para este cliente" style="font-size:12px;padding:3px 4px">'+
+            '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
             '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="'+esc(MEDIO_CHEQUE)+'">🏦 Cheque</button></span></div>'; }).join('')+
         '</div>';
     } else {
@@ -7434,8 +7440,14 @@ function buildFilterTable(cfg){
       box.querySelectorAll('#rc-lista-agregar > div').forEach(el=> el.style.display = (!q||el.dataset.nombre.indexOf(q)>=0)?'':'none'); });
 
     box.querySelectorAll('button[data-agregar]').forEach(b=> b.onclick=()=>{
-      const orden=(enRuta.length+1)*10;
-      persistCobranza(b.dataset.agregar, {cobranzaFecha:rutaFechaSel, cobranzaMedio:b.dataset.medio, cobranzaOrden:orden});
+      // La fecha sale del input de la propia fila (permite asignar un día YA coordinado, distinto
+      // del que se está mirando arriba). El orden se cuenta contra la ruta de ESE día, no contra
+      // `enRuta` (que es la del día en pantalla) — si no, un cliente agregado a otro día podía
+      // heredar un número de orden que ya estaba ocupado ahí.
+      const fi=box.querySelector('input.rc-fecha-fila[data-uid="'+b.dataset.agregar+'"]');
+      const fecha=(fi&&fi.value)||rutaFechaSel;
+      const orden=(todas.filter(x=>x.cobranzaFecha===fecha).length+1)*10;
+      persistCobranza(b.dataset.agregar, {cobranzaFecha:fecha, cobranzaMedio:b.dataset.medio, cobranzaOrden:orden});
       setTimeout(pintarRutaCobranza,120); });
     box.querySelectorAll('button[data-quitar]').forEach(b=> b.onclick=()=>{
       persistCobranza(b.dataset.quitar, {cobranzaFecha:'', cobranzaMedio:'', cobranzaOrden:''});
