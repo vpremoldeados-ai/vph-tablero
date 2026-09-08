@@ -7356,6 +7356,7 @@ function buildFilterTable(cfg){
   // propio documento, sin colección aparte, y se escriben con SOLO esos campos (nunca el documento
   // entero, por si otro usuario está editando la venta a la vez).
   let rutaFechaSel = hoyISO;
+  let mostrarExcluidosCobranza = false;
   function persistCobranza(uid, campos){
     const i=DB.ventas.findIndex(x=>x._uid===uid); if(i<0) return;
     Object.assign(DB.ventas[i], campos);
@@ -7363,7 +7364,11 @@ function buildFilterTable(cfg){
     else saveLocal();
     render();
   }
-  function candidatosCobranza(){ return DB.ventas.filter(v=> calc(v).saldo>0.5); }
+  // Excluye las marcadas cobranzaExcluida: son ventas con saldo que NO se cobran yendo a visitar
+  // (transferencia, cliente grande que paga solo, etc.) y no tiene sentido que ensucien "＋ Agregar a
+  // la ruta". Es solo una preferencia de ESTA lista — la venta sigue como venta con saldo pendiente
+  // en todos lados (Ventas, Finanzas, Caja): nunca se usa `calc`/saldo de esto para otra cosa.
+  function candidatosCobranza(){ return DB.ventas.filter(v=> calc(v).saldo>0.5 && !v.cobranzaExcluida); }
   // Dirección y teléfono de una venta: misma búsqueda que ya usa remitoObjDeVenta (por CUIT y si no
   // por nombre exacto), para no tener dos criterios de match de cliente en el mismo módulo.
   function contactoDeVenta(v){
@@ -7462,10 +7467,16 @@ function buildFilterTable(cfg){
       h+='<p style="color:var(--muted);font-size:13px;padding:6px 0">Todavía no armaste la ruta de este día.</p>';
     }
 
+    // Excluida = una venta con saldo que NO se cobra yendo a visitar (transferencia, cliente que paga
+    // solo, etc.) y no tiene sentido que aparezca en "＋ Agregar a la ruta". Solo afecta ESTA lista —
+    // sigue como venta con saldo pendiente en Ventas/Finanzas/Caja igual que siempre.
+    const excluidos=DB.ventas.filter(v=>v.cobranzaExcluida && calc(v).saldo>0.5);
+
     h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px">＋ Agregar a la ruta — ventas con saldo pendiente</div>';
     if(fueraRuta.length){
       h+='<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px">Arrastrá para ordenar esta lista a tu gusto (no afecta ninguna ruta). '+
-        '<span style="color:var(--amber);font-weight:700">Resaltado en ámbar</span>: ya tiene una fecha programada en otro día.</p>'+
+        '<span style="color:var(--amber);font-weight:700">Resaltado en ámbar</span>: ya tiene una fecha programada en otro día. '+
+        'La ✕ saca un cliente de ESTA lista (no lo cobra por acá) sin tocar la venta.</p>'+
         '<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
         // El campo de fecha por fila deja asignar el día YA coordinado con ese cliente sin tocar el
         // selector de arriba (que solo cambia qué ruta se está mirando). Precargado con la fecha que
@@ -7479,7 +7490,9 @@ function buildFilterTable(cfg){
               '<span style="color:var(--muted)">⠿</span>'+
               '<span style="font-size:12.5px;flex:1">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+'</span>'+
               (yaProgramado?' <b style="color:var(--amber)">· ya programado: '+fmtFecha(v.cobranzaFecha)+'</b>':'')+
-              '</span></div>'+
+              '</span>'+
+              '<button class="cmp-rowbtn" data-excluir="'+esc(v._uid)+'" title="Sacar de esta lista (no toca la venta)">✕</button>'+
+              '</div>'+
             '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding:6px 8px">'+
               '<input type="date" class="rc-fecha-fila" data-uid="'+esc(v._uid)+'" value="'+esc(v.cobranzaFecha||rutaFechaSel)+'" title="Día para este cliente" style="font-size:12px;padding:3px 4px">'+
               '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
@@ -7488,6 +7501,17 @@ function buildFilterTable(cfg){
         '</div>';
     } else {
       h+='<p style="color:var(--green);font-size:13px;padding:6px 0">✅ No quedan ventas con saldo pendiente fuera de esta ruta.</p>';
+    }
+    if(excluidos.length){
+      h+='<button class="cmp-rowbtn" id="rc-ver-excluidos" style="margin:4px 0 8px">'+
+        (mostrarExcluidosCobranza?'▲':'▼')+' '+excluidos.length+' cliente'+(excluidos.length!==1?'s':'')+' excluido'+(excluidos.length!==1?'s':'')+' de esta lista</button>';
+      if(mostrarExcluidosCobranza){
+        h+='<div id="rc-lista-excluidos">'+excluidos.map(v=>{ const k=calc(v);
+          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px dashed var(--border);border-radius:8px;margin-bottom:6px;color:var(--muted)">'+
+            '<span style="font-size:12.5px">'+esc(v.cliente||'—')+' <span>· '+money(k.saldo)+'</span></span>'+
+            '<button class="cmp-rowbtn" data-restaurar="'+esc(v._uid)+'">↩️ Volver a ofrecer</button></div>'; }).join('')+
+        '</div>';
+      }
     }
 
     h+='<div class="cmp-form-foot">'+
@@ -7519,6 +7543,15 @@ function buildFilterTable(cfg){
         setTimeout(pintarRutaCobranza,120); });
     });
 
+    box.querySelectorAll('button[data-excluir]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.excluir); if(!v) return;
+      if(!confirm('¿Sacar a '+(v.cliente||'—')+' de esta lista?\n\nNo se cobra por acá, pero la venta sigue con su saldo pendiente en Ventas y Finanzas. Se puede volver a ofrecer cuando quieras.')) return;
+      persistCobranza(v._uid,{cobranzaExcluida:true});
+      setTimeout(pintarRutaCobranza,120); });
+    const verExc=$('rc-ver-excluidos'); if(verExc) verExc.onclick=()=>{ mostrarExcluidosCobranza=!mostrarExcluidosCobranza; pintarRutaCobranza(); };
+    box.querySelectorAll('button[data-restaurar]').forEach(b=> b.onclick=()=>{
+      persistCobranza(b.dataset.restaurar,{cobranzaExcluida:false});
+      setTimeout(pintarRutaCobranza,120); });
     box.querySelectorAll('button[data-agregar]').forEach(b=> b.onclick=()=>{
       // La fecha sale del input de la propia fila (permite asignar un día YA coordinado, distinto
       // del que se está mirando arriba). El orden se cuenta contra TODA la ruta de ESE día (cobrada
