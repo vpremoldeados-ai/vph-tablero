@@ -1400,6 +1400,7 @@
         <span id="vnt-periodo-lbl" style="font-size:12px;color:var(--muted)"></span>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="vnt-nueva">+ Nueva Venta</button>
+          <button class="cmp-btn" id="vnt-ruta-cobranza" title="Armar la hoja de ruta para pasar a cobrar en efectivo o cheque: cliente, dirección, teléfono y monto">🚶 Ruta de cobranza</button>
           <button class="cmp-btn" id="vnt-retenciones" title="Retenciones que nos hicieron los clientes — para pasarle al contador">🧾 Retenciones sufridas</button>
           <button class="cmp-btn" id="vnt-export">Exportar JSON</button>
           <button class="cmp-btn" id="vnt-import">Importar JSON</button>
@@ -1456,6 +1457,17 @@
         <button class="cmp-x" id="vnt-cobro-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="vnt-form-cobro"></div>
+    </div>
+  </div>
+
+  <!-- ================= RUTA DE COBRANZA (overlay) ================= -->
+  <div class="cmp-overlay" id="vnt-modal-cobranza">
+    <div class="cmp-dialog" style="max-width:640px">
+      <div class="cmp-dialog-head">
+        <h3>🚶 Ruta de cobranza</h3>
+        <button class="cmp-x" id="vnt-cobranza-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="vnt-form-cobranza"></div>
     </div>
   </div>
 
@@ -7108,7 +7120,12 @@ function buildFilterTable(cfg){
   // ---------- Cobros (registrar / editar / revertir / borrar) ----------
   let cobrandoUid=null, cobroEdit=null;
   let retArchivoPend=null;   // PDF del certificado leído pero todavía no archivado (se sube al Guardar)
-  function openCobro(v){ cobrandoUid=v._uid; cobroEdit=null; retArchivoPend=null; drawCobro(); $('vnt-modal-cobro').classList.add('open'); }
+  let cobroAutoRecibo=false;   // se prende al abrir el cobro DESDE la Ruta de cobranza: imprime el recibo solo al guardar
+  let cobroMedioSugerido='';   // medio que trae la parada de la ruta (Efectivo/Cheque), se aplica una sola vez
+  // autoRecibo/medioSugerido: los usa la Ruta de cobranza — al guardar el cobro imprime el recibo
+  // solo, y el <select> de medio arranca en el que se eligió al agregar la parada.
+  function openCobro(v, autoRecibo, medioSugerido){ cobrandoUid=v._uid; cobroEdit=null; retArchivoPend=null;
+    cobroAutoRecibo=!!autoRecibo; cobroMedioSugerido=medioSugerido||''; drawCobro(); $('vnt-modal-cobro').classList.add('open'); }
   function drawCobro(){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
@@ -7126,7 +7143,8 @@ function buildFilterTable(cfg){
     // Venta cerrada en cuotas → el cobro nuevo arranca en VIUMI con el plan de la venta preseleccionado
     const medioViumi = MEDIOS_COBRO.find(m=>esPlataforma(m)) || 'Viumi';
     const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO,
-          medioDef = ed ? ed.medio : (num(v.finCuotas) ? medioViumi : MEDIOS_COBRO[0]);
+          medioDef = ed ? ed.medio : (cobroMedioSugerido || (num(v.finCuotas) ? medioViumi : MEDIOS_COBRO[0]));
+    if(!ed) cobroMedioSugerido='';   // se aplica una sola vez, no en cada re-render del formulario
     const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef);
     // Tasas para la propuesta de liquidación: las del PERFIL con el que se cerró la venta (si la
     // venta no tiene plan, Macro — el comportamiento de siempre). Arancel y costo financiero por
@@ -7322,7 +7340,124 @@ function buildFilterTable(cfg){
       // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
       if(esCheque(rec.medio) && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
       else if(!esCheque(rec.medio) && window.__deleteChequeCobro){ window.__deleteChequeCobro(rec.id); }
+      // Cobro NUEVO (no edición) abierto desde la Ruta de cobranza → el recibo sale solo, una sola vez.
+      if(cobroAutoRecibo && !prev){ cobroAutoRecibo=false;
+        try{ if(window.__imprimir&&window.__imprimir.recibo) window.__imprimir.recibo(v); }catch(e){} }
       drawCobro(); };
+  }
+
+  // ---------- 🚶 Ruta de cobranza (08/09, pedido de Marcelo): para los clientes a los que se les cobra
+  // en EFECTIVO o CHEQUE físico — la fecha/horario se coordina con el cliente por fuera del Tablero,
+  // acá solo queda el ORDEN de las paradas del día y los datos para no tener que abrir cada venta:
+  // dirección, teléfono y monto. Al agregar una venta a la ruta se elige Efectivo o Cheque: ESE gesto
+  // es lo que la distingue de una venta que se va a cobrar por transferencia/tarjeta (no hay un campo
+  // separado de "forma de pago acordada" en la venta, y no hace falta inventarlo). Mismo patrón que la
+  // Ruta de compra de Insumos: los 3 campos (cobranzaFecha/cobranzaMedio/cobranzaOrden) viven en el
+  // propio documento, sin colección aparte, y se escriben con SOLO esos campos (nunca el documento
+  // entero, por si otro usuario está editando la venta a la vez).
+  let rutaFechaSel = hoyISO;
+  function persistCobranza(uid, campos){
+    const i=DB.ventas.findIndex(x=>x._uid===uid); if(i<0) return;
+    Object.assign(DB.ventas[i], campos);
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.updateDoc(c.FS.doc(c.db,COL,uid), campos).catch(e=>alert('No se pudo guardar: '+e.message)); }
+    else saveLocal();
+    render();
+  }
+  function candidatosCobranza(){ return DB.ventas.filter(v=> calc(v).saldo>0.5); }
+  // Dirección y teléfono de una venta: misma búsqueda que ya usa remitoObjDeVenta (por CUIT y si no
+  // por nombre exacto), para no tener dos criterios de match de cliente en el mismo módulo.
+  function contactoDeVenta(v){
+    const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
+    const cu=String(v.cuit||'').replace(/\D/g,'');
+    const cli=(cu&&cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu))||cs.find(c=>(c.nombre||'').trim().toUpperCase()===(v.cliente||'').trim().toUpperCase())||{};
+    const dom=String(v.domicilioEntrega||'').trim() || [cli.direccion, cli.localidad].filter(Boolean).join(' - ');
+    const tel = cli.telefono || (window.__telefonoLead?window.__telefonoLead(v.cliente):'') || '';
+    return { direccion: dom||'', telefono: tel||'' };
+  }
+  function openRutaCobranza(){ rutaFechaSel = rutaFechaSel || hoyISO; pintarRutaCobranza(); $('vnt-modal-cobranza').classList.add('open'); }
+  function pintarRutaCobranza(){
+    const box=$('vnt-form-cobranza');
+    const todas=candidatosCobranza();
+    const enRuta=todas.filter(v=>v.cobranzaFecha===rutaFechaSel).sort((a,b)=>num(a.cobranzaOrden)-num(b.cobranzaOrden));
+    const fueraRuta=todas.filter(v=>v.cobranzaFecha!==rutaFechaSel);
+    const totRuta=enRuta.reduce((a,v)=>a+calc(v).saldo,0);
+
+    let h='<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Elegí el día de la ruta, agregá los clientes que vas a visitar '+
+      '(coordinalo antes vos con cada uno) y anotá si le vas a cobrar en <b>efectivo</b> o <b>cheque</b>. '+
+      'Al cobrar desde acá, el recibo se genera solo.</p>'+
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">'+
+        '<label style="font-size:12.5px;font-weight:700">📅 Día de la ruta</label>'+
+        '<input type="date" id="rc-fecha" value="'+esc(rutaFechaSel)+'">'+
+      '</div>';
+
+    if(enRuta.length){
+      h+='<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">🧭 Ruta de '+fmtFecha(rutaFechaSel)+' ('+enRuta.length+' parada'+(enRuta.length!==1?'s':'')+' · '+money(totRuta)+')</div>';
+      enRuta.forEach((v,i)=>{ const k=calc(v); const ct=contactoDeVenta(v);
+        h+='<div class="pe-ruta" data-uid="'+esc(v._uid)+'">'+
+          '<div class="pe-ruta-h"><span class="pe-ruta-n">'+(i+1)+'</span><span style="flex:1"><b>'+esc(v.cliente||'—')+'</b>'+
+            ' <span style="font-weight:400;color:var(--muted)">· '+esc(v.cobranzaMedio||'—')+'</span></span>'+
+            '<span class="pe-qty-move"><button data-up="'+i+'"'+(i===0?' disabled':'')+' title="Ir antes">▲</button>'+
+            '<button data-down="'+i+'"'+(i===enRuta.length-1?' disabled':'')+' title="Ir después">▼</button></span>'+
+            '<button class="cmp-rowbtn" data-quitar="'+esc(v._uid)+'" title="Sacar de la ruta">✕</button></div>'+
+          '<div class="pe-ruta-body" style="font-size:12.5px">'+
+            '<div>📍 '+(ct.direccion?esc(ct.direccion):'<span style="color:var(--amber)">sin dirección — completar en la ficha del cliente</span>')+'</div>'+
+            '<div>📞 '+(ct.telefono?esc(ct.telefono):'<span style="color:var(--amber)">sin teléfono en la ficha</span>')+'</div>'+
+            '<div>💰 A cobrar: <b>'+money(k.saldo)+'</b></div>'+
+            '<button class="cmp-btn cmp-btn-primary" data-cobrar="'+esc(v._uid)+'" style="width:100%;margin-top:6px">💰 Cobrar y generar recibo</button>'+
+          '</div></div>'; });
+    } else {
+      h+='<p style="color:var(--muted);font-size:13px;padding:6px 0">Todavía no armaste la ruta de este día.</p>';
+    }
+
+    h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px">＋ Agregar a la ruta — ventas con saldo pendiente</div>';
+    if(fueraRuta.length){
+      h+='<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
+        '<div id="rc-lista-agregar">'+fueraRuta.map(v=>{ const k=calc(v);
+          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px" data-nombre="'+esc((v.cliente||'').toUpperCase())+'">'+
+            '<span style="font-size:12.5px">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+(v.cobranzaFecha?' · en ruta del '+fmtFecha(v.cobranzaFecha):'')+'</span></span>'+
+            '<span style="display:flex;gap:4px"><button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
+            '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="'+esc(MEDIO_CHEQUE)+'">🏦 Cheque</button></span></div>'; }).join('')+
+        '</div>';
+    } else {
+      h+='<p style="color:var(--green);font-size:13px;padding:6px 0">✅ No quedan ventas con saldo pendiente fuera de esta ruta.</p>';
+    }
+
+    h+='<div class="cmp-form-foot">'+
+      '<button class="cmp-btn" id="rc-cerrar">Cerrar</button>'+
+      (enRuta.length?'<button class="cmp-btn" id="rc-imprimir">🖨️ Imprimir hoja de ruta</button>':'')+
+      '</div>';
+    box.innerHTML=h;
+
+    $('rc-fecha').onchange=()=>{ rutaFechaSel=$('rc-fecha').value||hoyISO; pintarRutaCobranza(); };
+    const buscar=$('rc-buscar');
+    if(buscar) buscar.addEventListener('input',()=>{ const q=buscar.value.trim().toUpperCase();
+      box.querySelectorAll('#rc-lista-agregar > div').forEach(el=> el.style.display = (!q||el.dataset.nombre.indexOf(q)>=0)?'':'none'); });
+
+    box.querySelectorAll('button[data-agregar]').forEach(b=> b.onclick=()=>{
+      const orden=(enRuta.length+1)*10;
+      persistCobranza(b.dataset.agregar, {cobranzaFecha:rutaFechaSel, cobranzaMedio:b.dataset.medio, cobranzaOrden:orden});
+      setTimeout(pintarRutaCobranza,120); });
+    box.querySelectorAll('button[data-quitar]').forEach(b=> b.onclick=()=>{
+      persistCobranza(b.dataset.quitar, {cobranzaFecha:'', cobranzaMedio:'', cobranzaOrden:''});
+      setTimeout(pintarRutaCobranza,120); });
+    // ▲▼: se intercambia el nº de orden entre las dos paradas vecinas (mismo criterio que la Ruta de
+    // compra de Insumos).
+    const mover=(i,j)=>{ if(j<0||j>=enRuta.length) return;
+      const a=enRuta[i], b2=enRuta[j], oa=num(a.cobranzaOrden), ob=num(b2.cobranzaOrden);
+      persistCobranza(a._uid,{cobranzaOrden:ob}); persistCobranza(b2._uid,{cobranzaOrden:oa});
+      setTimeout(pintarRutaCobranza,120); };
+    box.querySelectorAll('button[data-up]').forEach(b=> b.onclick=()=> mover(+b.dataset.up, +b.dataset.up-1));
+    box.querySelectorAll('button[data-down]').forEach(b=> b.onclick=()=> mover(+b.dataset.down, +b.dataset.down+1));
+    box.querySelectorAll('button[data-cobrar]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.cobrar); if(!v) return;
+      $('vnt-modal-cobranza').classList.remove('open');
+      openCobro(v, true, v.cobranzaMedio); });
+    const imp=$('rc-imprimir'); if(imp) imp.onclick=()=>{
+      if(!window.__imprimir||!window.__imprimir.rutaCobranza){ alert('Módulo de Documentos no disponible.'); return; }
+      const paradas=enRuta.map((v,i)=>{ const k=calc(v); const ct=contactoDeVenta(v);
+        return { orden:i+1, cliente:v.cliente||'', direccion:ct.direccion, telefono:ct.telefono, medio:v.cobranzaMedio||'', monto:k.saldo }; });
+      window.__imprimir.rutaCobranza({ fecha:rutaFechaSel, paradas }); };
+    $('rc-cerrar').onclick=()=>$('vnt-modal-cobranza').classList.remove('open');
   }
 
   // ---------- Leer el certificado de retención (PDF) ----------
@@ -7550,6 +7685,8 @@ function buildFilterTable(cfg){
   $('vnt-nueva').onclick=()=>openForm(null);
   $('vnt-cerrar').onclick=closeForm;
   $('vnt-cobro-cerrar').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
+  $('vnt-ruta-cobranza').onclick=openRutaCobranza;
+  $('vnt-cobranza-cerrar').onclick=()=>$('vnt-modal-cobranza').classList.remove('open');
   $('vnt-retenciones').onclick=mostrarRetenciones;
   $('vnt-export').onclick=exportJSON;
   $('vnt-import').onclick=()=>$('vnt-import-file').click();
@@ -7559,7 +7696,7 @@ function buildFilterTable(cfg){
   $('vnt-filtro-periodo').addEventListener('change',e=>{ filtro.periodo=e.target.value; render(); });
   $('vnt-cols-btn').onclick=(e)=>{ e.stopPropagation(); const p=$('vnt-cols-pop'); p.style.display = p.style.display==='none' ? 'block' : 'none'; };
   document.addEventListener('click',(e)=>{ const p=$('vnt-cols-pop'); if(p && p.style.display!=='none' && !p.contains(e.target) && e.target!==$('vnt-cols-btn')) p.style.display='none'; });
-  [$('vnt-modal'),$('vnt-modal-cobro')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+  [$('vnt-modal'),$('vnt-modal-cobro'),$('vnt-modal-cobranza')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
 
   window.__ventaCalc = calc;   // expuesto para el módulo Documentos (totales de venta)
   window.__ventasTodas = ()=> (DB.ventas||[]).slice();   // lectura para el Libro IVA
@@ -16578,12 +16715,30 @@ function buildFilterTable(cfg){
     mostrar(html, nombreArchivo('Lista de precios '+L.nombre, '', '', hoyISO));
   }
 
+  // ---------- Hoja de Ruta de Cobranza (08/09) ----------
+  // Recibe un objeto normalizado que arma Ventas: { fecha, paradas:[{orden,cliente,direccion,telefono,medio,monto}] }.
+  // Es la lista que Marcelo lleva para pasar a cobrar en efectivo/cheque — el día y horario los
+  // coordina él con cada cliente antes, por fuera del Tablero; acá solo va el ORDEN de las paradas.
+  function rutaCobranza(o){
+    o=o||{};
+    const paradas=(o.paradas||[]);
+    let filas=paradas.map(p=>'<tr><td class="n">'+esc(p.orden||'')+'</td><td>'+esc(p.cliente||'—')+'</td><td>'+esc(p.direccion||'—')+'</td><td>'+esc(p.telefono||'—')+'</td><td>'+esc(p.medio||'—')+'</td><td class="n">'+money(p.monto)+'</td></tr>').join('');
+    if(!filas) filas='<tr><td colspan="6" style="text-align:center;color:#888">Sin paradas cargadas.</td></tr>';
+    const tot=paradas.reduce((a,p)=>a+num(p.monto),0);
+    const tabla='<table class="doc-tab"><tr><th>#</th><th>Cliente</th><th>Dirección</th><th>Teléfono</th><th>Cobrar en</th><th class="n">Monto</th></tr>'+filas+
+      '<tr><td colspan="5" class="n"><b>Total a cobrar</b></td><td class="n"><b>'+money(tot)+'</b></td></tr></table>';
+    return encabezado('X','HOJA DE RUTA — COBRANZA','', dmy(o.fecha))+tabla+
+      '<div class="doc-obs" style="margin-top:10px">Coordinar día y horario con cada cliente antes de pasar. Al cobrar, generar el recibo desde el Tablero.</div>'+
+      firma()+pie();
+  }
+
   window.__imprimir = {
     listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'may100'|'maySF100'|'min'} — la usa Base de Datos (📄 Lista de precios)
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
     ordenPago:    o => mostrar(ordenPago(o), nombreArchivo('Orden de Pago', '', o.proveedor, o.fecha)),
+    rutaCobranza: o => mostrar(rutaCobranza(o), nombreArchivo('Ruta de Cobranza', '', '', o.fecha)),
     remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha)),
     // Recibo INTERNO de sueldo (sin aportes) — lo arma el módulo Sueldos con la quincena liquidada.
     // Acepta un recibo suelto o {lote:[...]} con todos los de la quincena (uno por hoja).
