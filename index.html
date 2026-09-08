@@ -7394,6 +7394,20 @@ function buildFilterTable(cfg){
       window.__imprimir.recibo(vPrev);
     } else window.__imprimir.recibo(v);
   }
+  // Deshacer un "✅ Cobrado" apretado por error: saca el ÚLTIMO cobro registrado (el que la dejó en
+  // $0 y la resaltó) — mismo criterio que el ✕ de cada línea en el formulario de cobro normal
+  // (revertir/eliminar), solo que acá no hay que salir de la Ruta a buscarlo. Si era un cheque,
+  // también se borra el vínculo en el módulo Cheques (mismo criterio que ese ✕).
+  function revertirCobroRuta(v){
+    const cobros=(v.cobros||[]).slice();
+    if(!cobros.length){ alert('Esta venta no tiene cobros registrados.'); return; }
+    const last=cobros[cobros.length-1];
+    if(!confirm('¿Revertir el cobro de '+money(num(last.monto))+' ('+(last.medio||'—')+', '+fmtFecha(last.fecha)+')?\n\nEl cliente vuelve a figurar con saldo pendiente en la ruta.')) return;
+    cobros.pop();
+    persistCobros(v._uid, cobros);
+    if(last.id && esCheque(last.medio) && window.__deleteChequeCobro) window.__deleteChequeCobro(last.id);
+    setTimeout(pintarRutaCobranza,120);
+  }
   function openRutaCobranza(){ rutaFechaSel = rutaFechaSel || hoyISO; pintarRutaCobranza(); $('vnt-modal-cobranza').classList.add('open'); }
   function pintarRutaCobranza(){
     const box=$('vnt-form-cobranza');
@@ -7436,7 +7450,8 @@ function buildFilterTable(cfg){
                     :'<div>💰 A cobrar: <b>'+money(k.saldo)+'</b></div>')+
             '<div style="display:flex;gap:6px;margin-top:6px">'+
               '<button class="cmp-btn" data-recibo="'+esc(v._uid)+'" style="flex:1">🖨️ Recibo</button>'+
-              (cobrada?'':'<button class="cmp-btn cmp-btn-primary" data-cobrado="'+esc(v._uid)+'" style="flex:1">✅ Cobrado</button>')+
+              (cobrada?'<button class="cmp-btn" data-revertir="'+esc(v._uid)+'" style="flex:1;color:var(--red)" title="Por si se apretó Cobrado por error">↩️ Revertir</button>'
+                      :'<button class="cmp-btn cmp-btn-primary" data-cobrado="'+esc(v._uid)+'" style="flex:1">✅ Cobrado</button>')+
             '</div>'+
           '</div></div>'; });
     } else {
@@ -7520,6 +7535,8 @@ function buildFilterTable(cfg){
       const v=DB.ventas.find(x=>x._uid===b.dataset.cobrado); if(!v) return;
       $('vnt-modal-cobranza').classList.remove('open');
       openCobro(v, false, v.cobranzaMedio); });
+    box.querySelectorAll('button[data-revertir]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.revertir); if(v) revertirCobroRuta(v); });
     const scb=$('rc-sacar-cobradas'); if(scb) scb.onclick=()=>{
       if(!confirm('¿Sacar de la ruta los '+cobradas.length+' clientes ya cobrados?\n\nEl cobro que ya se registró NO se borra, solo se saca de esta lista.')) return;
       cobradas.forEach(v=> persistCobranza(v._uid,{cobranzaFecha:'',cobranzaMedio:'',cobranzaOrden:''}));
