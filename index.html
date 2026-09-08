@@ -7412,7 +7412,11 @@ function buildFilterTable(cfg){
   function pintarRutaCobranza(){
     const box=$('vnt-form-cobranza');
     const enRuta=paradasDe(rutaFechaSel).sort((a,b)=>num(a.cobranzaOrden)-num(b.cobranzaOrden));
-    const fueraRuta=candidatosCobranza().filter(v=>v.cobranzaFecha!==rutaFechaSel);
+    // cobranzaPrioridad es un orden PROPIO de esta lista (a quién considerar primero), sin tocar
+    // cobranzaOrden (que es de la ruta) ni nada relacionado a estar o no asignado a un día. Antes de
+    // que alguien arrastre algo, todos comparan en 0 → sort estable → queda el orden de siempre.
+    const fueraRuta=candidatosCobranza().filter(v=>v.cobranzaFecha!==rutaFechaSel)
+      .sort((a,b)=>num(a.cobranzaPrioridad)-num(b.cobranzaPrioridad));
     // Cobrada = ya no tiene saldo (se registró el cobro real desde el botón ✅ Cobrado). Sigue en la
     // ruta, resaltada, hasta que alguien la saque a propósito — no desaparece sola.
     const cobradas=enRuta.filter(v=>calc(v).estado==='cobrado');
@@ -7460,18 +7464,27 @@ function buildFilterTable(cfg){
 
     h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px">＋ Agregar a la ruta — ventas con saldo pendiente</div>';
     if(fueraRuta.length){
-      h+='<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
+      h+='<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px">Arrastrá para ordenar esta lista a tu gusto (no afecta ninguna ruta). '+
+        '<span style="color:var(--amber);font-weight:700">Resaltado en ámbar</span>: ya tiene una fecha programada en otro día.</p>'+
+        '<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
         // El campo de fecha por fila deja asignar el día YA coordinado con ese cliente sin tocar el
         // selector de arriba (que solo cambia qué ruta se está mirando). Precargado con la fecha que
         // ya tenga (si estaba en otra ruta) o si no con la que se está viendo, para no forzar a
         // retipearla en el caso más común (agregar al día de hoy).
-        '<div id="rc-lista-agregar">'+fueraRuta.map(v=>{ const k=calc(v);
-          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px" data-nombre="'+esc((v.cliente||'').toUpperCase())+'">'+
-            '<span style="font-size:12.5px">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+(v.cobranzaFecha?' · en ruta del '+fmtFecha(v.cobranzaFecha):'')+'</span></span>'+
-            '<span style="display:flex;gap:4px;align-items:center">'+
-            '<input type="date" class="rc-fecha-fila" data-uid="'+esc(v._uid)+'" value="'+esc(v.cobranzaFecha||rutaFechaSel)+'" title="Día para este cliente" style="font-size:12px;padding:3px 4px">'+
-            '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
-            '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="'+esc(MEDIO_CHEQUE)+'">🏦 Cheque</button></span></div>'; }).join('')+
+        '<div id="rc-lista-agregar">'+fueraRuta.map(v=>{ const k=calc(v), yaProgramado=!!v.cobranzaFecha;
+          return '<div draggable="true" data-uid="'+esc(v._uid)+'" data-nombre="'+esc((v.cliente||'').toUpperCase())+'" '+
+            'style="border:1px solid '+(yaProgramado?'var(--amber)':'var(--border)')+';border-radius:8px;margin-bottom:6px;overflow:hidden'+
+            (yaProgramado?';background:rgba(245,158,11,.08)':'')+'">'+
+            '<div style="display:flex;gap:6px;align-items:center;padding:6px 8px 0;cursor:grab" title="Arrastrá para reordenar esta lista">'+
+              '<span style="color:var(--muted)">⠿</span>'+
+              '<span style="font-size:12.5px;flex:1">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+'</span>'+
+              (yaProgramado?' <b style="color:var(--amber)">· ya programado: '+fmtFecha(v.cobranzaFecha)+'</b>':'')+
+              '</span></div>'+
+            '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding:6px 8px">'+
+              '<input type="date" class="rc-fecha-fila" data-uid="'+esc(v._uid)+'" value="'+esc(v.cobranzaFecha||rutaFechaSel)+'" title="Día para este cliente" style="font-size:12px;padding:3px 4px">'+
+              '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
+              '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="'+esc(MEDIO_CHEQUE)+'">🏦 Cheque</button>'+
+            '</div></div>'; }).join('')+
         '</div>';
     } else {
       h+='<p style="color:var(--green);font-size:13px;padding:6px 0">✅ No quedan ventas con saldo pendiente fuera de esta ruta.</p>';
@@ -7487,6 +7500,24 @@ function buildFilterTable(cfg){
     const buscar=$('rc-buscar');
     if(buscar) buscar.addEventListener('input',()=>{ const q=buscar.value.trim().toUpperCase();
       box.querySelectorAll('#rc-lista-agregar > div').forEach(el=> el.style.display = (!q||el.dataset.nombre.indexOf(q)>=0)?'':'none'); });
+    // Arrastrar dentro de "＋ Agregar a la ruta" reordena SOLO esa lista (cobranzaPrioridad) — es una
+    // prioridad personal para decidir a quién considerar primero, no toca ninguna ruta ni pisa
+    // cobranzaOrden. Contenedor propio (#rc-lista-agregar) para no chocar con el arrastre de la ruta.
+    let dragUidCand=null;
+    box.querySelectorAll('#rc-lista-agregar > div[draggable]').forEach(el=>{
+      el.addEventListener('dragstart', e=>{ dragUidCand=el.dataset.uid; e.dataTransfer.effectAllowed='move'; el.style.opacity='.4'; });
+      el.addEventListener('dragend', ()=>{ el.style.opacity=''; dragUidCand=null; });
+      el.addEventListener('dragover', e=> e.preventDefault());
+      el.addEventListener('drop', e=>{ e.preventDefault();
+        const destUid=el.dataset.uid; if(!dragUidCand || dragUidCand===destUid) return;
+        const ord=fueraRuta.map(x=>x._uid); const from=ord.indexOf(dragUidCand); if(from<0) return;
+        const rect=el.getBoundingClientRect(), before=(e.clientY-rect.top)<rect.height/2;
+        let to=ord.indexOf(destUid); if(!before) to++;
+        ord.splice(from,1); if(from<to) to--;
+        ord.splice(to,0,dragUidCand);
+        ord.forEach((uid,i)=> persistCobranza(uid,{cobranzaPrioridad:(i+1)*10}));
+        setTimeout(pintarRutaCobranza,120); });
+    });
 
     box.querySelectorAll('button[data-agregar]').forEach(b=> b.onclick=()=>{
       // La fecha sale del input de la propia fila (permite asignar un día YA coordinado, distinto
