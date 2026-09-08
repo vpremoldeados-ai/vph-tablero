@@ -16722,10 +16722,20 @@ function buildFilterTable(cfg){
   function rutaCobranza(o){
     o=o||{};
     const paradas=(o.paradas||[]);
-    let filas=paradas.map(p=>'<tr><td class="n">'+esc(p.orden||'')+'</td><td>'+esc(p.cliente||'—')+'</td><td>'+esc(p.direccion||'—')+'</td><td>'+esc(p.telefono||'—')+'</td><td>'+esc(p.medio||'—')+'</td><td class="n">'+money(p.monto)+'</td></tr>').join('');
+    // table-layout:fixed + colgroup propio (no el de .doc-tab, que es auto para los demás documentos):
+    // una dirección larga sin espacios (un link de Maps, por ejemplo) no puede empujar la columna del
+    // Monto fuera de la hoja — cada columna tiene su ancho fijo y el texto se corta adentro.
+    // ⚠️ white-space:normal INLINE es imprescindible: el th,td{white-space:nowrap} global de toda la
+    // app (línea ~118) gana la cascada porque .doc-tab td no lo pisa para las celdas de texto (solo
+    // para las .n) — sin este inline, overflow-wrap no tiene dónde partir la línea y el texto larga
+    // la celda entera afuera de la hoja. Se vio en la propia hoja de ruta: fix acotado a esta tabla.
+    const wrap='style="white-space:normal;word-break:break-word"';
+    let filas=paradas.map(p=>'<tr><td class="n">'+esc(p.orden||'')+'</td><td '+wrap+'>'+esc(p.cliente||'—')+'</td><td '+wrap+'>'+esc(p.direccion||'—')+'</td><td '+wrap+'>'+esc(p.telefono||'—')+'</td><td '+wrap+'>'+esc(p.medio||'—')+'</td><td class="n">'+money(p.monto)+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="6" style="text-align:center;color:#888">Sin paradas cargadas.</td></tr>';
     const tot=paradas.reduce((a,p)=>a+num(p.monto),0);
-    const tabla='<table class="doc-tab"><tr><th>#</th><th>Cliente</th><th>Dirección</th><th>Teléfono</th><th>Cobrar en</th><th class="n">Monto</th></tr>'+filas+
+    const tabla='<table class="doc-tab" style="table-layout:fixed">'+
+      '<colgroup><col style="width:5%"><col style="width:20%"><col style="width:28%"><col style="width:15%"><col style="width:14%"><col style="width:18%"></colgroup>'+
+      '<tr><th>#</th><th>Cliente</th><th>Dirección</th><th>Teléfono</th><th>Cobrar en</th><th class="n">Monto</th></tr>'+filas+
       '<tr><td colspan="5" class="n"><b>Total a cobrar</b></td><td class="n"><b>'+money(tot)+'</b></td></tr></table>';
     return encabezado('X','HOJA DE RUTA — COBRANZA','', dmy(o.fecha))+tabla+
       '<div class="doc-obs" style="margin-top:10px">Coordinar día y horario con cada cliente antes de pasar. Al cobrar, generar el recibo desde el Tablero.</div>'+
