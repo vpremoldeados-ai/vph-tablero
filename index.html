@@ -1136,6 +1136,7 @@
           <h3 style="margin:0">🔩 Topes de estacionamiento — playas de Córdoba</h3>
           <button class="cmp-x" id="crm-topes-cerrar" style="margin-left:auto" title="Ocultar la lista de topes">✕</button>
         </div>
+        <input type="text" class="search-box" id="topes-buscar" placeholder="Buscar por lugar, rubro, zona, teléfono, email..." style="margin:0 0 10px;width:100%;max-width:420px">
         <div id="crm-topes-controles"></div>
         <!-- La tabla queda FIJA (no la recrea drawTopes) para que window.__ordenable pueda guardar
              el orden elegido en el propio <table> — si se recreara en cada render, el clic en un
@@ -12789,7 +12790,8 @@ function buildFilterTable(cfg){
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
   const topesAlEnviar=row=> (row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row;
-  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFormAbierto=false;
+  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false;
+  const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   function topesLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function topesSaveLocal(){ try{ localStorage.setItem(TOPES_KEY, JSON.stringify(TOPES)); }catch(e){} }
   // Guarda el array ENTERO (documento chico, mismo criterio que PLANT/PREG) — no hay forma de tocar
@@ -12815,9 +12817,11 @@ function buildFilterTable(cfg){
     // Los controles (filtros, alta manual) SÍ se recrean enteros, no necesitan ese cuidado.
     const controles=$('crm-topes-controles'), tabla=$('topes-tabla'); if(!controles||!tabla) return;
     const rubros=[...new Set(TOPES.map(t=>t.rubro).filter(Boolean))];
+    const qTexto=topesNorm(topesFiltroTexto);
     const filas = TOPES
       .map((t,i)=>({t,i}))
-      .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro));
+      .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro))
+      .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota].some(v=>topesNorm(v).includes(qTexto)));
     const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
     const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
     let hc='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
@@ -12940,6 +12944,10 @@ function buildFilterTable(cfg){
   }
   const topesCerrarBtn=$('crm-topes-cerrar');
   if(topesCerrarBtn) topesCerrarBtn.onclick=()=>$('crm-topes-panel').style.display='none';
+  // El buscador vive FUERA de #crm-topes-controles (que drawTopes reescribe entero) para no perder
+  // el foco ni el cursor en cada tecla — mismo criterio que crm-buscar/bd-buscar.
+  const topesBuscarInp=$('topes-buscar');
+  if(topesBuscarInp) topesBuscarInp.addEventListener('input', e=>{ topesFiltroTexto=e.target.value; drawTopes(); });
 
   boot();
 })();
