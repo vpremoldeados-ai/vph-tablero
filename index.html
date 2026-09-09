@@ -340,6 +340,8 @@
   .pe-diachip.sinfecha{background:transparent;color:var(--muted);border:1px dashed var(--border)}
   .pe-viaje.hoy{border-left-color:var(--green) !important;box-shadow:var(--shadow)}
   .pe-viaje.despues,.pe-viaje.sinfecha{opacity:.72}   /* lo de más adelante no compite con la semana en curso */
+  /* Arrastrar una entrega a otro viaje: resaltado del viaje sobre el que se está por soltar */
+  .pe-viaje-drop{outline:2px dashed var(--blue);outline-offset:2px}
   .pe-banda{display:flex;align-items:center;gap:9px;margin:18px 0 8px;font-weight:800;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
   .pe-banda::after{content:'';flex:1;height:1px;background:var(--border)}
   .pe-banda:first-child{margin-top:2px}
@@ -1012,7 +1014,7 @@
         <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--blue)"></span>Viajes armados — carga por camión</h2>
         <div class="asof" id="pe-viajes-asof"></div>
         <div id="pe-viajes"></div>
-        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.<br>Los viajes van ordenados por <b>fecha más próxima</b>, con el <b>nombre del día</b>, y separados en <b>atrasados · esta semana (lunes a domingo) · más adelante · sin fecha</b>. El día se toma del campo <b>Día de entrega</b> del pedido: si no está cargado como fecha (<b>dd/mm/aa</b>), el viaje se muestra igual pero cae al final, en «sin fecha».</p>
+        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.<br><b>🖱️ Arrastrá un cliente</b> de un viaje a otro para reprogramarlo (toma el día, el transportista y el camión del viaje donde lo soltás), o soltalo en <b>«Camión aparte»</b> para separarlo en su propio viaje del mismo día.<br>Los viajes van ordenados por <b>fecha más próxima</b>, con el <b>nombre del día</b>, y separados en <b>atrasados · esta semana (lunes a domingo) · más adelante · sin fecha</b>. El día se toma del campo <b>Día de entrega</b> del pedido: si no está cargado como fecha (<b>dd/mm/aa</b>), el viaje se muestra igual pero cae al final, en «sin fecha».</p>
       </section>
       <section>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -14859,11 +14861,13 @@ function buildFilterTable(cfg){
     let bandaPuesta=-1;
     const sugerencias=[];   // una entrada por viaje con botón de "Aplicar división" (índice = data-viaje-idx)
     const solosPed=[];      // pedidos que solos ya se pasan de la capacidad → botón "Partir pedido" (índice = data-partir-idx)
-    cont.innerHTML = viajes.map(v=>{
+    cont.innerHTML = viajes.map((v,vi)=>{
       let banda='';
       const b=[...BANDA].reverse().find(x=>v.c>=x.desde);
       if(b && b.desde!==bandaPuesta){ bandaPuesta=b.desde; banda='<div class="pe-banda '+b.cls+'">'+b.t+'</div>'; }
-      return banda+trjViaje(v); }).join('');
+      return banda+trjViaje(v,vi); }).join('')
+      // Zona para SEPARAR una entrega en su propio camión: escondida salvo mientras se arrastra.
+      +'<div id="pe-viaje-nuevo" hidden style="border:2px dashed var(--blue);border-radius:12px;padding:14px;text-align:center;color:var(--blue);font-weight:700;font-size:13px">🆕 Soltá acá: CAMIÓN APARTE (mismo día y transportista, viaje propio)</div>';
     cont.querySelectorAll('button[data-viaje-idx]').forEach(btn=> btn.onclick=()=>{
       const s=sugerencias[+btn.dataset.viajeIdx]; if(!s) return;
       const detalle=s.bins.slice(1).map((b,i)=>'· '+fmtF(addDiasHabiles(s.fBase,i+1))+': '+b.peds.map(p=>p.cliente||'—').join(', ')+' ('+b.pallets+' pal)').join('\n');
@@ -14876,7 +14880,32 @@ function buildFilterTable(cfg){
       const p=solosPed[+btn.dataset.partirIdx]; if(p) abrirPartirPedido(p);
     });
     bindAccionesPedido(cont);   // los 🖨️ Remito de cada cliente del viaje
-    function trjViaje(v){
+    // ---------- Arrastrar una entrega para reprogramarla (pedido de Marcelo, 09/09) ----------
+    // Soltarla sobre OTRO viaje la mueve ahí (día + transportista + camión); soltarla en la zona
+    // "Camión aparte" la separa en su propio viaje. En el celular no hay drag: se sigue editando
+    // el pedido como siempre. ⚠️ Todo el cableado va por querySelectorAll sobre elementos: en el
+    // arnés de tests el contenedor es un stub que devuelve [] y nada de esto corre.
+    let arrUid=null;
+    const zonaNuevo=cont.querySelectorAll('#pe-viaje-nuevo')[0];
+    const alDrop=(el, fn)=>{
+      el.addEventListener('dragover',e=>{ if(!arrUid) return; e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect='move'; el.classList.add('pe-viaje-drop'); });
+      el.addEventListener('dragleave',()=> el.classList.remove('pe-viaje-drop'));
+      el.addEventListener('drop',e=>{ e.preventDefault(); el.classList.remove('pe-viaje-drop');
+        const uid=arrUid||(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||''; arrUid=null;
+        const p=pedidos.find(x=>x._uid===uid); if(!p||p.estado==='entregado') return;
+        if(fn(p)) render(); });
+    };
+    cont.querySelectorAll('[data-arr]').forEach(el=>{
+      el.addEventListener('dragstart',e=>{ arrUid=el.dataset.arr; el.style.opacity='.4';
+        if(e.dataTransfer){ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', el.dataset.arr); }
+        if(zonaNuevo) zonaNuevo.hidden=false; });
+      el.addEventListener('dragend',()=>{ arrUid=null; el.style.opacity='';
+        if(zonaNuevo) zonaNuevo.hidden=true;
+        cont.querySelectorAll('.pe-viaje-drop').forEach(x=>x.classList.remove('pe-viaje-drop')); });
+    });
+    cont.querySelectorAll('.pe-viaje[data-vidx]').forEach(el=> alDrop(el, p=>moverPedidoAViaje(p, viajes[+el.dataset.vidx])));
+    if(zonaNuevo) alDrop(zonaNuevo, p=>separarACamionAparte(p));
+    function trjViaje(v,vi){
       const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
       const excede=cap>0&&v.pallets>cap;
       const col = excede?'var(--red)' : (cap>0&&libre<=0?'var(--green)' : (cap>0?'var(--amber)':'var(--muted)'));
@@ -14904,7 +14933,7 @@ function buildFilterTable(cfg){
           '</div>';
         }
       }
-      return '<div class="pe-viaje '+CHIP[v.c].k+'" style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
+      return '<div class="pe-viaje '+CHIP[v.c].k+'" data-vidx="'+vi+'" style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
           chipDia(v)+
           '<div style="font-weight:800;font-size:14px">🚚 '+esc(v.tr)+(v.nv>1?' · Viaje '+v.nv:'')+' </div>'+
@@ -14915,7 +14944,8 @@ function buildFilterTable(cfg){
           (v.peso>0?'<span>· '+(Math.round(v.peso/100)/10)+' t</span>':'')+
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
-          return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border)"><span style="flex:1;min-width:130px">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
+          // La fila entera se puede ARRASTRAR a otro viaje (el ⠿ es la señal visual; el botón sigue siendo botón).
+          return '<div draggable="true" data-arr="'+esc(p._uid)+'" title="Arrastrá para moverlo a otro viaje" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border);cursor:grab"><span style="color:var(--muted)">⠿</span><span style="flex:1;min-width:130px">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
             // 🖨️ Remito POR CLIENTE del viaje armado (pedido de Marcelo, 20/08): Gustavo imprime mirando
             // el viaje que va a cargar, no la tabla de abajo. Va con el MISMO data-pact que la tabla, así
             // que lo toma bindAccionesPedido y no hay una segunda copia de la lógica de impresión.
@@ -14924,6 +14954,46 @@ function buildFilterTable(cfg){
         sugerenciaHtml+
       '</div>';
     }
+  }
+  // ---------- Mover una ENTREGA de un viaje a otro (el arrastre de arriba) ----------
+  // Un viaje es día + transportista + n° de camión: mover el pedido es cambiarle esos TRES campos,
+  // lo mismo que hace "Aplicar división" pero eligiendo a mano. El pedido viaja ENTERO — partirlo
+  // en dos entregas es otra cosa (✂️ Partir pedido).
+  function moverPedidoAViaje(p, v){
+    if(!p || !v || !Array.isArray(v.peds)) return false;
+    if(v.peds.some(x=>x&&x._uid===p._uid)) return false;   // lo soltó en el viaje donde ya estaba
+    p.diaEntrega = v.dia==='Sin fecha' ? '' : v.dia;        // 'Sin fecha' es la etiqueta del grupo, no un texto a guardar
+    p.transporte = v.tr || 'Sin asignar';
+    // El n° de camión REAL del destino es el de sus pedidos: el `v.nv` que se muestra puede venir
+    // renumerado solo para la pantalla (la consolidación de arriba) y no coincidir con lo guardado.
+    p.numeroViaje = (v.peds[0] && v.peds[0].numeroViaje) || 1;
+    sellarYGuardar(p);
+    return true;
+  }
+  // Camión APARTE: mismo día y transportista que ya tiene, pero en su propio viaje (n° nuevo).
+  function separarACamionAparte(p){
+    if(!p) return false;
+    const dia=String(p.diaEntrega||'').trim(), tr=String(p.transporte||'').trim();
+    const hermanos=pedidos.filter(x=>x._uid!==p._uid && x.estado!=='entregado'
+      && String(x.diaEntrega||'').trim()===dia && String(x.transporte||'').trim()===tr);
+    if(!hermanos.length){ alert('Ese pedido ya está solo en su camión.'); return false; }
+    // Si TODOS caben en un camión, el render los vuelve a juntar solo (así se aprovecha la
+    // capacidad): separarlo no tendría efecto y parecería que el arrastre no anduvo. Se avisa.
+    const cap=capacidadDe(tr);
+    const total=hermanos.reduce((a,x)=>a+totCarga(x).pallets,0)+totCarga(p).pallets;
+    if(cap>0 && total<=cap){ alert('Entran todos en un solo camión ('+total+' de '+cap+' pallets): el Tablero los junta en el mismo viaje para aprovecharlo. Para que vayan en camiones distintos, movelo a OTRO DÍA o cambiale el transporte.'); return false; }
+    p.numeroViaje = Math.max(p.numeroViaje||1, ...hermanos.map(x=>x.numeroViaje||1))+1;
+    sellarYGuardar(p);
+    return true;
+  }
+  // ⚠️ persistPed RECALCULA numeroViaje cuando ve cambiar el día/transportista contra
+  // _diaPrevio/_trPrevio (es lo correcto cuando se edita el pedido en el form: lo manda al final de
+  // la cola). Acá el número lo decidió el ARRASTRE: se sellan los previos ANTES de guardar para que
+  // el guardado respete el viaje elegido y no lo mande a un camión nuevo.
+  function sellarYGuardar(p){
+    p._diaPrevio=String(p.diaEntrega||'').trim();
+    p._trPrevio=String(p.transporte||'').trim();
+    persistPed(p);
   }
   function renderCoord(){
     renderViajes();
