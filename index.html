@@ -6560,6 +6560,13 @@ function buildFilterTable(cfg){
     // Aviso dirigido al Libro IVA (seguimiento + conciliación ARCA de Emitidos): se repinta solo si esa
     // página está a la vista — al guardar/corregir una venta desde ahí, las listas se mueven al instante.
     if(window.__pintarLibroIVA){ try{ window.__pintarLibroIVA(); }catch(e){} }
+    // 🔴 Si la Ruta de cobranza está abierta cuando llega el primer snapshot de vph_ventas (o
+    // cualquier cambio posterior), hay que repintarla — si no, quien la abrió ANTES de que
+    // Firestore terminara de sincronizar (típico en el celular, con conexión más lenta que la
+    // PC donde la sesión ya lleva rato abierta y cacheada) se queda mirando el modal vacío
+    // ("Todavía no armaste la ruta" + "No quedan ventas pendiente") para siempre: nada lo
+    // repintaba después. `render()` es lo que se dispara con cada snapshot nuevo.
+    if($('vnt-modal-cobranza') && $('vnt-modal-cobranza').classList.contains('open')) pintarRutaCobranza();
     const ventas = DB.ventas.map(v=>({ v, k:calc(v) }));
     const periodos=[...new Set(DB.ventas.map(v=>v.periodo))].filter(Boolean).sort().reverse();
     fillSelect($('vnt-filtro-periodo'), [{v:'',l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
