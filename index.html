@@ -11756,7 +11756,7 @@ function buildFilterTable(cfg){
   // `canal` separa MAYORISTA de MINORISTA: desde que se cargaron los ~31 corralones revendedores
   // (06/08) el pipeline mezcla dos negocios muy distintos, y sin este filtro Sofía no puede
   // trabajar una tanda sin tropezarse con la otra.
-  let filtro = {estado:'', producto:'', zona:'', origen:'', canal:''};
+  let filtro = {estado:'', producto:'', zona:'', origen:'', canal:'', tipoActividad:''};
   // Los leads Confirmados (ya se convirtieron en venta) y Perdidos no "requieren seguimiento" — quedan
   // archivados y ocultos del listado/tablero por defecto, para que Sofía solo vea lo que sigue en gestión.
   // "Ver archivados" los vuelve a mostrar; elegir el estado a mano en el filtro también los muestra.
@@ -11819,6 +11819,8 @@ function buildFilterTable(cfg){
     // "Minorista Descuento 10.5%"): se matchea por substring para que las dos caigan en su canal.
     if(filtro.canal) leads=leads.filter(l=>{ const c=String(l.categoria||'').toUpperCase();
       return filtro.canal==='MAYORISTA' ? c.includes('MAYORISTA') : (c.includes('MINORISTA') || !c); });
+    // Filtro por tipo de actividad: si el tipo elegido está EN CUALQUIER actividad sin resolver del lead
+    if(filtro.tipoActividad) leads=leads.filter(l=>(l.seguimiento||[]).some(a=>!a.resuelta && (a.tipo||'otra')===filtro.tipoActividad));
     // KPIs
     const activos=leads.filter(l=>ACTIVOS.includes(l.estado));
     const valorPipe=activos.reduce((a,l)=>a+num(l.monto),0);
@@ -11873,10 +11875,11 @@ function buildFilterTable(cfg){
       sel('crm-f-producto','Producto',filtro.producto, productos.map(p=>[p,p])) +
       sel('crm-f-zona','Zona',filtro.zona, zonas.map(z=>[z,zLabel(z)])) +
       sel('crm-f-origen','Origen',filtro.origen, origenes.map(o=>[o,o])) +
-      (filtro.estado||filtro.producto||filtro.zona||filtro.origen||filtro.canal ? '<button class="cmp-rowbtn" id="crm-f-limpiar">✕ Limpiar filtros</button>' : '');
-    [['crm-f-canal','canal'],['crm-f-estado','estado'],['crm-f-producto','producto'],['crm-f-zona','zona'],['crm-f-origen','origen']].forEach(([id,key])=>{
+      sel('crm-f-tipoactividad','Actividad',filtro.tipoActividad, TIPOS_ACTIVIDAD.map(t=>[t.k,t.l])) +
+      (filtro.estado||filtro.producto||filtro.zona||filtro.origen||filtro.canal||filtro.tipoActividad ? '<button class="cmp-rowbtn" id="crm-f-limpiar">✕ Limpiar filtros</button>' : '');
+    [['crm-f-canal','canal'],['crm-f-estado','estado'],['crm-f-producto','producto'],['crm-f-zona','zona'],['crm-f-origen','origen'],['crm-f-tipoactividad','tipoActividad']].forEach(([id,key])=>{
       const el=$(id); if(el) el.onchange=()=>{ filtro[key]=el.value; render(); }; });
-    if($('crm-f-limpiar')) $('crm-f-limpiar').onclick=()=>{ filtro={estado:'',producto:'',zona:'',origen:'',canal:''}; render(); };
+    if($('crm-f-limpiar')) $('crm-f-limpiar').onclick=()=>{ filtro={estado:'',producto:'',zona:'',origen:'',canal:'',tipoActividad:''}; render(); };
   }
   function bindAcciones(root){
     root.querySelectorAll('[data-act]').forEach(el=> el.onclick=()=>{ const l=DB.leads.find(x=>x._uid==el.dataset.id); if(!l)return; const a=el.dataset.act;
