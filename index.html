@@ -1014,7 +1014,7 @@
         <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--blue)"></span>Viajes armados — carga por camión</h2>
         <div class="asof" id="pe-viajes-asof"></div>
         <div id="pe-viajes"></div>
-        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.<br><b>🖱️ Arrastrá un cliente</b> de un viaje a otro para reprogramarlo (toma el día, el transportista y el camión del viaje donde lo soltás), soltalo en <b>«Camión aparte»</b> para separarlo en su propio viaje del mismo día, o <b>arrastrá el título del camión (⠿ 🚚)</b> para mover el viaje COMPLETO a otro viaje.<br>Los viajes van ordenados por <b>fecha más próxima</b>, con el <b>nombre del día</b>, y separados en <b>atrasados · esta semana (lunes a domingo) · más adelante · sin fecha</b>. El día se toma del campo <b>Día de entrega</b> del pedido: si no está cargado como fecha (<b>dd/mm/aa</b>), el viaje se muestra igual pero cae al final, en «sin fecha».</p>
+        <p class="note">Agrupa los pedidos pendientes por <b>transportista + día</b> y suma los pallets de cada viaje contra la <b>capacidad del camión</b> (se configura en ⚙️ Parámetros → Logística). Sirve para llenar el camión al máximo: si sobra lugar, sumás otro cliente para el mismo día; si se pasa, hay que dividir el viaje.<br><b>🖱️ Arrastrá un cliente</b> de un viaje a otro para reprogramarlo (toma el día, el transportista y el camión del viaje donde lo soltás), soltalo en <b>«Camión aparte»</b> para separarlo en su propio viaje del mismo día, o <b>arrastrá el título del camión (⠿ 🚚)</b> sobre otro viaje para cambiar el <b>ORDEN DE SALIDA</b> (qué viaje sale primero) — no los junta, solo los reordena; entre días distintos manda el calendario.<br>Los viajes van ordenados por <b>fecha más próxima</b>, con el <b>nombre del día</b>, y separados en <b>atrasados · esta semana (lunes a domingo) · más adelante · sin fecha</b>. El día se toma del campo <b>Día de entrega</b> del pedido: si no está cargado como fecha (<b>dd/mm/aa</b>), el viaje se muestra igual pero cae al final, en «sin fecha».</p>
       </section>
       <section>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -14838,8 +14838,10 @@ function buildFilterTable(cfg){
     const dd=d=>d.getTime();
     // cuándo: 0 atrasado · 1 hoy · 2 mañana · 3 resto de esta semana · 4 más adelante · 5 sin fecha
     const cuando=f=> !f ? 5 : dd(f)<dd(hoy0) ? 0 : dd(f)===dd(hoy0) ? 1 : dd(f)===dd(manana) ? 2 : dd(f)<=dd(finSemana) ? 3 : 4;
+    // El orden dentro de la misma banda y fecha respeta la PRIORIDAD puesta a mano (arrastrando un
+    // viaje arriba de otro). Sin prioridad cargada, empatan (9e12) y queda el orden de siempre.
     const viajes=Object.values(g).map(v=>{ v.f=fechaDeDia(v.dia); v.c=cuando(v.f); return v; })
-      .sort((a,b)=> a.c-b.c || (a.f&&b.f ? dd(a.f)-dd(b.f) : 0) || String(a.tr).localeCompare(String(b.tr)));
+      .sort((a,b)=> a.c-b.c || (a.f&&b.f ? dd(a.f)-dd(b.f) : 0) || prioridadDe(a)-prioridadDe(b) || String(a.tr).localeCompare(String(b.tr)));
     const enSemana=viajes.filter(v=>v.c<=3).length;
     const asof=$('pe-viajes-asof');
     if(asof) asof.textContent = viajes.length
@@ -14918,7 +14920,7 @@ function buildFilterTable(cfg){
     });
     cont.querySelectorAll('.pe-viaje[data-vidx]').forEach(el=> alDrop(el,
       p=>moverPedidoAViaje(p, viajes[+el.dataset.vidx]),
-      vOri=>moverViajeAViaje(vOri, viajes[+el.dataset.vidx])));
+      vOri=>reordenarViaje(vOri, viajes[+el.dataset.vidx], viajes)));
     if(zonaNuevo) alDrop(zonaNuevo, p=>separarACamionAparte(p));
     function trjViaje(v,vi){
       const cap=capacidadDe(v.tr), libre=cap>0?(cap-v.pallets):0, pct=cap>0?Math.min(100, v.pallets/cap*100):0;
@@ -14951,8 +14953,9 @@ function buildFilterTable(cfg){
       return '<div class="pe-viaje '+CHIP[v.c].k+'" data-vidx="'+vi+'" style="border:1px solid var(--border);border-left:4px solid '+col+';border-radius:12px;padding:10px 14px;margin-bottom:10px;background:var(--card,#fff)">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
           chipDia(v)+
-          // El título del camión es la MANIJA para arrastrar el viaje completo a otro viaje.
-          '<div draggable="true" data-vgrab="'+vi+'" title="Arrastrá el VIAJE COMPLETO a otro viaje" style="font-weight:800;font-size:14px;cursor:grab"><span style="color:var(--muted)">⠿</span> 🚚 '+esc(v.tr)+(v.nv>1?' · Viaje '+v.nv:'')+' </div>'+
+          // El título del camión es la MANIJA para arrastrar el viaje completo y cambiar su ORDEN
+          // de salida (soltarlo sobre otro viaje lo pone en ese lugar de la lista, sin juntarlos).
+          '<div draggable="true" data-vgrab="'+vi+'" title="Arrastrá el viaje sobre otro para cambiar el ORDEN de salida (no los junta)" style="font-weight:800;font-size:14px;cursor:grab"><span style="color:var(--muted)">⠿</span> 🚚 '+esc(v.tr)+(v.nv>1?' · Viaje '+v.nv:'')+' </div>'+
           '<div style="margin-left:auto;font-weight:800;font-size:14px;color:'+col+'">'+v.pallets+(cap>0?(' / '+cap):'')+' pallet'+(v.pallets!==1?'s':'')+'</div>'+
         '</div>'+
         (cap>0?'<div class="progress" style="height:10px;margin:6px 0"><i style="width:'+pct+'%;background:'+col+'"></i></div>':'<div style="height:6px"></div>')+
@@ -14986,18 +14989,45 @@ function buildFilterTable(cfg){
     sellarYGuardar(p);
     return true;
   }
-  // Mover el VIAJE COMPLETO (arrastrando el título del camión): todas sus entregas pasan juntas al
-  // día + transportista + camión del destino, por el MISMO camino que una entrega suelta
-  // (moverPedidoAViaje, una por una). Con confirmación: son varios pedidos de un saque y un mal
-  // soltado se notaría menos que con uno solo.
-  function moverViajeAViaje(vOri, vDest){
-    if(!vOri || !vDest || vOri===vDest || !Array.isArray(vOri.peds) || !vOri.peds.length || !Array.isArray(vDest.peds)) return false;
-    const destTxt=(vDest.dia==='Sin fecha'?'sin fecha':vDest.dia)+' · '+(vDest.tr||'Sin asignar')+(vDest.nv>1?' · Viaje '+vDest.nv:'');
-    if(!confirm('Vas a mover el viaje COMPLETO ('+vOri.peds.length+' entrega'+(vOri.peds.length!==1?'s':'')+') a: '+destTxt+'\n\n'+
-      vOri.peds.map(p=>'• '+(p.cliente||'—')).join('\n')+'\n\n¿Confirmar?')) return false;
-    let alguno=false;
-    vOri.peds.slice().forEach(p=>{ if(moverPedidoAViaje(p, vDest)) alguno=true; });
-    return alguno;
+  // ---------- ORDEN DE SALIDA de los viajes (arrastrar un camión arriba de otro) ----------
+  // Pedido de Marcelo (09/09, 2ª corrección): arrastrar el camión completo NO junta las entregas —
+  // "ordenarlos sin juntarlos": establece qué viaje sale primero y cuál después. El viaje arrastrado
+  // se INSERTA en el lugar del otro y toda la lista se renumera de a 10.
+  // La prioridad vive en CADA PEDIDO (viajePrioridad): el viaje no tiene documento propio, es un
+  // agrupado derivado. Prioridad del viaje = la menor de sus pedidos; sin ninguna, 9e12 (empatan y
+  // manda el orden de siempre). ⚠️ 9e12 y no Infinity: Infinity−Infinity da NaN y rompe el sort.
+  function prioridadDe(v){
+    let m=9e12;
+    (v&&v.peds||[]).forEach(p=>{ const n=Math.round(num(p&&p.viajePrioridad)); if(n>0&&n<m) m=n; });
+    return m;
+  }
+  // Se escribe SOLO ese campo (setDoc merge): un reordenamiento no puede pisar lo que otro usuario
+  // esté editando del pedido. También se actualiza la copia local: el snapshot tarda y el render
+  // inmediato ya tiene que salir en el orden nuevo.
+  function guardarPrioridad(p, val){
+    p.viajePrioridad=val;
+    const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',p._uid), {viajePrioridad:val}, {merge:true}).catch(e=>alert('Error al guardar el orden: '+e.message));
+  }
+  function reordenarViaje(vOri, vDest, lista){
+    if(!vOri || !vDest || vOri===vDest || !Array.isArray(lista)) return false;
+    // Entre fechas distintas manda el CALENDARIO (las bandas ATRASADO/HOY/MAÑANA son semánticas):
+    // el orden a mano solo compite entre viajes del mismo día, o entre los que están sin fecha.
+    if(vOri.c!==vDest.c || (vOri.f&&vDest.f&&vOri.f.getTime()!==vDest.f.getTime())){
+      alert('El orden a mano vale entre viajes del MISMO día (o entre los que están sin fecha): entre días distintos manda el calendario. Para cambiar la cronología de ese viaje, cambiale el día de entrega.');
+      return false;
+    }
+    const orden=lista.slice();
+    const iO=orden.indexOf(vOri), iD=orden.indexOf(vDest);
+    if(iO<0 || iD<0) return false;
+    orden.splice(iO,1);
+    let at=orden.indexOf(vDest);
+    if(iO===iD-1) at=at+1;   // ya estaba justo arriba del destino: pasa justo abajo (swap), no un no-op
+    orden.splice(at,0,vOri);
+    // Renumerar TODA la lista de a 10 y escribir solo los pedidos cuyo número cambió.
+    let cambios=0;
+    orden.forEach((v,i)=>{ const val=(i+1)*10;
+      (v.peds||[]).forEach(p=>{ if(Math.round(num(p.viajePrioridad))!==val){ guardarPrioridad(p,val); cambios++; } }); });
+    return cambios>0;
   }
   // Camión APARTE: mismo día y transportista que ya tiene, pero en su propio viaje (n° nuevo).
   function separarACamionAparte(p){
