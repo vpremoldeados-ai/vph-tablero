@@ -1136,6 +1136,7 @@
           <h3 style="margin:0">🔩 Topes de estacionamiento — playas de Córdoba</h3>
           <button class="cmp-x" id="crm-topes-cerrar" style="margin-left:auto" title="Ocultar la lista de topes">✕</button>
         </div>
+        <input type="text" class="search-box" id="topes-buscar" placeholder="Buscar por lugar, rubro, zona, teléfono, email..." style="margin:0 0 10px;width:100%;max-width:420px">
         <div id="crm-topes-controles"></div>
         <!-- La tabla queda FIJA (no la recrea drawTopes) para que window.__ordenable pueda guardar
              el orden elegido en el propio <table> — si se recreara en cada render, el clic en un
@@ -7356,6 +7357,7 @@ function buildFilterTable(cfg){
   // propio documento, sin colección aparte, y se escriben con SOLO esos campos (nunca el documento
   // entero, por si otro usuario está editando la venta a la vez).
   let rutaFechaSel = hoyISO;
+  let mostrarExcluidosCobranza = false;
   function persistCobranza(uid, campos){
     const i=DB.ventas.findIndex(x=>x._uid===uid); if(i<0) return;
     Object.assign(DB.ventas[i], campos);
@@ -7363,7 +7365,11 @@ function buildFilterTable(cfg){
     else saveLocal();
     render();
   }
-  function candidatosCobranza(){ return DB.ventas.filter(v=> calc(v).saldo>0.5); }
+  // Excluye las marcadas cobranzaExcluida: son ventas con saldo que NO se cobran yendo a visitar
+  // (transferencia, cliente grande que paga solo, etc.) y no tiene sentido que ensucien "＋ Agregar a
+  // la ruta". Es solo una preferencia de ESTA lista — la venta sigue como venta con saldo pendiente
+  // en todos lados (Ventas, Finanzas, Caja): nunca se usa `calc`/saldo de esto para otra cosa.
+  function candidatosCobranza(){ return DB.ventas.filter(v=> calc(v).saldo>0.5 && !v.cobranzaExcluida); }
   // Dirección y teléfono de una venta: misma búsqueda que ya usa remitoObjDeVenta (por CUIT y si no
   // por nombre exacto), para no tener dos criterios de match de cliente en el mismo módulo.
   function contactoDeVenta(v){
@@ -7374,57 +7380,144 @@ function buildFilterTable(cfg){
     const tel = cli.telefono || (window.__telefonoLead?window.__telefonoLead(v.cliente):'') || '';
     return { direccion: dom||'', telefono: tel||'' };
   }
+  // Mismo criterio de normalización que ya usan CRM/Producción para el link de WhatsApp (no se
+  // comparte código entre módulos — son IIFE distintas, ver §3 — pero es la misma regla).
+  function waLinkDe(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d) return null;
+    if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; }
+  // TODAS las ventas asignadas a un día, cobradas o no — a diferencia de candidatosCobranza(), que
+  // solo trae las que TODAVÍA tienen saldo. Una parada ya cobrada sigue en la ruta (resaltada), así
+  // que "está en la ruta de este día" no puede filtrar por saldo.
+  function paradasDe(fecha){ return DB.ventas.filter(v=>v.cobranzaFecha===fecha); }
+  // Recibo desde la Ruta de cobranza: si la venta TODAVÍA tiene saldo, imprime una vista previa con
+  // ese saldo — para entregar en mano en el momento — SIN guardar nada; el ingreso a caja recién se
+  // genera al tocar "✅ Cobrado". Si ya está cobrada, imprime el recibo real con los cobros que de
+  // verdad se guardaron (así sirve también para reimprimirlo).
+  function imprimirReciboRuta(v){
+    if(!window.__imprimir||!window.__imprimir.recibo){ alert('Módulo de Documentos no disponible.'); return; }
+    const k=calc(v);
+    if(k.saldo>0.5){
+      const vPrev={...v, cobros:[...(v.cobros||[]), {fecha:hoyISO, medio:v.cobranzaMedio||'', monto:k.saldo}]};
+      window.__imprimir.recibo(vPrev);
+    } else window.__imprimir.recibo(v);
+  }
+  // Deshacer un "✅ Cobrado" apretado por error: saca el ÚLTIMO cobro registrado (el que la dejó en
+  // $0 y la resaltó) — mismo criterio que el ✕ de cada línea en el formulario de cobro normal
+  // (revertir/eliminar), solo que acá no hay que salir de la Ruta a buscarlo. Si era un cheque,
+  // también se borra el vínculo en el módulo Cheques (mismo criterio que ese ✕).
+  function revertirCobroRuta(v){
+    const cobros=(v.cobros||[]).slice();
+    if(!cobros.length){ alert('Esta venta no tiene cobros registrados.'); return; }
+    const last=cobros[cobros.length-1];
+    if(!confirm('¿Revertir el cobro de '+money(num(last.monto))+' ('+(last.medio||'—')+', '+fmtFecha(last.fecha)+')?\n\nEl cliente vuelve a figurar con saldo pendiente en la ruta.')) return;
+    cobros.pop();
+    persistCobros(v._uid, cobros);
+    if(last.id && esCheque(last.medio) && window.__deleteChequeCobro) window.__deleteChequeCobro(last.id);
+    setTimeout(pintarRutaCobranza,120);
+  }
   function openRutaCobranza(){ rutaFechaSel = rutaFechaSel || hoyISO; pintarRutaCobranza(); $('vnt-modal-cobranza').classList.add('open'); }
   function pintarRutaCobranza(){
     const box=$('vnt-form-cobranza');
-    const todas=candidatosCobranza();
-    const enRuta=todas.filter(v=>v.cobranzaFecha===rutaFechaSel).sort((a,b)=>num(a.cobranzaOrden)-num(b.cobranzaOrden));
-    const fueraRuta=todas.filter(v=>v.cobranzaFecha!==rutaFechaSel);
-    const totRuta=enRuta.reduce((a,v)=>a+calc(v).saldo,0);
+    const enRuta=paradasDe(rutaFechaSel).sort((a,b)=>num(a.cobranzaOrden)-num(b.cobranzaOrden));
+    // cobranzaPrioridad es un orden PROPIO de esta lista (a quién considerar primero), sin tocar
+    // cobranzaOrden (que es de la ruta) ni nada relacionado a estar o no asignado a un día. Antes de
+    // que alguien arrastre algo, todos comparan en 0 → sort estable → queda el orden de siempre.
+    const fueraRuta=candidatosCobranza().filter(v=>v.cobranzaFecha!==rutaFechaSel)
+      .sort((a,b)=>num(a.cobranzaPrioridad)-num(b.cobranzaPrioridad));
+    // Cobrada = ya no tiene saldo (se registró el cobro real desde el botón ✅ Cobrado). Sigue en la
+    // ruta, resaltada, hasta que alguien la saque a propósito — no desaparece sola.
+    const cobradas=enRuta.filter(v=>calc(v).estado==='cobrado');
+    const pendientes=enRuta.filter(v=>calc(v).estado!=='cobrado');
+    const totPend=pendientes.reduce((a,v)=>a+calc(v).saldo,0);
 
     let h='<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Elegí el día de la ruta, agregá los clientes que vas a visitar '+
       '(coordinalo antes vos con cada uno) y anotá si le vas a cobrar en <b>efectivo</b> o <b>cheque</b>. '+
-      'Al cobrar desde acá, el recibo se genera solo.</p>'+
+      'Arrastrá las paradas para reordenarlas. El 🖨️ Recibo es solo para entregar en mano — el ingreso '+
+      'a la caja se genera recién al tocar <b>✅ Cobrado</b>.</p>'+
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">'+
         '<label style="font-size:12.5px;font-weight:700">📅 Día de la ruta</label>'+
         '<input type="date" id="rc-fecha" value="'+esc(rutaFechaSel)+'">'+
       '</div>';
 
     if(enRuta.length){
-      h+='<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">🧭 Ruta de '+fmtFecha(rutaFechaSel)+' ('+enRuta.length+' parada'+(enRuta.length!==1?'s':'')+' · '+money(totRuta)+')</div>';
-      enRuta.forEach((v,i)=>{ const k=calc(v); const ct=contactoDeVenta(v);
-        h+='<div class="pe-ruta" data-uid="'+esc(v._uid)+'">'+
-          '<div class="pe-ruta-h"><span class="pe-ruta-n">'+(i+1)+'</span><span style="flex:1"><b>'+esc(v.cliente||'—')+'</b>'+
-            ' <span style="font-weight:400;color:var(--muted)">· '+esc(v.cobranzaMedio||'—')+'</span></span>'+
+      h+='<div style="font-size:12.5px;font-weight:800;margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+        '<span>🧭 Ruta de '+fmtFecha(rutaFechaSel)+' ('+enRuta.length+' parada'+(enRuta.length!==1?'s':'')+
+          (cobradas.length?' · '+cobradas.length+' cobrada'+(cobradas.length!==1?'s':''):'')+' · '+money(totPend)+' pendiente)</span>'+
+        (cobradas.length?'<button class="cmp-rowbtn" id="rc-sacar-cobradas">🗑️ Sacar los cobrados ('+cobradas.length+')</button>':'')+
+        '<button class="cmp-rowbtn" id="rc-vaciar-ruta">🗑️ Vaciar la ruta completa</button>'+
+        '</div>';
+      enRuta.forEach((v,i)=>{ const k=calc(v), ct=contactoDeVenta(v), wa=waLinkDe(ct.telefono), cobrada=k.estado==='cobrado';
+        h+='<div class="pe-ruta" draggable="true" data-uid="'+esc(v._uid)+'" style="'+(cobrada?'background:rgba(34,197,94,.10)':'')+'">'+
+          '<div class="pe-ruta-h" style="cursor:grab" title="Arrastrá para reordenar"><span class="pe-ruta-n">'+(i+1)+'</span><span style="flex:1"><b>'+esc(v.cliente||'—')+'</b>'+
+            ' <span style="font-weight:400;color:var(--muted)">· '+esc(v.cobranzaMedio||'—')+'</span>'+
+            (cobrada?' <span style="color:var(--green);font-weight:800">✓ COBRADO</span>':'')+'</span>'+
             '<span class="pe-qty-move"><button data-up="'+i+'"'+(i===0?' disabled':'')+' title="Ir antes">▲</button>'+
             '<button data-down="'+i+'"'+(i===enRuta.length-1?' disabled':'')+' title="Ir después">▼</button></span>'+
             '<button class="cmp-rowbtn" data-quitar="'+esc(v._uid)+'" title="Sacar de la ruta">✕</button></div>'+
           '<div class="pe-ruta-body" style="font-size:12.5px">'+
             '<div>📍 '+(ct.direccion?esc(ct.direccion):'<span style="color:var(--amber)">sin dirección — completar en la ficha del cliente</span>')+'</div>'+
-            '<div>📞 '+(ct.telefono?esc(ct.telefono):'<span style="color:var(--amber)">sin teléfono en la ficha</span>')+'</div>'+
-            '<div>💰 A cobrar: <b>'+money(k.saldo)+'</b></div>'+
-            '<button class="cmp-btn cmp-btn-primary" data-cobrar="'+esc(v._uid)+'" style="width:100%;margin-top:6px">💰 Cobrar y generar recibo</button>'+
+            '<div>📞 '+(ct.telefono?('<a href="'+wa+'" target="_blank" style="color:inherit">'+esc(ct.telefono)+' 💬</a>'):'<span style="color:var(--amber)">sin teléfono en la ficha</span>')+'</div>'+
+            (cobrada?'<div>💰 Cobrado: <b style="color:var(--green)">'+money(k.cobrado)+'</b></div>'
+                    :'<div>💰 A cobrar: <b>'+money(k.saldo)+'</b></div>')+
+            '<div style="display:flex;gap:6px;margin-top:6px">'+
+              '<button class="cmp-btn" data-recibo="'+esc(v._uid)+'" style="flex:1">🖨️ Recibo</button>'+
+              (cobrada?'<button class="cmp-btn" data-revertir="'+esc(v._uid)+'" style="flex:1;color:var(--red)" title="Por si se apretó Cobrado por error">↩️ Revertir</button>'
+                      :'<button class="cmp-btn cmp-btn-primary" data-cobrado="'+esc(v._uid)+'" style="flex:1">✅ Cobrado</button>')+
+            '</div>'+
           '</div></div>'; });
     } else {
       h+='<p style="color:var(--muted);font-size:13px;padding:6px 0">Todavía no armaste la ruta de este día.</p>';
     }
 
+    // Excluida = una venta con saldo que NO se cobra yendo a visitar (transferencia, cliente que paga
+    // solo, etc.) y no tiene sentido que aparezca en "＋ Agregar a la ruta". Solo afecta ESTA lista —
+    // sigue como venta con saldo pendiente en Ventas/Finanzas/Caja igual que siempre.
+    const excluidos=DB.ventas.filter(v=>v.cobranzaExcluida && calc(v).saldo>0.5);
+
     h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px">＋ Agregar a la ruta — ventas con saldo pendiente</div>';
     if(fueraRuta.length){
-      h+='<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
-        '<div id="rc-lista-agregar">'+fueraRuta.map(v=>{ const k=calc(v);
-          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px" data-nombre="'+esc((v.cliente||'').toUpperCase())+'">'+
-            '<span style="font-size:12.5px">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+(v.cobranzaFecha?' · en ruta del '+fmtFecha(v.cobranzaFecha):'')+'</span></span>'+
-            '<span style="display:flex;gap:4px"><button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
-            '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="'+esc(MEDIO_CHEQUE)+'">🏦 Cheque</button></span></div>'; }).join('')+
+      h+='<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px">Arrastrá para ordenar esta lista a tu gusto (no afecta ninguna ruta). '+
+        '<span style="color:var(--amber);font-weight:700">Resaltado en ámbar</span>: ya tiene una fecha programada en otro día. '+
+        'La ✕ saca un cliente de ESTA lista (no lo cobra por acá) sin tocar la venta.</p>'+
+        '<input type="text" id="rc-buscar" placeholder="Buscar cliente..." class="search-box" style="margin:0 0 8px;width:100%">'+
+        // El campo de fecha por fila deja asignar el día YA coordinado con ese cliente sin tocar el
+        // selector de arriba (que solo cambia qué ruta se está mirando). Precargado con la fecha que
+        // ya tenga (si estaba en otra ruta) o si no con la que se está viendo, para no forzar a
+        // retipearla en el caso más común (agregar al día de hoy).
+        '<div id="rc-lista-agregar">'+fueraRuta.map(v=>{ const k=calc(v), yaProgramado=!!v.cobranzaFecha;
+          return '<div draggable="true" data-uid="'+esc(v._uid)+'" data-nombre="'+esc((v.cliente||'').toUpperCase())+'" '+
+            'style="border:1px solid '+(yaProgramado?'var(--amber)':'var(--border)')+';border-radius:8px;margin-bottom:6px;overflow:hidden'+
+            (yaProgramado?';background:rgba(245,158,11,.08)':'')+'">'+
+            '<div style="display:flex;gap:6px;align-items:center;padding:6px 8px 0;cursor:grab" title="Arrastrá para reordenar esta lista">'+
+              '<span style="color:var(--muted)">⠿</span>'+
+              '<span style="font-size:12.5px;flex:1">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+'</span>'+
+              (yaProgramado?' <b style="color:var(--amber)">· ya programado: '+fmtFecha(v.cobranzaFecha)+'</b>':'')+
+              '</span>'+
+              '<button class="cmp-rowbtn" data-excluir="'+esc(v._uid)+'" title="Sacar de esta lista (no toca la venta)">✕</button>'+
+              '</div>'+
+            '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding:6px 8px">'+
+              '<input type="date" class="rc-fecha-fila" data-uid="'+esc(v._uid)+'" value="'+esc(v.cobranzaFecha||rutaFechaSel)+'" title="Día para este cliente" style="font-size:12px;padding:3px 4px">'+
+              '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="Efectivo">💵 Efectivo</button>'+
+              '<button class="cmp-rowbtn" data-agregar="'+esc(v._uid)+'" data-medio="'+esc(MEDIO_CHEQUE)+'">🏦 Cheque</button>'+
+            '</div></div>'; }).join('')+
         '</div>';
     } else {
       h+='<p style="color:var(--green);font-size:13px;padding:6px 0">✅ No quedan ventas con saldo pendiente fuera de esta ruta.</p>';
     }
+    if(excluidos.length){
+      h+='<button class="cmp-rowbtn" id="rc-ver-excluidos" style="margin:4px 0 8px">'+
+        (mostrarExcluidosCobranza?'▲':'▼')+' '+excluidos.length+' cliente'+(excluidos.length!==1?'s':'')+' excluido'+(excluidos.length!==1?'s':'')+' de esta lista</button>';
+      if(mostrarExcluidosCobranza){
+        h+='<div id="rc-lista-excluidos">'+excluidos.map(v=>{ const k=calc(v);
+          return '<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px dashed var(--border);border-radius:8px;margin-bottom:6px;color:var(--muted)">'+
+            '<span style="font-size:12.5px">'+esc(v.cliente||'—')+' <span>· '+money(k.saldo)+'</span></span>'+
+            '<button class="cmp-rowbtn" data-restaurar="'+esc(v._uid)+'">↩️ Volver a ofrecer</button></div>'; }).join('')+
+        '</div>';
+      }
+    }
 
     h+='<div class="cmp-form-foot">'+
       '<button class="cmp-btn" id="rc-cerrar">Cerrar</button>'+
-      (enRuta.length?'<button class="cmp-btn" id="rc-imprimir">🖨️ Imprimir hoja de ruta</button>':'')+
+      (pendientes.length?'<button class="cmp-btn" id="rc-imprimir">🖨️ Imprimir hoja de ruta</button>':'')+
       '</div>';
     box.innerHTML=h;
 
@@ -7432,29 +7525,95 @@ function buildFilterTable(cfg){
     const buscar=$('rc-buscar');
     if(buscar) buscar.addEventListener('input',()=>{ const q=buscar.value.trim().toUpperCase();
       box.querySelectorAll('#rc-lista-agregar > div').forEach(el=> el.style.display = (!q||el.dataset.nombre.indexOf(q)>=0)?'':'none'); });
+    // Arrastrar dentro de "＋ Agregar a la ruta" reordena SOLO esa lista (cobranzaPrioridad) — es una
+    // prioridad personal para decidir a quién considerar primero, no toca ninguna ruta ni pisa
+    // cobranzaOrden. Contenedor propio (#rc-lista-agregar) para no chocar con el arrastre de la ruta.
+    let dragUidCand=null;
+    box.querySelectorAll('#rc-lista-agregar > div[draggable]').forEach(el=>{
+      el.addEventListener('dragstart', e=>{ dragUidCand=el.dataset.uid; e.dataTransfer.effectAllowed='move'; el.style.opacity='.4'; });
+      el.addEventListener('dragend', ()=>{ el.style.opacity=''; dragUidCand=null; });
+      el.addEventListener('dragover', e=> e.preventDefault());
+      el.addEventListener('drop', e=>{ e.preventDefault();
+        const destUid=el.dataset.uid; if(!dragUidCand || dragUidCand===destUid) return;
+        const ord=fueraRuta.map(x=>x._uid); const from=ord.indexOf(dragUidCand); if(from<0) return;
+        const rect=el.getBoundingClientRect(), before=(e.clientY-rect.top)<rect.height/2;
+        let to=ord.indexOf(destUid); if(!before) to++;
+        ord.splice(from,1); if(from<to) to--;
+        ord.splice(to,0,dragUidCand);
+        ord.forEach((uid,i)=> persistCobranza(uid,{cobranzaPrioridad:(i+1)*10}));
+        setTimeout(pintarRutaCobranza,120); });
+    });
 
+    box.querySelectorAll('button[data-excluir]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.excluir); if(!v) return;
+      if(!confirm('¿Sacar a '+(v.cliente||'—')+' de esta lista?\n\nNo se cobra por acá, pero la venta sigue con su saldo pendiente en Ventas y Finanzas. Se puede volver a ofrecer cuando quieras.')) return;
+      persistCobranza(v._uid,{cobranzaExcluida:true});
+      setTimeout(pintarRutaCobranza,120); });
+    const verExc=$('rc-ver-excluidos'); if(verExc) verExc.onclick=()=>{ mostrarExcluidosCobranza=!mostrarExcluidosCobranza; pintarRutaCobranza(); };
+    box.querySelectorAll('button[data-restaurar]').forEach(b=> b.onclick=()=>{
+      persistCobranza(b.dataset.restaurar,{cobranzaExcluida:false});
+      setTimeout(pintarRutaCobranza,120); });
     box.querySelectorAll('button[data-agregar]').forEach(b=> b.onclick=()=>{
-      const orden=(enRuta.length+1)*10;
-      persistCobranza(b.dataset.agregar, {cobranzaFecha:rutaFechaSel, cobranzaMedio:b.dataset.medio, cobranzaOrden:orden});
+      // La fecha sale del input de la propia fila (permite asignar un día YA coordinado, distinto
+      // del que se está mirando arriba). El orden se cuenta contra TODA la ruta de ESE día (cobrada
+      // o no) — si no, un cliente agregado a otro día podía heredar un número de orden ya ocupado.
+      const fi=box.querySelector('input.rc-fecha-fila[data-uid="'+b.dataset.agregar+'"]');
+      const fecha=(fi&&fi.value)||rutaFechaSel;
+      const orden=(paradasDe(fecha).length+1)*10;
+      persistCobranza(b.dataset.agregar, {cobranzaFecha:fecha, cobranzaMedio:b.dataset.medio, cobranzaOrden:orden});
       setTimeout(pintarRutaCobranza,120); });
     box.querySelectorAll('button[data-quitar]').forEach(b=> b.onclick=()=>{
       persistCobranza(b.dataset.quitar, {cobranzaFecha:'', cobranzaMedio:'', cobranzaOrden:''});
       setTimeout(pintarRutaCobranza,120); });
     // ▲▼: se intercambia el nº de orden entre las dos paradas vecinas (mismo criterio que la Ruta de
-    // compra de Insumos).
+    // compra de Insumos) — se deja como alternativa al arrastre, para cuando es más cómodo un click.
     const mover=(i,j)=>{ if(j<0||j>=enRuta.length) return;
       const a=enRuta[i], b2=enRuta[j], oa=num(a.cobranzaOrden), ob=num(b2.cobranzaOrden);
       persistCobranza(a._uid,{cobranzaOrden:ob}); persistCobranza(b2._uid,{cobranzaOrden:oa});
       setTimeout(pintarRutaCobranza,120); };
     box.querySelectorAll('button[data-up]').forEach(b=> b.onclick=()=> mover(+b.dataset.up, +b.dataset.up-1));
     box.querySelectorAll('button[data-down]').forEach(b=> b.onclick=()=> mover(+b.dataset.down, +b.dataset.down+1));
-    box.querySelectorAll('button[data-cobrar]').forEach(b=> b.onclick=()=>{
-      const v=DB.ventas.find(x=>x._uid===b.dataset.cobrar); if(!v) return;
+    // Arrastrar una parada la mueve a upo/después de donde se suelta (según la mitad de la fila
+    // sobre la que se soltó) y reordena TODA la ruta del día en pantalla, de punta a punta.
+    let dragUid=null;
+    box.querySelectorAll('.pe-ruta[draggable]').forEach(el=>{
+      el.addEventListener('dragstart', e=>{ dragUid=el.dataset.uid; e.dataTransfer.effectAllowed='move'; el.style.opacity='.4'; });
+      el.addEventListener('dragend', ()=>{ el.style.opacity=''; dragUid=null; });
+      el.addEventListener('dragover', e=> e.preventDefault());
+      el.addEventListener('drop', e=>{ e.preventDefault();
+        const destUid=el.dataset.uid; if(!dragUid || dragUid===destUid) return;
+        const ord=enRuta.map(x=>x._uid); const from=ord.indexOf(dragUid); if(from<0) return;
+        const rect=el.getBoundingClientRect(), before=(e.clientY-rect.top)<rect.height/2;
+        let to=ord.indexOf(destUid); if(!before) to++;
+        ord.splice(from,1); if(from<to) to--;
+        ord.splice(to,0,dragUid);
+        ord.forEach((uid,i)=> persistCobranza(uid,{cobranzaOrden:(i+1)*10}));
+        setTimeout(pintarRutaCobranza,120); });
+    });
+    // 🖨️ Recibo: imprime nomás, no toca Firestore (ver imprimirReciboRuta).
+    box.querySelectorAll('button[data-recibo]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.recibo); if(v) imprimirReciboRuta(v); });
+    // ✅ Cobrado: abre el cobro real de Ventas (con la cuenta/cheque/lo que corresponda según el
+    // medio) para que quede bien registrado — es EL mismo camino de siempre para cobrar una venta,
+    // solo que ya no imprime el recibo solo al guardar (autoRecibo=false): eso ahora es aparte.
+    box.querySelectorAll('button[data-cobrado]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.cobrado); if(!v) return;
       $('vnt-modal-cobranza').classList.remove('open');
-      openCobro(v, true, v.cobranzaMedio); });
+      openCobro(v, false, v.cobranzaMedio); });
+    box.querySelectorAll('button[data-revertir]').forEach(b=> b.onclick=()=>{
+      const v=DB.ventas.find(x=>x._uid===b.dataset.revertir); if(v) revertirCobroRuta(v); });
+    const scb=$('rc-sacar-cobradas'); if(scb) scb.onclick=()=>{
+      if(!confirm('¿Sacar de la ruta los '+cobradas.length+' clientes ya cobrados?\n\nEl cobro que ya se registró NO se borra, solo se saca de esta lista.')) return;
+      cobradas.forEach(v=> persistCobranza(v._uid,{cobranzaFecha:'',cobranzaMedio:'',cobranzaOrden:''}));
+      setTimeout(pintarRutaCobranza,120); };
+    const vac=$('rc-vaciar-ruta'); if(vac) vac.onclick=()=>{
+      if(!confirm('¿Vaciar toda la ruta del '+fmtFecha(rutaFechaSel)+' ('+enRuta.length+' cliente'+(enRuta.length!==1?'s':'')+')?\n\nLos cobros ya registrados NO se borran, solo se sacan de esta lista.')) return;
+      enRuta.forEach(v=> persistCobranza(v._uid,{cobranzaFecha:'',cobranzaMedio:'',cobranzaOrden:''}));
+      setTimeout(pintarRutaCobranza,120); };
     const imp=$('rc-imprimir'); if(imp) imp.onclick=()=>{
       if(!window.__imprimir||!window.__imprimir.rutaCobranza){ alert('Módulo de Documentos no disponible.'); return; }
-      const paradas=enRuta.map((v,i)=>{ const k=calc(v); const ct=contactoDeVenta(v);
+      // Solo los pendientes: una vez cobrado, ya no hace falta ir a buscarlo.
+      const paradas=pendientes.map((v,i)=>{ const k=calc(v); const ct=contactoDeVenta(v);
         return { orden:i+1, cliente:v.cliente||'', direccion:ct.direccion, telefono:ct.telefono, medio:v.cobranzaMedio||'', monto:k.saldo }; });
       window.__imprimir.rutaCobranza({ fecha:rutaFechaSel, paradas }); };
     $('rc-cerrar').onclick=()=>$('vnt-modal-cobranza').classList.remove('open');
@@ -12634,7 +12793,8 @@ function buildFilterTable(cfg){
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
   const topesAlEnviar=row=> (row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row;
-  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFormAbierto=false;
+  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false;
+  const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   function topesLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function topesSaveLocal(){ try{ localStorage.setItem(TOPES_KEY, JSON.stringify(TOPES)); }catch(e){} }
   // Guarda el array ENTERO (documento chico, mismo criterio que PLANT/PREG) — no hay forma de tocar
@@ -12660,9 +12820,11 @@ function buildFilterTable(cfg){
     // Los controles (filtros, alta manual) SÍ se recrean enteros, no necesitan ese cuidado.
     const controles=$('crm-topes-controles'), tabla=$('topes-tabla'); if(!controles||!tabla) return;
     const rubros=[...new Set(TOPES.map(t=>t.rubro).filter(Boolean))];
+    const qTexto=topesNorm(topesFiltroTexto);
     const filas = TOPES
       .map((t,i)=>({t,i}))
-      .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro));
+      .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro))
+      .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota].some(v=>topesNorm(v).includes(qTexto)));
     const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
     const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
     let hc='<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
@@ -12785,6 +12947,10 @@ function buildFilterTable(cfg){
   }
   const topesCerrarBtn=$('crm-topes-cerrar');
   if(topesCerrarBtn) topesCerrarBtn.onclick=()=>$('crm-topes-panel').style.display='none';
+  // El buscador vive FUERA de #crm-topes-controles (que drawTopes reescribe entero) para no perder
+  // el foco ni el cursor en cada tecla — mismo criterio que crm-buscar/bd-buscar.
+  const topesBuscarInp=$('topes-buscar');
+  if(topesBuscarInp) topesBuscarInp.addEventListener('input', e=>{ topesFiltroTexto=e.target.value; drawTopes(); });
 
   boot();
 })();
