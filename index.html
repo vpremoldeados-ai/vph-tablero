@@ -11970,7 +11970,9 @@ function buildFilterTable(cfg){
     normalizarLeads();
     let leads=DB.leads.slice();
     if(q){ const s=q.toLowerCase(); leads=leads.filter(l=> (l.cliente+' '+l.telefono+' '+l.lugar+' '+resumenPedido(l)).toLowerCase().includes(s)); }
-    renderFiltros(leads);
+    // Los conteos de filtros se calculan ANTES de aplicar los filtros (así aparecen todas las opciones)
+    const leadsParaConteos=leads.slice();
+    renderFiltros(leadsParaConteos);
     if(filtro.estado) leads=leads.filter(l=>(l.estado||'nuevo')===filtro.estado);
     if(filtro.producto) leads=leads.filter(l=>(l.items||[]).some(it=>it&&it.producto===filtro.producto));
     if(filtro.zona) leads=leads.filter(l=>(l.zona||'')===filtro.zona);
@@ -12013,7 +12015,7 @@ function buildFilterTable(cfg){
     const leadsVista = ocultarArchivados ? leads.filter(l=>!ARCHIVADOS.includes(l.estado||'nuevo')) : leads;
     renderSinSegui();
     if(VIEW==='lista') { drawTabla(leadsVista); $('crm-filtro-actividad').style.display='none'; }
-    else { renderFilteroActividadKanban(DB.leads); drawBoard(leadsVista); }
+    else { renderFilteroActividadKanban(leadsParaConteos); drawBoard(leadsVista); }
     const archivados = leads.length - leadsVista.length;
     $('crm-count').textContent = leadsVista.length+' leads'+(archivados?' · '+archivados+' archivados ocultos':'');
     $('crm-ver-archivados').classList.toggle('active', verArchivados);
