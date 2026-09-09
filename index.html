@@ -1145,6 +1145,7 @@
       </div>
       <div id="crm-sinsegui" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.5;color:#7a5b00"></div>
       <div class="filter-bar" id="crm-filtros" style="display:none"></div>
+      <div class="filter-bar" id="crm-filtro-actividad" style="display:none;margin-bottom:16px"></div>
       <div class="kb-board" id="crm-board"></div>
       <div class="tbl-wrap" id="crm-tabla-wrap" style="display:none"><table class="crm-tbl" id="crm-tabla"></table></div>
       <p class="note">Cada lead lleva el pedido, el teléfono con <b>link directo a WhatsApp</b> y el seguimiento. Cuando se confirma, <b>"→ Venta"</b> abre la venta ya cargada con el cliente y los productos (trayendo precios del catálogo). Pensado para recibir automáticamente lo que arma el cotizador de la web (próxima etapa).</p>
@@ -12011,7 +12012,8 @@ function buildFilterTable(cfg){
     const ocultarArchivados = !verArchivados && !filtro.estado;
     const leadsVista = ocultarArchivados ? leads.filter(l=>!ARCHIVADOS.includes(l.estado||'nuevo')) : leads;
     renderSinSegui();
-    if(VIEW==='lista') drawTabla(leadsVista); else drawBoard(leadsVista);
+    if(VIEW==='lista') { drawTabla(leadsVista); $('crm-filtro-actividad').style.display='none'; }
+    else { renderFilteroActividadKanban(DB.leads); drawBoard(leadsVista); }
     const archivados = leads.length - leadsVista.length;
     $('crm-count').textContent = leadsVista.length+' leads'+(archivados?' · '+archivados+' archivados ocultos':'');
     $('crm-ver-archivados').classList.toggle('active', verArchivados);
@@ -12039,6 +12041,36 @@ function buildFilterTable(cfg){
     [['crm-f-canal','canal'],['crm-f-estado','estado'],['crm-f-producto','producto'],['crm-f-zona','zona'],['crm-f-origen','origen'],['crm-f-tipoactividad','tipoActividad']].forEach(([id,key])=>{
       const el=$(id); if(el) el.onchange=()=>{ filtro[key]=el.value; render(); }; });
     if($('crm-f-limpiar')) $('crm-f-limpiar').onclick=()=>{ filtro={estado:'',producto:'',zona:'',origen:'',canal:'',tipoActividad:''}; render(); };
+  }
+  // Filtro de tipo de actividad para el kanban — más prominente que el de la lista
+  function renderFilteroActividadKanban(source){
+    const el=$('crm-filtro-actividad'); if(!el) return;
+    // Contar leads con actividades sin resolver por tipo
+    const conteos={};
+    TIPOS_ACTIVIDAD.forEach(t=>{ conteos[t.k]=0; });
+    source.forEach(l=>{
+      (l.seguimiento||[]).forEach(a=>{
+        if(!a.resuelta){
+          const tipo=a.tipo||'otra';
+          if(conteos[tipo]!==undefined) conteos[tipo]++;
+        }
+      });
+    });
+    // HTML del selector
+    const sel = '<select id="crm-kb-filtro-actividad" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:500">'
+      + '<option value="">📌 Mostrar todas las actividades</option>'
+      + TIPOS_ACTIVIDAD.map(t=>{
+        const cnt=conteos[t.k];
+        return cnt>0 ? '<option value="'+esc(t.k)+'">'+t.l+' ('+cnt+')</option>' : '';
+      }).filter(Boolean).join('')
+      + '</select>';
+    el.innerHTML = sel + (filtro.tipoActividad ? ' <button class="cmp-rowbtn" id="crm-kb-limpiar-actividad" style="padding:6px 12px">✕ Limpiar</button>' : '');
+    el.style.display = 'block';
+    // Bindings
+    const selEl=$('crm-kb-filtro-actividad');
+    if(selEl) selEl.onchange=()=>{ filtro.tipoActividad=selEl.value; render(); };
+    const btnLimpiar=$('crm-kb-limpiar-actividad');
+    if(btnLimpiar) btnLimpiar.onclick=()=>{ filtro.tipoActividad=''; render(); };
   }
   function bindAcciones(root){
     root.querySelectorAll('[data-act]').forEach(el=> el.onclick=()=>{ const l=DB.leads.find(x=>x._uid==el.dataset.id); if(!l)return; const a=el.dataset.act;
