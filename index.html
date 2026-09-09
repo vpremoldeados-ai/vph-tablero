@@ -15988,6 +15988,35 @@ function buildFilterTable(cfg){
     return { netoGrav, netoNoGrav, porAlic };
   }
 
+  // Decodifica el payload del QR fiscal (RG 4892) que devolvió el Worker al facturar (ver
+  // C:\VPH\facturacion-arca\worker\worker.js, función qrUrl): trae EXACTAMENTE lo que ARCA autorizó
+  // — tipo/número de documento del receptor y código de comprobante — sin recalcularlo acá. Si no
+  // se puede leer (venta sin facturar, o `qr` con otro formato), devuelve null y el papel sigue con
+  // el criterio de siempre (CUIT de la ficha/venta).
+  function qrPayload(v){
+    if(!v || !v.qr) return null;
+    try{
+      const m=String(v.qr).match(/[?&]p=([^&]+)/);
+      if(!m) return null;
+      return JSON.parse(atob(decodeURIComponent(m[1])));
+    }catch(e){ return null; }
+  }
+  const DOC_LBL={80:'CUIT',86:'CUIL',96:'DNI'};
+  // Documento del receptor tal como lo exige ARCA en el comprobante impreso: para Consumidor Final
+  // sin identificar (código 99, ventas menores) no hay número que mostrar. El formato de cada tipo
+  // de documento sigue la costumbre de un talonario real (CUIT/CUIL con guiones, DNI con puntos).
+  function documentoReceptor(v, cli){
+    const qp=qrPayload(v);
+    if(qp && qp.tipoDocRec!=null){
+      if(qp.tipoDocRec===99) return 'Consumidor Final';
+      const n=String(qp.nroDocRec||'');
+      const fmt = qp.tipoDocRec===96 ? n.replace(/\B(?=(\d{3})+(?!\d))/g,'.')
+        : (n.length===11 ? n.slice(0,2)+'-'+n.slice(2,10)+'-'+n.slice(10) : n);
+      return (DOC_LBL[qp.tipoDocRec]||'Doc.')+': '+fmt;
+    }
+    return 'CUIT: '+(v.cuit||cli.cuit||'—');   // sin facturar todavía (detalle/presupuesto): como siempre
+  }
+
   // ---------- Infra de impresión (overlay + @media print) ----------
   function ensureLayer(){
     if(document.getElementById('doc-overlay')) return;
@@ -16081,8 +16110,12 @@ function buildFilterTable(cfg){
   // ---------- Bloques compartidos ----------
   // labelFecha: el remito NO se emite, se ENTREGA — ahí el papel tiene que decir "Fecha de Entrega"
   // (pedido de Marcelo, 28/07). El resto de los documentos siguen con "Fecha de Emisión".
-  function encabezado(letra, titulo, numero, fecha, extrasDer, labelFecha){
-    return '<div class="doc-top"><span class="lt">'+esc(letra)+'</span>'+esc(titulo)+(numero?' '+esc(numero):'')+'</div>'+
+  // codigo: el código ARCA del tipo de comprobante (01 Factura A, 06 Factura B, 02/07 Nota de
+  // Débito A/B, 03/08 Nota de Crédito A/B — RG 1415, Anexo II). Va SIEMPRE junto a la letra en un
+  // comprobante fiscal real; se omite en presupuestos/recibos/remitos y en ventas sin CAE (no son
+  // facturas todavía, no tienen código que mostrar).
+  function encabezado(letra, titulo, numero, fecha, extrasDer, labelFecha, codigo){
+    return '<div class="doc-top"><span class="lt">'+esc(letra)+(codigo?'<div style="font-size:7px;font-weight:400;letter-spacing:0;line-height:1.15;margin-top:1px">COD. '+esc(codigo)+'</div>':'')+'</span>'+esc(titulo)+(numero?' '+esc(numero):'')+'</div>'+
       '<div class="doc-head"><div><img src="Productos/logo.png" alt="" style="height:48px;display:block;margin-bottom:6px" onerror="this.remove()"><div class="doc-razon">'+esc(EMPRESA.razon)+'</div>'+
         '<div>'+esc(EMPRESA.domicilio)+'</div><div>Tel: '+esc(EMPRESA.tel)+'</div>'+
         '<div>'+esc(EMPRESA.email)+'</div><div>'+esc(EMPRESA.web)+'</div></div>'+
@@ -16296,10 +16329,17 @@ function buildFilterTable(cfg){
     // que decir qué comprobante es y a cuál corrige (v.compAsocDesc lo sella al emitirse).
     const esNota = v.tipoComprobante==='Nota de Crédito' || v.tipoComprobante==='Nota de Débito';
     // (El título del documento se arma más abajo, en tituloFac, que ya contempla las notas.)
+    // d/k se calculan ACÁ (antes que antes) porque "Condición de Venta" —que ARCA exige en toda
+    // factura, RG 1415 Anexo II— los necesita para decidir Contado vs Cuenta Corriente.
+    const d=desglose(v), k=calcVenta(v);
     let extrasDer='';
     if(esNota && v.compAsocDesc) extrasDer='<div style="margin-top:4px"><b>Corrige:</b> '+esc(v.compAsocDesc)+'</div>';
     if(esPresupuesto){ extrasDer='<div style="margin-top:4px"><b>Vto. del Presupuesto:</b> '+dmy(v.vencimiento)+'</div>'; }
     else if(v.vencimiento){ extrasDer='<div style="margin-top:4px"><b>Vto. para el pago:</b> '+dmy(v.vencimiento)+'</div>'; }
+    // "Condición de Venta" (RG 1415): no es un campo cargado aparte —se deduce de si a la venta le
+    // queda saldo pendiente al momento de imprimir, el mismo dato que ya muestra "Total a Cobrar"
+    // más abajo—, así que no puede contradecirlo.
+    if(!esPresupuesto) extrasDer+='<div style="margin-top:4px"><b>Condición de Venta:</b> '+(num(k.saldo)>0.5?'Cuenta Corriente':'Contado')+'</div>';
     // En el papel manda la dirección de ENTREGA (donde va la mercadería), no la fiscal de la ficha
     // del cliente. El rótulo dice cuál de las dos se está mostrando: si la venta/presupuesto no tiene
     // dirección de entrega cargada, se cae a la de la ficha y el rótulo vuelve a ser "Domicilio", para
@@ -16308,7 +16348,10 @@ function buildFilterTable(cfg){
     const izq='<b>'+esc(v.cliente||'—')+'</b>'+
       (cli.telefono?'<br>Teléfono: '+esc(cli.telefono):'')+
       '<br>'+(ent?'Dirección de entrega: '+esc(ent):'Domicilio: '+esc(dom));
-    const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—')+
+    // Documento del receptor: en una factura autorizada, el que ARCA de verdad recibió (vía el QR
+    // que devolvió el Worker) — puede ser CUIT, DNI o "Consumidor Final" sin número; en un detalle
+    // de venta o presupuesto sin facturar todavía, el CUIT cargado en la venta/ficha, como siempre.
+    const der=esc(documentoReceptor(v,cli))+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—')+
       '<br>Categoría: '+esc(v.categoria||'—')+'<br>Vendedor: '+esc(v.vendedor||'—');
     // Al consumidor final no hace falta discriminarle el IVA (no lo usa para nada, y desdoblar
     // Neto/Alícuota/c-IVA en 8 columnas es lo que hacía desbordar el ancho de la hoja A4). Se le
@@ -16334,7 +16377,7 @@ function buildFilterTable(cfg){
         '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th></tr>'+filas+'</table>'
       : '<table class="doc-tab"><tr><th>Código</th><th>Descripción</th><th class="n">Cant.</th>'+
         '<th class="n">Precio Unit.</th><th class="n">% Bonif.</th><th class="n">Subtotal</th><th class="n">Alicuota</th><th class="n">Subtotal c/IVA</th></tr>'+filas+'</table>';
-    const d=desglose(v), k=calcVenta(v);
+    // (d/k ya se calcularon más arriba, para "Condición de Venta")
     // Escalera de financiación: solo presupuestos minoristas (bloqueEscalera devuelve '' si no va)
     const escBlock = esPresupuesto ? bloqueEscalera(v) : '';
     let tot='';
@@ -16375,7 +16418,12 @@ function buildFilterTable(cfg){
     const letraFac = v.cae ? (v.tipoComprobante==='Factura A'?'A':v.tipoComprobante==='Factura B'?'B'
       :(letraNota?letraNota.toUpperCase():'X')) : 'X';
     const tituloFac = v.cae ? (v.tipoComprobante||'FACTURA').toUpperCase() : (esPresupuesto?'PRESUPUESTO':'DETALLE DE VENTA');
-    return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer)+
+    // Código ARCA del comprobante (01/02/03/06/07/08 — RG 1415 Anexo II), del MISMO QR que ya se
+    // decodificó para el documento del receptor: es el que ARCA autorizó de verdad, no uno recalculado
+    // acá. Sin CAE (detalle interno o presupuesto) no hay código que mostrar.
+    const qp=!esPresupuesto?qrPayload(v):null;
+    const codigoFac = qp && qp.tipoCmp!=null ? String(qp.tipoCmp).padStart(2,'0') : '';
+    return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer, undefined, codigoFac)+
       bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+escBlock+obs+caeBlock+pie(v);
   }
 
