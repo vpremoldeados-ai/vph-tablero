@@ -66,6 +66,9 @@
   .pf-pick.on,.tile.on{border-color:var(--green);background:var(--green-bg)}
   /* Variante compacta: para formularios densos donde la opción es solo una etiqueta corta */
   .tile.mini{min-width:0;padding:6px 12px;flex-direction:row;align-items:center}
+  /* Las tarjetas de categoria de Compras llevan una pista debajo: sin tope, la mas larga se estira
+     y descoloca la fila. Con el tope la pista envuelve a dos renglones y las 6 quedan parejas. */
+  #f-cat + .tile-picker .tile{max-width:230px}
   .tile.mini .nm{font-size:12.5px}
   /* Variante con foto del producto a la izquierda del nombre (selector de productos del CRM).
      Si la foto no existe se quita sola (onerror) y queda el texto, por eso .tx sigue siendo una columna. */
@@ -3235,6 +3238,17 @@ function buildFilterTable(cfg){
   const catOpts = (actual)=>{ const a=String(actual||''); const L=CATEGORIAS();
     if(a && L.indexOf(a)<0) L.push(a);
     return L.map(n=>'<option'+(n===a?' selected':'')+'>'+esc(n)+'</option>').join(''); };
+  // Pista de UNA línea debajo de cada tarjeta de categoría, para no tener que acordarse el criterio al
+  // cargar un ticket. Se busca por el nombre EXACTO: una categoría agregada a mano queda sin subtítulo
+  // (no rompe nada). La explicación larga está en Drive: Guia_Categorias_Compras_VPH.pdf.
+  const PISTA_CAT = {
+    'MATERIAS PRIMAS'            : 'Va adentro del producto: cemento, arena, piedra, hierro, aditivo',
+    'COSTOS VARIABLES'           : 'Sube con la venta: fletes, comisión, diesel, embalaje, pintura',
+    'SUELDOS'                    : 'Sueldos, comisiones y aguinaldo',
+    'ESTRUCTURA'                 : 'Se paga igual vendas o no: alquiler, servicios, seguros, GNC, impuestos',
+    'MANTENIMIENTO Y CONSUMIBLES': 'Ferretería, repuestos, aceites, soldadura, ropa de trabajo',
+    'NO OPERATIVAS'              : 'Fuera de los indicadores: máquinas, moldes y gastos personales'
+  };
   const TIPOS_COMPROB = ['Compra','Nota de Crédito','Nota de Débito'];
   const COND_IVA = ['A','B','C','M','X'];
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
@@ -4335,7 +4349,7 @@ function buildFilterTable(cfg){
     $('f-addline').onclick=()=>{ editing.items.push({desc:'',codigo:'',cant:1,precioUnit:0,descPct:0,iva:'21'}); drawItems(); };
     // Tarjetas: la categoría define si la compra es COSTO FIJO (entra al punto de equilibrio), así que
     // conviene verla de un vistazo; y el tipo de comprobante distingue una Nota de Crédito de una compra.
-    if(window.__tarjetas){ window.__tarjetas('f-cat'); window.__tarjetas('f-tipo'); }
+    if(window.__tarjetas){ window.__tarjetas('f-cat',{sub:n=>PISTA_CAT[n]||''}); window.__tarjetas('f-tipo'); }
     wireTicketBox();
     $('f-cancel').onclick=closeForm;
     $('f-save').onclick=saveForm;
