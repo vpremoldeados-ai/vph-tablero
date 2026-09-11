@@ -12870,7 +12870,9 @@ function buildFilterTable(cfg){
   const topesSig=k=>{ const i=TOPES_ESTADOS.findIndex(e=>e.k===k); return TOPES_ESTADOS[(i+1)%TOPES_ESTADOS.length].k; };
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
-  const topesAlEnviar=row=> (row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row;
+  // Registra siempre la fecha (11/09, pedido de Marcelo: "que registres la fecha de la última
+  // acción en el prospecto") — mandar el mensaje es una acción, cambie o no el estado.
+  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO});
   let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false;
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
@@ -12996,8 +12998,8 @@ function buildFilterTable(cfg){
     // resto del Tablero) envuelven el texto largo en vez de estirar la columna, e inputs/select más
     // angostos que antes. data-sortval en teléfono/email/nota porque son <input> — __ordenable lee
     // el texto de la celda, y un <input> no tiene textContent (quedaría sin ordenar sin esto).
-    let ht='<tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th style="text-align:center">Estado</th><th>Enviar</th><th>Foto</th><th>Nota</th><th></th></tr>';
-    if(!filas.length) ht+='<tr><td colspan="9" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
+    let ht='<tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th style="text-align:center">Estado</th><th>Última acción</th><th>Enviar</th><th>Foto</th><th>Nota</th><th></th></tr>';
+    if(!filas.length) ht+='<tr><td colspan="10" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach(({t,i})=>{
       const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
       const tel=waLink(t.telefono); const texto=topesTexto(t.nombre);
@@ -13007,6 +13009,7 @@ function buildFilterTable(cfg){
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.zona||'')+'</td>'+
         '<td data-sortval="'+esc(t.telefono||'')+'"><input type="text" data-topes-tel="'+i+'" value="'+esc(t.telefono||'')+'" placeholder="351..." style="width:88px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
         '<td style="text-align:center" data-sortval="'+esc(e.l)+'"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 8px;font-size:11.5px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
+        '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+esc(fmtFecha(t.ultimaAccion))+'</td>'+
         '<td style="white-space:nowrap">'+
           (tel?'<a class="kb-wa" href="'+tel+'?text='+encodeURIComponent(texto)+'" target="_blank" rel="noopener" data-topes-envio="'+i+'">WhatsApp</a>'
               :'<button class="cmp-rowbtn" data-topes-copiar="'+i+'" title="Sin teléfono cargado: copiá el texto y pegalo en un chat nuevo">📋 Copiar</button>')+
@@ -13021,7 +13024,7 @@ function buildFilterTable(cfg){
     });
     tabla.innerHTML=ht;
     tabla.querySelectorAll('button[data-topes-est]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesEst; const list=TOPES.slice();
-      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente')}; topesSave(list); drawTopes(); });
+      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente'), ultimaAccion:hoyISO}; topesSave(list); drawTopes(); });
     // El Lugar es el único campo obligatorio (mismo criterio que el alta manual): si lo dejan vacío,
     // no se guarda — se avisa y se repinta con el nombre de antes, en vez de perderlo en silencio.
     tabla.querySelectorAll('input[data-topes-nombre]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNombre; const v=inp.value.trim();
