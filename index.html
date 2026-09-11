@@ -12936,15 +12936,39 @@ function buildFilterTable(cfg){
   // falta escribir. Abre el WhatsApp del PRIMER prospecto en estado "pendiente" con teléfono cargado
   // (mismo orden que TOPES, no el de la tabla filtrada/ordenada) — Marcelo hace Enviar y adjunta la
   // foto a mano en la app (son 2 clics nativos; ni el envío ni el adjunto se pueden automatizar desde
-  // acá). Reusa el MISMO camino que el botón de la fila: topesWaLink + topesTexto para armar el link,
-  // y topesAlEnviar para pasar a "contactado" y registrar la última acción — un solo camino.
+  // acá). Reusa el MISMO camino que el botón de la fila: topesWaLink + topesTexto arman el link.
+  // 🔴 ABRIR NO MARCA NADA (11/09, 2ª vuelta): la primera versión daba por "Contactado" a todo el que
+  // se abría, y en la primera tanda real DOS números seguidos no tenían WhatsApp — el Tablero decía
+  // contactado y no había salido ningún mensaje. El Tablero no puede saberlo (solo WhatsApp lo sabe
+  // al abrir el chat), así que el resultado lo dice Marcelo con topesResolver.
   function topesSiguientePendiente(){
     const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim());
-    if(idx<0){ alert('No queda ningún prospecto Pendiente con teléfono cargado.'); return; }
+    if(idx<0){ topesUltimoAbierto=''; alert('No queda ningún prospecto Pendiente con teléfono cargado.'); drawTopes(); return; }
     const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre);
     window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
     topesUltimoAbierto=t.nombre||'';
-    const list=TOPES.slice(); list[idx]=topesAlEnviar(list[idx]); topesSave(list); drawTopes();
+    drawTopes();
+  }
+  // Registra QUÉ PASÓ con el que está abierto y, si `seguir`, abre el próximo de una.
+  // Así confirmar NO cuesta un clic extra: el mismo botón que dice el resultado avanza la cola.
+  //   'mandado' → Contactado (el camino de siempre, topesAlEnviar)
+  //   'sinwa'   → Falta dato de contacto (decisión de Marcelo, 11/09: el número no sirve para
+  //               WhatsApp pero puede servir para llamar; sale de la cola igual)
+  // Se busca por NOMBRE y no por índice: entre abrir y confirmar el array se reescribe entero en
+  // cada guardado (propio o de otro usuario) y un índice viejo marcaría al prospecto equivocado.
+  function topesResolver(resultado, seguir){
+    const nom=topesUltimoAbierto;
+    if(nom){
+      const i=TOPES.findIndex(t=>(t.nombre||'')===nom);
+      if(i>=0){
+        const list=TOPES.slice();
+        list[i] = (resultado==='sinwa') ? {...list[i], estado:'falta-dato', ultimaAccion:hoyISO}
+                                        : topesAlEnviar(list[i]);
+        topesSave(list);
+      }
+    }
+    topesUltimoAbierto='';
+    if(seguir) topesSiguientePendiente(); else drawTopes();
   }
   function drawTopes(){
     // 08/09: la tabla (#topes-tabla) es un elemento FIJO — nunca se recrea — para que
@@ -12963,13 +12987,20 @@ function buildFilterTable(cfg){
     const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
     let hc=
       '<div style="margin-bottom:10px;padding:10px;border:1px dashed var(--border);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      (topesUltimoAbierto ? (
+        // Mientras hay uno abierto, las respuestas REEMPLAZAN al botón de avanzar: cada una registra
+        // qué pasó Y abre el siguiente, así confirmar no agrega ningún clic al recorrido.
+        '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc(topesUltimoAbierto)+'</b>. ¿Qué pasó?</span>'+
+        '<button class="cmp-btn cmp-btn-primary" id="topes-ok-btn" title="Queda Contactado y abro el próximo pendiente">✅ Lo mandé → siguiente</button>'+
+        '<button class="cmp-btn" id="topes-nowa-btn" title="WhatsApp avisó que el número no está en WhatsApp: queda en Falta dato de contacto y abro el próximo">📵 No tiene WhatsApp → siguiente</button>'+
+        '<button class="cmp-btn" id="topes-fin-btn" title="Corta el recorrido. El que está abierto queda como estaba (Pendiente)">⏹ Terminar</button>'
+      ) : (
         '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>'+
-        '<span style="font-size:12px;color:var(--muted)">Se abre en la app de WhatsApp con el mensaje cargado — Enviar y adjuntar la foto se hace a mano ahí.'+
-        (topesUltimoAbierto ? ' Último abierto: <b>'+esc(topesUltimoAbierto)+'</b>.' : '')+
-        '</span>'+
+        '<span style="font-size:12px;color:var(--muted)">Se abre en la app de WhatsApp con el mensaje cargado — Enviar y adjuntar la foto se hace a mano ahí.</span>'
+      ))+
       '</div>'+
       '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
-      'Al mandar el WhatsApp o el mail se marca <b>Contactado</b> solo. Cargá el teléfono/email apenas los consigas en el primer llamado.</p>'+
+      'Al mandar el WhatsApp o el mail desde la fila se marca <b>Contactado</b> solo. Cargá el teléfono/email apenas los consigas en el primer llamado.</p>'+
       '<div class="filter-bar" style="margin-bottom:6px">'+
         chip('','Todos ('+TOPES.length+')', !topesFiltroEstado)+
         TOPES_ESTADOS.map(e=>chip(e.k, e.l+' ('+n(e.k)+')', topesFiltroEstado===e.k)).join('')+
@@ -12998,6 +13029,12 @@ function buildFilterTable(cfg){
     controles.innerHTML=hc;
     const btnSiguiente=controles.querySelector('#topes-siguiente-btn');
     if(btnSiguiente) btnSiguiente.onclick=topesSiguientePendiente;
+    const btnOk=controles.querySelector('#topes-ok-btn');
+    if(btnOk) btnOk.onclick=()=>topesResolver('mandado', true);
+    const btnNoWa=controles.querySelector('#topes-nowa-btn');
+    if(btnNoWa) btnNoWa.onclick=()=>topesResolver('sinwa', true);
+    const btnFin=controles.querySelector('#topes-fin-btn');
+    if(btnFin) btnFin.onclick=()=>{ topesUltimoAbierto=''; drawTopes(); };
     controles.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
     controles.querySelectorAll('button[data-topesf-r]').forEach(b=>b.onclick=()=>{ topesFiltroRubro=b.dataset.topesfR; drawTopes(); });
     // Alta manual — pedido de Marcelo, 08/09: además de la carga inicial por investigación, poder
