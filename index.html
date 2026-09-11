@@ -12322,7 +12322,7 @@ function buildFilterTable(cfg){
     {cat:'Postes', txt:'Los postes de hormigón los fabricamos en varias medidas. Contame para qué los necesitás (cerco, vid, alambrado) y la cantidad, así te confirmo medida, precio y disponibilidad.'},
     {cat:'Losetas', txt:'Las losetas las tenemos en distintos tamaños y terminaciones. Decime los m² o la cantidad de unidades que necesitás y te paso precio y disponibilidad.'},
     {cat:'Forma de pago', txt:'Podés abonar por transferencia, efectivo o tarjeta en cuotas. Si pagás sin factura tenés un descuento adicional. ¿Cómo preferís abonar?'},
-    {cat:'Topes de estacionamiento', txt:'Hola soy Sofia te escribo de VPH! Fabricamos *Topes de Estacionamiento de Hormigón* que dan orden y seguridad a tu playa de estacionamiento, aprovechando mejor los espacios y previniendo accidentes. ¿Te paso precios?'}
+    {cat:'Topes de estacionamiento', txt:'Hola, soy Marcelo de VPH! Fabricamos *Topes de Estacionamiento de Hormigón* que dan orden y seguridad a tu playa de estacionamiento, aprovechando mejor los espacios y previniendo accidentes. ¿Me pasás el contacto (nombre y WhatsApp o mail) de quien maneja las compras o el mantenimiento del estacionamiento? Le quiero acercar la propuesta directamente.'}
   ];
   let PLANT=PLANT_DEFAULT.slice(), plantUnsub=null, plantLead=null, plantEditing=false;
   function plantLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(PLANT_KEY)); if(Array.isArray(d)&&d.length) return d; }catch(e){} return PLANT_DEFAULT.slice(); }
@@ -12867,6 +12867,10 @@ function buildFilterTable(cfg){
   // los "Pendiente" que sí están listos para el primer llamado. Va segundo en el ciclo: un solo
   // clic desde "Pendiente" alcanza para marcarlo apenas se nota que falta el dato.
   const TOPES_ESTADOS=[{k:'pendiente',l:'Pendiente',c:'#95a5b8'},{k:'falta-dato',l:'Falta dato de contacto',c:'#c0392b'},{k:'contactado',l:'Contactado',c:'#c98a06'},{k:'interesado',l:'Interesado',c:'#1e9e5a'},{k:'sin-interes',l:'Sin interés',c:'#8a94a3'}];
+  // Enlace de WhatsApp SOLO para esta tabla (11/09, pedido de Sofía): "whatsapp://" abre directo la
+  // app de escritorio de Windows en vez de WhatsApp Web en Chrome. A propósito NO se tocó el waLink()
+  // compartido con los leads del CRM (línea 11984) — el alcance acordado fue solo Topes.
+  function topesWaLink(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d) return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'whatsapp://send?phone='+d; }
   const topesSig=k=>{ const i=TOPES_ESTADOS.findIndex(e=>e.k===k); return TOPES_ESTADOS[(i+1)%TOPES_ESTADOS.length].k; };
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
@@ -13002,7 +13006,7 @@ function buildFilterTable(cfg){
     if(!filas.length) ht+='<tr><td colspan="10" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach(({t,i})=>{
       const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
-      const tel=waLink(t.telefono); const texto=topesTexto(t.nombre);
+      const tel=topesWaLink(t.telefono); const texto=topesTexto(t.nombre);
       const foto=t.foto||FOTO_TOPE_DEFAULT;
       ht+='<tr><td class="cel-nombre" data-sortval="'+esc(t.nombre||'')+'"><input type="text" data-topes-nombre="'+i+'" value="'+esc(t.nombre||'')+'" placeholder="Nombre del lugar" style="width:100%;min-width:130px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12.5px;font-weight:600"></td>'+
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.rubro||'')+'</td>'+
@@ -13011,7 +13015,7 @@ function buildFilterTable(cfg){
         '<td style="text-align:center" data-sortval="'+esc(e.l)+'"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 8px;font-size:11.5px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
         '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+esc(fmtFecha(t.ultimaAccion))+'</td>'+
         '<td style="white-space:nowrap">'+
-          (tel?'<a class="kb-wa" href="'+tel+'?text='+encodeURIComponent(texto)+'" target="_blank" rel="noopener" data-topes-envio="'+i+'">WhatsApp</a>'
+          (tel?'<a class="kb-wa" href="'+tel+'&text='+encodeURIComponent(texto)+'" target="_blank" rel="noopener" data-topes-envio="'+i+'">WhatsApp</a>'
               :'<button class="cmp-rowbtn" data-topes-copiar="'+i+'" title="Sin teléfono cargado: copiá el texto y pegalo en un chat nuevo">📋 Copiar</button>')+
         '</td>'+
         '<td><select data-topes-foto="'+i+'" style="width:88px;padding:4px 4px;border:1px solid var(--border);border-radius:7px;font-size:11.5px" title="Sofía la adjunta a mano en el chat — WhatsApp no manda una imagen desde un link">'+
