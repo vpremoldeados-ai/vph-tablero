@@ -132,6 +132,12 @@
   .cel-nombre{white-space:normal;max-width:220px;line-height:1.3;overflow-wrap:break-word;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .cel-envuelve{white-space:normal;max-width:170px;line-height:1.3;overflow-wrap:break-word}
+  /* Columnas con ancho ajustable a mano, arrastrando el borde derecho del encabezado (11/09, pedido
+     de Marcelo — hoy solo en 🔩 Topes de estacionamiento). El handle es un <span> puesto por JS
+     dentro de cada <th> — ver topesColResizeInit. */
+  #topes-tabla th{position:relative}
+  .topes-colres{position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:2}
+  .topes-colres:hover,.topes-colres:active{background:var(--accent2);opacity:.35}
   /* 360px medido: con menos, los botones se apilan en 3 filas y la fila crece a 127px — se cambia
      scroll horizontal por vertical, que no sirve de nada. Con 360 quedan 2 filas (85px) y la tabla
      igual entra sin desbordar. */
@@ -12868,6 +12874,42 @@ function buildFilterTable(cfg){
   const topesAlEnviar=row=> (row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row;
   let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false;
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
+  // negocio — vive en localStorage (mismo criterio que "alertas ocultas"), cada navegador la suya.
+  const TOPES_COLW_KEY='vph_crm_topes_colw_v1';
+  function topesColWLoad(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_COLW_KEY)); return (d&&typeof d==='object')?d:{}; }catch(e){ return {}; } }
+  function topesColWSave(w){ try{ localStorage.setItem(TOPES_COLW_KEY, JSON.stringify(w)); }catch(e){} }
+  // Engancha el handle de arrastre en cada <th>. Al primer resize (de esta sesión o ya guardado de
+  // antes) CONGELA el ancho natural de TODAS las columnas antes de pasar la tabla a table-layout:fixed
+  // — si no, el navegador reparte el resto por partes iguales y descuadra las columnas angostas que
+  // ya estaban afinadas a mano (§3, .cel-nombre/.cel-envuelve). stopPropagation en el mousedown para
+  // que arrastrar no dispare el click de __ordenable (ordenar), montado sobre el mismo <th>.
+  function topesColResizeInit(tabla){
+    const COLW=topesColWLoad(), head=tabla.querySelector('tr'); if(!head) return;
+    const congelar=()=>{ if(tabla.style.tableLayout==='fixed') return;
+      [...head.cells].forEach((c,ci)=>{ c.style.width=(COLW[ci]!=null?COLW[ci]:c.offsetWidth)+'px'; });
+      tabla.style.tableLayout='fixed'; };
+    if(Object.keys(COLW).length) congelar();
+    [...head.cells].forEach((th,i)=>{
+      const res=document.createElement('span');
+      res.className='topes-colres'; res.title='Arrastrá para cambiar el ancho';
+      th.appendChild(res);
+      // El click de __ordenable (ordenar por esta columna) está montado en el <th>: si el mousedown
+      // del handle no frena el click que sigue al soltar, un simple clic (sin arrastrar) del handle
+      // también dispararía el orden — se frena acá aparte, porque stopPropagation del mousedown NO
+      // alcanza al evento click que viene después.
+      res.addEventListener('click', e=>e.stopPropagation());
+      res.addEventListener('mousedown', e=>{
+        e.preventDefault(); e.stopPropagation();
+        congelar();
+        const startX=e.clientX, startW=th.offsetWidth;
+        const onMove=ev=>{ const w=Math.max(40, startW+(ev.clientX-startX)); th.style.width=w+'px'; };
+        const onUp=()=>{ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp);
+          const w={}; [...head.cells].forEach((c,ci)=>{ w[ci]=c.offsetWidth; }); topesColWSave(w); };
+        document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
+      });
+    });
+  }
   function topesLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function topesSaveLocal(){ try{ localStorage.setItem(TOPES_KEY, JSON.stringify(TOPES)); }catch(e){} }
   // Guarda el array ENTERO (documento chico, mismo criterio que PLANT/PREG) — no hay forma de tocar
@@ -13015,6 +13057,7 @@ function buildFilterTable(cfg){
       const list=TOPES.slice(); list.splice(i,1); topesSave(list); drawTopes();
     });
     if(window.__ordenable) window.__ordenable(tabla);
+    topesColResizeInit(tabla);
   }
   // Panel INLINE (no overlay) — pedido de Marcelo, 07/09: la lista de topes no debe tapar el resto
   // de la pantalla como una ventana superpuesta. El botón alterna mostrar/ocultar el panel dentro
