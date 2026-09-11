@@ -12870,7 +12870,31 @@ function buildFilterTable(cfg){
   // Enlace de WhatsApp SOLO para esta tabla (11/09, pedido de Sofía): "whatsapp://" abre directo la
   // app de escritorio de Windows en vez de WhatsApp Web en Chrome. A propósito NO se tocó el waLink()
   // compartido con los leads del CRM (línea 11984) — el alcance acordado fue solo Topes.
-  function topesWaLink(tel){ let d=String(tel||'').replace(/\D/g,''); if(!d) return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'whatsapp://send?phone='+d; }
+  // ⚠️ El 9 después del 54 es lo que separa un CELULAR de un FIJO en Argentina. Un fijo con WhatsApp
+  // Business va SIN el 9 (54 351 …) — y buena parte de esta lista son universidades, shoppings y
+  // clubes, que atienden por fijo. Con `sinNueve` se arma esa variante para probarla cuando WhatsApp
+  // contesta "el número no está en WhatsApp"; el camino por defecto NO cambia (celular, con 9).
+  // 🔴 El "15" va DESPUÉS del código de área (0351 **15** 570-4100), no al principio: el
+  // `.replace(/^15/,'')` de antes no lo sacaba nunca y armaba 549 351 15 5704100, un número que no
+  // existe — WhatsApp contesta "el número no está en WhatsApp" y parece que el prospecto no lo tiene.
+  // Se saca solo si al sacarlo quedan los 10 dígitos de un número argentino (área + abonado), así
+  // un número que de verdad tenga un 15 adentro no se toca. Áreas de 2 (11), 3 (351) y 4 (3541).
+  function topesQuita15(d){
+    if(d.length!==12) return d;
+    for(const n of [2,3,4]) if(d.slice(n,n+2)==='15') return d.slice(0,n)+d.slice(n+2);
+    return d;
+  }
+  function topesWaLink(tel, sinNueve){
+    let d=String(tel||'').replace(/\D/g,''); if(!d) return null;
+    if(sinNueve){
+      if(d.startsWith('549')) d=d.slice(3); else if(d.startsWith('54')) d=d.slice(2);
+      return 'whatsapp://send?phone=54'+topesQuita15(d.replace(/^0/,''));
+    }
+    // Si ya viene en formato internacional se respeta tal cual: puede ser un fijo cargado a
+    // propósito sin el 9, y meterle el 9 lo rompería.
+    if(d.startsWith('54')) return 'whatsapp://send?phone='+d;
+    return 'whatsapp://send?phone=549'+topesQuita15(d.replace(/^0/,''));
+  }
   const topesSig=k=>{ const i=TOPES_ESTADOS.findIndex(e=>e.k===k); return TOPES_ESTADOS[(i+1)%TOPES_ESTADOS.length].k; };
   // Al mandar el WhatsApp/mail: pasa de "pendiente" a "contactado" solo. Si Sofía ya lo había
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
@@ -12949,6 +12973,16 @@ function buildFilterTable(cfg){
     topesUltimoAbierto=t.nombre||'';
     drawTopes();
   }
+  // Reabre el MISMO prospecto con el formato de fijo (sin el 9), para descartar que el "no está en
+  // WhatsApp" sea por el formato del número y no porque realmente no lo tenga. No toca el estado:
+  // el resultado lo sigue diciendo Marcelo con los botones de siempre.
+  function topesReabrirSinNueve(){
+    const nom=topesUltimoAbierto; if(!nom) return;
+    const t=TOPES.find(x=>(x.nombre||'')===nom); if(!t) return;
+    const tel=topesWaLink(t.telefono, true);
+    if(!tel){ alert('Ese prospecto no tiene teléfono cargado.'); return; }
+    window.open(tel+'&text='+encodeURIComponent(topesTexto(t.nombre)), '_blank');
+  }
   // Registra QUÉ PASÓ con el que está abierto y, si `seguir`, abre el próximo de una.
   // Así confirmar NO cuesta un clic extra: el mismo botón que dice el resultado avanza la cola.
   //   'mandado' → Contactado (el camino de siempre, topesAlEnviar)
@@ -12992,6 +13026,7 @@ function buildFilterTable(cfg){
         // qué pasó Y abre el siguiente, así confirmar no agrega ningún clic al recorrido.
         '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc(topesUltimoAbierto)+'</b>. ¿Qué pasó?</span>'+
         '<button class="cmp-btn cmp-btn-primary" id="topes-ok-btn" title="Queda Contactado y abro el próximo pendiente">✅ Lo mandé → siguiente</button>'+
+        '<button class="cmp-btn" id="topes-sin9-btn" title="Si WhatsApp dijo que el número no está registrado, probá esto ANTES de descartarlo: reabre el mismo contacto como FIJO (sin el 9), que es como se registran los WhatsApp Business de empresas">🔁 Probar sin el 9</button>'+
         '<button class="cmp-btn" id="topes-nowa-btn" title="WhatsApp avisó que el número no está en WhatsApp: queda en Falta dato de contacto y abro el próximo">📵 No tiene WhatsApp → siguiente</button>'+
         '<button class="cmp-btn" id="topes-fin-btn" title="Corta el recorrido. El que está abierto queda como estaba (Pendiente)">⏹ Terminar</button>'
       ) : (
@@ -13031,6 +13066,8 @@ function buildFilterTable(cfg){
     if(btnSiguiente) btnSiguiente.onclick=topesSiguientePendiente;
     const btnOk=controles.querySelector('#topes-ok-btn');
     if(btnOk) btnOk.onclick=()=>topesResolver('mandado', true);
+    const btnSin9=controles.querySelector('#topes-sin9-btn');
+    if(btnSin9) btnSin9.onclick=topesReabrirSinNueve;
     const btnNoWa=controles.querySelector('#topes-nowa-btn');
     if(btnNoWa) btnNoWa.onclick=()=>topesResolver('sinwa', true);
     const btnFin=controles.querySelector('#topes-fin-btn');
