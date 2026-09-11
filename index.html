@@ -12962,7 +12962,7 @@ function buildFilterTable(cfg){
       const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
       const tel=waLink(t.telefono); const texto=topesTexto(t.nombre);
       const foto=t.foto||FOTO_TOPE_DEFAULT;
-      ht+='<tr><td class="cel-nombre" title="'+esc(t.nombre||'')+'">'+esc(t.nombre||'—')+'</td>'+
+      ht+='<tr><td class="cel-nombre" data-sortval="'+esc(t.nombre||'')+'"><input type="text" data-topes-nombre="'+i+'" value="'+esc(t.nombre||'')+'" placeholder="Nombre del lugar" style="width:100%;min-width:130px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12.5px;font-weight:600"></td>'+
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.rubro||'')+'</td>'+
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.zona||'')+'</td>'+
         '<td data-sortval="'+esc(t.telefono||'')+'"><input type="text" data-topes-tel="'+i+'" value="'+esc(t.telefono||'')+'" placeholder="351..." style="width:88px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
@@ -12983,6 +12983,11 @@ function buildFilterTable(cfg){
     tabla.innerHTML=ht;
     tabla.querySelectorAll('button[data-topes-est]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesEst; const list=TOPES.slice();
       list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente')}; topesSave(list); drawTopes(); });
+    // El Lugar es el único campo obligatorio (mismo criterio que el alta manual): si lo dejan vacío,
+    // no se guarda — se avisa y se repinta con el nombre de antes, en vez de perderlo en silencio.
+    tabla.querySelectorAll('input[data-topes-nombre]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNombre; const v=inp.value.trim();
+      if(!v){ alert('El lugar no puede quedar vacío.'); drawTopes(); return; }
+      const list=TOPES.slice(); list[i]={...list[i], nombre:v}; topesSave(list); drawTopes(); }));
     tabla.querySelectorAll('input[data-topes-tel]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesTel; const list=TOPES.slice();
       list[i]={...list[i], telefono:inp.value.trim()}; topesSave(list); drawTopes(); }));
     tabla.querySelectorAll('select[data-topes-foto]').forEach(sel=>sel.addEventListener('change',()=>{ const i=+sel.dataset.topesFoto; const list=TOPES.slice();
