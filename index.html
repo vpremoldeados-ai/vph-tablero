@@ -12322,7 +12322,8 @@ function buildFilterTable(cfg){
     {cat:'Postes', txt:'Los postes de hormigón los fabricamos en varias medidas. Contame para qué los necesitás (cerco, vid, alambrado) y la cantidad, así te confirmo medida, precio y disponibilidad.'},
     {cat:'Losetas', txt:'Las losetas las tenemos en distintos tamaños y terminaciones. Decime los m² o la cantidad de unidades que necesitás y te paso precio y disponibilidad.'},
     {cat:'Forma de pago', txt:'Podés abonar por transferencia, efectivo o tarjeta en cuotas. Si pagás sin factura tenés un descuento adicional. ¿Cómo preferís abonar?'},
-    {cat:'Topes de estacionamiento', txt:'Hola, soy Marcelo de VPH! Fabricamos *Topes de Estacionamiento de Hormigón* que dan orden y seguridad a tu playa de estacionamiento, aprovechando mejor los espacios y previniendo accidentes. Podés ver los productos en www.vpremoldeados.com. ¿Me pasás el contacto (nombre y WhatsApp o mail) de quien maneja las compras o el mantenimiento del estacionamiento? Le quiero acercar la propuesta directamente.'}
+    {cat:'Topes de estacionamiento', txt:'Hola, soy Marcelo de VPH! Fabricamos *Topes de Estacionamiento de Hormigón* que dan orden y seguridad a tu playa de estacionamiento, aprovechando mejor los espacios y previniendo accidentes. Podés ver los productos en www.vpremoldeados.com. ¿Me pasás el contacto (nombre y WhatsApp o mail) de quien maneja las compras o el mantenimiento del estacionamiento? Le quiero acercar la propuesta directamente.'},
+    {cat:'Topes — constructoras', txt:'Hola, soy Marcelo de VPH Premoldeados! Fabricamos en Córdoba *Topes de Estacionamiento de Hormigón* para cocheras y subsuelos, y también *losetas cribadas y green blocks* para accesos, veredas y espacios verdes de sus desarrollos. Podés ver los productos en www.vpremoldeados.com. ¿Me pasás el contacto (nombre y WhatsApp o mail) de quien maneja las compras o la dirección de obra? Le quiero acercar la propuesta y la lista de precios directamente.'}
   ];
   let PLANT=PLANT_DEFAULT.slice(), plantUnsub=null, plantLead=null, plantEditing=false;
   function plantLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(PLANT_KEY)); if(Array.isArray(d)&&d.length) return d; }catch(e){} return PLANT_DEFAULT.slice(); }
@@ -12954,7 +12955,12 @@ function buildFilterTable(cfg){
   // {nombre} lo llena fillPreg (ya definida arriba); el texto sale de la plantilla "Topes de
   // estacionamiento" — si todavía no existe en PLANT (instalación nueva, nadie la tocó todavía),
   // cae al texto de PLANT_DEFAULT para que el botón nunca quede roto.
-  function topesTexto(nombre){ const p=PLANT.find(x=>x.cat==='Topes de estacionamiento') || PLANT_DEFAULT.find(x=>x.cat==='Topes de estacionamiento');
+  // 13/09 (pedido de Marcelo): a una constructora/desarrollista no le sirve "tu playa de
+  // estacionamiento" — si el rubro lo dice, sale la plantilla "Topes — constructoras" (mismo fallback
+  // a PLANT_DEFAULT). La regex va inline y no con topesNorm para no sumarle dependencias a la función.
+  function topesTexto(nombre, rubro){
+    const cat=/constructor|desarrollist/i.test(String(rubro||'')) ? 'Topes — constructoras' : 'Topes de estacionamiento';
+    const p=PLANT.find(x=>x.cat===cat) || PLANT_DEFAULT.find(x=>x.cat===cat);
     return fillPreg(p?p.txt:'', {cliente:nombre}); }
   // "▶ Siguiente pendiente" (11/09, pedido de Marcelo): para no ir fila por fila buscando a quién le
   // falta escribir. Abre el WhatsApp del PRIMER prospecto en estado "pendiente" con teléfono cargado
@@ -12968,7 +12974,7 @@ function buildFilterTable(cfg){
   function topesSiguientePendiente(){
     const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim());
     if(idx<0){ topesUltimoAbierto=''; alert('No queda ningún prospecto Pendiente con teléfono cargado.'); drawTopes(); return; }
-    const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre);
+    const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre, t.rubro);
     window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
     topesUltimoAbierto=t.nombre||'';
     drawTopes();
@@ -12981,7 +12987,7 @@ function buildFilterTable(cfg){
     const t=TOPES.find(x=>(x.nombre||'')===nom); if(!t) return;
     const tel=topesWaLink(t.telefono, true);
     if(!tel){ alert('Ese prospecto no tiene teléfono cargado.'); return; }
-    window.open(tel+'&text='+encodeURIComponent(topesTexto(t.nombre)), '_blank');
+    window.open(tel+'&text='+encodeURIComponent(topesTexto(t.nombre, t.rubro)), '_blank');
   }
   // Registra QUÉ PASÓ con el que está abierto y, si `seguir`, abre el próximo de una.
   // Así confirmar NO cuesta un clic extra: el mismo botón que dice el resultado avanza la cola.
@@ -13104,7 +13110,7 @@ function buildFilterTable(cfg){
     if(!filas.length) ht+='<tr><td colspan="10" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach(({t,i})=>{
       const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
-      const tel=topesWaLink(t.telefono); const texto=topesTexto(t.nombre);
+      const tel=topesWaLink(t.telefono); const texto=topesTexto(t.nombre, t.rubro);
       const foto=t.foto||FOTO_TOPE_DEFAULT;
       ht+='<tr><td class="cel-nombre" data-sortval="'+esc(t.nombre||'')+'"><input type="text" data-topes-nombre="'+i+'" value="'+esc(t.nombre||'')+'" placeholder="Nombre del lugar" style="width:100%;min-width:130px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12.5px;font-weight:600"></td>'+
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.rubro||'')+'</td>'+
@@ -13141,7 +13147,7 @@ function buildFilterTable(cfg){
     // Al abrir WhatsApp o el mail: topesAlEnviar decide si corresponde pasar a "contactado".
     tabla.querySelectorAll('[data-topes-envio]').forEach(a=>a.addEventListener('click',()=>{ const i=+a.dataset.topesEnvio; const list=TOPES.slice();
       list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); }));
-    tabla.querySelectorAll('button[data-topes-copiar]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesCopiar; const txt=topesTexto(TOPES[i].nombre);
+    tabla.querySelectorAll('button[data-topes-copiar]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesCopiar; const txt=topesTexto(TOPES[i].nombre, TOPES[i].rubro);
       const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='📋 Copiar'; },1200); };
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); }
       const list=TOPES.slice(); list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); });
