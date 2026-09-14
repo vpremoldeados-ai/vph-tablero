@@ -12917,7 +12917,7 @@ function buildFilterTable(cfg){
   // Registra siempre la fecha (11/09, pedido de Marcelo: "que registres la fecha de la última
   // acción en el prospecto") — mandar el mensaje es una acción, cambie o no el estado.
   const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO});
-  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='';
+  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='', topesImgEstado='';
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
   // negocio — vive en localStorage (mismo criterio que "alertas ocultas"), cada navegador la suya.
@@ -13009,6 +13009,35 @@ function buildFilterTable(cfg){
     const cat=topesTipo(rubro);
     const p=PLANT.find(x=>x.cat===cat) || PLANT_DEFAULT.find(x=>x.cat===cat);
     return fillPreg(p?p.txt:'', {cliente:nombre}); }
+  // IMAGEN POR TIPO (14/09, pedido de Marcelo): una imagen con texto propio para cada tipo de
+  // topesTipo, en la carpeta Topes/ del repo (copia achicada de "IMAGENES Y VIDEOS DE PRODUCTOS\
+  // PLAN DE VENTAS" en Drive). El nombre sale del tipo, así un tipo nuevo sin imagen lo caza el test
+  // que verifica que exista el archivo de cada uno.
+  function topesImagen(rubro){
+    const cat=topesTipo(rubro);
+    const slug = cat==='Topes de estacionamiento' ? 'playas-y-estacionamientos'
+      : cat.replace(/^Topes — /,'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/,/g,'').replace(/\s+/g,'-');
+    return 'Topes/'+slug+'.jpg';
+  }
+  // Deja la imagen en el portapapeles para pegarla con Ctrl+V en el chat (WhatsApp no acepta una
+  // imagen por link). El portapapeles solo acepta PNG: se baja el JPG y se redibuja en un canvas.
+  // El ClipboardItem recibe la PROMESA, así write() se llama DENTRO del clic (Chrome exige el gesto
+  // y el foco al llamarlo) aunque la imagen termine de bajar después.
+  // Nunca bloquea el recorrido: si falla, el cartel avisa y la foto se adjunta a mano como antes.
+  function topesCopiarImagen(src){
+    topesImgEstado='';
+    try{
+      if(!src || typeof navigator==='undefined' || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem==='undefined'){ topesImgEstado='error'; return; }
+      const png=fetch(src).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); })
+        .then(b=>createImageBitmap(b))
+        .then(bmp=>new Promise((ok,ko)=>{ const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height;
+          c.getContext('2d').drawImage(bmp,0,0); c.toBlob(x=> x?ok(x):ko(new Error('toBlob')), 'image/png'); }));
+      topesImgEstado='copiando';
+      navigator.clipboard.write([new ClipboardItem({'image/png':png})])
+        .then(()=>{ topesImgEstado='ok'; drawTopes(); })
+        .catch(()=>{ topesImgEstado='error'; drawTopes(); });
+    }catch(e){ topesImgEstado='error'; }
+  }
   // "▶ Siguiente pendiente" (11/09, pedido de Marcelo): para no ir fila por fila buscando a quién le
   // falta escribir. Abre el WhatsApp del PRIMER prospecto en estado "pendiente" con teléfono cargado
   // (mismo orden que TOPES, no el de la tabla filtrada/ordenada) — Marcelo hace Enviar y adjunta la
@@ -13022,6 +13051,7 @@ function buildFilterTable(cfg){
     const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim());
     if(idx<0){ topesUltimoAbierto=''; alert('No queda ningún prospecto Pendiente con teléfono cargado.'); drawTopes(); return; }
     const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre, t.rubro);
+    topesCopiarImagen(topesImagen(t.rubro));   // ANTES de abrir: al abrir WhatsApp la página pierde el foco
     window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
     topesUltimoAbierto=t.nombre||'';
     drawTopes();
@@ -13034,6 +13064,7 @@ function buildFilterTable(cfg){
     const t=TOPES.find(x=>(x.nombre||'')===nom); if(!t) return;
     const tel=topesWaLink(t.telefono, true);
     if(!tel){ alert('Ese prospecto no tiene teléfono cargado.'); return; }
+    topesCopiarImagen(topesImagen(t.rubro));
     window.open(tel+'&text='+encodeURIComponent(topesTexto(t.nombre, t.rubro)), '_blank');
   }
   // Registra QUÉ PASÓ con el que está abierto y, si `seguir`, abre el próximo de una.
@@ -13078,13 +13109,16 @@ function buildFilterTable(cfg){
         // Mientras hay uno abierto, las respuestas REEMPLAZAN al botón de avanzar: cada una registra
         // qué pasó Y abre el siguiente, así confirmar no agrega ningún clic al recorrido.
         '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc(topesUltimoAbierto)+'</b>. ¿Qué pasó?</span>'+
+        (topesImgEstado==='ok' ? '<span style="font-size:12px;color:#157a1d;font-weight:600">📋 Imagen copiada: pegala en el chat con Ctrl+V</span>'
+          : topesImgEstado==='error' ? '<span style="font-size:12px;color:#b45309;font-weight:600">⚠️ No se pudo copiar la imagen: adjuntala a mano (Drive → PLAN DE VENTAS)</span>'
+          : topesImgEstado==='copiando' ? '<span style="font-size:12px;color:var(--muted)">Copiando la imagen…</span>' : '')+
         '<button class="cmp-btn cmp-btn-primary" id="topes-ok-btn" title="Queda Contactado y abro el próximo pendiente">✅ Lo mandé → siguiente</button>'+
         '<button class="cmp-btn" id="topes-sin9-btn" title="Si WhatsApp dijo que el número no está registrado, probá esto ANTES de descartarlo: reabre el mismo contacto como FIJO (sin el 9), que es como se registran los WhatsApp Business de empresas">🔁 Probar sin el 9</button>'+
         '<button class="cmp-btn" id="topes-nowa-btn" title="WhatsApp avisó que el número no está en WhatsApp: queda en Falta dato de contacto y abro el próximo">📵 No tiene WhatsApp → siguiente</button>'+
         '<button class="cmp-btn" id="topes-fin-btn" title="Corta el recorrido. El que está abierto queda como estaba (Pendiente)">⏹ Terminar</button>'
       ) : (
         '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>'+
-        '<span style="font-size:12px;color:var(--muted)">Se abre en la app de WhatsApp con el mensaje cargado — Enviar y adjuntar la foto se hace a mano ahí.</span>'
+        '<span style="font-size:12px;color:var(--muted)">Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.</span>'
       ))+
       '</div>'+
       '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
