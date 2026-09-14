@@ -11531,6 +11531,8 @@ function buildFilterTable(cfg){
     // deja más del doble de contribución que uno mayorista, así que se puede facturar mucho con mix
     // malo y no cubrir la estructura igual. Lo muestra el widget de arriba de todo en la Vista Diaria.
     {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
+    // 14/09: WhatsApp restringió el número tras 54 mensajes en frío en una mañana. El tope frena ▶ Siguiente.
+    {g:'Comercial', k:'topesTopeDiario', l:'Topes: máximo de WhatsApp en frío por día',   def:45, t:'num', hint:'Cuenta los prospectos marcados como contactados HOY (en todas las PC). Al llegar, ▶ Siguiente se frena y avisa. El 14/09 se mandaron 54 y WhatsApp restringió el número. En 0 no hay tope.'},
     {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
@@ -13044,6 +13046,17 @@ function buildFilterTable(cfg){
   // tiene WhatsApp queda abierto el chat anterior), lo manda y después pega y manda la imagen del tipo.
   // Se prende POR PC (localStorage): solo sirve donde está instalado. Sin tildar, todo sigue como antes.
   function topesAyudanteOn(){ try{ return localStorage.getItem('vph_topes_ayudante_v1')==='1'; }catch(e){ return false; } }
+  // TOPE DIARIO (14/09, pedido de Marcelo tras la restricción de WhatsApp): cuántos mensajes en frío
+  // salieron HOY y cuántos se permiten. Se cuenta desde la lista compartida (ultimaAccion de hoy y ya
+  // no pendiente), así vale igual desde cualquier PC. Cambiar el estado a mano también sella la fecha,
+  // así que puede contar de más, nunca de menos: para esto conviene pecar de prudente.
+  function topesEnviadosHoy(){
+    return TOPES.filter(t=> t.ultimaAccion===hoyISO && ['contactado','interesado','sin-interes'].includes(t.estado)).length;
+  }
+  function topesTope(){
+    const n=Math.round(Number(window.__param ? window.__param('topesTopeDiario',45) : 45));
+    return n>0 ? n : 0;
+  }
   function topesAyudanteLink(t, sinNueve){
     const wa=topesWaLink(t.telefono, sinNueve); if(!wa) return null;
     return 'vphenviar:?tel='+wa.replace(/^whatsapp:\/\/send\?phone=/,'')+
@@ -13061,6 +13074,12 @@ function buildFilterTable(cfg){
   // al abrir el chat), así que el resultado lo dice Marcelo con topesResolver.
   function topesSiguientePendiente(){
     const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim());
+    const tope=topesTope(), enviados=topesEnviadosHoy();
+    if(tope && enviados>=tope){
+      topesUltimoAbierto='';
+      alert('Llegaste al tope de hoy: '+enviados+' mensajes (máximo '+tope+').\n\nWhatsApp restringe el número si se mandan demasiados mensajes en frío en un día. Seguí mañana.');
+      drawTopes(); return;
+    }
     if(idx<0){ topesUltimoAbierto=''; alert('No queda ningún prospecto Pendiente con teléfono cargado.'); drawTopes(); return; }
     const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre, t.rubro);
     if(topesAyudanteOn()){ topesImgEstado='ayudante'; window.open(topesAyudanteLink(t), '_blank'); }
@@ -13118,6 +13137,7 @@ function buildFilterTable(cfg){
       .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota].some(v=>topesNorm(v).includes(qTexto)));
     const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
     const pendConTel=TOPES.filter(t=>(t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim()).length;
+    const topeHoy=topesTope(), enviadosHoy=topesEnviadosHoy();
     const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
     let hc=
       '<div style="margin-bottom:10px;padding:10px;border:1px dashed var(--border);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
@@ -13135,6 +13155,10 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn" id="topes-fin-btn" title="Corta el recorrido. El que está abierto queda como estaba (Pendiente)">⏹ Terminar</button>'
       ) : (
         '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>'+
+        (topeHoy ? '<span style="font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;color:#fff;background:'+
+          (enviadosHoy>=topeHoy ? '#c0392b' : enviadosHoy>=topeHoy-5 ? '#c98a06' : '#157a1d')+
+          '" title="Mensajes en frío mandados hoy contra el máximo del día (Parámetros → Comercial)">Hoy: '+enviadosHoy+' de '+topeHoy+
+          (enviadosHoy>=topeHoy ? ' · tope alcanzado, seguí mañana' : enviadosHoy>=topeHoy-5 ? ' · quedan '+(topeHoy-enviadosHoy) : '')+'</span>' : '')+
         '<span style="font-size:12px;color:var(--muted)">'+(topesAyudanteOn()
           ? 'El ayudante abre el chat, comprueba que sea el correcto y manda el mensaje y la imagen de su rubro.'
           : 'Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.')+'</span>'+
