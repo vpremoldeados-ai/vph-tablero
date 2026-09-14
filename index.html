@@ -13038,6 +13038,18 @@ function buildFilterTable(cfg){
         .catch(()=>{ topesImgEstado='error'; drawTopes(); });
     }catch(e){ topesImgEstado='error'; }
   }
+  // AYUDANTE DE ENVÍO (14/09, pedido de Marcelo: "automatizar el envío del mensaje con la foto
+  // correcta"). Un programita instalado en la PC (carpeta "ayudante-whatsapp" en Drive) atiende los
+  // links vphenviar: — abre el chat, COMPRUEBA que se abrió con ESTE mensaje escrito (si el número no
+  // tiene WhatsApp queda abierto el chat anterior), lo manda y después pega y manda la imagen del tipo.
+  // Se prende POR PC (localStorage): solo sirve donde está instalado. Sin tildar, todo sigue como antes.
+  function topesAyudanteOn(){ try{ return localStorage.getItem('vph_topes_ayudante_v1')==='1'; }catch(e){ return false; } }
+  function topesAyudanteLink(t, sinNueve){
+    const wa=topesWaLink(t.telefono, sinNueve); if(!wa) return null;
+    return 'vphenviar:?tel='+wa.replace(/^whatsapp:\/\/send\?phone=/,'')+
+      '&tipo='+topesImagen(t.rubro).replace(/^Topes\//,'').replace(/\.jpg$/,'')+
+      '&texto='+encodeURIComponent(topesTexto(t.nombre, t.rubro));
+  }
   // "▶ Siguiente pendiente" (11/09, pedido de Marcelo): para no ir fila por fila buscando a quién le
   // falta escribir. Abre el WhatsApp del PRIMER prospecto en estado "pendiente" con teléfono cargado
   // (mismo orden que TOPES, no el de la tabla filtrada/ordenada) — Marcelo hace Enviar y adjunta la
@@ -13051,8 +13063,11 @@ function buildFilterTable(cfg){
     const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim());
     if(idx<0){ topesUltimoAbierto=''; alert('No queda ningún prospecto Pendiente con teléfono cargado.'); drawTopes(); return; }
     const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre, t.rubro);
-    topesCopiarImagen(topesImagen(t.rubro));   // ANTES de abrir: al abrir WhatsApp la página pierde el foco
-    window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
+    if(topesAyudanteOn()){ topesImgEstado='ayudante'; window.open(topesAyudanteLink(t), '_blank'); }
+    else {
+      topesCopiarImagen(topesImagen(t.rubro));   // ANTES de abrir: al abrir WhatsApp la página pierde el foco
+      window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
+    }
     topesUltimoAbierto=t.nombre||'';
     drawTopes();
   }
@@ -13064,6 +13079,7 @@ function buildFilterTable(cfg){
     const t=TOPES.find(x=>(x.nombre||'')===nom); if(!t) return;
     const tel=topesWaLink(t.telefono, true);
     if(!tel){ alert('Ese prospecto no tiene teléfono cargado.'); return; }
+    if(topesAyudanteOn()){ topesImgEstado='ayudante'; window.open(topesAyudanteLink(t, true), '_blank'); drawTopes(); return; }
     topesCopiarImagen(topesImagen(t.rubro));
     window.open(tel+'&text='+encodeURIComponent(topesTexto(t.nombre, t.rubro)), '_blank');
   }
@@ -13111,14 +13127,18 @@ function buildFilterTable(cfg){
         '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc(topesUltimoAbierto)+'</b>. ¿Qué pasó?</span>'+
         (topesImgEstado==='ok' ? '<span style="font-size:12px;color:#157a1d;font-weight:600">📋 Imagen copiada: pegala en el chat con Ctrl+V</span>'
           : topesImgEstado==='error' ? '<span style="font-size:12px;color:#b45309;font-weight:600">⚠️ No se pudo copiar la imagen: adjuntala a mano (Drive → PLAN DE VENTAS)</span>'
-          : topesImgEstado==='copiando' ? '<span style="font-size:12px;color:var(--muted)">Copiando la imagen…</span>' : '')+
+          : topesImgEstado==='ayudante' ? '<span style="font-size:12px;color:#157a1d;font-weight:600">🤖 El ayudante está mandando el mensaje y la imagen: mirá WhatsApp y marcá qué pasó</span>'
+          : topesImgEstado==='copiando' ?'<span style="font-size:12px;color:var(--muted)">Copiando la imagen…</span>' : '')+
         '<button class="cmp-btn cmp-btn-primary" id="topes-ok-btn" title="Queda Contactado y abro el próximo pendiente">✅ Lo mandé → siguiente</button>'+
         '<button class="cmp-btn" id="topes-sin9-btn" title="Si WhatsApp dijo que el número no está registrado, probá esto ANTES de descartarlo: reabre el mismo contacto como FIJO (sin el 9), que es como se registran los WhatsApp Business de empresas">🔁 Probar sin el 9</button>'+
         '<button class="cmp-btn" id="topes-nowa-btn" title="WhatsApp avisó que el número no está en WhatsApp: queda en Falta dato de contacto y abro el próximo">📵 No tiene WhatsApp → siguiente</button>'+
         '<button class="cmp-btn" id="topes-fin-btn" title="Corta el recorrido. El que está abierto queda como estaba (Pendiente)">⏹ Terminar</button>'
       ) : (
         '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>'+
-        '<span style="font-size:12px;color:var(--muted)">Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.</span>'
+        '<span style="font-size:12px;color:var(--muted)">'+(topesAyudanteOn()
+          ? 'El ayudante abre el chat, comprueba que sea el correcto y manda el mensaje y la imagen de su rubro.'
+          : 'Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.')+'</span>'+
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Solo en la PC donde está instalado el Ayudante VPH (carpeta ayudante-whatsapp en Drive)"><input type="checkbox" id="topes-ayudante-chk"'+(topesAyudanteOn()?' checked':'')+'> 🤖 Enviar solo (ayudante)</label>'
       ))+
       '</div>'+
       '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
@@ -13159,6 +13179,8 @@ function buildFilterTable(cfg){
     if(btnNoWa) btnNoWa.onclick=()=>topesResolver('sinwa', true);
     const btnFin=controles.querySelector('#topes-fin-btn');
     if(btnFin) btnFin.onclick=()=>{ topesUltimoAbierto=''; drawTopes(); };
+    const chkAy=controles.querySelector('#topes-ayudante-chk');
+    if(chkAy) chkAy.onchange=()=>{ try{ localStorage.setItem('vph_topes_ayudante_v1', chkAy.checked?'1':'0'); }catch(e){} drawTopes(); };
     controles.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
     controles.querySelectorAll('button[data-topesf-r]').forEach(b=>b.onclick=()=>{ topesFiltroRubro=b.dataset.topesfR; drawTopes(); });
     // Alta manual — pedido de Marcelo, 08/09: además de la carga inicial por investigación, poder
