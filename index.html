@@ -11533,6 +11533,10 @@ function buildFilterTable(cfg){
     {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
     // 14/09: WhatsApp restringió el número tras 54 mensajes en frío en una mañana. El tope frena ▶ Siguiente.
     {g:'Comercial', k:'topesTopeDiario', l:'Topes: máximo de WhatsApp en frío por día',   def:45, t:'num', hint:'Cuenta los prospectos marcados como contactados HOY (en todas las PC). Al llegar, ▶ Siguiente se frena y avisa. El 14/09 se mandaron 54 y WhatsApp restringió el número. En 0 no hay tope.'},
+    // 15/09: el Tablero marca el ritmo. Reparte lo que queda del tope en lo que queda del horario, con este piso.
+    {g:'Comercial', k:'topesMinutosEntre', l:'Topes: minutos mínimos entre WhatsApp en frío', def:10, t:'num', hint:'Después de cada ✅ Lo mandé, ▶ Siguiente espera. Reparte el tope del día en el horario: con 45 de 9 a 18 sale uno cada 12 min (nunca menos que este número). En 0 no espera.'},
+    {g:'Comercial', k:'topesHoraDesde', l:'Topes: hora de inicio de los WhatsApp en frío', def:9, t:'num', hint:'Antes de esta hora ▶ Siguiente no abre chats. Admite medias horas (9.5 = 9:30).'},
+    {g:'Comercial', k:'topesHoraHasta', l:'Topes: hora de fin de los WhatsApp en frío', def:18, t:'num', hint:'Desde esta hora ▶ Siguiente no abre más chats hasta mañana.'},
     {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
@@ -12918,7 +12922,7 @@ function buildFilterTable(cfg){
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
   // Registra siempre la fecha (11/09, pedido de Marcelo: "que registres la fecha de la última
   // acción en el prospecto") — mandar el mensaje es una acción, cambie o no el estado.
-  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO});
+  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:Date.now()});
   let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='', topesImgEstado='';
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
@@ -13057,6 +13061,62 @@ function buildFilterTable(cfg){
     const n=Math.round(Number(window.__param ? window.__param('topesTopeDiario',45) : 45));
     return n>0 ? n : 0;
   }
+  // ESPACIADO (15/09, pedido de Marcelo: "lo voy a hacer más espaciado pero necesito que vos dirijas el
+  // espaciamiento"). ▶ Siguiente no abre el próximo chat hasta que pase el intervalo: reparte lo que
+  // queda del tope en lo que queda del horario, con un piso de topesMinutosEntre (45 de 9 a 18 = uno
+  // cada 12 min). Cuenta desde el último ✅ Lo mandé (ultimaAccionTs, en la lista compartida: vale desde
+  // cualquier PC). Un 📵 No tiene WhatsApp no sella la hora: no salió ningún mensaje.
+  function topesUltimoEnvioTs(){
+    return TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
+  }
+  function topesEspera(ahoraMs){
+    const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
+    const minEntre=Math.max(0, Math.round(P('topesMinutosEntre',10)));
+    const desde=P('topesHoraDesde',9), hasta=P('topesHoraHasta',18);
+    if(!minEntre) return {ms:0, intervalo:0, motivo:'', desde, hasta};
+    const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
+    const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
+    const ini=aHora(desde), fin=aHora(hasta);
+    const ult=topesUltimoEnvioTs();
+    const tope=topesTope(), quedan=tope ? Math.max(1, tope-topesEnviadosHoy()) : 0;
+    const base=Math.max(ult||ahora, ini);
+    const intervalo=Math.max(minEntre, quedan ? Math.floor((fin-base)/60000/quedan) : 0);
+    if(ahora<ini) return {ms:ini-ahora, intervalo, motivo:'antes', desde, hasta};
+    if(ahora>=fin) return {ms:Infinity, intervalo, motivo:'despues', desde, hasta};
+    if(!ult) return {ms:0, intervalo, motivo:'', desde, hasta};
+    // Tope en un intervalo: si el reloj de otra PC va adelantado, no se queda esperando de más.
+    const ms=Math.min(intervalo*60000, Math.max(0, ult+intervalo*60000-ahora));
+    return {ms, intervalo, motivo:ms>0?'espacio':'', desde, hasta};
+  }
+  function topesFmtEspera(ms){
+    const s=Math.ceil(ms/1000), h=Math.floor(s/3600), m=Math.floor(s%3600/60), x=s%60, p=n=>String(n).padStart(2,'0');
+    return (h ? h+':'+p(m) : m)+':'+p(x);
+  }
+  function topesFmtHora(h){ return Math.floor(h)+':'+String(Math.round((h%1)*60)).padStart(2,'0'); }
+  // Cuenta regresiva en la barra; al llegar a cero suena un aviso y la pestaña se marca con 🟢, así se
+  // puede estar en otra cosa mientras tanto.
+  let topesCuentaTimer=null;
+  function topesAvisoListo(){
+    try{ if(!/^🟢 /.test(document.title)) document.title='🟢 '+document.title; }catch(e){}
+    try{
+      const C=window.AudioContext||window.webkitAudioContext;
+      if(C){ const c=new C(), o=c.createOscillator(), g=c.createGain(); o.frequency.value=880; g.gain.value=0.08;
+        o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime+0.3); }
+    }catch(e){}
+  }
+  function topesProgramarCuenta(esp){
+    if(topesCuentaTimer){ clearInterval(topesCuentaTimer); topesCuentaTimer=null; }
+    if(!(esp.ms>0) || esp.ms===Infinity) return;
+    topesCuentaTimer=setInterval(()=>{
+      const el=document.getElementById('topes-cuenta');
+      if(!el){ clearInterval(topesCuentaTimer); topesCuentaTimer=null; return; }
+      const e=topesEspera();
+      if(e.ms>0 && e.ms!==Infinity){ el.textContent=topesFmtEspera(e.ms); return; }
+      clearInterval(topesCuentaTimer); topesCuentaTimer=null;
+      if(e.ms===0) topesAvisoListo();
+      drawTopes();
+    }, 1000);
+  }
   function topesAyudanteLink(t, sinNueve){
     const wa=topesWaLink(t.telefono, sinNueve); if(!wa) return null;
     return 'vphenviar:?tel='+wa.replace(/^whatsapp:\/\/send\?phone=/,'')+
@@ -13080,7 +13140,11 @@ function buildFilterTable(cfg){
       alert('Llegaste al tope de hoy: '+enviados+' mensajes (máximo '+tope+').\n\nWhatsApp restringe el número si se mandan demasiados mensajes en frío en un día. Seguí mañana.');
       drawTopes(); return;
     }
+    // Espaciado: si todavía no pasó el intervalo (o está fuera de horario) no abre nada; la barra
+    // muestra la cuenta regresiva. Así "✅ Lo mandé → siguiente" registra y queda esperando.
+    if(topesEspera().ms>0){ topesUltimoAbierto=''; drawTopes(); return; }
     if(idx<0){ topesUltimoAbierto=''; alert('No queda ningún prospecto Pendiente con teléfono cargado.'); drawTopes(); return; }
+    try{ document.title=document.title.replace(/^🟢 /,''); }catch(e){}
     const t=TOPES[idx], tel=topesWaLink(t.telefono), texto=topesTexto(t.nombre, t.rubro);
     if(topesAyudanteOn()){ topesImgEstado='ayudante'; window.open(topesAyudanteLink(t), '_blank'); }
     else {
@@ -13137,7 +13201,7 @@ function buildFilterTable(cfg){
       .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota].some(v=>topesNorm(v).includes(qTexto)));
     const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
     const pendConTel=TOPES.filter(t=>(t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim()).length;
-    const topeHoy=topesTope(), enviadosHoy=topesEnviadosHoy();
+    const topeHoy=topesTope(), enviadosHoy=topesEnviadosHoy(), esp=topesEspera();
     const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
     let hc=
       '<div style="margin-bottom:10px;padding:10px;border:1px dashed var(--border);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
@@ -13154,7 +13218,12 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn" id="topes-nowa-btn" title="WhatsApp avisó que el número no está en WhatsApp: queda en Falta dato de contacto y abro el próximo">📵 No tiene WhatsApp → siguiente</button>'+
         '<button class="cmp-btn" id="topes-fin-btn" title="Corta el recorrido. El que está abierto queda como estaba (Pendiente)">⏹ Terminar</button>'
       ) : (
-        '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>'+
+        (esp.ms>0 && !(topeHoy && enviadosHoy>=topeHoy)
+          ? '<button class="cmp-btn" disabled style="opacity:1;font-weight:700;cursor:default" title="Espaciado entre mensajes (Parámetros → Comercial)">⏳ '+
+              (esp.motivo==='despues' ? 'Terminó el horario de hoy'
+                : (esp.motivo==='antes' ? 'Arranca a las '+topesFmtHora(esp.desde)+' · falta ' : 'Próximo mensaje en ')+'<span id="topes-cuenta">'+topesFmtEspera(esp.ms)+'</span>')+'</button>'
+          : '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>')+
+        (esp.intervalo ? '<span style="font-size:12px;color:var(--muted)" title="Reparte lo que queda del tope en lo que queda del horario">🕒 Uno cada '+esp.intervalo+' min · de '+topesFmtHora(esp.desde)+' a '+topesFmtHora(esp.hasta)+'</span>' : '')+
         (topeHoy ? '<span style="font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;color:#fff;background:'+
           (enviadosHoy>=topeHoy ? '#c0392b' : enviadosHoy>=topeHoy-5 ? '#c98a06' : '#157a1d')+
           '" title="Mensajes en frío mandados hoy contra el máximo del día (Parámetros → Comercial)">Hoy: '+enviadosHoy+' de '+topeHoy+
@@ -13193,6 +13262,7 @@ function buildFilterTable(cfg){
         '</div>'
       ) : '');
     controles.innerHTML=hc;
+    topesProgramarCuenta(topesUltimoAbierto ? {ms:0} : esp);
     const btnSiguiente=controles.querySelector('#topes-siguiente-btn');
     if(btnSiguiente) btnSiguiente.onclick=topesSiguientePendiente;
     const btnOk=controles.querySelector('#topes-ok-btn');
