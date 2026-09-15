@@ -13075,6 +13075,123 @@ function buildFilterTable(cfg){
     const f=topesFirma();
     return !t.accionPor || !f || String(t.accionPor).trim().toLowerCase()===f.trim().toLowerCase();
   }
+  // LINKEDIN (15/09, pedido de Marcelo: "agregá el botón y los textos para LinkedIn"). Sirve para llegar
+  // a quien DECIDE (compras, mantenimiento, obras), que es lo que el WhatsApp general no da. El Tablero
+  // solo abre la búsqueda y deja los textos listos: buscar, invitar y escribir lo hace la persona desde
+  // su LinkedIn (automatizarlo viola las reglas de LinkedIn — misma lección que la restricción de
+  // WhatsApp del 14/09). El estado de LinkedIn va aparte del de WhatsApp y no suma al tope diario.
+  // La nota de invitación va con tope de 200 caracteres (el límite de las cuentas gratis).
+  function topesLiTextos(t){
+    const W='www.vpremoldeados.com', R=' Me gustaría sumarte a mi red.';
+    const T={
+      'Topes de estacionamiento': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de estacionamiento de hormigón.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón que ordenan el estacionamiento, aprovechan mejor los lugares y evitan golpes contra paredes y columnas. No llevan mantenimiento y enviamos a toda la provincia. ¿Te puedo mandar la ficha con precios para {empresa}? Si lo maneja otra persona, ¿me decís quién? '+W],
+      'Topes — constructoras': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes, losetas cribadas y green blocks de hormigón para obras.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento para cocheras y subsuelos, y losetas cribadas y green blocks para accesos, veredas y espacios verdes. Entregamos en obra y tenemos lista para empresas. ¿Te mando el catálogo con precios para los próximos desarrollos de {empresa}? '+W],
+      'Topes — estudios de arquitectura': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos losetas cribadas, green blocks y topes de hormigón para proyectos.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba losetas cribadas y green blocks para superficies permeables (accesos, cocheras, veredas) y topes de estacionamiento. Nos gustaría que los tengan en cuenta al especificar materiales. ¿Te mando el catálogo con medidas, pesos y precios? '+W],
+      'Topes — paisajistas y viveros': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos losetas cribadas y green blocks de hormigón para césped transitable.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba losetas cribadas y green blocks para sumar a sus trabajos de césped en accesos, cocheras y senderos, además de topes de estacionamiento. ¿Te mando el catálogo con precios para {empresa}? '+W],
+      'Topes — cámaras empresarias': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de estacionamiento de hormigón y tenemos una propuesta para socios.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón. Nos gustaría acercarles una propuesta para los socios de {empresa}. ¿Con quién lo puedo conversar? '+W],
+      'Topes — corralones': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes, losetas y green blocks de hormigón para reventa.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento, losetas cribadas, green blocks y cordones de hormigón, con lista mayorista para reventa. ¿Te mando la lista de precios para {empresa}? '+W],
+      'Topes — campings y clubes náuticos': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de hormigón para estacionamientos de autos, trailers y motorhomes.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para ordenar autos, trailers y motorhomes, y losetas cribadas para accesos con césped. No llevan mantenimiento. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — hoteles y cabañas': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes y losetas de hormigón para estacionamientos de huéspedes.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para ordenar el estacionamiento de huéspedes, y losetas cribadas y green blocks para accesos verdes. Enviamos a toda la provincia. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — colegios y universidades': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes y losetas de hormigón para estacionamientos y espacios exteriores.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón que ordenan y dan seguridad al ingreso, y losetas cribadas para espacios verdes transitables. ¿Te mando la ficha con precios para {empresa}, o me decís quién se ocupa de mantenimiento? '+W],
+      'Topes — clubes y gimnasios': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de estacionamiento de hormigón para clubes y complejos.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para ordenar el estacionamiento de socios y visitas, y losetas cribadas para accesos con césped. No llevan mantenimiento. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — salud': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de hormigón para estacionamientos de clínicas y sanatorios.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón que ordenan el ingreso y protegen los lugares de ambulancias y de personas con discapacidad. No llevan mantenimiento. ¿Te mando la ficha con precios para {empresa}, o me decís quién maneja mantenimiento? '+W],
+      'Topes — automotor': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de hormigón para playas de concesionarias y talleres.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para ordenar la playa de exhibición, el taller y el estacionamiento de clientes, y evitar golpes. No llevan mantenimiento. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — cementerios, salas velatorias e iglesias': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes y losetas de hormigón para estacionamientos y accesos.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para ordenar el estacionamiento de visitas, y losetas cribadas y green blocks para senderos y accesos con césped. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — logística e industria': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes de hormigón para playas de camiones, depósitos y parques industriales.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para playas de camiones y autos, andenes y depósitos. Ordenan la circulación, protegen muros y portones y no llevan mantenimiento. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — consorcios y barrios cerrados': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes, losetas y green blocks de hormigón para cocheras y espacios comunes.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento para cocheras y espacios comunes, y losetas cribadas y green blocks para veredas y accesos con césped. ¿Te mando la ficha con precios para {empresa}, o me decís quién maneja la administración? '+W],
+      'Topes — eventos y gastronomía': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes y losetas de hormigón para estacionamientos de clientes.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento de hormigón para ordenar el estacionamiento de clientes, y losetas cribadas para accesos y patios con césped. ¿Te mando la ficha con precios para {empresa}? '+W],
+      'Topes — municipios y comunas': ['{saludo} soy {firma}, de VPH Premoldeados (Córdoba). Fabricamos topes, losetas y cordones de hormigón para espacios públicos.'+R,
+        '{saludo} gracias por aceptar. Soy {firma}, de VPH Premoldeados: fabricamos en Córdoba topes de estacionamiento, losetas cribadas, green blocks y cordones de hormigón para plazas, estacionamientos y espacios públicos. ¿Me orientás con quién de Compras u Obras Públicas lo converso y cómo nos inscribimos como proveedores de {empresa}? '+W]
+    };
+    const tipo=topesTipo(t.rubro), par=T[tipo]||T['Topes de estacionamiento'];
+    const nom=String(t.liContacto||'').trim().split(/[\s,(—–-]+/)[0]||'';
+    const saludo=nom ? 'Hola '+nom+',' : 'Hola,';
+    const firma=((typeof topesFirma==='function') && topesFirma()) || '[tu nombre]';
+    const fill=s=>s.replace(/\{saludo\}/g,saludo).replace(/\{firma\}/g,firma).replace(/\{empresa\}/g,String(t.nombre||'').trim()||'tu empresa');
+    return {tipo, nota:fill(par[0]), mensaje:fill(par[1])};
+  }
+  // Búsqueda de PERSONAS por el nombre de la empresa, en LinkedIn o en Sales Navigator.
+  function topesLiBusqueda(t, salesNav){
+    const q=encodeURIComponent(String(t.nombre||'').trim());
+    return salesNav ? 'https://www.linkedin.com/sales/search/people?keywords='+q
+                    : 'https://www.linkedin.com/search/results/people/?keywords='+q;
+  }
+  function topesLiEtiqueta(k){
+    return ({invitacion:'💼 Invitado', aceptada:'💼 Aceptó', respondio:'💼 Respondió', 'sin-respuesta':'💼 Sin resp.'})[k] || '💼 LinkedIn';
+  }
+  let topesLiNombre='';
+  function topesLiAbrir(nombre){ topesLiNombre=nombre||''; drawTopesLi(); }
+  function topesLiCerrar(){ topesLiNombre=''; const m=document.getElementById('topes-li-modal'); if(m) m.style.display='none'; }
+  function topesLiCopiar(btn, txt, etiqueta){
+    const done=()=>{ btn.textContent='Copiado ✓'; setTimeout(()=>{ btn.textContent=etiqueta; },1200); };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); });
+    else { fallbackCopy(txt); done(); }
+  }
+  // Ventana del prospecto (prefijo topes-li-). Va en <body> y NO la repinta drawTopes: si no, cada
+  // snapshot de la lista borraría lo que se está escribiendo en el contacto.
+  function drawTopesLi(){
+    let m=document.getElementById('topes-li-modal');
+    if(!topesLiNombre){ if(m) m.style.display='none'; return; }
+    const t=TOPES.find(x=>(x.nombre||'')===topesLiNombre); if(!t){ topesLiCerrar(); return; }
+    if(!m){ m=document.createElement('div'); m.id='topes-li-modal'; document.body.appendChild(m);
+      m.addEventListener('click', e=>{ if(e.target===m) topesLiCerrar(); }); }
+    const tx=topesLiTextos(t), nom=topesLiNombre;
+    const lbl='display:block;font-size:11px;color:var(--muted);margin-bottom:3px';
+    const campo='width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px';
+    const bloque=(id,titulo,txt,etiqueta,max)=>
+      '<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'+
+        '<b style="font-size:12.5px">'+titulo+'</b>'+
+        (max ? '<span style="font-size:11px;color:'+(txt.length>max?'#c0392b':'var(--muted)')+'">'+txt.length+'/'+max+' caracteres</span>' : '')+'</div>'+
+        '<textarea readonly id="topes-li-'+id+'-txt" rows="'+(max?3:6)+'" style="'+campo+';resize:vertical;font-family:inherit">'+esc(txt)+'</textarea>'+
+        '<button class="cmp-btn cmp-btn-primary" id="topes-li-'+id+'-btn" style="margin-top:6px">'+etiqueta+'</button></div>';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:600;display:flex;align-items:center;justify-content:center;padding:12px';
+    m.innerHTML=
+      '<div style="background:var(--card,#fff);border-radius:12px;padding:16px;width:min(600px,100%);max-height:92vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.3)">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">'+
+          '<div><div style="font-weight:700;font-size:15px">💼 LinkedIn — '+esc(t.nombre||'')+'</div>'+
+          '<div style="font-size:12px;color:var(--muted)">'+esc(t.rubro||'')+' · textos de '+esc(tx.tipo)+'</div></div>'+
+          '<button class="cmp-btn" id="topes-li-cerrar">✕</button></div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
+          '<a class="cmp-btn" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(topesLiBusqueda(t,false))+'">🔎 Buscar en LinkedIn</a>'+
+          '<a class="cmp-btn" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(topesLiBusqueda(t,true))+'">🔎 Buscar en Sales Navigator</a></div>'+
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 12px">Buscá a quien maneja <b>compras, mantenimiento, obras o la administración</b>. '+
+          'La invitación y el mensaje los mandás vos desde LinkedIn, <b>pocos por día</b> (automatizarlo hace que LinkedIn restrinja la cuenta).</p>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
+          '<div style="flex:2;min-width:200px"><label style="'+lbl+'">Contacto (nombre y cargo)</label>'+
+            '<input type="text" id="topes-li-contacto" value="'+esc(t.liContacto||'')+'" placeholder="Ej: Juan Pérez — Jefe de compras" style="'+campo+'"></div>'+
+          '<div style="flex:1;min-width:150px"><label style="'+lbl+'">Estado en LinkedIn</label>'+
+            '<select id="topes-li-estado" style="'+campo+'">'+
+              [['','Sin contactar'],['invitacion','Invitación enviada'],['aceptada','Aceptó la invitación'],['respondio','Respondió'],['sin-respuesta','Sin respuesta']]
+                .map(([k,l])=>'<option value="'+k+'"'+((t.liEstado||'')===k?' selected':'')+'>'+l+'</option>').join('')+
+            '</select></div></div>'+
+        bloque('nota','1) Nota de la invitación',tx.nota,'📋 Copiar nota',200)+
+        bloque('msj','2) Mensaje cuando acepta',tx.mensaje,'📋 Copiar mensaje',0)+
+        (topesFirma() ? '' : '<p style="font-size:12px;color:#c0392b;margin:0">Escribí tu nombre en "✍️ Firmo como" para que los textos salgan firmados.</p>')+
+      '</div>';
+    m.querySelector('#topes-li-cerrar').onclick=topesLiCerrar;
+    m.querySelector('#topes-li-contacto').onchange=e=>{ const v=String(e.target.value||'').trim();
+      topesActualizar(nom, row=>({...row, liContacto:v})); drawTopesLi(); };
+    m.querySelector('#topes-li-estado').onchange=e=>{ const v=e.target.value;
+      topesActualizar(nom, row=>({...row, liEstado:v, liFecha:hoyISO})); drawTopes(); drawTopesLi(); };
+    const bn=m.querySelector('#topes-li-nota-btn'); bn.onclick=()=>topesLiCopiar(bn, tx.nota, '📋 Copiar nota');
+    const bm=m.querySelector('#topes-li-msj-btn'); bm.onclick=()=>topesLiCopiar(bm, tx.mensaje, '📋 Copiar mensaje');
+  }
   // Prospecto abierto por la OTRA persona en los últimos 30 min: ▶ Siguiente lo saltea, así no le
   // escriben los dos. Se reserva al abrir el chat y se libera al marcar el resultado o ⏹ Terminar.
   function topesReservadoPorOtro(t, ahora){
@@ -13378,7 +13495,8 @@ function buildFilterTable(cfg){
           Object.entries(FOTOS_TOPE).map(([arch,lbl])=>'<option value="'+esc(arch)+'"'+(foto===arch?' selected':'')+'>'+esc(lbl)+'</option>').join('')+
         '</select></td>'+
         '<td data-sortval="'+esc(t.nota||'')+'"><input type="text" data-topes-nota="'+i+'" value="'+esc(t.nota||'')+'" placeholder="—" style="width:95px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
-        '<td style="white-space:nowrap"><button class="cmp-rowbtn" data-topes-lead="'+i+'" title="Ya respondió: pasarlo al pipeline de leads">→ Lead</button> '+
+        '<td style="white-space:nowrap"><button class="cmp-rowbtn" data-topes-li="'+i+'" title="LinkedIn: buscar a quien decide y copiar la invitación y el mensaje"'+
+          (t.liEstado ? ' style="color:#0a66c2;font-weight:600"' : '')+'>'+esc(topesLiEtiqueta(t.liEstado))+'</button> <button class="cmp-rowbtn" data-topes-lead="'+i+'" title="Ya respondió: pasarlo al pipeline de leads">→ Lead</button> '+
           '<button class="cmp-rowbtn" data-topes-del="'+i+'" title="Eliminar este prospecto de la lista" style="color:var(--red)">✕</button></td>'+
       '</tr>';
     });
@@ -13403,6 +13521,7 @@ function buildFilterTable(cfg){
       const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='📋 Copiar'; },1200); };
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); }
       const list=TOPES.slice(); list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); });
+    tabla.querySelectorAll('button[data-topes-li]').forEach(b=>b.onclick=()=>topesLiAbrir(TOPES[+b.dataset.topesLi].nombre||''));
     tabla.querySelectorAll('button[data-topes-lead]').forEach(b=>b.onclick=()=>{ const t=TOPES[+b.dataset.topesLead];
       $('crm-topes-panel').style.display='none';
       openForm(); editing.cliente=t.nombre||''; editing.telefono=t.telefono||''; editing.email=t.email||'';
