@@ -12922,7 +12922,7 @@ function buildFilterTable(cfg){
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
   // Registra siempre la fecha (11/09, pedido de Marcelo: "que registres la fecha de la última
   // acción en el prospecto") — mandar el mensaje es una acción, cambie o no el estado.
-  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:Date.now(), accionPor:(typeof topesFirma==='function' ? topesFirma() : '')});
+  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:Date.now(), accionPor:(typeof topesFirma==='function' ? topesFirma() : ''), accionPc:(typeof topesPcId==='function' ? topesPcId() : '')});
   let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='', topesImgEstado='';
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
@@ -13064,16 +13064,29 @@ function buildFilterTable(cfg){
   // DOS NÚMEROS (15/09, pedido de Marcelo: Sofía también prospecta, con OTRO número y desde su PC).
   // La firma se guarda POR PC (localStorage), porque cada PC tiene vinculado su propio WhatsApp: sirve
   // para firmar el mensaje y para que el tope y la espera se cuenten por número. En la PC de Marcelo
-  // (su mail) arranca en "Marcelo". Lo que se marcó sin firma (antes de esto) cuenta para todos:
-  // de más, nunca de menos.
+  // Lo que se marcó sin identificar la PC (antes de esto) cuenta para todos: de más, nunca de menos.
+  // 🔴 15/09 (2ª vuelta, "yo y Sofía le estamos mandando mensaje al mismo prospecto"): la firma arrancaba
+  // sola en "Marcelo" si el mail era vpremoldeados@gmail.com — y con ese mail entra SOFÍA. Las dos PCs
+  // firmaban "Marcelo", así que la reserva, el tope y la espera las trataban como una sola persona.
+  // Ahora la firma no se deduce nunca, y lo que separa a una PC de la otra es un id propio de cada PC
+  // (topesPcId), no el nombre: aunque las dos escriban el mismo nombre, no se pisan.
   function topesFirma(){
     try{ const v=String(localStorage.getItem('vph_topes_firma_v1')||'').trim(); if(v) return v; }catch(e){}
-    try{ const c=fb(); if(c&&c.auth&&c.auth.currentUser&&c.auth.currentUser.email==='vpremoldeados@gmail.com') return 'Marcelo'; }catch(e){}
     return '';
   }
+  function topesPcId(){
+    if(topesPcId._c) return topesPcId._c;
+    let v='';
+    try{ v=String(localStorage.getItem('vph_topes_pc_v1')||'').trim(); }catch(e){}
+    if(!v){
+      v='pc-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
+      try{ localStorage.setItem('vph_topes_pc_v1', v); }catch(e){}
+    }
+    return (topesPcId._c=v);
+  }
   function topesEsMio(t){
-    const f=topesFirma();
-    return !t.accionPor || !f || String(t.accionPor).trim().toLowerCase()===f.trim().toLowerCase();
+    if(!t.accionPc) return true;   // marcado antes de identificar las PCs: cuenta para todos
+    return t.accionPc===topesPcId();
   }
   // LINKEDIN (15/09, pedido de Marcelo: "agregá el botón y los textos para LinkedIn"). Sirve para llegar
   // a quien DECIDE (compras, mantenimiento, obras), que es lo que el WhatsApp general no da. El Tablero
@@ -13195,9 +13208,9 @@ function buildFilterTable(cfg){
   // Prospecto abierto por la OTRA persona en los últimos 30 min: ▶ Siguiente lo saltea, así no le
   // escriben los dos. Se reserva al abrir el chat y se libera al marcar el resultado o ⏹ Terminar.
   function topesReservadoPorOtro(t, ahora){
-    if(!t.abiertoPor) return false;
-    const f=topesFirma();
-    if(f && String(t.abiertoPor).trim().toLowerCase()===f.trim().toLowerCase()) return false;
+    if(!t.abiertoPc && !t.abiertoPor) return false;
+    if(t.abiertoPc){ if(t.abiertoPc===topesPcId()) return false; }
+    else { const f=topesFirma(); if(f && String(t.abiertoPor).trim().toLowerCase()===f.trim().toLowerCase()) return false; }   // reserva vieja, sin id de PC
     return ((ahora==null ? Date.now() : ahora) - (Number(t.abiertoTs)||0)) < 30*60000;
   }
   // Cambia UN prospecto sin pisar lo que la otra PC acaba de guardar: en la nube lo hace dentro de una
@@ -13316,7 +13329,7 @@ function buildFilterTable(cfg){
     }
     topesUltimoAbierto=t.nombre||'';
     // Reserva (después de abrir: el clic tiene que llegar entero a window.open). No cambia el estado.
-    topesActualizar(topesUltimoAbierto, row=>({...row, abiertoPor:firma, abiertoTs:Date.now()}));
+    topesActualizar(topesUltimoAbierto, row=>({...row, abiertoPor:firma, abiertoPc:topesPcId(), abiertoTs:Date.now()}));
     drawTopes();
   }
   // Reabre el MISMO prospecto con el formato de fijo (sin el 9), para descartar que el "no está en
@@ -13343,9 +13356,9 @@ function buildFilterTable(cfg){
     if(nom){
       // Solo esa fila y liberando la reserva (15/09): así no pisa lo que marcó la otra PC.
       topesActualizar(nom, row=>{
-        const r = (resultado==='sinwa') ? {...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:topesFirma()}
+        const r = (resultado==='sinwa') ? {...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:topesFirma(), accionPc:topesPcId()}
                                         : topesAlEnviar(row);
-        delete r.abiertoPor; delete r.abiertoTs;
+        delete r.abiertoPor; delete r.abiertoPc; delete r.abiertoTs;
         return r;
       });
     }
@@ -13441,7 +13454,7 @@ function buildFilterTable(cfg){
     if(btnNoWa) btnNoWa.onclick=()=>topesResolver('sinwa', true);
     const btnFin=controles.querySelector('#topes-fin-btn');
     if(btnFin) btnFin.onclick=()=>{ const nom=topesUltimoAbierto; topesUltimoAbierto='';
-      if(nom) topesActualizar(nom, row=>{ delete row.abiertoPor; delete row.abiertoTs; return row; });   // libera la reserva
+      if(nom) topesActualizar(nom, row=>{ delete row.abiertoPor; delete row.abiertoPc; delete row.abiertoTs; return row; });   // libera la reserva
       drawTopes(); };
     const inpFirma=controles.querySelector('#topes-firma-inp');
     if(inpFirma) inpFirma.onchange=()=>{ try{ localStorage.setItem('vph_topes_firma_v1', String(inpFirma.value||'').trim()); }catch(e){} drawTopes(); };
@@ -13502,7 +13515,7 @@ function buildFilterTable(cfg){
     });
     tabla.innerHTML=ht;
     tabla.querySelectorAll('button[data-topes-est]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesEst; const list=TOPES.slice();
-      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente'), ultimaAccion:hoyISO, accionPor:topesFirma()}; topesSave(list); drawTopes(); });
+      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente'), ultimaAccion:hoyISO, accionPor:topesFirma(), accionPc:topesPcId()}; topesSave(list); drawTopes(); });
     // El Lugar es el único campo obligatorio (mismo criterio que el alta manual): si lo dejan vacío,
     // no se guarda — se avisa y se repinta con el nombre de antes, en vez de perderlo en silencio.
     tabla.querySelectorAll('input[data-topes-nombre]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNombre; const v=inp.value.trim();
@@ -13515,8 +13528,10 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('input[data-topes-nota]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNota; const list=TOPES.slice();
       list[i]={...list[i], nota:inp.value.trim()}; topesSave(list); }));
     // Al abrir WhatsApp o el mail: topesAlEnviar decide si corresponde pasar a "contactado".
-    tabla.querySelectorAll('[data-topes-envio]').forEach(a=>a.addEventListener('click',()=>{ const i=+a.dataset.topesEnvio; const list=TOPES.slice();
-      list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); }));
+    // 15/09: el WhatsApp de la fila tampoco abre un prospecto que la otra PC tiene abierto (antes lo salteaba la reserva).
+    tabla.querySelectorAll('[data-topes-envio]').forEach(a=>a.addEventListener('click',ev=>{ const i=+a.dataset.topesEnvio;
+      if(topesReservadoPorOtro(TOPES[i])){ ev.preventDefault(); alert('Este prospecto lo tiene abierto '+(TOPES[i].abiertoPor||'la otra PC')+' ahora mismo. Elegí otro para no escribirle los dos.'); return; }
+      const list=TOPES.slice(); list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); }));
     tabla.querySelectorAll('button[data-topes-copiar]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesCopiar; const txt=topesTexto(TOPES[i].nombre, TOPES[i].rubro);
       const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='📋 Copiar'; },1200); };
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); }
