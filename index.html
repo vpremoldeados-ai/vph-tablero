@@ -12922,7 +12922,7 @@ function buildFilterTable(cfg){
   // avanzado a mano (interesado / sin interés), un envío posterior NO lo retrocede a contactado.
   // Registra siempre la fecha (11/09, pedido de Marcelo: "que registres la fecha de la última
   // acción en el prospecto") — mandar el mensaje es una acción, cambie o no el estado.
-  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:Date.now()});
+  const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:Date.now(), accionPor:(typeof topesFirma==='function' ? topesFirma() : '')});
   let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='', topesImgEstado='';
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
@@ -13014,7 +13014,11 @@ function buildFilterTable(cfg){
   function topesTexto(nombre, rubro){
     const cat=topesTipo(rubro);
     const p=PLANT.find(x=>x.cat===cat) || PLANT_DEFAULT.find(x=>x.cat===cat);
-    return fillPreg(p?p.txt:'', {cliente:nombre}); }
+    // 15/09: firma de quien manda (Sofía usa su propio número). Pisa "soy Marcelo" también en las
+    // plantillas guardadas en vph_config/crm_plantillas.
+    const firma=(typeof topesFirma==='function') ? topesFirma() : '';
+    const txt=fillPreg(p?p.txt:'', {cliente:nombre});
+    return firma ? txt.replace(/\bsoy Marcelo\b/g, 'soy '+firma) : txt; }
   // IMAGEN POR TIPO (14/09, pedido de Marcelo): una imagen con texto propio para cada tipo de
   // topesTipo, en la carpeta Topes/ del repo (copia achicada de "IMAGENES Y VIDEOS DE PRODUCTOS\
   // PLAN DE VENTAS" en Drive). El nombre sale del tipo, así un tipo nuevo sin imagen lo caza el test
@@ -13055,7 +13059,47 @@ function buildFilterTable(cfg){
   // no pendiente), así vale igual desde cualquier PC. Cambiar el estado a mano también sella la fecha,
   // así que puede contar de más, nunca de menos: para esto conviene pecar de prudente.
   function topesEnviadosHoy(){
-    return TOPES.filter(t=> t.ultimaAccion===hoyISO && ['contactado','interesado','sin-interes'].includes(t.estado)).length;
+    return TOPES.filter(t=> t.ultimaAccion===hoyISO && ['contactado','interesado','sin-interes'].includes(t.estado) && topesEsMio(t)).length;
+  }
+  // DOS NÚMEROS (15/09, pedido de Marcelo: Sofía también prospecta, con OTRO número y desde su PC).
+  // La firma se guarda POR PC (localStorage), porque cada PC tiene vinculado su propio WhatsApp: sirve
+  // para firmar el mensaje y para que el tope y la espera se cuenten por número. En la PC de Marcelo
+  // (su mail) arranca en "Marcelo". Lo que se marcó sin firma (antes de esto) cuenta para todos:
+  // de más, nunca de menos.
+  function topesFirma(){
+    try{ const v=String(localStorage.getItem('vph_topes_firma_v1')||'').trim(); if(v) return v; }catch(e){}
+    try{ const c=fb(); if(c&&c.auth&&c.auth.currentUser&&c.auth.currentUser.email==='vpremoldeados@gmail.com') return 'Marcelo'; }catch(e){}
+    return '';
+  }
+  function topesEsMio(t){
+    const f=topesFirma();
+    return !t.accionPor || !f || String(t.accionPor).trim().toLowerCase()===f.trim().toLowerCase();
+  }
+  // Prospecto abierto por la OTRA persona en los últimos 30 min: ▶ Siguiente lo saltea, así no le
+  // escriben los dos. Se reserva al abrir el chat y se libera al marcar el resultado o ⏹ Terminar.
+  function topesReservadoPorOtro(t, ahora){
+    if(!t.abiertoPor) return false;
+    const f=topesFirma();
+    if(f && String(t.abiertoPor).trim().toLowerCase()===f.trim().toLowerCase()) return false;
+    return ((ahora==null ? Date.now() : ahora) - (Number(t.abiertoTs)||0)) < 30*60000;
+  }
+  // Cambia UN prospecto sin pisar lo que la otra PC acaba de guardar: en la nube lo hace dentro de una
+  // transacción que relee la lista del servidor y aplica `fn` solo a esa fila (`fn` se puede reintentar).
+  // La copia local se actualiza antes, para que el render inmediato ya lo muestre.
+  function topesActualizar(nombre, fn){
+    const i=TOPES.findIndex(t=>(t.nombre||'')===nombre); if(i<0) return;
+    const list=TOPES.slice(); list[i]=fn({...list[i]});
+    const c=(window.__usaNube && typeof fb==='function') ? fb() : null;
+    if(!(c && c.db && c.FS && c.FS.runTransaction)){ topesSave(list); return; }
+    TOPES=list;
+    const ref=c.FS.doc(c.db,TOPES_COL,TOPES_DOC);
+    c.FS.runTransaction(c.db, async tx=>{
+      const snap=await tx.get(ref);
+      const arr=(snap.exists() && Array.isArray(snap.data().prospectos)) ? snap.data().prospectos.slice() : [];
+      const j=arr.findIndex(t=>(t.nombre||'')===nombre); if(j<0) return;
+      arr[j]=fn({...arr[j]});
+      tx.set(ref, {prospectos:arr}, {merge:true});
+    }).catch(e=>alert('Error al guardar: '+e.message));
   }
   function topesTope(){
     const n=Math.round(Number(window.__param ? window.__param('topesTopeDiario',45) : 45));
@@ -13067,7 +13111,7 @@ function buildFilterTable(cfg){
   // cada 12 min). Cuenta desde el último ✅ Lo mandé (ultimaAccionTs, en la lista compartida: vale desde
   // cualquier PC). Un 📵 No tiene WhatsApp no sella la hora: no salió ningún mensaje.
   function topesUltimoEnvioTs(){
-    return TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
+    return TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && topesEsMio(t) && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
   }
   function topesEspera(ahoraMs){
     const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
@@ -13133,7 +13177,9 @@ function buildFilterTable(cfg){
   // contactado y no había salido ningún mensaje. El Tablero no puede saberlo (solo WhatsApp lo sabe
   // al abrir el chat), así que el resultado lo dice Marcelo con topesResolver.
   function topesSiguientePendiente(){
-    const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim());
+    const firma=topesFirma();
+    if(!firma){ topesUltimoAbierto=''; alert('Antes de empezar escribí tu nombre en "✍️ Firmo como".\n\nEl mensaje sale firmado con ese nombre, y el tope y la espera se cuentan por persona (cada una manda desde su número).'); drawTopes(); return; }
+    const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t));
     const tope=topesTope(), enviados=topesEnviadosHoy();
     if(tope && enviados>=tope){
       topesUltimoAbierto='';
@@ -13152,6 +13198,8 @@ function buildFilterTable(cfg){
       window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
     }
     topesUltimoAbierto=t.nombre||'';
+    // Reserva (después de abrir: el clic tiene que llegar entero a window.open). No cambia el estado.
+    topesActualizar(topesUltimoAbierto, row=>({...row, abiertoPor:firma, abiertoTs:Date.now()}));
     drawTopes();
   }
   // Reabre el MISMO prospecto con el formato de fijo (sin el 9), para descartar que el "no está en
@@ -13176,13 +13224,13 @@ function buildFilterTable(cfg){
   function topesResolver(resultado, seguir){
     const nom=topesUltimoAbierto;
     if(nom){
-      const i=TOPES.findIndex(t=>(t.nombre||'')===nom);
-      if(i>=0){
-        const list=TOPES.slice();
-        list[i] = (resultado==='sinwa') ? {...list[i], estado:'falta-dato', ultimaAccion:hoyISO}
-                                        : topesAlEnviar(list[i]);
-        topesSave(list);
-      }
+      // Solo esa fila y liberando la reserva (15/09): así no pisa lo que marcó la otra PC.
+      topesActualizar(nom, row=>{
+        const r = (resultado==='sinwa') ? {...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:topesFirma()}
+                                        : topesAlEnviar(row);
+        delete r.abiertoPor; delete r.abiertoTs;
+        return r;
+      });
     }
     topesUltimoAbierto='';
     if(seguir) topesSiguientePendiente(); else drawTopes();
@@ -13200,7 +13248,8 @@ function buildFilterTable(cfg){
       .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro))
       .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota].some(v=>topesNorm(v).includes(qTexto)));
     const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
-    const pendConTel=TOPES.filter(t=>(t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim()).length;
+    const pendConTel=TOPES.filter(t=>(t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t)).length;
+    const firmaPc=topesFirma();
     const topeHoy=topesTope(), enviadosHoy=topesEnviadosHoy(), esp=topesEspera();
     const chip=(v,l,activo)=>'<button class="filter-btn'+(activo?' active':'')+'" data-topesf-e="'+esc(v)+'">'+l+'</button>';
     let hc=
@@ -13231,7 +13280,9 @@ function buildFilterTable(cfg){
         '<span style="font-size:12px;color:var(--muted)">'+(topesAyudanteOn()
           ? 'El ayudante abre el chat, comprueba que sea el correcto y manda el mensaje y la imagen de su rubro.'
           : 'Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.')+'</span>'+
-        '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Solo en la PC donde está instalado el Ayudante VPH (carpeta ayudante-whatsapp en Drive)"><input type="checkbox" id="topes-ayudante-chk"'+(topesAyudanteOn()?' checked':'')+'> 🤖 Enviar solo (ayudante)</label>'
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Solo en la PC donde está instalado el Ayudante VPH (carpeta ayudante-whatsapp en Drive)"><input type="checkbox" id="topes-ayudante-chk"'+(topesAyudanteOn()?' checked':'')+'> 🤖 Enviar solo (ayudante)</label>'+
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Con qué nombre se firma el mensaje en ESTA PC. El tope y la espera se cuentan por persona, porque cada una manda desde su número.">✍️ Firmo como '+
+          '<input type="text" id="topes-firma-inp" value="'+esc(firmaPc)+'" placeholder="Tu nombre" style="width:90px;padding:4px 6px;border:1px solid '+(firmaPc?'var(--border)':'#c0392b')+';border-radius:7px;font-size:12px"></label>'
       ))+
       '</div>'+
       '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
@@ -13272,7 +13323,11 @@ function buildFilterTable(cfg){
     const btnNoWa=controles.querySelector('#topes-nowa-btn');
     if(btnNoWa) btnNoWa.onclick=()=>topesResolver('sinwa', true);
     const btnFin=controles.querySelector('#topes-fin-btn');
-    if(btnFin) btnFin.onclick=()=>{ topesUltimoAbierto=''; drawTopes(); };
+    if(btnFin) btnFin.onclick=()=>{ const nom=topesUltimoAbierto; topesUltimoAbierto='';
+      if(nom) topesActualizar(nom, row=>{ delete row.abiertoPor; delete row.abiertoTs; return row; });   // libera la reserva
+      drawTopes(); };
+    const inpFirma=controles.querySelector('#topes-firma-inp');
+    if(inpFirma) inpFirma.onchange=()=>{ try{ localStorage.setItem('vph_topes_firma_v1', String(inpFirma.value||'').trim()); }catch(e){} drawTopes(); };
     const chkAy=controles.querySelector('#topes-ayudante-chk');
     if(chkAy) chkAy.onchange=()=>{ try{ localStorage.setItem('vph_topes_ayudante_v1', chkAy.checked?'1':'0'); }catch(e){} drawTopes(); };
     controles.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
@@ -13329,7 +13384,7 @@ function buildFilterTable(cfg){
     });
     tabla.innerHTML=ht;
     tabla.querySelectorAll('button[data-topes-est]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.topesEst; const list=TOPES.slice();
-      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente'), ultimaAccion:hoyISO}; topesSave(list); drawTopes(); });
+      list[i]={...list[i], estado:topesSig(list[i].estado||'pendiente'), ultimaAccion:hoyISO, accionPor:topesFirma()}; topesSave(list); drawTopes(); });
     // El Lugar es el único campo obligatorio (mismo criterio que el alta manual): si lo dejan vacío,
     // no se guarda — se avisa y se repinta con el nombre de antes, en vez de perderlo en silencio.
     tabla.querySelectorAll('input[data-topes-nombre]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNombre; const v=inp.value.trim();
