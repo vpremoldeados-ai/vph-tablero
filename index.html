@@ -1378,7 +1378,7 @@
         <button class="cmp-x" id="pre-comp-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body">
-        <div style="padding:14px;font-size:12px;color:var(--muted);margin-bottom:10px">Carga m² totales, elige la zona de flete y selecciona hasta 3 modelos. El comparativo se genera sin guardar en la base de datos.</div>
+        <div style="padding:14px;font-size:12px;color:var(--muted);margin-bottom:10px">Carga m² totales, elige la zona de flete y selecciona los modelos a comparar. El comparativo se genera sin guardar en la base de datos.</div>
         <div class="cmp-field">
           <label>m² totales</label>
           <input type="number" id="pre-comp-m2" value="100" min="1" step="0.1">
@@ -1402,8 +1402,13 @@
             <option value="brio">6 Brio</option>
           </select>
         </div>
+        <div class="cmp-field" id="pre-comp-fin-wrap">
+          <label>Financiación con tarjeta (solo Minorista)</label>
+          <select id="pre-comp-fin"></select>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">El PDF suma una columna por cada modelo con el precio a 3, 6 y 12 cuotas. Sin elegir perfil, no se muestra financiación (Mayorista nunca la lleva).</div>
+        </div>
         <div class="cmp-field">
-          <label>Modelos a comparar (marca hasta 4)</label>
+          <label>Modelos a comparar (marca los que quieras)</label>
           <div id="pre-comp-modelos" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:6px 0"></div>
         </div>
         <div class="cmp-field">
@@ -10857,17 +10862,32 @@ function buildFilterTable(cfg){
     $('pre-comp-m2').value=d.m2||'100';
     $('pre-comp-categoria').value=/minorista/i.test(d.categoria||'')?'MINORISTA':'MAYORISTA';
     $('pre-comp-zona').value=d.zona||'capital';
+    $('pre-comp-fin').innerHTML=finOpts('');
+    sincFinComparativo();
     $('pre-comp-modal').classList.add('open');
   }
   window.__abrirComparativo = openComparativoModal;
+  // El mayorista no lleva escalera de tarjeta (mismo criterio que finAplica en el form normal):
+  // se esconde el selector y, si venía elegido, se vuelve a "a confirmar" para no arrastrar un
+  // perfil que ya no corresponde si el usuario cambia de categoría sin cerrar el modal.
+  function sincFinComparativo(){
+    const w=$('pre-comp-fin-wrap'); if(!w) return;
+    const ok=$('pre-comp-categoria').value==='MINORISTA';
+    w.style.display = ok?'':'none';
+    if(!ok) $('pre-comp-fin').value='';
+  }
   function closeComparativoModal(){ $('pre-comp-modal').classList.remove('open'); }
   function generarComparativo(){
     const m2 = num($('pre-comp-m2').value); if(m2<=0){ alert('Ingresá m² positivos.'); return; }
     const zona = $('pre-comp-zona').value; if(!zona){ alert('Elegí una zona de flete.'); return; }
     const modelos = Array.from($('pre-comp-modelos').querySelectorAll('input[type="checkbox"]:checked')).map(cb=>+cb.dataset.compMod);
-    if(modelos.length===0 || modelos.length>4){ alert('Selecciona 1 a 4 modelos.'); return; }
+    if(modelos.length===0){ alert('Marcá al menos un modelo.'); return; }
     const cliente = $('pre-comp-cliente').value || 'Cliente';
     const categoria = $('pre-comp-categoria').value || 'MAYORISTA';
+    // Financiación: mismo criterio que finAplica del form normal — el mayorista no lleva escalera,
+    // así que el select queda vacío/oculto y acá simplemente no se calcula nada.
+    const finPerfil = categoria==='MINORISTA' ? ($('pre-comp-fin').value||'') : '';
+    const finPlanes = finPerfil ? (window.__planesOfrecidos?window.__planesOfrecidos():[3,6,12]) : [];
     const prods = catProductos();
     // Mismo criterio que Presupuestos/CRM (listaDeCategoria): mayorista y minorista tienen precios
     // muy distintos — comparar un lead minorista contra precios mayoristas da un total que no le
@@ -10888,6 +10908,16 @@ function buildFilterTable(cfg){
       const f = calcFlete([it], zona);
       it.fletePallets = f.pallets;
       it.fleteCosto = f.costo;
+      // Financiado: mismo criterio que escaleraDoc (el flete se financia como un renglón más, VIUMI
+      // retiene sobre el TOTAL facturado) — acá se financia directo el TOTAL contado del modelo
+      // (mercadería + flete, los dos ya con IVA) porque solo se muestra el total por plan, no un
+      // precio unitario que tenga que multiplicar.
+      if(finPerfil){
+        const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
+        const contado = num(it.precioUnit)*(1+al/100)*num(it.cant) + num(it.fleteCosto);
+        it.fin = {};
+        finPlanes.forEach(c=>{ it.fin[c]=Math.round(window.__precioFinanciado(contado, c, finPerfil)); });
+      }
       return it;
     }).filter(Boolean);
     if(items.length===0) return;
@@ -10906,6 +10936,8 @@ function buildFilterTable(cfg){
       zonaTexto: zonaLabel(zona),   // el módulo Documentos es OTRA IIFE y no tiene zonaLabel/zonaCosto
       palletsFlete: 0,
       items: items,
+      finPlanes: finPlanes,
+      finPerfilLabel: finPerfil ? ((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.k===finPerfil)||{}).l||finPerfil : '',
       descGeneral: 0,
       notaCliente: '** Opciones: elegí la que mejor se adapta a tu proyecto. Todos incluyen flete. **',
       nota: 'Presupuesto comparativo generado desde el Tablero',
@@ -10928,6 +10960,7 @@ function buildFilterTable(cfg){
   $('pre-comp-cerrar').onclick=closeComparativoModal;
   $('pre-comp-cancel').onclick=closeComparativoModal;
   $('pre-comp-generar').onclick=generarComparativo;
+  $('pre-comp-categoria').addEventListener('change', sincFinComparativo);
   $('pre-cerrar').onclick=closeForm;
   $('pre-export').onclick=exportJSON;
   $('pre-import').onclick=()=>$('pre-import-file').click();
@@ -17064,22 +17097,30 @@ function buildFilterTable(cfg){
         const al = (it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
         const subtotal = base*(1+al/100);
         const fletePorItem = num(it.fleteCosto);
-        return {codigo:it.codigo, desc:it.desc, m2:it.m2total, cant:it.cant, precioUnit:num(it.precioUnit)*(1+(al||0)/100), subtotal:subtotal, flete:fletePorItem, total:subtotal+fletePorItem};
+        return {codigo:it.codigo, desc:it.desc, m2:it.m2total, cant:it.cant, precioUnit:num(it.precioUnit)*(1+(al||0)/100), subtotal:subtotal, flete:fletePorItem, total:subtotal+fletePorItem, fin:it.fin||null};
       });
+      // Columnas de financiación: solo si generarComparativo calculó algo (Minorista + perfil
+      // elegido). El mayorista nunca las lleva (mismo criterio que condicionesPresup/finAplica).
+      const finPlanes = Array.isArray(v.finPlanes) ? v.finPlanes : [];
+      const thFin = finPlanes.map(c=>'<th style="text-align:right;padding:6px">'+c+' cuotas</th>').join('');
+      const tdFin = it => finPlanes.map(c=>'<td style="text-align:right;padding:6px">'+(it.fin&&it.fin[c]!=null?money(it.fin[c]):'—')+'</td>').join('');
       const tablaHTML = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px">'+
         '<tr style="background:#f5f5f5;border-bottom:2px solid #333"><th style="text-align:left;padding:6px">Modelo</th>'+
         '<th style="text-align:right;padding:6px">m²</th><th style="text-align:right;padding:6px">Unidades</th>'+
         '<th style="text-align:right;padding:6px">Precio unit.</th><th style="text-align:right;padding:6px">Mercadería</th>'+
-        '<th style="text-align:right;padding:6px">Flete</th><th style="text-align:right;padding:6px;border-right:0"><b>Total</b></th></tr>'+
+        '<th style="text-align:right;padding:6px">Flete</th><th style="text-align:right;padding:6px">Total contado</th>'+
+        thFin+'</tr>'+
         itemsNeto.map(it=>'<tr style="border-bottom:1px solid #ddd"><td style="padding:6px">'+celdaCodigo(it.codigo)+esc(it.desc)+'</td>'+
           '<td style="text-align:right;padding:6px">'+nf(it.m2)+'</td><td style="text-align:right;padding:6px">'+nf(it.cant)+'</td>'+
           '<td style="text-align:right;padding:6px">'+money(it.precioUnit)+'</td><td style="text-align:right;padding:6px">'+money(it.subtotal)+'</td>'+
           '<td style="text-align:right;padding:6px">'+money(it.flete)+'</td>'+
-          '<td style="text-align:right;padding:6px;border-right:0;font-weight:700;color:#1a7c3f">'+money(it.total)+'</td></tr>').join('')+
+          '<td style="text-align:right;padding:6px;font-weight:700;color:#1a7c3f">'+money(it.total)+'</td>'+
+          tdFin(it)+'</tr>').join('')+
         '</table>';
       const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
         '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
         '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
+        (finPlanes.length ? '<br><b>💳 Financiado:</b> precios a '+finPlanes.join('/')+' cuotas con tarjeta '+esc(v.finPerfilLabel||'')+'. El total contado es el que compite; las cuotas ya incluyen el costo de VIUMI.' : '')+
         '</div>'+
         // Mismas condiciones de venta que un presupuesto normal (formas de pago, envío/retiro): la
         // función ya resuelve el texto según listaPrecios/categoria/zona, que compDoc arma igual que
