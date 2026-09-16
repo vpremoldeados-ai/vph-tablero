@@ -13061,6 +13061,23 @@ function buildFilterTable(cfg){
   function topesEnviadosHoy(){
     return TOPES.filter(t=> t.ultimaAccion===hoyISO && ['contactado','interesado','sin-interes'].includes(t.estado) && topesEsMio(t)).length;
   }
+  // ENVIADOS POR PERSONA (16/09, pedido de Marcelo: ver por separado cuántos mandó Sofía y cuántos él).
+  // Cada prospecto guarda solo su ÚLTIMA acción (accionPor = la firma de la PC), así que esto cuenta
+  // PROSPECTOS contactados por cada uno, no mensajes sueltos. Lo marcado antes del 15/09 no tiene firma
+  // y va aparte como "sin firma". Las firmas se agrupan sin tildes ni mayúsculas (Sofía = sofia).
+  function topesEnviadosPorPersona(){
+    const clave=s=>String(s||'').trim().normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+    const res={hoy:{}, total:{}, nombres:{}, sinFirmaHoy:0, sinFirmaTotal:0};
+    TOPES.forEach(t=>{
+      if(!['contactado','interesado','sin-interes'].includes(t.estado)) return;
+      const k=clave(t.accionPor), hoy=t.ultimaAccion===hoyISO;
+      if(!k){ res.sinFirmaTotal++; if(hoy) res.sinFirmaHoy++; return; }
+      if(!res.nombres[k]) res.nombres[k]=String(t.accionPor).trim();
+      res.total[k]=(res.total[k]||0)+1;
+      if(hoy) res.hoy[k]=(res.hoy[k]||0)+1;
+    });
+    return res;
+  }
   // DOS NÚMEROS (15/09, pedido de Marcelo: Sofía también prospecta, con OTRO número y desde su PC).
   // La firma se guarda POR PC (localStorage), porque cada PC tiene vinculado su propio WhatsApp: sirve
   // para firmar el mensaje y para que el tope y la espera se cuenten por número. En la PC de Marcelo
@@ -13413,6 +13430,13 @@ function buildFilterTable(cfg){
           '<input type="text" id="topes-firma-inp" value="'+esc(firmaPc)+'" placeholder="Tu nombre" style="width:90px;padding:4px 6px;border:1px solid '+(firmaPc?'var(--border)':'#c0392b')+';border-radius:7px;font-size:12px"></label>'
       ))+
       '</div>'+
+      (()=>{ const pp=topesEnviadosPorPersona(), ks=Object.keys(pp.total).sort((a,b)=>pp.total[b]-pp.total[a]);
+        if(!ks.length && !pp.sinFirmaTotal) return '';
+        return '<div style="margin:-2px 0 10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px" title="Prospectos que quedaron Contactado, Interesado o Sin interés, según quién marcó la última acción (✍️ Firmo como de cada PC)">'+
+          '<span style="color:var(--muted)">📨 Contactados por persona:</span>'+
+          ks.map(k=>'<span style="padding:3px 10px;border:1px solid var(--border);border-radius:999px"><b>'+esc(pp.nombres[k])+'</b>: hoy '+(pp.hoy[k]||0)+' · total '+pp.total[k]+'</span>').join('')+
+          (pp.sinFirmaTotal ? '<span style="color:var(--muted)" title="Marcados antes de que cada PC firmara (15/09)">sin firma: hoy '+pp.sinFirmaHoy+' · total '+pp.sinFirmaTotal+'</span>' : '')+
+        '</div>'; })()+
       '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tocá el estado para pasar al siguiente: <b>pendiente → falta dato → contactado → interesado → sin interés</b>. '+
       'Al mandar el WhatsApp o el mail desde la fila se marca <b>Contactado</b> solo. Cargá el teléfono/email apenas los consigas en el primer llamado.</p>'+
       '<div class="filter-bar" style="margin-bottom:6px">'+
