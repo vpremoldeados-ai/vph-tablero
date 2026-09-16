@@ -10915,8 +10915,14 @@ function buildFilterTable(cfg){
       if(finPerfil){
         const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
         const contado = num(it.precioUnit)*(1+al/100)*num(it.cant) + num(it.fleteCosto);
+        // __precioFinanciado cae al MISMO contado (sin recargo) si el perfil no tiene esa cantidad
+        // de cuotas cargada — un plan real nunca "no tiene interés"; mostrar ese fallback como si
+        // fuera un precio financiado confundía (ej. "MiPyME" sin tasa a 12 cuotas salía casi igual
+        // al contado). Se chequea que el plan EXISTA de verdad antes de calcular; si no, queda null
+        // y el PDF lo imprime como "—".
+        const planesReales = (window.__planesFin?window.__planesFin(finPerfil):[]).map(p=>p.cuotas);
         it.fin = {};
-        finPlanes.forEach(c=>{ it.fin[c]=Math.round(window.__precioFinanciado(contado, c, finPerfil)); });
+        finPlanes.forEach(c=>{ it.fin[c] = planesReales.includes(c) ? Math.round(window.__precioFinanciado(contado, c, finPerfil)) : null; });
       }
       return it;
     }).filter(Boolean);
@@ -17083,7 +17089,10 @@ function buildFilterTable(cfg){
     if(v.esComparativo===true && Array.isArray(v.items) && v.items.length>0){
       const cli=buscarCliente(v.cliente,v.cuit)||{};
       const dom=[cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '—';
-      const headerHTML = '<div style="page-break-after:always;padding:20px;font-family:Arial,sans-serif">'+
+      // Sin padding propio: el contenedor real es .doc-sheet (A4, 12mm de margen lateral = ~703px
+      // útiles) — sumarle acá otro padding se los comía y desbordaba las últimas columnas fuera de
+      // la hoja (reportado por Marcelo con financiación activada, 10 columnas).
+      const headerHTML = '<div style="page-break-after:always;font-family:Arial,sans-serif">'+
         '<div style="font-size:18px;font-weight:700;margin-bottom:12px;border-bottom:3px solid #1a7c3f;padding-bottom:8px">PRESUPUESTO COMPARATIVO DE MODELOS</div>'+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:16px;font-size:12px">'+
           '<div><b>Cliente:</b> '+esc(v.cliente||'—')+'<br><b>Domicilio:</b> '+esc(dom||'—')+'</div>'+
@@ -17102,25 +17111,32 @@ function buildFilterTable(cfg){
       // Columnas de financiación: solo si generarComparativo calculó algo (Minorista + perfil
       // elegido). El mayorista nunca las lleva (mismo criterio que condicionesPresup/finAplica).
       const finPlanes = Array.isArray(v.finPlanes) ? v.finPlanes : [];
-      const thFin = finPlanes.map(c=>'<th style="text-align:right;padding:6px">'+c+' cuotas</th>').join('');
-      const tdFin = it => finPlanes.map(c=>'<td style="text-align:right;padding:6px">'+(it.fin&&it.fin[c]!=null?money(it.fin[c]):'—')+'</td>').join('');
-      const tablaHTML = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px">'+
-        '<tr style="background:#f5f5f5;border-bottom:2px solid #333"><th style="text-align:left;padding:6px">Modelo</th>'+
-        '<th style="text-align:right;padding:6px">m²</th><th style="text-align:right;padding:6px">Unidades</th>'+
-        '<th style="text-align:right;padding:6px">Precio unit.</th><th style="text-align:right;padding:6px">Mercadería</th>'+
-        '<th style="text-align:right;padding:6px">Flete</th><th style="text-align:right;padding:6px">Total contado</th>'+
+      const P='padding:4px 3px'; // tabla compacta: con financiación son 10 columnas en ~703px
+      const thFin = finPlanes.map(c=>'<th style="text-align:right;'+P+'">'+c+'c</th>').join('');
+      const tdFin = it => finPlanes.map(c=>'<td style="text-align:right;'+P+'">'+(it.fin&&it.fin[c]!=null?money(it.fin[c]):'—')+'</td>').join('');
+      // Foto + nombre, con el código chico ABAJO (no pegado al nombre): celdaCodigo() imprime el
+      // código como texto al lado de la imagen — pensada para una columna Código aparte, no para
+      // compartir celda con la descripción (salía "ULC60Loseta Cribada 60x40" sin espacio).
+      const celdaModelo = it => { const img=window.__fotoProducto?window.__fotoProducto(it.codigo):'';
+        return '<td style="'+P+'">'+(img?'<img src="'+img+'" alt="" style="width:20px;height:20px;object-fit:cover;border-radius:3px;vertical-align:middle;margin-right:4px" onerror="this.remove()">':'')+
+          '<b>'+esc(it.desc)+'</b><div style="font-size:8.5px;color:#888">'+esc(it.codigo)+'</div></td>'; };
+      const tablaHTML = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:9.5px">'+
+        '<tr style="background:#f5f5f5;border-bottom:2px solid #333"><th style="text-align:left;'+P+'">Modelo</th>'+
+        '<th style="text-align:right;'+P+'">m²</th><th style="text-align:right;'+P+'">Unid.</th>'+
+        '<th style="text-align:right;'+P+'">P.Unit.</th><th style="text-align:right;'+P+'">Mercad.</th>'+
+        '<th style="text-align:right;'+P+'">Flete</th><th style="text-align:right;'+P+'">Contado</th>'+
         thFin+'</tr>'+
-        itemsNeto.map(it=>'<tr style="border-bottom:1px solid #ddd"><td style="padding:6px">'+celdaCodigo(it.codigo)+esc(it.desc)+'</td>'+
-          '<td style="text-align:right;padding:6px">'+nf(it.m2)+'</td><td style="text-align:right;padding:6px">'+nf(it.cant)+'</td>'+
-          '<td style="text-align:right;padding:6px">'+money(it.precioUnit)+'</td><td style="text-align:right;padding:6px">'+money(it.subtotal)+'</td>'+
-          '<td style="text-align:right;padding:6px">'+money(it.flete)+'</td>'+
-          '<td style="text-align:right;padding:6px;font-weight:700;color:#1a7c3f">'+money(it.total)+'</td>'+
+        itemsNeto.map(it=>'<tr style="border-bottom:1px solid #ddd">'+celdaModelo(it)+
+          '<td style="text-align:right;'+P+'">'+nf(it.m2)+'</td><td style="text-align:right;'+P+'">'+nf(it.cant)+'</td>'+
+          '<td style="text-align:right;'+P+'">'+money(it.precioUnit)+'</td><td style="text-align:right;'+P+'">'+money(it.subtotal)+'</td>'+
+          '<td style="text-align:right;'+P+'">'+money(it.flete)+'</td>'+
+          '<td style="text-align:right;'+P+';font-weight:700;color:#1a7c3f">'+money(it.total)+'</td>'+
           tdFin(it)+'</tr>').join('')+
         '</table>';
       const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
         '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
         '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
-        (finPlanes.length ? '<br><b>💳 Financiado:</b> precios a '+finPlanes.join('/')+' cuotas con tarjeta '+esc(v.finPerfilLabel||'')+'. El total contado es el que compite; las cuotas ya incluyen el costo de VIUMI.' : '')+
+        (finPlanes.length ? '<br><b>💳 Financiado:</b> precios a '+finPlanes.join('/')+' cuotas con tarjeta '+esc(v.finPerfilLabel||'')+' (Contado es el que compite; "—" es un plan sin tasa cargada para esa tarjeta).' : '')+
         '</div>'+
         // Mismas condiciones de venta que un presupuesto normal (formas de pago, envío/retiro): la
         // función ya resuelve el texto según listaPrecios/categoria/zona, que compDoc arma igual que
