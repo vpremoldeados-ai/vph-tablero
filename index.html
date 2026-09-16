@@ -11534,7 +11534,7 @@ function buildFilterTable(cfg){
     // 14/09: WhatsApp restringió el número tras 54 mensajes en frío en una mañana. El tope frena ▶ Siguiente.
     {g:'Comercial', k:'topesTopeDiario', l:'Topes: máximo de WhatsApp en frío por día',   def:45, t:'num', hint:'Cuenta los prospectos marcados como contactados HOY (en todas las PC). Al llegar, ▶ Siguiente se frena y avisa. El 14/09 se mandaron 54 y WhatsApp restringió el número. En 0 no hay tope.'},
     // 15/09: el Tablero marca el ritmo. Reparte lo que queda del tope en lo que queda del horario, con este piso.
-    {g:'Comercial', k:'topesMinutosEntre', l:'Topes: minutos mínimos entre WhatsApp en frío', def:10, t:'num', hint:'Después de cada ✅ Lo mandé, ▶ Siguiente espera. Reparte el tope del día en el horario: con 45 de 9 a 18 sale uno cada 12 min (nunca menos que este número). En 0 no espera.'},
+    {g:'Comercial', k:'topesMinutosEntre', l:'Topes: minutos entre WhatsApp en frío', def:5, t:'num', hint:'Después de cada ✅ Lo mandé, ▶ Siguiente espera estos minutos. Cada PC tiene su propio reloj. En 0 no espera.'},
     {g:'Comercial', k:'topesHoraDesde', l:'Topes: hora de inicio de los WhatsApp en frío', def:9, t:'num', hint:'Antes de esta hora ▶ Siguiente no abre chats. Admite medias horas (9.5 = 9:30).'},
     {g:'Comercial', k:'topesHoraHasta', l:'Topes: hora de fin de los WhatsApp en frío', def:18, t:'num', hint:'Desde esta hora ▶ Siguiente no abre más chats hasta mañana.'},
     {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
@@ -13236,25 +13236,23 @@ function buildFilterTable(cfg){
     return n>0 ? n : 0;
   }
   // ESPACIADO (15/09, pedido de Marcelo: "lo voy a hacer más espaciado pero necesito que vos dirijas el
-  // espaciamiento"). ▶ Siguiente no abre el próximo chat hasta que pase el intervalo: reparte lo que
-  // queda del tope en lo que queda del horario, con un piso de topesMinutosEntre (45 de 9 a 18 = uno
-  // cada 12 min). Cuenta desde el último ✅ Lo mandé (ultimaAccionTs, en la lista compartida: vale desde
-  // cualquier PC). Un 📵 No tiene WhatsApp no sella la hora: no salió ningún mensaje.
+  // espaciamiento"). ▶ Siguiente no abre el próximo chat hasta que pase el intervalo.
+  // 16/09 (Marcelo): intervalo FIJO de topesMinutosEntre (5 min; antes repartía el tope en el horario) y
+  // un reloj POR PC: solo cuenta lo que ESTA PC mandó (accionPc). Lo marcado sin accionPc (una pestaña
+  // con código viejo) ya no hace esperar a las dos. Un 📵 No tiene WhatsApp no sella la hora.
   function topesUltimoEnvioTs(){
-    return TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && topesEsMio(t) && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
+    return TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && t.accionPc && t.accionPc===topesPcId() && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
   }
   function topesEspera(ahoraMs){
     const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
-    const minEntre=Math.max(0, Math.round(P('topesMinutosEntre',10)));
+    const minEntre=Math.max(0, Math.round(P('topesMinutosEntre',5)));
     const desde=P('topesHoraDesde',9), hasta=P('topesHoraHasta',18);
     if(!minEntre) return {ms:0, intervalo:0, motivo:'', desde, hasta};
     const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
     const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
     const ini=aHora(desde), fin=aHora(hasta);
     const ult=topesUltimoEnvioTs();
-    const tope=topesTope(), quedan=tope ? Math.max(1, tope-topesEnviadosHoy()) : 0;
-    const base=Math.max(ult||ahora, ini);
-    const intervalo=Math.max(minEntre, quedan ? Math.floor((fin-base)/60000/quedan) : 0);
+    const intervalo=minEntre;
     if(ahora<ini) return {ms:ini-ahora, intervalo, motivo:'antes', desde, hasta};
     if(ahora>=fin) return {ms:Infinity, intervalo, motivo:'despues', desde, hasta};
     if(!ult) return {ms:0, intervalo, motivo:'', desde, hasta};
@@ -13402,7 +13400,7 @@ function buildFilterTable(cfg){
               (esp.motivo==='despues' ? 'Terminó el horario de hoy'
                 : (esp.motivo==='antes' ? 'Arranca a las '+topesFmtHora(esp.desde)+' · falta ' : 'Próximo mensaje en ')+'<span id="topes-cuenta">'+topesFmtEspera(esp.ms)+'</span>')+'</button>'
           : '<button class="cmp-btn cmp-btn-primary" id="topes-siguiente-btn" title="Abre el WhatsApp del próximo Pendiente con teléfono cargado, con el mensaje ya escrito">▶ Siguiente pendiente ('+pendConTel+')</button>')+
-        (esp.intervalo ? '<span style="font-size:12px;color:var(--muted)" title="Reparte lo que queda del tope en lo que queda del horario">🕒 Uno cada '+esp.intervalo+' min · de '+topesFmtHora(esp.desde)+' a '+topesFmtHora(esp.hasta)+'</span>' : '')+
+        (esp.intervalo ? '<span style="font-size:12px;color:var(--muted)" title="Reloj propio de esta PC: cuenta desde el último ✅ Lo mandé de esta computadora">🕒 Uno cada '+esp.intervalo+' min · de '+topesFmtHora(esp.desde)+' a '+topesFmtHora(esp.hasta)+'</span>' : '')+
         (topeHoy ? '<span style="font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;color:#fff;background:'+
           (enviadosHoy>=topeHoy ? '#c0392b' : enviadosHoy>=topeHoy-5 ? '#c98a06' : '#157a1d')+
           '" title="Mensajes en frío mandados hoy contra el máximo del día (Parámetros → Comercial)">Hoy: '+enviadosHoy+' de '+topeHoy+
