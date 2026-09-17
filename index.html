@@ -989,7 +989,7 @@
         <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
         <div class="tbl-wrap"><table id="pe-tabla-stock" class="pe-tbl-planilla"></table></div>
         <div id="pe-bases-2h" style="margin-top:10px"></div>
-        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En secado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>P/ vender</b> = secado − comprometido: <b>lo que se puede entregar YA</b> (rojo si no alcanza para los pedidos, ámbar si queda por debajo del mínimo). Un producto puede estar OK para fabricar y en rojo para vender: es que el lote todavía está secando. <b>m² p/ vender</b> = esa misma cantidad pasada a metros cuadrados (solo losetas y greens; los topes, el listón y el cordón se venden por unidad o metro lineal). Las unidades por m² se cargan en Base de Datos → Productos.</p>
+        <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. <b>Disponible para vender</b> = físico − comprometido: <b>lo que de verdad falta o sobra para fabricar</b>. <b>FALTANTE</b> (rojo) = disponible negativo; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En secado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>En secado ya vendidos</b> = unidades que ya están vendidas y esperan que termine de secar su lote: <b>no es un faltante</b>, se resuelve solo cuando seca (la fecha está en la columna En secado). Si falta de verdad, lo marca en rojo la columna Disponible. <b>m² p/ vender</b> = lo que se puede entregar YA (seco − comprometido) pasado a metros cuadrados (solo losetas y greens; los topes, el listón y el cordón se venden por unidad o metro lineal). Las unidades por m² se cargan en Base de Datos → Productos.</p>
       </section>
       <section>
         <h2><span class="dot" style="background:var(--amber)"></span>🏭 Plan de producción</h2>
@@ -14437,12 +14437,11 @@ function buildFilterTable(cfg){
     // (físico) diga OK porque el lote todavía está secando.
     const rpS = window.__resumenProduccion ? window.__resumenProduccion() : null;
     const vendPor = {}; (rpS && Array.isArray(rpS.porProducto) ? rpS.porProducto : []).forEach(x=>{ vendPor[x.k]=x; });
-    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num">Disponible</th><th class="num" title="Secado − comprometido: lo que se puede entregar YA">P/ vender</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden vender hoy = P/ vender ÷ unidades por m². Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
+    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Físico − comprometido: lo que queda libre contando lo que está secando">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden vender hoy = P/ vender ÷ unidades por m². Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
     if(!rows.length) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
       const v = vendPor[s.k] || null;
       const colV = !v ? 'var(--muted)' : v.estadoVenta==='falta'?'var(--red)':v.estadoVenta==='bajo'?'var(--amber)':'var(--green)';
-      const vend = v ? nf(v.disponible) : '—';
       // m² SOLO de lo que tiene "unidades por m²" cargado en Base de Datos (losetas y greens). Los
       // topes, el listón y el cordón se venden por unidad o por metro lineal: ahí va "—", NUNCA 0,
       // que se leería como "no hay". Se convierten los MISMOS números de las columnas de al lado,
@@ -14452,6 +14451,14 @@ function buildFilterTable(cfg){
       const m2f = (uxm2>0) ? s.dispReal/uxm2 : null;          // el físico − comprometido, de respaldo
       const m2Cel = m2v===null ? '<span style="color:var(--muted);font-weight:400">—</span>'
         : nm2(m2v)+' m²'+((m2f!==null && Math.abs(m2f-m2v)>=0.05) ? '<div class="pe-m2-sub">físico '+nm2(m2f)+' m²</div>' : '');
+      /* "En secado ya vendidos" (17/09, pedido de Marcelo — reemplaza a "P/ vender"): la columna vieja
+         mostraba secado − comprometido, y en un tope con el lote secando daba −144 en ROJO. Parecía un
+         faltante y no lo era: eran 144 unidades vendidas esperando que su lote termine de secar, algo
+         que se resuelve solo en días. Ahora se muestra eso, en positivo y en ámbar:
+           mín(en secado, máx(0, comprometido − seco))
+         Tope en lo que está secando: si lo vendido supera incluso eso, el resto NO está secando — es
+         un faltante real, y ya lo marca en rojo la columna Disponible (físico − comprometido). */
+      const secVend = Math.min(num(s.enCurado), Math.max(0, num(s.comprometido) - num(s.curado)));
       const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
       html+='<tr><td class="pe-col-cod" data-label="Código">'+esc(p.codigo||'')+'</td>'+
         // data-sortval: sin esto __ordenable leería "Loseta Cribada RectangularULC60" y, al sacarle
@@ -14460,14 +14467,14 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Físico">'+nf(s.fisico)+'</td>'+
         '<td class="num" data-label="En secado" style="color:var(--blue)">'+cur+'</td>'+
         '<td class="num" data-label="Compr." style="color:var(--amber)">'+(s.comprometido?'-'+nf(s.comprometido):'0')+'</td>'+
-        '<td class="num" data-label="Disponible" style="color:'+col+';font-weight:800">'+nf(s.dispReal)+'</td>'+
-        '<td class="num" data-label="P/ vender" title="Secado − comprometido: lo que se puede entregar YA" style="color:'+colV+';font-weight:700">'+vend+'</td>'+
+        '<td class="num" data-label="Disponible para vender" style="color:'+col+';font-weight:800">'+nf(s.dispReal)+'</td>'+
+        '<td class="num" data-label="En secado ya vendidos" title="Unidades ya vendidas que esperan que termine de secar su lote" data-sortval="'+secVend+'" style="color:'+(secVend>0?'var(--amber)':'var(--muted)')+';font-weight:'+(secVend>0?700:400)+'">'+nf(secVend)+'</td>'+
         '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td>'+
         // data-sortval numérico: sin esto __ordenable leería "219,9 m² físico 165 m²" y ordenaría
         // cualquier cosa. Los que no se venden por m² van a -1, así quedan al final.
         '<td class="num pe-col-m2" data-label="m² p/ vender" data-sortval="'+(m2v===null?-1:m2v)+'" style="color:'+colV+';font-weight:700">'+m2Cel+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
-    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · Disponible = físico − comprometido (qué FABRICAR) · P/ vender = secado − comprometido (qué puede PROMETER Sofía hoy)';
+    $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · Disponible para vender = físico − comprometido (qué FABRICAR) · En secado ya vendidos = lo vendido que espera que seque su lote';
     // Indicador de bases de doble hierro (criterio de Marcelo): pallets de LC60 = físico ÷ 70 (el
     // pallet lleno son 70 comunes + 5 de doble hierro de base) → con el físico de LC60 2H ÷ 5 se sabe
     // para cuántos pallets alcanzan las bases. Si hay más pallets que bases, hay que fabricar LC60 2H.
