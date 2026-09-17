@@ -13216,7 +13216,8 @@ function buildFilterTable(cfg){
   // arrancando por el que queda más cerca del centro, y Google Maps se abre por tramos de 10
   // paradas (su límite en un link).
   const TOPES_PLAZA={lat:-31.41667, lon:-64.18358}, TOPES_RADIO_CENTRO=2.5, TOPES_TRAMO=10;
-  const TOPES_ZONAS=['Centro','Norte','Este','Sur','Oeste'];
+  const TOPES_ZONAS=['Centro','Norte','Este','Sur','Oeste','Interior'];
+  const TOPES_RADIO_CIUDAD=25;   // más lejos que esto ya no es Córdoba y su corona: La Falda, Villa María…
   function topesDistKm(a,b){
     const R=6371, rad=x=>x*Math.PI/180;
     const dLat=rad(b.lat-a.lat), dLon=rad(b.lon-a.lon);
@@ -13226,7 +13227,9 @@ function buildFilterTable(cfg){
   function topesZonaCiudad(t){
     const lat=Number(t&&t.lat), lon=Number(t&&t.lon);
     if(!isFinite(lat)||!isFinite(lon)||!lat||!lon) return '';
-    if(topesDistKm(TOPES_PLAZA,{lat,lon})<=TOPES_RADIO_CENTRO) return 'Centro';
+    const d=topesDistKm(TOPES_PLAZA,{lat,lon});
+    if(d<=TOPES_RADIO_CENTRO) return 'Centro';
+    if(d>TOPES_RADIO_CIUDAD) return 'Interior';   // se agrupan aparte: es un viaje de otro día, no una recorrida
     const ang=(Math.atan2((lon-TOPES_PLAZA.lon)*Math.cos(TOPES_PLAZA.lat*Math.PI/180), lat-TOPES_PLAZA.lat)*180/Math.PI+360)%360;
     return ang<45||ang>=315 ? 'Norte' : ang<135 ? 'Este' : ang<225 ? 'Sur' : 'Oeste';
   }
