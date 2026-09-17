@@ -13013,7 +13013,8 @@ function buildFilterTable(cfg){
     topesUnsub=c.FS.onSnapshot(c.FS.doc(c.db,TOPES_COL,TOPES_DOC), snap=>{ const d=snap.exists()?snap.data():null; TOPES=(d&&Array.isArray(d.prospectos))?d.prospectos:[];
       const btn=$('crm-topes-abrir'); if(btn){ const n=TOPES.filter(t=>t.estado&&t.estado!=='pendiente').length; btn.textContent='🔩 Topes ('+n+'/'+TOPES.length+')'; }
       if($('crm-topes-panel').style.display!=='none') drawTopes();
-      if(topesRutaAbierta) drawTopesRuta(); }, err=>console.error('topes:',err)); }
+      if(topesRutaAbierta) drawTopesRuta();
+      if(topesMailAbierto) drawTopesMail(); }, err=>console.error('topes:',err)); }
   // {nombre} lo llena fillPreg (ya definida arriba); el texto sale de la plantilla "Topes de
   // estacionamiento" — si todavía no existe en PLANT (instalación nueva, nadie la tocó todavía),
   // cae al texto de PLANT_DEFAULT para que el botón nunca quede roto.
@@ -13207,6 +13208,144 @@ function buildFilterTable(cfg){
     return ({invitacion:'💼 Invitado', aceptada:'💼 Aceptó', respondio:'💼 Respondió', 'sin-respuesta':'💼 Sin resp.'})[k] || '💼 LinkedIn';
   }
   let topesLiNombre='';
+  // MAIL POR SECTOR (17/09, pedido de Marcelo: "enviar la propuesta por mail a los prospectos que
+  // tengo el mail, agrupando por sector, con CCO desde Gmail, y que quede marcado en el CRM").
+  // ⚠️ El Tablero NO manda mails: arma el asunto, el cuerpo y el link de Gmail con los destinatarios
+  // en CCO (así no se ven entre ellos), y el envío lo hace la persona desde su cuenta. El resultado
+  // se marca acá con un botón, igual que el ✅ de WhatsApp.
+  // El estado del mail (`mailEstado`/`mailFecha`/`mailPor`) va APARTE del de WhatsApp: no toca
+  // `ultimaAccion` ni suma al tope diario, que es de mensajes en frío por WhatsApp.
+  const TOPES_MAIL_CCO=30;   // Gmail arma bien el borrador hasta unos 30 destinatarios por link
+  function topesMailValido(e){ return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e||'').trim()); }
+  // Una línea por sector: es lo único que cambia entre un mail y otro.
+  function topesMailSector(tipo){
+    const S={
+      'Topes — municipios y comunas':'Fabricamos topes de estacionamiento, cordones de confinamiento y losetas cribadas de hormigón para obra pública: playas, veredas, plazas y espacios verdes.',
+      'Topes — estudios de arquitectura':'Fabricamos losetas cribadas y green blocks para superficies permeables (accesos, cocheras, veredas) y topes de estacionamiento, para especificar en sus proyectos.',
+      'Topes — constructoras':'Fabricamos topes de estacionamiento para cocheras y subsuelos, y losetas cribadas, green blocks y cordones para accesos, veredas y espacios comunes de la obra.',
+      'Topes — paisajistas y viveros':'Fabricamos losetas cribadas y green blocks para césped transitable: accesos, cocheras y senderos que quedan verdes y se pueden pisar.',
+      'Topes — cámaras empresarias':'Fabricamos topes de estacionamiento de hormigón y nos gustaría acercarles una propuesta con precio preferencial para los socios de la cámara.',
+      'Topes — corralones':'Fabricamos topes de estacionamiento, losetas cribadas, green blocks y cordones de hormigón, con lista mayorista para reventa.',
+      'Topes — campings y clubes náuticos':'Fabricamos topes de estacionamiento de hormigón para ordenar autos, trailers y motorhomes, y losetas cribadas para accesos con césped.',
+      'Topes — hoteles y cabañas':'Fabricamos topes de estacionamiento de hormigón para ordenar el estacionamiento de huéspedes, y losetas cribadas y green blocks para accesos verdes.',
+      'Topes — colegios y universidades':'Fabricamos topes de estacionamiento que ordenan y dan seguridad al ingreso y la salida, y losetas cribadas para espacios verdes transitables.',
+      'Topes — clubes y gimnasios':'Fabricamos topes de estacionamiento de hormigón para ordenar el estacionamiento de socios y visitas, y losetas cribadas para accesos con césped.',
+      'Topes — salud':'Fabricamos topes de estacionamiento de hormigón que ordenan el ingreso y protegen los lugares de ambulancias y de personas con discapacidad.',
+      'Topes — automotor':'Fabricamos topes de estacionamiento de hormigón para ordenar la playa de exhibición, el taller y el estacionamiento de clientes.',
+      'Topes — cementerios, salas velatorias e iglesias':'Fabricamos topes de estacionamiento de hormigón para ordenar el estacionamiento de visitas, y losetas cribadas y green blocks para accesos y senderos.',
+      'Topes — logística e industria':'Fabricamos topes de estacionamiento de hormigón para playas de camiones y autos, andenes y depósitos, y cordones para delimitar la circulación.',
+      'Topes — consorcios y barrios cerrados':'Fabricamos topes de estacionamiento para cocheras, y losetas cribadas y green blocks para accesos, senderos y espacios comunes.',
+      'Topes — eventos y gastronomía':'Fabricamos topes de estacionamiento de hormigón para ordenar el estacionamiento de clientes, y losetas cribadas para accesos con césped.',
+      'Topes de estacionamiento':'Fabricamos topes de estacionamiento de hormigón que ordenan la playa, aprovechan mejor los lugares y evitan golpes contra paredes y columnas.'
+    };
+    return S[tipo] || S['Topes de estacionamiento'];
+  }
+  function topesMailTexto(tipo, firma){
+    const quien=String(firma||'').trim() || 'Marcelo Vassallo';
+    const sector=tipo==='Topes de estacionamiento' ? 'playas y estacionamientos' : tipo.replace(/^Topes — /,'');
+    const asunto='Topes de estacionamiento y losetas de hormigón para '+sector+' — VPH Premoldeados (Córdoba)';
+    const cuerpo=
+      'Hola, ¿cómo están?\n\n'+
+      'Soy '+quien+', de Vassallo Premoldeados de Hormigón (VPH). Fabricamos en Toledo, Córdoba, y entregamos en toda la provincia.\n\n'+
+      topesMailSector(tipo)+'\n\n'+
+      'Por qué conviene el hormigón:\n'+
+      '· No se rompe con el sol ni con el paso de los autos, y no necesita mantenimiento ni pintura.\n'+
+      '· Se puede anclar al piso (hormigón o asfalto) o dejar apoyado por su propio peso.\n'+
+      '· Medidas de 50 cm y de 1 metro, y losetas y green blocks para que el acceso quede verde y firme.\n\n'+
+      'Fotos, medidas y precios: www.vpremoldeados.com\n\n'+
+      '¿Les mando la lista de precios y el costo de entrega para su caso? Con responder este mail alcanza, contándome cuántos lugares o metros necesitan.\n\n'+
+      'Saludos,\n'+quien+' — VPH Premoldeados de Hormigón\nToledo, Córdoba · www.vpremoldeados.com\n\n'+
+      'Si preferís no recibir más mails nuestros, respondé "BAJA" y te saco de la lista.';
+    return {asunto, cuerpo, sector};
+  }
+  function topesMailPorSector(){
+    const g={};
+    TOPES.forEach((t,i)=>{
+      if(!topesMailValido(t.email) || t.estado==='sin-interes') return;
+      const tipo=topesTipo(t.rubro), k=tipo;
+      if(!g[k]) g[k]={tipo, pendientes:[], enviados:[]};
+      (t.mailEstado==='enviado' ? g[k].enviados : g[k].pendientes).push({i,t});
+    });
+    return Object.values(g).sort((a,b)=> b.pendientes.length-a.pendientes.length || a.tipo.localeCompare(b.tipo));
+  }
+  // Un link de Gmail por tanda: los destinatarios van SIEMPRE en CCO (bcc) para que no se vean entre
+  // ellos ni queden los mails de unos expuestos a los otros.
+  function topesMailGmailLinks(emails, asunto, cuerpo){
+    const links=[];
+    for(let i=0;i<emails.length;i+=TOPES_MAIL_CCO){
+      const tanda=emails.slice(i,i+TOPES_MAIL_CCO);
+      links.push({desde:i+1, hasta:i+tanda.length, url:'https://mail.google.com/mail/?view=cm&fs=1&tf=1'+
+        '&bcc='+encodeURIComponent(tanda.join(','))+'&su='+encodeURIComponent(asunto)+'&body='+encodeURIComponent(cuerpo)});
+    }
+    return links;
+  }
+  let topesMailAbierto=false, topesMailTipoSel='';
+  function drawTopesMail(){
+    let m=document.getElementById('topes-mail-modal');
+    if(!topesMailAbierto){ if(m) m.style.display='none'; return; }
+    if(!m){ m=document.createElement('div'); m.id='topes-mail-modal'; document.body.appendChild(m);
+      m.addEventListener('click', e=>{ if(e.target===m){ topesMailAbierto=false; drawTopesMail(); } }); }
+    const grupos=topesMailPorSector();
+    if(!grupos.some(g=>g.tipo===topesMailTipoSel)) topesMailTipoSel=(grupos[0]||{}).tipo||'';
+    const g=grupos.find(x=>x.tipo===topesMailTipoSel);
+    const firma=topesFirma();
+    const txt=g ? topesMailTexto(g.tipo, firma) : null;
+    const emails=g ? [...new Set(g.pendientes.map(x=>String(x.t.email).trim().toLowerCase()))] : [];
+    const links=txt ? topesMailGmailLinks(emails, txt.asunto, txt.cuerpo) : [];
+    const img=g ? new URL(topesImagen((g.pendientes[0]||g.enviados[0]||{t:{}}).t.rubro||''), location.href).href : '';
+    const campo='width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:600;display:flex;align-items:center;justify-content:center;padding:12px';
+    m.innerHTML=
+      '<div style="background:var(--card,#fff);border-radius:12px;padding:16px;width:min(760px,100%);max-height:92vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.3)">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">'+
+          '<div><div style="font-weight:700;font-size:15px">✉️ Mail de la propuesta, por sector</div>'+
+          '<div style="font-size:12px;color:var(--muted)">Los destinatarios van en CCO. El mail lo mandás vos desde tu Gmail; después marcás acá que salió.</div></div>'+
+          '<button class="cmp-btn" id="topes-mail-cerrar">✕</button></div>'+
+        (!firma ? '<p style="color:#c0392b;font-size:12.5px;font-weight:600">Escribí tu nombre en ✍️ Firmo como (en la barra de arriba) para que el mail salga firmado.</p>' : '')+
+        (grupos.length
+          ? '<div class="filter-bar" style="margin-bottom:10px">'+
+              grupos.map(x=>'<button class="filter-btn'+(x.tipo===topesMailTipoSel?' active':'')+'" data-topes-mail-t="'+esc(x.tipo)+'">'+
+                esc(x.tipo.replace(/^Topes — /,''))+' ('+x.pendientes.length+(x.enviados.length?' · '+x.enviados.length+' ✓':'')+')</button>').join('')+
+            '</div>'+
+            (g.pendientes.length
+              ? '<div style="margin-bottom:8px"><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Asunto</label>'+
+                  '<input type="text" id="topes-mail-asunto" value="'+esc(txt.asunto)+'" style="'+campo+'"></div>'+
+                '<div style="margin-bottom:8px"><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Cuerpo del mail (se puede editar antes de copiar)</label>'+
+                  '<textarea id="topes-mail-cuerpo" rows="14" style="'+campo+';resize:vertical;font-family:inherit">'+esc(txt.cuerpo)+'</textarea></div>'+
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+                  links.map((l,i)=>'<button class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'" data-topes-mail-g="'+i+'">📧 Abrir Gmail con CCO'+(links.length>1?' ('+l.desde+'–'+l.hasta+')':'')+'</button>').join('')+
+                  '<button class="cmp-btn" id="topes-mail-copiar">📋 Copiar el cuerpo</button>'+
+                  '<a class="cmp-btn" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(img)+'">🖼️ Abrir la imagen del sector</a>'+
+                '</div>'+
+                '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">En Gmail: revisá que estén en <b>CCO</b>, pegá la imagen en el cuerpo (se abre con el botón de arriba, clic derecho → copiar imagen) y mandá. '+
+                  (links.length>1?'Son '+links.length+' mails de hasta '+TOPES_MAIL_CCO+' destinatarios cada uno. ':'')+'Después volvé acá y marcá que salieron.</p>'+
+                '<div style="margin-bottom:10px"><button class="cmp-btn cmp-btn-primary" id="topes-mail-marcar">✅ Marcar los '+g.pendientes.length+' como enviados</button></div>'+
+                '<table style="width:100%;font-size:12.5px"><tr><th>Prospecto</th><th>Mail</th><th>Estado WhatsApp</th></tr>'+
+                  g.pendientes.map(x=>'<tr><td class="cel-nombre">'+esc(x.t.nombre||'')+'</td><td class="cel-envuelve">'+esc(x.t.email||'')+'</td>'+
+                    '<td style="color:var(--muted)">'+esc((TOPES_ESTADOS.find(e=>e.k===(x.t.estado||'pendiente'))||{}).l||'')+'</td></tr>').join('')+
+                '</table>'
+              : '<p style="color:var(--muted);font-size:12.5px">A todos los de este sector ya les mandaste el mail.</p>')+
+            (g.enviados.length ? '<p style="font-size:12px;color:#157a1d;margin:10px 0 0">✓ Ya enviados en este sector: '+g.enviados.length+
+              ' ('+esc(g.enviados.slice(0,4).map(x=>x.t.nombre).join(', '))+(g.enviados.length>4?' y más':'')+')</p>' : '')
+          : '<p style="color:var(--muted);font-size:12.5px">Todavía no hay prospectos con mail cargado.</p>')+
+      '</div>';
+    m.querySelector('#topes-mail-cerrar').onclick=()=>{ topesMailAbierto=false; drawTopesMail(); };
+    m.querySelectorAll('[data-topes-mail-t]').forEach(b=>b.onclick=()=>{ topesMailTipoSel=b.dataset.topesMailT; drawTopesMail(); });
+    // El asunto y el cuerpo se leen del formulario al abrir Gmail: así se puede retocar el texto antes.
+    const leer=()=>({asunto:(m.querySelector('#topes-mail-asunto')||{}).value||'', cuerpo:(m.querySelector('#topes-mail-cuerpo')||{}).value||''});
+    m.querySelectorAll('[data-topes-mail-g]').forEach(b=>b.onclick=()=>{ const {asunto,cuerpo}=leer();
+      const l=topesMailGmailLinks(emails, asunto, cuerpo)[+b.dataset.topesMailG]; if(l) window.open(l.url,'_blank','noopener'); });
+    const cop=m.querySelector('#topes-mail-copiar');
+    if(cop) cop.onclick=()=>topesLiCopiar(cop, leer().cuerpo, '📋 Copiar el cuerpo');
+    const mar=m.querySelector('#topes-mail-marcar');
+    if(mar) mar.onclick=()=>{
+      if(!g.pendientes.length) return;
+      if(!confirm('¿Marcar como enviados los '+g.pendientes.length+' mails de '+g.tipo.replace(/^Topes — /,'')+'?\n\nEsto NO manda nada: solo anota que ya salieron.')) return;
+      const list=TOPES.slice();
+      g.pendientes.forEach(x=>{ list[x.i]={...list[x.i], mailEstado:'enviado', mailFecha:hoyISO, mailPor:firma}; });
+      topesSave(list); drawTopesMail(); drawTopes();
+    };
+  }
   // RUTAS POR ZONA (17/09, pedido de Marcelo: "tocar un botón y que me arme rutas por zonas de la
   // ciudad de Córdoba, norte, sur y centro" para visitar prospectos en persona). Cada prospecto
   // ubicado guarda lat/lon (se cargaron geocodificando la dirección de "Zona / referencia"; el
@@ -13574,7 +13713,8 @@ function buildFilterTable(cfg){
         rubros.map(r=>'<button class="filter-btn'+(topesFiltroRubro===r?' active':'')+'" data-topesf-r="'+esc(r)+'">'+esc(r)+'</button>').join('')+
       '</div>' : '')+
       '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="cmp-btn" id="topes-agregar-btn">'+(topesFormAbierto?'✕ Cancelar':'+ Agregar prospecto')+'</button>'+
-        '<button class="cmp-btn" id="topes-ruta-btn" title="Arma el recorrido para visitar en persona los prospectos de una zona de Córdoba Capital">🗺️ Rutas por zona</button></div>'+
+        '<button class="cmp-btn" id="topes-ruta-btn" title="Arma el recorrido para visitar en persona los prospectos de una zona de Córdoba Capital">🗺️ Rutas por zona</button>'+
+        '<button class="cmp-btn" id="topes-mail-btn" title="Arma el mail de la propuesta por sector, con los destinatarios en CCO, para mandarlo desde tu Gmail">✉️ Mail por sector</button></div>'+
       (topesFormAbierto ? (
         '<div style="margin-bottom:14px;padding:12px;border:1px dashed var(--border);border-radius:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
           '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Lugar *</label>'+
@@ -13618,6 +13758,8 @@ function buildFilterTable(cfg){
     if(btnAgregar) btnAgregar.onclick=()=>{ topesFormAbierto=!topesFormAbierto; drawTopes(); };
     const btnRuta=controles.querySelector('#topes-ruta-btn');
     if(btnRuta) btnRuta.onclick=()=>{ topesRutaAbierta=true; drawTopesRuta(); };
+    const btnMail=controles.querySelector('#topes-mail-btn');
+    if(btnMail) btnMail.onclick=()=>{ topesMailAbierto=true; drawTopesMail(); };
     const btnGuardarNuevo=controles.querySelector('#topes-guardar-nuevo');
     if(btnGuardarNuevo) btnGuardarNuevo.onclick=()=>{
       const nombre=(controles.querySelector('#topes-new-nombre').value||'').trim();
@@ -13651,7 +13793,8 @@ function buildFilterTable(cfg){
         '<td data-sortval="'+esc(t.telefono||'')+'"><input type="text" data-topes-tel="'+i+'" value="'+esc(t.telefono||'')+'" placeholder="351..." style="width:88px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
         // Email (17/09, pedido de Marcelo: volver a ver los mails que se habían cargado). Solo el dato,
         // editable: el botón de mandar mail se sacó el 11/09 y no vuelve.
-        '<td data-sortval="'+esc(t.email||'')+'"><input type="email" data-topes-email="'+i+'" value="'+esc(t.email||'')+'" placeholder="—" style="width:150px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
+        '<td data-sortval="'+esc(t.email||'')+'"><input type="email" data-topes-email="'+i+'" value="'+esc(t.email||'')+'" placeholder="—" style="width:150px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px">'+
+          (t.mailEstado==='enviado' ? '<div style="font-size:10.5px;color:#157a1d;font-weight:600" title="Mail de la propuesta ya enviado'+(t.mailPor?' por '+esc(t.mailPor):'')+'">✉️ enviado '+esc(fmtFecha(t.mailFecha))+'</div>' : '')+'</td>'+
         '<td style="text-align:center" data-sortval="'+esc(e.l)+'"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 8px;font-size:11.5px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
         '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+esc(fmtFecha(t.ultimaAccion))+'</td>'+
         '<td style="white-space:nowrap">'+
