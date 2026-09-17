@@ -13012,7 +13012,8 @@ function buildFilterTable(cfg){
   function topesSubscribe(){ if(!window.__usaNube){ TOPES=topesLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(topesUnsub)topesUnsub();
     topesUnsub=c.FS.onSnapshot(c.FS.doc(c.db,TOPES_COL,TOPES_DOC), snap=>{ const d=snap.exists()?snap.data():null; TOPES=(d&&Array.isArray(d.prospectos))?d.prospectos:[];
       const btn=$('crm-topes-abrir'); if(btn){ const n=TOPES.filter(t=>t.estado&&t.estado!=='pendiente').length; btn.textContent='🔩 Topes ('+n+'/'+TOPES.length+')'; }
-      if($('crm-topes-panel').style.display!=='none') drawTopes(); }, err=>console.error('topes:',err)); }
+      if($('crm-topes-panel').style.display!=='none') drawTopes();
+      if(topesRutaAbierta) drawTopesRuta(); }, err=>console.error('topes:',err)); }
   // {nombre} lo llena fillPreg (ya definida arriba); el texto sale de la plantilla "Topes de
   // estacionamiento" — si todavía no existe en PLANT (instalación nueva, nadie la tocó todavía),
   // cae al texto de PLANT_DEFAULT para que el botón nunca quede roto.
@@ -13206,6 +13207,88 @@ function buildFilterTable(cfg){
     return ({invitacion:'💼 Invitado', aceptada:'💼 Aceptó', respondio:'💼 Respondió', 'sin-respuesta':'💼 Sin resp.'})[k] || '💼 LinkedIn';
   }
   let topesLiNombre='';
+  // RUTAS POR ZONA (17/09, pedido de Marcelo: "tocar un botón y que me arme rutas por zonas de la
+  // ciudad de Córdoba, norte, sur y centro" para visitar prospectos en persona). Cada prospecto
+  // ubicado guarda lat/lon (se cargaron geocodificando la dirección de "Zona / referencia"; el
+  // Tablero no puede geocodificar solo porque el CSP bloquea servicios externos). La zona sale de
+  // la distancia y el rumbo desde la Plaza San Martín: hasta 2,5 km es Centro; más lejos, Norte /
+  // Este / Sur / Oeste según hacia dónde queda. El orden de visita es "el más cercano primero"
+  // arrancando por el que queda más cerca del centro, y Google Maps se abre por tramos de 10
+  // paradas (su límite en un link).
+  const TOPES_PLAZA={lat:-31.41667, lon:-64.18358}, TOPES_RADIO_CENTRO=2.5, TOPES_TRAMO=10;
+  const TOPES_ZONAS=['Centro','Norte','Este','Sur','Oeste'];
+  function topesDistKm(a,b){
+    const R=6371, rad=x=>x*Math.PI/180;
+    const dLat=rad(b.lat-a.lat), dLon=rad(b.lon-a.lon);
+    const h=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(h));
+  }
+  function topesZonaCiudad(t){
+    const lat=Number(t&&t.lat), lon=Number(t&&t.lon);
+    if(!isFinite(lat)||!isFinite(lon)||!lat||!lon) return '';
+    if(topesDistKm(TOPES_PLAZA,{lat,lon})<=TOPES_RADIO_CENTRO) return 'Centro';
+    const ang=(Math.atan2((lon-TOPES_PLAZA.lon)*Math.cos(TOPES_PLAZA.lat*Math.PI/180), lat-TOPES_PLAZA.lat)*180/Math.PI+360)%360;
+    return ang<45||ang>=315 ? 'Norte' : ang<135 ? 'Este' : ang<225 ? 'Sur' : 'Oeste';
+  }
+  function topesRutaArmar(zona, estados){
+    const quedan=TOPES.filter(t=> topesZonaCiudad(t)===zona && estados.includes(t.estado||'pendiente'));
+    const ruta=[]; let pos=TOPES_PLAZA;
+    while(quedan.length){
+      let k=0, dk=Infinity;
+      quedan.forEach((t,j)=>{ const d=topesDistKm(pos,{lat:+t.lat,lon:+t.lon}); if(d<dk){ dk=d; k=j; } });
+      const t=quedan.splice(k,1)[0]; ruta.push({t, km: ruta.length ? dk : 0}); pos={lat:+t.lat, lon:+t.lon};
+    }
+    return ruta;
+  }
+  // Un link por tramo; cada tramo arranca en la última parada del anterior para que no quede un hueco.
+  function topesRutaLinks(ruta){
+    const links=[];
+    for(let i=0;i<ruta.length;i+=TOPES_TRAMO-1){
+      const tramo=ruta.slice(i, i+TOPES_TRAMO); if(i>0 && tramo.length<2) break;
+      links.push({desde:i+1, hasta:i+tramo.length, url:'https://www.google.com/maps/dir/'+tramo.map(x=>(+x.t.lat).toFixed(6)+','+(+x.t.lon).toFixed(6)).join('/')});
+      if(i+TOPES_TRAMO>=ruta.length) break;
+    }
+    return links;
+  }
+  let topesRutaAbierta=false, topesRutaZonaSel='Centro', topesRutaEstados=['pendiente','falta-dato','contactado','interesado'];
+  function drawTopesRuta(){
+    let m=document.getElementById('topes-ruta-modal');
+    if(!topesRutaAbierta){ if(m) m.style.display='none'; return; }
+    if(!m){ m=document.createElement('div'); m.id='topes-ruta-modal'; document.body.appendChild(m);
+      m.addEventListener('click', e=>{ if(e.target===m){ topesRutaAbierta=false; drawTopesRuta(); } }); }
+    const ubicados=TOPES.filter(t=>topesZonaCiudad(t)), sinUbicar=TOPES.length-ubicados.length;
+    const cuenta=z=>ubicados.filter(t=>topesZonaCiudad(t)===z && topesRutaEstados.includes(t.estado||'pendiente')).length;
+    const ruta=topesRutaArmar(topesRutaZonaSel, topesRutaEstados), links=topesRutaLinks(ruta);
+    const totalKm=ruta.reduce((s,x)=>s+x.km,0);
+    const est=k=>TOPES_ESTADOS.find(x=>x.k===k)||TOPES_ESTADOS[0];
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:600;display:flex;align-items:center;justify-content:center;padding:12px';
+    m.innerHTML=
+      '<div style="background:var(--card,#fff);border-radius:12px;padding:16px;width:min(720px,100%);max-height:92vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.3)">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">'+
+          '<div><div style="font-weight:700;font-size:15px">🗺️ Rutas por zona para visitar</div>'+
+          '<div style="font-size:12px;color:var(--muted)">Córdoba Capital · Centro = hasta 2,5 km de la Plaza San Martín · orden: el más cercano primero</div></div>'+
+          '<button class="cmp-btn" id="topes-ruta-cerrar">✕</button></div>'+
+        '<div class="filter-bar" style="margin-bottom:8px">'+
+          TOPES_ZONAS.map(z=>'<button class="filter-btn'+(z===topesRutaZonaSel?' active':'')+'" data-topes-ruta-z="'+z+'">'+z+' ('+cuenta(z)+')</button>').join('')+'</div>'+
+        '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-bottom:10px">'+
+          TOPES_ESTADOS.map(e=>'<label style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-topes-ruta-e="'+e.k+'"'+(topesRutaEstados.includes(e.k)?' checked':'')+'> '+esc(e.l)+'</label>').join('')+'</div>'+
+        (ruta.length
+          ? '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+              links.map((l,i)=>'<a class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(l.url)+'">📍 Abrir en Maps '+(links.length>1?'(paradas '+l.desde+'–'+l.hasta+')':'')+'</a>').join('')+
+              '<span style="font-size:12px;color:var(--muted)">'+ruta.length+' paradas · ~'+totalKm.toFixed(1).replace('.',',')+' km en línea recta entre paradas</span></div>'+
+            '<table style="width:100%;font-size:12.5px"><tr><th>#</th><th>Lugar</th><th>Dirección</th><th>Estado</th><th>Tel.</th></tr>'+
+              ruta.map((x,i)=>{ const e=est(x.t.estado||'pendiente');
+                return '<tr><td>'+(i+1)+'</td><td class="cel-nombre"><b>'+esc(x.t.nombre||'')+'</b><div style="font-size:11px;color:var(--muted)">'+esc(x.t.rubro||'')+'</div></td>'+
+                  '<td class="cel-envuelve">'+esc(x.t.zona||'')+'</td><td style="color:'+e.c+';font-weight:600">'+esc(e.l)+'</td><td>'+esc(x.t.telefono||'')+'</td></tr>'; }).join('')+
+            '</table>'
+          : '<p style="color:var(--muted);font-size:12.5px">No hay prospectos ubicados en esta zona con esos estados.</p>')+
+        (sinUbicar ? '<p style="font-size:11.5px;color:var(--muted);margin:10px 0 0">'+sinUbicar+' prospectos no entran en las rutas: son de otras localidades o no tienen una dirección que se haya podido ubicar en el mapa.</p>' : '')+
+      '</div>';
+    m.querySelector('#topes-ruta-cerrar').onclick=()=>{ topesRutaAbierta=false; drawTopesRuta(); };
+    m.querySelectorAll('[data-topes-ruta-z]').forEach(b=>b.onclick=()=>{ topesRutaZonaSel=b.dataset.topesRutaZ; drawTopesRuta(); });
+    m.querySelectorAll('[data-topes-ruta-e]').forEach(c=>c.onchange=()=>{ const k=c.dataset.topesRutaE;
+      topesRutaEstados=c.checked ? [...new Set([...topesRutaEstados,k])] : topesRutaEstados.filter(x=>x!==k); drawTopesRuta(); });
+  }
   function topesLiAbrir(nombre){ topesLiNombre=nombre||''; drawTopesLi(); }
   function topesLiCerrar(){ topesLiNombre=''; const m=document.getElementById('topes-li-modal'); if(m) m.style.display='none'; }
   function topesLiCopiar(btn, txt, etiqueta){
@@ -13487,7 +13570,8 @@ function buildFilterTable(cfg){
         '<button class="filter-btn'+(!topesFiltroRubro?' active':'')+'" data-topesf-r="">Todos los rubros</button>'+
         rubros.map(r=>'<button class="filter-btn'+(topesFiltroRubro===r?' active':'')+'" data-topesf-r="'+esc(r)+'">'+esc(r)+'</button>').join('')+
       '</div>' : '')+
-      '<div style="margin-bottom:10px"><button class="cmp-btn" id="topes-agregar-btn">'+(topesFormAbierto?'✕ Cancelar':'+ Agregar prospecto')+'</button></div>'+
+      '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="cmp-btn" id="topes-agregar-btn">'+(topesFormAbierto?'✕ Cancelar':'+ Agregar prospecto')+'</button>'+
+        '<button class="cmp-btn" id="topes-ruta-btn" title="Arma el recorrido para visitar en persona los prospectos de una zona de Córdoba Capital">🗺️ Rutas por zona</button></div>'+
       (topesFormAbierto ? (
         '<div style="margin-bottom:14px;padding:12px;border:1px dashed var(--border);border-radius:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
           '<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Lugar *</label>'+
@@ -13529,6 +13613,8 @@ function buildFilterTable(cfg){
     // (rubro, zona, teléfono, email) es opcional y se completa después como cualquier fila existente.
     const btnAgregar=controles.querySelector('#topes-agregar-btn');
     if(btnAgregar) btnAgregar.onclick=()=>{ topesFormAbierto=!topesFormAbierto; drawTopes(); };
+    const btnRuta=controles.querySelector('#topes-ruta-btn');
+    if(btnRuta) btnRuta.onclick=()=>{ topesRutaAbierta=true; drawTopesRuta(); };
     const btnGuardarNuevo=controles.querySelector('#topes-guardar-nuevo');
     if(btnGuardarNuevo) btnGuardarNuevo.onclick=()=>{
       const nombre=(controles.querySelector('#topes-new-nombre').value||'').trim();
