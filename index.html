@@ -13258,13 +13258,16 @@ function buildFilterTable(cfg){
       'Si preferís no recibir más mails nuestros, respondé "BAJA" y te saco de la lista.';
     return {asunto, cuerpo, sector};
   }
+  // 17/09: un mail que REBOTÓ (la casilla no existe o rechaza) no vuelve a la lista de pendientes —
+  // mandarlo de nuevo rebota igual y ensucia la reputación de la cuenta. Queda aparte hasta que
+  // alguien corrija la dirección, y al cambiar el mail de la fila el rebote se borra solo.
   function topesMailPorSector(){
     const g={};
     TOPES.forEach((t,i)=>{
       if(!topesMailValido(t.email) || t.estado==='sin-interes') return;
       const tipo=topesTipo(t.rubro), k=tipo;
-      if(!g[k]) g[k]={tipo, pendientes:[], enviados:[]};
-      (t.mailEstado==='enviado' ? g[k].enviados : g[k].pendientes).push({i,t});
+      if(!g[k]) g[k]={tipo, pendientes:[], enviados:[], rebotes:[]};
+      (t.mailEstado==='enviado' ? g[k].enviados : t.mailEstado==='rebote' ? g[k].rebotes : g[k].pendientes).push({i,t});
     });
     return Object.values(g).sort((a,b)=> b.pendientes.length-a.pendientes.length || a.tipo.localeCompare(b.tipo));
   }
@@ -13326,7 +13329,9 @@ function buildFilterTable(cfg){
                 '</table>'
               : '<p style="color:var(--muted);font-size:12.5px">A todos los de este sector ya les mandaste el mail.</p>')+
             (g.enviados.length ? '<p style="font-size:12px;color:#157a1d;margin:10px 0 0">✓ Ya enviados en este sector: '+g.enviados.length+
-              ' ('+esc(g.enviados.slice(0,4).map(x=>x.t.nombre).join(', '))+(g.enviados.length>4?' y más':'')+')</p>' : '')
+              ' ('+esc(g.enviados.slice(0,4).map(x=>x.t.nombre).join(', '))+(g.enviados.length>4?' y más':'')+')</p>' : '')+
+            (g.rebotes.length ? '<p style="font-size:12px;color:#c0392b;margin:6px 0 0">⚠️ Rebotaron '+g.rebotes.length+
+              ': '+esc(g.rebotes.map(x=>x.t.nombre+' ('+x.t.email+')').join(' · '))+'. No se vuelven a ofrecer: corregí el mail en la fila y el rebote se borra solo.</p>' : '')
           : '<p style="color:var(--muted);font-size:12.5px">Todavía no hay prospectos con mail cargado.</p>')+
       '</div>';
     m.querySelector('#topes-mail-cerrar').onclick=()=>{ topesMailAbierto=false; drawTopesMail(); };
@@ -13794,7 +13799,8 @@ function buildFilterTable(cfg){
         // Email (17/09, pedido de Marcelo: volver a ver los mails que se habían cargado). Solo el dato,
         // editable: el botón de mandar mail se sacó el 11/09 y no vuelve.
         '<td data-sortval="'+esc(t.email||'')+'"><input type="email" data-topes-email="'+i+'" value="'+esc(t.email||'')+'" placeholder="—" style="width:150px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px">'+
-          (t.mailEstado==='enviado' ? '<div style="font-size:10.5px;color:#157a1d;font-weight:600" title="Mail de la propuesta ya enviado'+(t.mailPor?' por '+esc(t.mailPor):'')+'">✉️ enviado '+esc(fmtFecha(t.mailFecha))+'</div>' : '')+'</td>'+
+          (t.mailEstado==='enviado' ? '<div style="font-size:10.5px;color:#157a1d;font-weight:600" title="Mail de la propuesta ya enviado'+(t.mailPor?' por '+esc(t.mailPor):'')+'">✉️ enviado '+esc(fmtFecha(t.mailFecha))+'</div>'
+           : t.mailEstado==='rebote' ? '<div style="font-size:10.5px;color:#c0392b;font-weight:600" title="El mail rebotó: la casilla no existe o rechazó el mensaje. Corregí la dirección y se vuelve a ofrecer.">✉️ rebotó '+esc(fmtFecha(t.mailFecha))+'</div>' : '')+'</td>'+
         '<td style="text-align:center" data-sortval="'+esc(e.l)+'"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 8px;font-size:11.5px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
         '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+esc(fmtFecha(t.ultimaAccion))+'</td>'+
         '<td style="white-space:nowrap">'+
@@ -13820,8 +13826,12 @@ function buildFilterTable(cfg){
       const list=TOPES.slice(); list[i]={...list[i], nombre:v}; topesSave(list); drawTopes(); }));
     tabla.querySelectorAll('input[data-topes-tel]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesTel; const list=TOPES.slice();
       list[i]={...list[i], telefono:inp.value.trim()}; topesSave(list); drawTopes(); }));
+    // Al corregir el mail se limpia el rebote: la dirección nueva merece su intento.
     tabla.querySelectorAll('input[data-topes-email]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesEmail; const list=TOPES.slice();
-      list[i]={...list[i], email:inp.value.trim()}; topesSave(list); }));
+      const nuevo=inp.value.trim(), cambio=nuevo!==String(list[i].email||'').trim();
+      list[i]={...list[i], email:nuevo};
+      if(cambio && list[i].mailEstado==='rebote'){ list[i]={...list[i], mailEstado:'', mailFecha:''}; }
+      topesSave(list); if(cambio) drawTopes(); }));
     tabla.querySelectorAll('select[data-topes-foto]').forEach(sel=>sel.addEventListener('change',()=>{ const i=+sel.dataset.topesFoto; const list=TOPES.slice();
       list[i]={...list[i], foto:sel.value}; topesSave(list); }));
     tabla.querySelectorAll('input[data-topes-nota]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNota; const list=TOPES.slice();
