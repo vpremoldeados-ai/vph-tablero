@@ -15993,6 +15993,7 @@ function buildFilterTable(cfg){
         '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
         '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
         (pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="partir" data-id="'+esc(pe._uid)+'" title="Partir en 2 viajes">✂️ Partir</button>':'')+
+        (pe.estado!=='entregado'&&pedidosUnibles(pe).length?'<button class="cmp-rowbtn" data-pact="unir" data-id="'+esc(pe._uid)+'" title="Unirle otro pedido del mismo cliente: un solo viaje y un solo remito">➕ Unir</button>':'')+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
     $('pe-tabla-ped').innerHTML=html; window.__ordenable('pe-tabla-ped');
@@ -16031,6 +16032,7 @@ function buildFilterTable(cfg){
       else if(a==='remito') imprimirRemito(pe);
       else if(a==='wa') menuWaPedido(pe);
       else if(a==='partir') abrirPartirPedido(pe);
+      else if(a==='unir') abrirUnirPedido(pe);
       else if(a==='entregar') marcarEntregado(pe); });
   }
   // ---------- WhatsApp del pedido + programa del transportista (usa window.__wa) ----------
@@ -16108,7 +16110,7 @@ function buildFilterTable(cfg){
       // La ficha VIVA manda (es la más fresca); el snapshot del pedido es el que salva la sesión de
       // Gustavo, que no puede leer vph_clientes.
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
-      pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'' };
+      pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'', ventaUids:(pe.ventaUids||[]).slice() };
   };
   function imprimirRemito(pe){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
@@ -16198,6 +16200,120 @@ function buildFilterTable(cfg){
       if(!r) return null;   // servicio/flete: no se parte
       return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length };
     }).filter(Boolean);
+  }
+  /* ---------- ➕ UNIR pedidos del MISMO cliente (17/09, pedido de Marcelo: "un cliente hizo un
+     agregado a su pedido y en entregas me lo separa en dos pedidos distintos; necesito que se
+     agrupe para aprovechar al máximo el espacio del camión y hacer un solo remito por todo").
+     Es el inverso exacto de ✂️ Partir. El valor real está en SUMAR el mismo producto en UN renglón:
+     dos pedidos de 117 y 330 ULC60 arman 2+5 = 7 pallets por separado y 6 unidos (447 en un solo
+     renglón) — un pallet menos de camión, que es justo lo que se pidió. Por eso el armado guardado
+     (`plan`) del producto tocado se BORRA: era para la cantidad de antes de unir, igual que al partir.
+     Solo se ofrecen pedidos del MISMO cliente y NO entregados: unir uno ya entregado descuadraría
+     el stock ya descontado, y mezclar clientes en un remito es un papel mal emitido.
+     🔴 El pedido absorbido se ELIMINA, así que se confirma con el detalle de lo que se mueve. */
+  function pedidosUnibles(pe){
+    if(!pe || pe.estado==='entregado' || typeof pedidos==='undefined') return [];
+    return pedidos.filter(x=> x && x._uid!==pe._uid && x.estado!=='entregado' && norm(x.cliente)===norm(pe.cliente));
+  }
+  // Las ventas de un pedido: la que lo originó más las que absorbió al unirse. ⚠️ Sin esto, la venta
+  // del agregado quedaría "sin pasar a producción" (su pedido ya no existe) y Ventas volvería a
+  // ofrecer el botón ⚠ Pasar a producción — que crearía un pedido DUPLICADO del que se acaba de unir.
+  function ventasDePed(pe){
+    const l=[]; if(!pe) return l;
+    if(pe.ventaUid) l.push(pe.ventaUid);
+    (pe.ventaUids||[]).forEach(u=>{ if(u && l.indexOf(u)<0) l.push(u); });
+    return l;
+  }
+  // Suma los ítems de `otros` dentro de `destino`, consolidando el mismo producto en un solo renglón.
+  // Pura sobre los objetos que recibe (no guarda nada): la usan la vista previa —sobre copias— y la
+  // unión de verdad, así el número de pallets que se muestra es EXACTAMENTE el que va a quedar.
+  function fusionarItems(destino, otros){
+    otros.forEach(o=>{
+      (o.items||[]).filter(it=>it&&(it.producto||it.codigo)&&num(it.cantidad)>0).forEach(it=>{
+        const k=keyDe(it.codigo,it.producto);
+        const ya=(destino.items||[]).find(d=>d&&(d.producto||d.codigo)&&keyDe(d.codigo,d.producto)===k);
+        if(ya) ya.cantidad=num(ya.cantidad)+num(it.cantidad);
+        else destino.items=(destino.items||[]).concat([{producto:it.producto||'', codigo:it.codigo||'', cantidad:num(it.cantidad)}]);
+        if(destino.plan) delete destino.plan[k];   // el armado guardado era para la cantidad de ANTES de unir
+      });
+    });
+    destino.items=(destino.items||[]).filter(it=> it && num(it.cantidad)>0);
+    destino.mixtos=[];   // podía referenciar tandas que ya no existen tras consolidar las cantidades
+    return destino;
+  }
+  function unirPedidos(destino, otros){
+    if(!destino || !otros || !otros.length) return false;
+    fusionarItems(destino, otros);
+    otros.forEach(o=>{
+      // Datos que al destino le falten (en la captura de Marcelo uno de los dos no tenía dirección).
+      // Solo COMPLETA, nunca pisa lo que el destino ya tenía cargado.
+      ['direccion','ciudad','fechaRequerida','diaEntrega','transporte','clienteCuit','clienteCondIva','clienteTel'].forEach(c=>{
+        const v=String(destino[c]||'').trim();
+        if((!v || (c==='transporte' && v==='Sin asignar')) && o[c]) destino[c]=o[c];
+      });
+      if(o.nota && String(destino.nota||'').indexOf(o.nota)<0) destino.nota=[destino.nota,o.nota].filter(Boolean).join(' · ');
+      ventasDePed(o).forEach(u=>{
+        if(!u || u===destino.ventaUid) return;
+        destino.ventaUids=destino.ventaUids||[];
+        if(destino.ventaUids.indexOf(u)<0) destino.ventaUids.push(u);
+      });
+    });
+    persistPed(destino);
+    otros.forEach(o=> delPed(o._uid));
+    return true;
+  }
+  function abrirUnirPedido(pe){
+    const cands=pedidosUnibles(pe);
+    if(!cands.length){ alert('No hay otro pedido pendiente de '+(pe.cliente||'—')+' para unir.'); return; }
+    let ov=document.getElementById('pe-unir-modal');
+    if(!ov){ ov=document.createElement('div'); ov.id='pe-unir-modal';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px';
+      document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
+    const fila=p=>'<label style="display:flex;gap:8px;align-items:flex-start;border-top:1px solid #eee;padding:7px 0;cursor:pointer">'+
+      '<input type="checkbox" data-pun="'+esc(p._uid)+'" checked style="margin-top:3px">'+
+      '<span style="flex:1"><b style="font-size:12.5px">'+esc(resumenPed(p))+'</b>'+
+      '<span style="display:block;font-size:11px;color:#666">'+esc(p.diaEntrega||'sin fecha')+' · '+esc(p.transporte||'Sin asignar')+
+      ' · '+totCarga(p).pallets+' pallet'+(totCarga(p).pallets!==1?'s':'')+'</span></span></label>';
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:min(560px,96vw);max-height:92vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
+      '<h3 style="margin:0 0 4px;font-size:15px">➕ Unir pedidos — '+esc(pe.cliente||'—')+'</h3>'+
+      '<div style="font-size:11.5px;color:#666;margin-bottom:8px">Los pedidos que marques se suman a ESTE y desaparecen de la lista. El mismo producto queda en un solo renglón, así se aprovecha mejor el camión y sale <b>un solo remito por todo</b>.</div>'+
+      '<div style="font-size:12px;background:#f5f7fa;border-radius:8px;padding:8px 10px;margin-bottom:6px"><b>Se queda este pedido:</b> '+esc(resumenPed(pe))+
+        '<span style="color:#666"> · '+esc(pe.diaEntrega||'sin fecha')+' · '+esc(pe.transporte||'Sin asignar')+'</span></div>'+
+      '<div style="font-size:11.5px;color:#666;margin-bottom:2px">Unirle:</div>'+
+      cands.map(fila).join('')+
+      '<div id="pe-unir-resumen" style="margin-top:10px;font-size:12.5px;font-weight:700"></div>'+
+      '<div style="display:flex;gap:8px;margin-top:14px">'+
+        '<button id="pe-unir-ok" class="cmp-btn cmp-btn-primary">Unir pedidos</button>'+
+        '<button id="pe-unir-x" class="cmp-btn">Cancelar</button>'+
+      '</div></div>';
+    const elegidos=()=> cands.filter(p=>{ const c=ov.querySelector('[data-pun="'+p._uid+'"]'); return c&&c.checked; });
+    // Vista previa de los pallets: se simula sobre COPIAS con la MISMA función que hace la unión real
+    // (fusionarItems), así el número que se muestra no puede diferir del que queda. Nada se toca
+    // hasta confirmar.
+    const resumen=()=>{
+      const sel=elegidos();
+      const antes=totCarga(pe).pallets + sel.reduce((a,p)=>a+totCarga(p).pallets,0);
+      let despues=antes;
+      if(sel.length){
+        const copia=fusionarItems(JSON.parse(JSON.stringify(pe)), JSON.parse(JSON.stringify(sel)));
+        despues=totCarga(copia).pallets;
+      }
+      ov.querySelector('#pe-unir-resumen').textContent = !sel.length ? 'Marcá al menos un pedido para unir.'
+        : ('Separados: '+antes+' pallet'+(antes!==1?'s':'')+'  →  unidos: '+despues+' pallet'+(despues!==1?'s':'')+
+           (despues<antes?('  ·  se ahorra'+(antes-despues!==1?'n':'')+' '+(antes-despues)+' pallet'+(antes-despues!==1?'s':'')+' de camión'):''));
+    };
+    ov.querySelectorAll('[data-pun]').forEach(c=> c.onchange=resumen);
+    resumen();
+    ov.querySelector('#pe-unir-x').onclick=()=>ov.remove();
+    ov.querySelector('#pe-unir-ok').onclick=()=>{
+      const sel=elegidos();
+      if(!sel.length){ alert('Marcá al menos un pedido para unir.'); return; }
+      if(!confirm('Se van a sumar a este pedido de '+(pe.cliente||'—')+':\n\n'+sel.map(p=>'• '+resumenPed(p)).join('\n')+
+        '\n\n'+(sel.length===1?'Ese pedido se elimina':'Esos pedidos se eliminan')+' y queda UNO solo, con un solo remito. ¿Confirmar?')) return;
+      unirPedidos(pe, sel);
+      ov.remove(); render();
+      if(window.__ventasRefrescar) window.__ventasRefrescar();
+    };
   }
   // 🔴 SNAPSHOT de los datos fiscales del cliente DENTRO del pedido. Gustavo (rol 'produccion') NO
   // puede leer vph_clientes —se lo niegan las DOS capas: la regla de Firestore (esAdmin) y el
@@ -16495,7 +16611,9 @@ function buildFilterTable(cfg){
   window.__pedidoDeVenta = function(ventaUid){
     if(!pedidosCargados) return undefined;
     if(!ventaUid) return null;
-    return (pedidos||[]).find(pe=>pe && pe.ventaUid===ventaUid) || null;
+    // ⚠️ También las ventas ABSORBIDAS al unir dos pedidos (ventaUids): si no, la venta del
+    // agregado se vería 'sin pasar a producción' y crearía un pedido duplicado del que se unió.
+    return (pedidos||[]).find(pe=>pe && (pe.ventaUid===ventaUid || (pe.ventaUids||[]).indexOf(ventaUid)>=0)) || null;
   };
 
   // API: crear un pedido a partir de una venta (botón "→ Entrega" en Ventas)
@@ -16641,7 +16759,7 @@ function buildFilterTable(cfg){
         omit:{run(){ marcar('vph_ventas',v,'grupo'); }} });
     });
     // 3) Ventas recientes sin pedido de entrega creado
-    ventas.filter(v=> v.fecha>=isoMenos(14) && !['Presupuesto','Nota de Crédito'].includes(v.tipoComprobante) && !th(v).entregaOmitida && !pedidos.some(pe=>pe.ventaUid===v._uid) && (v.items||[]).some(it=>it&&it.desc&&num(it.cant)>0)).forEach(v=>{
+    ventas.filter(v=> v.fecha>=isoMenos(14) && !['Presupuesto','Nota de Crédito'].includes(v.tipoComprobante) && !th(v).entregaOmitida && !pedidos.some(pe=>pe.ventaUid===v._uid || (pe.ventaUids||[]).indexOf(v._uid)>=0) && (v.items||[]).some(it=>it&&it.desc&&num(it.cant)>0)).forEach(v=>{
       T.push({ ico:'🚚', titulo:'Crear pedido de entrega para '+(v.cliente||'—'), detalle:resumenItems(v.items,'desc','cant'),
         prim:{l:'▶ Crear pedido', run(){ if(window.__pedidoDesdeVenta){ navTo('Producción y Logística'); window.__pedidoDesdeVenta(v); } else alert('Módulo de Producción no disponible.'); }},
         omit:{run(){ marcar('vph_ventas',v,'entregaOmitida'); }} });
@@ -17797,7 +17915,11 @@ function buildFilterTable(cfg){
       return lista;
     })();
     const labelVenta=v=> refComprobante(v)+' · '+dmy(v.fecha);
-    if(obj.ventaUid && !obj.comprobanteAsoc){ const v=ventasCli.find(x=>x._uid===obj.ventaUid); if(v) obj.comprobanteAsoc=labelVenta(v); }
+    const labelVentas=uid=>{
+      const uids=[uid].concat(obj.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
+      return uids.map(u=>{ const v=(window.__ventasTodas?window.__ventasTodas():[]).find(x=>x._uid===u); return v?labelVenta(v):''; }).filter(Boolean).join(' + ');
+    };
+    if(obj.ventaUid && !obj.comprobanteAsoc) obj.comprobanteAsoc=labelVentas(obj.ventaUid);
     // Remitos ya emitidos para esta venta / este pedido: se ofrecen para REIMPRIMIR con su número
     // original en vez de quemar uno nuevo (el papel que firmó el cliente tiene que poder repetirse).
     const yaEmitidos=(window.__remitosDe?window.__remitosDe({ventaUid:obj.ventaUid, pedidoUid:obj.pedidoUid}):[]);
@@ -17826,7 +17948,7 @@ function buildFilterTable(cfg){
       // documento, así que un getElementById devolvería null y el formulario no llegaría a mostrarse.
       const leer=()=>{ obj.fecha=ov.querySelector('#rem-fecha').value||''; obj.domicilioEntrega=ov.querySelector('#rem-dom').value.trim(); obj.clienteTel=ov.querySelector('#rem-tel').value.trim();
         const uid=ov.querySelector('#rem-venta').value; obj.ventaUid=uid;
-        const v=uid?ventasCli.find(x=>x._uid===uid):null; obj.comprobanteAsoc = v?labelVenta(v):''; };
+        obj.comprobanteAsoc = labelVentas(uid); };
       ov.querySelectorAll('button[data-re]').forEach(b=> b.onclick=()=>{
         const r=yaEmitidos[+b.dataset.re]; ov.remove();
         try{ window.__imprimir.remito(window.__remitoParaImprimir(r)); }catch(e){ alert('Error al reimprimir: '+e.message); }
