@@ -12966,7 +12966,7 @@ function buildFilterTable(cfg){
   const topesNorm=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
   // Ancho de columna ajustado a mano (11/09, pedido de Marcelo). Preferencia de VISTA, no un dato de
   // negocio — vive en localStorage (mismo criterio que "alertas ocultas"), cada navegador la suya.
-  const TOPES_COLW_KEY='vph_crm_topes_colw_v1';
+  const TOPES_COLW_KEY='vph_crm_topes_colw_v2';   // v2 (17/09): se sumó la columna Email y los anchos guardados por posición quedaban corridos
   function topesColWLoad(){ try{ const d=JSON.parse(localStorage.getItem(TOPES_COLW_KEY)); return (d&&typeof d==='object')?d:{}; }catch(e){ return {}; } }
   function topesColWSave(w){ try{ localStorage.setItem(TOPES_COLW_KEY, JSON.stringify(w)); }catch(e){} }
   // Engancha el handle de arrastre en cada <th>. Al primer resize (de esta sesión o ya guardado de
@@ -13549,8 +13549,8 @@ function buildFilterTable(cfg){
     // resto del Tablero) envuelven el texto largo en vez de estirar la columna, e inputs/select más
     // angostos que antes. data-sortval en teléfono/email/nota porque son <input> — __ordenable lee
     // el texto de la celda, y un <input> no tiene textContent (quedaría sin ordenar sin esto).
-    let ht='<tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th style="text-align:center">Estado</th><th>Última acción</th><th>Enviar</th><th>Foto</th><th>Nota</th><th></th></tr>';
-    if(!filas.length) ht+='<tr><td colspan="10" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
+    let ht='<tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email</th><th style="text-align:center">Estado</th><th>Última acción</th><th>Enviar</th><th>Foto</th><th>Nota</th><th></th></tr>';
+    if(!filas.length) ht+='<tr><td colspan="11" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     filas.forEach(({t,i})=>{
       const e=TOPES_ESTADOS.find(x=>x.k===(t.estado||'pendiente'))||TOPES_ESTADOS[0];
       const tel=topesWaLink(t.telefono); const texto=topesTexto(t.nombre, t.rubro);
@@ -13559,6 +13559,9 @@ function buildFilterTable(cfg){
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.rubro||'')+'</td>'+
         '<td class="cel-envuelve" style="color:var(--muted);font-size:12px">'+esc(t.zona||'')+'</td>'+
         '<td data-sortval="'+esc(t.telefono||'')+'"><input type="text" data-topes-tel="'+i+'" value="'+esc(t.telefono||'')+'" placeholder="351..." style="width:88px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
+        // Email (17/09, pedido de Marcelo: volver a ver los mails que se habían cargado). Solo el dato,
+        // editable: el botón de mandar mail se sacó el 11/09 y no vuelve.
+        '<td data-sortval="'+esc(t.email||'')+'"><input type="email" data-topes-email="'+i+'" value="'+esc(t.email||'')+'" placeholder="—" style="width:150px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"></td>'+
         '<td style="text-align:center" data-sortval="'+esc(e.l)+'"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 8px;font-size:11.5px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
         '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+esc(fmtFecha(t.ultimaAccion))+'</td>'+
         '<td style="white-space:nowrap">'+
@@ -13584,6 +13587,8 @@ function buildFilterTable(cfg){
       const list=TOPES.slice(); list[i]={...list[i], nombre:v}; topesSave(list); drawTopes(); }));
     tabla.querySelectorAll('input[data-topes-tel]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesTel; const list=TOPES.slice();
       list[i]={...list[i], telefono:inp.value.trim()}; topesSave(list); drawTopes(); }));
+    tabla.querySelectorAll('input[data-topes-email]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesEmail; const list=TOPES.slice();
+      list[i]={...list[i], email:inp.value.trim()}; topesSave(list); }));
     tabla.querySelectorAll('select[data-topes-foto]').forEach(sel=>sel.addEventListener('change',()=>{ const i=+sel.dataset.topesFoto; const list=TOPES.slice();
       list[i]={...list[i], foto:sel.value}; topesSave(list); }));
     tabla.querySelectorAll('input[data-topes-nota]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNota; const list=TOPES.slice();
