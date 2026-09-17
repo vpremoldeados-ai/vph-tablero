@@ -16383,8 +16383,10 @@ function buildFilterTable(cfg){
 
   function calcularTareas(){
     const T=[];
-    // 1) Presupuestos en borrador → enviar al cliente (mensaje + PDF)
-    presupuestos.filter(p=>(p.estado||'borrador')==='borrador' && !th(p).enviarOmitido).forEach(p=>{ const k=calcV(p);
+    // 1) Presupuestos en borrador → enviar al cliente (mensaje + PDF). Vencido = no se ofrece: mismo
+    // criterio que la alerta de la Vista Diaria (estadoEf). Sin este filtro, un presupuesto de hace
+    // semanas —o ya vendido a mano sin pasar por "→ Venta"— seguía pidiendo "enviarlo" para siempre.
+    presupuestos.filter(p=>(p.estado||'borrador')==='borrador' && venceISOp(p)>=hoyISO && !th(p).enviarOmitido).forEach(p=>{ const k=calcV(p);
       T.push({ ico:'📝', titulo:'Enviar presupuesto '+(p.numero||'')+' a '+(p.cliente||'—'), detalle:money(k.total)+' · válido hasta '+venceP(p),
         prim:{l:'▶ Enviar', run(){ waModal({titulo:'Presupuesto → '+(p.cliente||''), telefono:telDe(p.cliente,p.cuit), adjunto:'Presupuesto '+(p.numero||'')+'.pdf', texto:'Hola '+(primerNombre(p.cliente)||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(k.total)+', válido hasta el '+venceP(p)+'. Cualquier duda me decís 😊', alConfirmar(){ setCampos('vph_presupuestos',p,{estado:'enviado'}); }}); }},
         doc:{l:'🧾 PDF', run(){ if(window.__imprimir) window.__imprimir.presupuesto({...p, tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISOp(p)}); }},
