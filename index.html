@@ -13894,10 +13894,30 @@ function buildFilterTable(cfg){
   // se abría, y en la primera tanda real DOS números seguidos no tenían WhatsApp — el Tablero decía
   // contactado y no había salido ningún mensaje. El Tablero no puede saberlo (solo WhatsApp lo sabe
   // al abrir el chat), así que el resultado lo dice Marcelo con topesResolver.
+  // PRIORIDAD DE RUBRO (18/09, pedido de Marcelo: "quiero priorizar las constructoras en los envíos").
+  // La cola sigue siendo la misma lista; lo único que cambia es a quién agarra primero ▶ Siguiente.
+  // Se prende POR PC (localStorage) y arranca PRENDIDA: es la decisión comercial de hoy.
+  function topesPrioridadOn(){ try{ return localStorage.getItem('vph_topes_prioridad_v1')!=='0'; }catch(e){ return true; } }
+  const TOPES_TIPO_PRIORIDAD='Topes — constructoras';
+  function topesElegible(t){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t); }
+  // Próximo a abrir: con la prioridad prendida, primero las constructoras (mismo criterio de rubro
+  // que usa el mensaje); cuando no quedan, sigue con el orden de siempre.
+  function topesProxIndice(){
+    const elegibles=TOPES.map((t,i)=>({t,i})).filter(x=>topesElegible(x.t));
+    if(!elegibles.length) return -1;
+    if(topesPrioridadOn()){
+      const pri=elegibles.find(x=>topesTipo(x.t.rubro)===TOPES_TIPO_PRIORIDAD);
+      if(pri) return pri.i;
+    }
+    return elegibles[0].i;
+  }
+  function topesPendientesPrioridad(){
+    return TOPES.filter(t=>topesElegible(t) && topesTipo(t.rubro)===TOPES_TIPO_PRIORIDAD).length;
+  }
   function topesSiguientePendiente(){
     const firma=topesFirma();
     if(!firma){ topesUltimoAbierto=''; alert('Antes de empezar escribí tu nombre en "✍️ Firmo como".\n\nEl mensaje sale firmado con ese nombre, y el tope y la espera se cuentan por persona (cada una manda desde su número).'); drawTopes(); return; }
-    const idx=TOPES.findIndex(t=> (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t));
+    const idx=topesProxIndice();
     const tope=topesTope(), enviados=topesEnviadosHoy();
     if(tope && enviados>=tope){
       topesUltimoAbierto='';
@@ -13999,6 +14019,7 @@ function buildFilterTable(cfg){
           ? 'El ayudante abre el chat, comprueba que sea el correcto y manda el mensaje y la imagen de su rubro.'
           : 'Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.')+'</span>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Solo en la PC donde está instalado el Ayudante VPH (carpeta ayudante-whatsapp en Drive)"><input type="checkbox" id="topes-ayudante-chk"'+(topesAyudanteOn()?' checked':'')+'> 🤖 Enviar solo (ayudante)</label>'+
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las constructoras y desarrollistas; cuando no queden, sigue con el resto de la lista"><input type="checkbox" id="topes-prioridad-chk"'+(topesPrioridadOn()?' checked':'')+'> 🏗️ Primero constructoras ('+topesPendientesPrioridad()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Con qué nombre se firma el mensaje en ESTA PC. El tope y la espera se cuentan por persona, porque cada una manda desde su número.">✍️ Firmo como '+
           '<input type="text" id="topes-firma-inp" value="'+esc(firmaPc)+'" placeholder="Tu nombre" style="width:90px;padding:4px 6px;border:1px solid '+(firmaPc?'var(--border)':'#c0392b')+';border-radius:7px;font-size:12px"></label>'
       ))+
@@ -14057,6 +14078,8 @@ function buildFilterTable(cfg){
     if(inpFirma) inpFirma.onchange=()=>{ try{ localStorage.setItem('vph_topes_firma_v1', String(inpFirma.value||'').trim()); }catch(e){} drawTopes(); };
     const chkAy=controles.querySelector('#topes-ayudante-chk');
     if(chkAy) chkAy.onchange=()=>{ try{ localStorage.setItem('vph_topes_ayudante_v1', chkAy.checked?'1':'0'); }catch(e){} drawTopes(); };
+    const chkPri=controles.querySelector('#topes-prioridad-chk');
+    if(chkPri) chkPri.onchange=()=>{ try{ localStorage.setItem('vph_topes_prioridad_v1', chkPri.checked?'1':'0'); }catch(e){} drawTopes(); };
     controles.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
     controles.querySelectorAll('button[data-topesf-r]').forEach(b=>b.onclick=()=>{ topesFiltroRubro=b.dataset.topesfR; drawTopes(); });
     // Alta manual — pedido de Marcelo, 08/09: además de la carga inicial por investigación, poder
