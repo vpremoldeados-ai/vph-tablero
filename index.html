@@ -1527,6 +1527,7 @@
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="cmp-nueva">+ Nueva Compra</button>
           <button class="cmp-btn cmp-btn-primary" id="cmp-pago-prov-btn" style="background:var(--amber)">💰 Pago a proveedor</button>
+          <button class="cmp-btn" id="cmp-op-dia-btn" title="Una sola orden de pago con TODOS los pagos de un día a un proveedor: qué valores se entregaron y a qué facturas se imputaron">🧾 Orden de pago del día</button>
           <button class="cmp-btn" id="cmp-cats" title="Agregar, renombrar o eliminar las categorías de compra">⚙️ Categorías</button>
           <button class="cmp-btn" id="cmp-export">Exportar JSON</button>
           <button class="cmp-btn" id="cmp-import">Importar JSON</button>
@@ -5455,6 +5456,54 @@ function buildFilterTable(cfg){
       return (p.medio||'Tarjeta')+' — '+p.debitos.length+' cuota'+(p.debitos.length>1?'s':'')+', 1er débito '+fmtFecha(p.debitos[0].fecha)+(p.cuenta?' ('+p.cuenta+')':'');
     return (p.medio||'—')+(p.cuenta?' — '+p.cuenta:'');
   }
+  // ---------- 🧾 Orden de pago del DÍA (18/09, pedido de Marcelo): una sola orden con TODOS los pagos
+  // de un día a un proveedor — el comprobante de cómo se imputaron. Los pagos ya cargados de a uno (o
+  // desde varios modales) se juntan por (proveedor, fecha): un renglón por VALOR entregado (el mismo
+  // cheque endosado en dos facturas sale UNA vez, por su monto completo) y un renglón por factura con
+  // lo aplicado y el saldo que le queda HOY. No escribe nada: solo lee las compras e imprime.
+  window.__ordenPagoDia = function ordenPagoDia(compras, proveedor, fecha){
+    const norm=s=>String(s||'').trim().toUpperCase();
+    const vals={}, facts=[];
+    (compras||[]).filter(c=>norm(c.proveedor)===norm(proveedor)).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(c=>{
+      const del=(c.pagos||[]).filter(p=>p && String(p.fecha||'').slice(0,10)===fecha && num(p.monto)>0);
+      if(!del.length) return;
+      del.forEach(p=>{
+        // Un mismo cheque/e-cheq repartido en varias facturas es UN valor: se agrupa por cheque
+        const k = esCheque(p.medio) && (p.endosoChequeUid||p.chNumero) ? 'chq:'+(p.endosoChequeUid||p.chNumero)
+                : (p.echeqGrupo ? 'grp:'+p.echeqGrupo : 'pago:'+p.id);
+        if(!vals[k]) vals[k]={ fecha:(p.chVenc&&esCheque(p.medio))?p.chVenc:fecha, detalle:detalleMedioPago(p), monto:0, _orden:Object.keys(vals).length };
+        vals[k].monto=round2(vals[k].monto+num(p.monto)); });
+      facts.push({ comprobante:refCompraDoc(c), fecha:c.fecha, monto:round2(del.reduce((s,p)=>s+num(p.monto),0)), saldo:calc(c).saldo, condIva:c.condIva||'' });
+    });
+    if(!facts.length) return null;
+    return { proveedor, cuit:cuitDeProveedor(proveedor,''), condIva:facts[0].condIva, fecha,
+      valores:Object.values(vals).sort((a,b)=>a._orden-b._orden).map(v=>({fecha:v.fecha, detalle:v.detalle, monto:v.monto})),
+      facturas:facts.map(f=>({comprobante:f.comprobante, fecha:f.fecha, monto:f.monto, saldo:f.saldo})) };
+  };
+  function openOrdenPagoDia(){
+    const provs=proveedoresConocidos().map(p=>p.nombre).sort();
+    let ov=$('cmp-op-dia-ov');
+    if(!ov){ ov=document.createElement('div'); ov.id='cmp-op-dia-ov'; ov.className='cmp-overlay'; document.body.appendChild(ov);
+      ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }); }
+    ov.innerHTML='<div class="cmp-dialog" style="max-width:520px"><div class="cmp-dialog-head"><h3>🧾 Orden de pago del día</h3><button class="cmp-x" id="opd-x">✕</button></div>'+
+      '<div class="cmp-dialog-body">'+
+      '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Junta en UNA orden de pago todos los pagos que le cargaste a un proveedor en un día: qué valores entregaste y a qué facturas se imputaron. Solo imprime, no cambia nada.</p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 150px">'+
+        field('Proveedor','','<input id="opd-prov" list="opd-prov-list" placeholder="Buscar proveedor..."><datalist id="opd-prov-list">'+provs.map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>')+
+        field('Día de los pagos','','<input type="date" id="opd-fecha" value="'+hoyISO+'">')+
+      '</div><div id="opd-prev" style="font-size:12.5px;margin:4px 0 10px;color:var(--muted)">—</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="opd-cancel">Cerrar</button><button class="cmp-btn cmp-btn-primary" id="opd-print" disabled>🖨️ Imprimir</button></div></div></div>';
+    let o=null;
+    const prev=()=>{ o=window.__ordenPagoDia(DB.compras, $('opd-prov').value.trim(), $('opd-fecha').value);
+      $('opd-print').disabled=!o;
+      $('opd-prev').innerHTML = !o ? (($('opd-prov').value.trim())?'<span style="color:var(--amber)">Ese día no hay pagos cargados a ese proveedor.</span>':'—')
+        : '<b>'+o.valores.length+'</b> valor'+(o.valores.length!==1?'es':'')+' por <b>'+money(o.valores.reduce((s,v)=>s+v.monto,0))+'</b> · <b>'+o.facturas.length+'</b> factura'+(o.facturas.length!==1?'s':'')+
+          '<div style="margin-top:4px">'+o.facturas.map(f=>'• '+esc(f.comprobante)+': '+money(f.monto)+(f.saldo>0.5?' <span style="color:var(--muted)">(queda '+money(f.saldo)+')</span>':' <span style="color:var(--green)">(cancelada)</span>')).join('<br>')+'</div>'; };
+    $('opd-prov').addEventListener('change',prev); $('opd-fecha').addEventListener('change',prev);
+    $('opd-x').onclick=$('opd-cancel').onclick=()=>ov.classList.remove('open');
+    $('opd-print').onclick=()=>{ if(!o) return; ov.classList.remove('open'); if(window.__imprimir&&window.__imprimir.ordenPago) window.__imprimir.ordenPago(o); };
+    ov.classList.add('open');
+  }
   // "Factura A N° 0016-00101856" (en Compras la letra del comprobante vive en condIva)
   function refCompraDoc(c){
     const nro=(c.puntoVenta?String(c.puntoVenta)+'-':'')+(c.nroFactura||c.numero||'');
@@ -6350,6 +6399,7 @@ function buildFilterTable(cfg){
   $('cmp-cerrar').onclick=closeForm;
   $('cmp-pago-cerrar').onclick=()=>$('cmp-modal-pago').classList.remove('open');
   $('cmp-pago-prov-btn').onclick=openPagoProv;
+  $('cmp-op-dia-btn').onclick=openOrdenPagoDia;
   $('cmp-pago-prov-cerrar').onclick=()=>$('cmp-modal-pago-prov').classList.remove('open');
   $('cmp-cats').onclick=openCats;
   $('cmp-cats-cerrar').onclick=closeCats;
