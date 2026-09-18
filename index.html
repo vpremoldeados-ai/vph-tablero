@@ -1138,6 +1138,7 @@
           <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
           <button class="cmp-btn" id="crm-cartel-abrir" title="Marcelo va visitando los corralones para ver si tienen la cartelería de VPH">🪧 Cartelería</button>
           <button class="cmp-btn" id="crm-topes-abrir" title="Prospección de playas de estacionamiento para ofrecerles los topes — lista aparte del embudo de leads">🔩 Topes</button>
+          <button class="cmp-btn" id="crm-may-abrir" title="Los revendedores mayoristas agrupados por su lista de precios (CBA/Interior × Facturado/Contado) — para mandarles el listado del mes y consultarles stock por WhatsApp">🧱 Mayoristas</button>
           <button class="cmp-btn" id="crm-export">Exportar JSON</button>
           <button class="cmp-btn" id="crm-import">Importar JSON</button>
           <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -1168,6 +1169,18 @@
              el orden elegido en el propio <table> — si se recreara en cada render, el clic en un
              encabezado se perdería con la próxima edición de cualquier fila. -->
         <div class="tbl-wrap"><table id="topes-tabla"></table></div>
+      </div>
+      <!-- ===== MAYORISTAS (18/09, pedido de Sofía): los revendedores que YA compran, agrupados por
+           su lista de precios, para mandarles el listado del mes y consultarles stock por WhatsApp.
+           Mismo patrón que Topes (panel inline, doc propio vph_config/crm_mayoristas), pero sin tope
+           diario ni espera: son clientes conocidos, no prospección en frío. -->
+      <div id="crm-may-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <h3 style="margin:0">🧱 Mayoristas — listas de precios y stock</h3>
+          <button class="cmp-x" id="crm-may-cerrar" style="margin-left:auto" title="Ocultar el panel de mayoristas">✕</button>
+        </div>
+        <div id="crm-may-controles"></div>
+        <div class="tbl-wrap"><table id="crm-may-tabla"></table></div>
       </div>
       <div id="crm-sinsegui" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.5;color:#7a5b00"></div>
       <div class="filter-bar" id="crm-filtros" style="display:none"></div>
@@ -14238,6 +14251,173 @@ function buildFilterTable(cfg){
     if(window.__ordenable) window.__ordenable(tabla);
     topesColResizeInit(tabla);
   }
+  // ---------- MAYORISTAS (18/09, pedido de Sofía) ----------
+  // Lo mismo que la lista de Topes pero para los REVENDEDORES que ya compran: mandarles el listado
+  // de precios del mes por WhatsApp y consultarles si necesitan reponer stock. Los 4 tipos son las
+  // 4 listas mayoristas del botón 📄 de Base de Datos (CBA/Interior × Facturado/Contado).
+  // Vive en UN documento (vph_config/crm_mayoristas, campo `filas`), mismo patrón que Topes.
+  // ⚠️ El PDF NO viaja solo (WhatsApp no adjunta archivos desde un link): el circuito es generar los
+  // 4 PDF con 📄 (salen con los precios EN VIVO) y adjuntarlos a mano en cada chat (clip → Documento).
+  // El panel recuerda CUÁL PDF va para cada cliente y lleva la cuenta de a quién ya le fue el del mes.
+  // Sin tope diario ni reloj de espera A PROPÓSITO: son clientes conocidos, no prospección en frío —
+  // acá no está el riesgo de restricción del número que obligó a frenar Topes el 14/09.
+  const MAY_COL='vph_config', MAY_DOC='crm_mayoristas', MAY_KEY='vph_crm_mayoristas_v1';
+  const MAY_TIPOS=[
+    {k:'cbaFact', l:'CBA · Facturado',       pdf:'Mayorista Facturado'},
+    {k:'cbaSF',   l:'CBA · Contado',         pdf:'Mayorista Contado'},
+    {k:'intFact', l:'Interior · Facturado',  pdf:'Mayorista Facturado — hasta 100 km'},
+    {k:'intSF',   l:'Interior · Contado',    pdf:'Mayorista Contado — hasta 100 km'}
+  ];
+  function mayTipo(k){ return MAY_TIPOS.find(t=>t.k===k)||MAY_TIPOS[0]; }
+  // A qué tipo de lista pertenece un cliente, deducido de sus datos. "Sin factura" en la lista de
+  // precios → Contado. El Interior NO se puede deducir de la venta (la zona no viaja en la lista):
+  // solo DELTA POLO se sabe (la lista "hasta 100 km" es casi exclusiva de él, 11/08); el resto queda
+  // en CBA y Sofía lo corrige en el desplegable de la fila.
+  function mayTipoDe(nombre, listaPrecios){
+    const sf=/sin factura/i.test(String(listaPrecios||''));
+    const interior=/delta\s*polo/i.test(String(nombre||''));
+    return (interior?'int':'cba')+(sf?'SF':'Fact');
+  }
+  function mayPeriodo(){ return hoyISO.slice(0,7); }
+  function mayMesLabel(p){
+    const M=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    const par=String(p||'').split('-'); const n=M[(+par[1]||0)-1];
+    return n ? (n+' '+par[0]) : String(p||'');
+  }
+  // Textos de los dos mensajes. La firma sale de "✍️ Firmo como" (la MISMA de Topes, por PC), con
+  // "Sofía" de respaldo: los mayoristas son su cartera. La compra mínima cambia por zona (1 pallet
+  // en Capital, 4 afuera — condiciones definidas el 11/08, las mismas del PDF).
+  function mayTexto(row, accion){
+    const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
+    const interior=String((row&&row.tipo)||'').indexOf('int')===0;
+    const nombre=String((row&&row.nombre)||'').trim();
+    const hola='Hola'+(nombre?' '+nombre:'')+'! Soy '+firma+' de VPH Premoldeados.';
+    if(accion==='stock') return hola+' ¿Cómo venís de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
+    return hola+' Te paso la lista de precios mayorista vigente de '+mayMesLabel(mayPeriodo())+' 👇 Fabricamos a pedido con entrega en 7 días hábiles, así no necesitás stock inmovilizado. ¡Avisame si querés que te reserve producción!';
+  }
+  let MAYW=[], mayUnsub=null, mayConfirm=null;   // mayConfirm = {mi, accion} tras abrir un chat
+  function mayLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
+  function maySaveLocal(){ try{ localStorage.setItem(MAY_KEY, JSON.stringify(MAYW)); }catch(e){} }
+  function maySave(list){ MAYW=list.slice();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{filas:MAYW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else maySaveLocal();
+  }
+  function mayBtnLabel(){ const per=mayPeriodo(); const env=MAYW.filter(r=>r.listaPeriodo===per).length;
+    return '🧱 Mayoristas'+(MAYW.length?(' ('+env+'/'+MAYW.length+')'):''); }
+  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
+    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[];
+      const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
+      const panel=$('crm-may-panel'); if(panel && panel.style.display!=='none') drawMayoristas(); }, err=>console.error('mayoristas:',err)); }
+  // Cambia UNA fila por su índice en MAYW (las vistas siempre guardan data-mi = índice maestro).
+  function mayUpd(mi, fn){ const l=MAYW.slice(); if(!l[mi]) return; l[mi]=fn({...l[mi]}); maySave(l); }
+  // El ✓ de "lo mandé" recién sella al confirmarlo — lección de Topes (11/09): marcar al ABRIR el
+  // chat dejaba como enviados mensajes que nunca salieron (número sin WhatsApp, PDF sin adjuntar).
+  function mayConfirmar(ok){
+    const p=mayConfirm; mayConfirm=null;
+    if(!p || !ok){ drawMayoristas(); return; }
+    const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
+    if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
+    else mayUpd(p.mi, r=>({...r, listaPeriodo:mayPeriodo(), listaFecha:hoyISO, accionPor:firma}));
+    const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
+    drawMayoristas();
+  }
+  // Importa los mayoristas existentes: fichas de Clientes (traen teléfono) + compradores REALES de
+  // vph_ventas con lista mayorista (hay muchos más compradores que fichas: 13 fichas vs 56 en
+  // ventas, lección de Topes del 13/09). No pisa los que ya están (dedup por nombre normalizado).
+  // La lectura de vph_ventas es un getDocs puntual al apretar el botón, no una suscripción.
+  async function mayImportar(){
+    const norm=topesNorm;
+    const ya=new Set(MAYW.map(r=>norm(r.nombre)));
+    const nuevos=[];
+    const sumar=(nombre, listaPrecios, telefono)=>{
+      const nom=String(nombre||'').trim(); const n=norm(nom); if(!n||ya.has(n)) return;
+      ya.add(n);
+      nuevos.push({nombre:nom, tipo:mayTipoDe(nom, listaPrecios), telefono:String(telefono||''), notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''});
+    };
+    (window.__catalogoClientes?window.__catalogoClientes():[]).forEach(c=>{
+      if(!(/mayorista/i.test(String(c.categoria||'')) || /mayorista/i.test(String(c.listaPrecios||'')))) return;
+      sumar(c.nombre, c.listaPrecios, c.telefono);
+    });
+    if(window.__usaNube){ const c=fb(); if(c&&c.db){ try{
+      const snap=await c.FS.getDocs(c.FS.collection(c.db,'vph_ventas'));
+      snap.forEach(d=>{ const v=d.data(); if(/mayorista/i.test(String(v.listaPrecios||''))) sumar(v.cliente, v.listaPrecios, ''); });
+    }catch(e){ alert('No pude leer las ventas: '+e.message); } } }
+    if(!nuevos.length){ alert('No apareció ningún mayorista nuevo: los de las fichas y las ventas ya están todos en la lista.'); return; }
+    maySave(MAYW.concat(nuevos)); drawMayoristas();
+    alert('Se sumaron '+nuevos.length+' mayoristas.\n\nRevisá el TIPO DE LISTA de cada uno (el Interior no se puede deducir solo — salvo DELTA POLO quedaron en CBA) y completá los teléfonos que falten.');
+  }
+  function drawMayoristas(){
+    const cont=$('crm-may-controles'), tabla=$('crm-may-tabla'); if(!cont||!tabla) return;
+    const per=mayPeriodo(), mes=mayMesLabel(per);
+    const env=MAYW.filter(r=>r.listaPeriodo===per).length;
+    const sinTel=MAYW.filter(r=>!String(r.telefono||'').trim()).length;
+    cont.innerHTML=
+      '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
+        '<b>El circuito del mes:</b> 1) Generá los 4 PDF en Base de Datos → 📄 Lista de precios (salen con los precios del día). '+
+        '2) Tocá 📲 en cada cliente: se abre su WhatsApp con el mensaje — <b>adjuntá ahí el PDF de SU lista</b> (clip 📎 → Documento; la columna dice cuál). '+
+        '3) Confirmá "✓ Lo mandé" para que el panel lleve la cuenta.</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+        '<span style="font-weight:800;font-size:13px">Lista de '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
+        (sinTel?('<span style="font-size:12px;color:#c0392b">· '+sinTel+' sin teléfono cargado</span>'):'')+
+        '<span style="margin-left:auto;display:flex;gap:8px">'+
+          '<button class="cmp-btn" data-may-importar title="Trae los clientes con lista mayorista desde las fichas de Clientes y desde las Ventas — no pisa los que ya están">↺ Traer de Clientes y Ventas</button>'+
+          '<button class="cmp-btn" data-may-agregar>+ Agregar</button>'+
+        '</span>'+
+      '</div>';
+    const vista=MAYW.map((r,mi)=>({r,mi}));
+    const ordenTipo=k=>MAY_TIPOS.findIndex(t=>t.k===k);
+    vista.sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
+    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
+    let tipoPrev=null;
+    vista.forEach(({r,mi})=>{
+      const t=mayTipo(r.tipo);
+      if(t.k!==tipoPrev){ tipoPrev=t.k;
+        html+='<tr><td colspan="7" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— PDF: '+esc(t.pdf)+'</span></td></tr>'; }
+      const tel=String(r.telefono||'').trim();
+      const lk=tel ? topesWaLink(tel) : null;
+      const conf = mayConfirm && mayConfirm.mi===mi ? mayConfirm.accion : null;
+      const celda=(accion, hecho, detalle)=>{
+        if(conf===accion) return '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> <button class="cmp-btn" data-may-no="'+mi+'">✗ No</button></span>';
+        return (lk?'<button class="cmp-btn" data-may-abrir-chat="'+mi+'" data-may-accion="'+accion+'" title="Abre el WhatsApp con el mensaje'+(accion==='lista'?' — adjuntá el PDF &quot;'+esc(t.pdf)+'&quot;':'')+'">📲</button>':'<span style="color:#c0392b;font-size:11px">sin tel.</span>')+
+          ' '+(hecho?('<span style="color:#1e9e5a;font-weight:700;font-size:11.5px">'+hecho+'</span>'):'')+(detalle?('<span style="color:#94a3b8;font-size:11px"> '+detalle+'</span>'):'');
+      };
+      const listaHecha = r.listaPeriodo===per ? '✓ enviada' : '';
+      const listaDet = (!listaHecha && r.listaPeriodo) ? ('últ: '+esc(mayMesLabel(r.listaPeriodo))) : '';
+      const stockDet = r.stockFecha ? ('últ: '+esc(String(r.stockFecha).slice(8,10)+'/'+String(r.stockFecha).slice(5,7))) : '';
+      html+='<tr>'+
+        '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700"></td>'+
+        '<td>'+selTipo(r,mi)+'</td>'+
+        '<td><input data-may-tel="'+mi+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
+        '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
+        '<td>'+celda('stock', '', stockDet)+'</td>'+
+        '<td><input data-may-nota="'+mi+'" value="'+esc(r.notas||'')+'" style="width:100%;min-width:120px;border:0;background:transparent;color:#475569"></td>'+
+        '<td><button class="cmp-x" data-may-borrar="'+mi+'" title="Sacar de esta lista (no toca la ficha del cliente ni sus ventas)">✕</button></td>'+
+      '</tr>';
+    });
+    if(!vista.length) html+='<tr><td colspan="7" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
+    tabla.innerHTML=html+'</tbody>';
+    // Cableado por querySelectorAll sobre elementos (§ patrón de viajes: testeable con stubs).
+    cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
+    cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>{
+      const mi=+b.dataset.mayAbrirChat, accion=b.dataset.mayAccion, r=MAYW[mi]; if(!r) return;
+      const lk=topesWaLink(r.telefono); if(!lk) return;
+      window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion)), '_blank');
+      mayConfirm={mi, accion}; drawMayoristas();
+    });
+    tabla.querySelectorAll('[data-may-si]').forEach(b=>b.onclick=()=>mayConfirmar(true));
+    tabla.querySelectorAll('[data-may-no]').forEach(b=>b.onclick=()=>mayConfirmar(false));
+    tabla.querySelectorAll('[data-may-tipo]').forEach(s=>s.onchange=()=>{ mayUpd(+s.dataset.mayTipo, r=>({...r, tipo:s.value})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
+    tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-nota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNota, r=>({...r, notas:i.value})));
+    tabla.querySelectorAll('[data-may-borrar]').forEach(b=>b.onclick=()=>{
+      const mi=+b.dataset.mayBorrar, r=MAYW[mi]; if(!r) return;
+      if(!confirm('¿Sacar a "'+(r.nombre||'(sin nombre)')+'" de la lista de mayoristas? No toca su ficha ni sus ventas.')) return;
+      maySave(MAYW.filter((x,j)=>j!==mi)); drawMayoristas();
+    });
+  }
   // Panel INLINE (no overlay) — pedido de Marcelo, 07/09: la lista de topes no debe tapar el resto
   // de la pantalla como una ventana superpuesta. El botón alterna mostrar/ocultar el panel dentro
   // de la misma página del CRM, igual que "Ver archivados" o los filtros.
@@ -14256,6 +14436,19 @@ function buildFilterTable(cfg){
   // el foco ni el cursor en cada tecla — mismo criterio que crm-buscar/bd-buscar.
   const topesBuscarInp=$('topes-buscar');
   if(topesBuscarInp) topesBuscarInp.addEventListener('input', e=>{ topesFiltroTexto=e.target.value; drawTopes(); });
+
+  // Mayoristas: mismo esquema inline que Topes (abrir/cerrar el panel + suscripción a su documento).
+  const mayAbrirBtn=$('crm-may-abrir');
+  if(mayAbrirBtn){ mayAbrirBtn.onclick=()=>{ const panel=$('crm-may-panel');
+      const abrir = panel.style.display==='none';
+      panel.style.display = abrir ? '' : 'none';
+      if(abrir){ drawMayoristas(); panel.scrollIntoView({behavior:'smooth', block:'start'}); }
+    };
+    if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>maySubscribe()); }
+    else maySubscribe();
+  }
+  const mayCerrarBtn=$('crm-may-cerrar');
+  if(mayCerrarBtn) mayCerrarBtn.onclick=()=>$('crm-may-panel').style.display='none';
 
   boot();
 })();
