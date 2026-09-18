@@ -5810,7 +5810,7 @@ function buildFilterTable(cfg){
         // MEDIO_TARJETA está acá porque el caso típico es justo este: 15 cargas de GNC del mismo
         // proveedor pagadas con la VISA de una. Desde el 03/08 la tarjeta es un medio DIFERIDO:
         // cada factura queda saldada y su parte del importe genera los débitos del resumen.
-        field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,'Transferencia',MEDIO_TARJETA,MEDIO_DEBITO,'Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
+        field('Medio de pago','','<select id="pp-medio">'+['Efectivo',MEDIO_CHEQUE,MEDIO_ENDOSO,'Transferencia',MEDIO_TARJETA,MEDIO_DEBITO,'Cuenta Corriente',MEDIO_ADMIN].map(m=>'<option>'+esc(m)+'</option>').join('')+'</select>') +
         '<div class="cmp-field" id="pp-cuenta-wrap"><label>¿De qué cuenta sale?</label><select id="pp-cuenta">'+cuentasOpt('')+'</select></div>' +
       '</div>'+
       '<div id="pp-tarj-extra" style="display:none;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
@@ -5837,6 +5837,7 @@ function buildFilterTable(cfg){
         '</div>'+
         '<div id="pp-ch-grid" style="margin-top:8px"></div>'+
       '</div>'+
+      '<div id="ppe-endoso" style="display:none;border:1px dashed #8b5cf6;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)"></div>'+
       '<div id="pp-facturas" style="margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc)">'+
         '<p style="margin:0 0 8px 0;font-size:12px;color:var(--muted)"><b>Facturas pendientes:</b> cargá el monto arriba para ver cómo se distribuye</p>'+
         '<div id="pp-dist-table" style="font-size:12px"></div>'+
@@ -5848,7 +5849,7 @@ function buildFilterTable(cfg){
 
     const ppProv=$('pp-prov'), ppMonto=$('pp-monto'), ppFecha=$('pp-fecha'), ppMedio=$('pp-medio');
 
-    ppProv.addEventListener('change',()=>{ pagoProv.proveedor=ppProv.value; drawCuitProv(); drawDistribucion(); });
+    ppProv.addEventListener('change',()=>{ pagoProv.proveedor=ppProv.value; drawCuitProv(); drawDistribucion(); if(esEndoso(pagoProv.medio)) drawEndosoProv(); });
     function drawCuitProv(){
       const n=String(pagoProv.proveedor||'').trim(), cu=n?cuitDeProveedor(n,''):'';
       $('pp-cuit').innerHTML = !n ? '' : (cu ? 'CUIT <b style="font-variant-numeric:tabular-nums">'+esc(fmtCuit(cu))+'</b>'
@@ -5861,21 +5862,51 @@ function buildFilterTable(cfg){
       const tot=cart.reduce((s,q)=>s+q.monto,0);
       cont.innerHTML='<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Tenés '+cart.length+' cheque'+(cart.length>1?'s':'')+' en cartera para endosar · '+money(tot)+'</div>'+
         cart.map(q=>'<div style="font-size:12.5px;padding:3px 0">'+(q.echeq===false?'📄 ':'')+'<b>N° '+esc(q.numero||'—')+'</b> · '+esc(q.banco||'—')+' · de <b>'+esc(q.entidad||'—')+'</b> · <b>'+money(q.monto)+'</b> · vence '+fmtFecha(q.fechaVencimiento)+'</div>').join('')+
-        '<p style="font-size:12px;color:var(--muted);margin:8px 0 0">Para <b>endosar</b> uno de estos, hacelo desde la factura puntual (botón Pagar de la fila) o desde el módulo Cheques: acá se reparte un importe entre varias facturas y un cheque no se puede partir en dos.</p>'; }
+        '<p style="font-size:12px;color:var(--muted);margin:8px 0 0">Para <b>endosar</b> uno de estos elegí arriba el medio <b>«Cheque de terceros (endoso)»</b>: se entregan por su importe completo y se reparten entre las facturas.</p>'; }
+
+    // ---------- ENDOSAR cheques de la cartera desde acá ----------
+    // Un cheque NO se parte: se entrega por su importe COMPLETO. El monto del pago pasa a ser la suma de
+    // los cheques elegidos y se reparte entre las facturas (la más vieja primero); si un cheque cubre dos
+    // facturas, queda un pago por factura y el cheque recuerda todos (endosoPagos) para poder deshacerlo.
+    let ppEndosoSel=[];
+    function drawEndosoProv(){
+      const cont=$('ppe-endoso'); if(!cont) return;
+      const cart = window.__chequesEnCartera ? window.__chequesEnCartera() : [];
+      ppEndosoSel = ppEndosoSel.filter(id=>cart.some(q=>q.uid===id));
+      if(!cart.length){ cont.innerHTML='<p style="color:var(--amber);font-size:12.5px;margin:0">No tenés cheques de clientes en cartera para endosar.</p>';
+        pagoProv.monto=0; ppMonto.value=0; drawDistribucion(); return; }
+      const sel=cart.filter(q=>ppEndosoSel.indexOf(q.uid)>=0), tot=round2(sel.reduce((s,q)=>s+q.monto,0));
+      const saldo=round2(facturasPendientesDelProveedor(pagoProv.proveedor).reduce((s,f)=>s+f.saldo,0));
+      cont.innerHTML='<div style="font-size:11px;color:#8b5cf6;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Elegí los cheques que entregás · van por su importe completo</div>'+
+        cart.map(q=>{ const on=ppEndosoSel.indexOf(q.uid)>=0;
+          return '<button type="button" class="cmp-rowbtn" data-ppe="'+esc(q.uid)+'" style="display:block;width:100%;text-align:left;margin:0 0 6px;padding:8px 10px;border-radius:8px;'+(on?'border-color:#8b5cf6;outline:2px solid #8b5cf6':'')+'">'+
+            (on?'☑ ':'☐ ')+(q.echeq===false?'📄 ':'')+'<b>N° '+esc(q.numero||'—')+'</b> · '+esc(q.banco||'—')+' · de <b>'+esc(q.entidad||'—')+'</b> · <b>'+money(q.monto)+'</b> · vence '+fmtFecha(q.fechaVencimiento)+'</button>'; }).join('')+
+        '<div style="font-size:12.5px;margin-top:4px">'+(!sel.length?'<span style="color:var(--muted)">Elegí al menos un cheque.</span>'
+          : 'Entregás <b>'+sel.length+'</b> cheque'+(sel.length>1?'s':'')+' por <b>'+money(tot)+'</b>'+
+            (saldo>0 ? (tot>saldo+0.5 ? ' <span style="color:var(--amber)">· ⚠️ es más que lo que debés ('+money(saldo)+'): '+money(tot-saldo)+' quedan a favor tuyo</span>'
+              : tot<saldo-0.5 ? ' <span style="color:var(--muted)">· quedan '+money(saldo-tot)+' por pagar</span>' : ' <span style="color:var(--green)">· cancela todo</span>') : ''))+'</div>';
+      cont.querySelectorAll('button[data-ppe]').forEach(b=> b.onclick=()=>{
+        const id=b.dataset.ppe, i=ppEndosoSel.indexOf(id); if(i>=0) ppEndosoSel.splice(i,1); else ppEndosoSel.push(id);
+        drawEndosoProv(); });
+      pagoProv.monto=tot; ppMonto.value=tot; drawDistribucion();
+    }
     ppMonto.addEventListener('input',()=>{ pagoProv.monto=num(ppMonto.value); drawDistribucion(); });
     ppFecha.addEventListener('change',()=>{ pagoProv.fecha=ppFecha.value; });
     ppMedio.addEventListener('change',()=>{
-      const ch=esCheque(ppMedio.value);
+      const en=esEndoso(ppMedio.value);   // "Cheque de terceros (endoso)" también matchea esCheque: NO es un cheque propio
+      const ch=esCheque(ppMedio.value)&&!en;
       const admin=esAdministrativo(ppMedio.value);
       const tj=esTarjeta(ppMedio.value)&&!ch;
       $('pp-cheque-extra').style.display=ch?'block':'none';
       $('pp-cartera-aviso').style.display=ch?'block':'none';
       if(ch) drawCarteraProv();
-      $('pp-cuenta-wrap').style.display=(ch||admin||ppMedio.value==='Cuenta Corriente')?'none':'block';
+      $('pp-cuenta-wrap').style.display=(ch||en||admin||ppMedio.value==='Cuenta Corriente')?'none':'block';
+      $('ppe-endoso').style.display=en?'block':'none'; ppMonto.readOnly=en;
       $('pp-tarj-extra').style.display=tj?'block':'none';
       if(tj){ const def=tarjCuentaDef(), sel=$('pp-cuenta');
         if(def && sel){ sel.value=def; pagoProv.cuenta=def; if(sel.__repintar) sel.__repintar(); } }
       pagoProv.medio=ppMedio.value;
+      if(en) drawEndosoProv();
       if(ch){ sembrarVencProv(); drawEcheqsProv(); }
     });
 
@@ -5896,7 +5927,7 @@ function buildFilterTable(cfg){
         html+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px">'+esc(f.nroFactura||f.numero||'?')+'</td><td style="text-align:right;padding:4px">'+money(f.saldo)+'</td><td style="text-align:right;padding:4px;'+(aplicar>0?'color:var(--green);font-weight:700':'')+'">'+money(aplicar)+'</td></tr>';
       });
       html+='<tr style="border-top:1px solid var(--border);font-weight:700;font-size:11px"><td style="padding:4px">Total</td><td style="text-align:right;padding:4px">'+money(fact.reduce((a,f)=>a+f.saldo,0))+'</td><td style="text-align:right;padding:4px;color:var(--amber)">'+money(totAplicar)+'</td></tr></table>';
-      if(totAplicar<pagoProv.monto-0.5){ html+='<p style="color:var(--amber);font-size:11px;margin:6px 0 0">⚠️ Sobra '+money(pagoProv.monto-totAplicar)+' sin asignar (todas las facturas se cancelan)</p>'; }
+      if(totAplicar<pagoProv.monto-0.5){ html+='<p style="color:var(--amber);font-size:11px;margin:6px 0 0">⚠️ Sobra '+money(pagoProv.monto-totAplicar)+(esEndoso(pagoProv.medio)?': el cheque no se parte, así que queda a favor tuyo (se aplica a la última factura)':' sin asignar (todas las facturas se cancelan)')+'</p>'; }
       tbl.innerHTML=html;
       sembrarVencProv();
       drawEcheqsProv();
@@ -5994,6 +6025,42 @@ function buildFilterTable(cfg){
       if(!pagoProv.distribucion.length){ alert('No hay facturas pendientes para distribuir el pago'); return; }
 
       const medio=pagoProv.medio;
+      if(esEndoso(medio)){
+        const cart = window.__chequesEnCartera ? window.__chequesEnCartera() : [];
+        const elegidos = cart.filter(q=>ppEndosoSel.indexOf(q.uid)>=0);
+        if(!elegidos.length){ alert('Elegí al menos un cheque de la cartera para endosar.'); return; }
+        if(!window.__cascadaValores){ alert('No se pudo repartir los cheques entre las facturas. Recargá la página (Ctrl+Shift+R) y probá de nuevo.'); return; }
+        const dist=pagoProv.distribucion.map(d=>({...d}));
+        const totCh=round2(elegidos.reduce((s,q)=>s+q.monto,0)), totDist=round2(dist.reduce((s,d)=>s+d.monto,0));
+        if(totCh>totDist+0.5) dist[dist.length-1].monto=round2(dist[dist.length-1].monto+totCh-totDist);   // el sobrante queda a favor, en la última factura
+        const piezas=window.__cascadaValores(elegidos.map(q=>({monto:q.monto})), dist.map(d=>({imputado:d.monto})));
+        const porCompra={}, porCheque={}, aplic={};
+        piezas.forEach(p=>{
+          const d=dist[p.si], q=elegidos[p.vi], comp=DB.compras.find(c=>c._uid===d.compraUid); if(!comp) return;
+          const pago={ id:'pag_'+newUid(), fecha:pagoProv.fecha, monto:p.monto, medio:MEDIO_ENDOSO,
+            chNumero:q.numero||'', chBanco:q.banco||'', chVenc:q.fechaVencimiento||'', endosoChequeUid:q.uid, endosoDe:q.entidad||'' };
+          if(!porCompra[comp._uid]) porCompra[comp._uid]={comp, pagos:(comp.pagos||[]).slice()};
+          porCompra[comp._uid].pagos.push(pago);
+          (porCheque[q.uid]=porCheque[q.uid]||[]).push({compraUid:comp._uid, pagoId:pago.id, nro:comp.nroFactura||comp.numero||''});
+          const a=aplic[comp._uid]=aplic[comp._uid]||{comp, monto:0}; a.monto=round2(a.monto+p.monto); });
+        // Todos los pagos de una sola vez (un persistPagos por factura): sin escrituras a medias.
+        Object.keys(porCompra).forEach(uid=>{ const x=porCompra[uid]; x.comp.pagos=x.pagos; persistPagos(uid, x.pagos); });
+        let hechos=0;
+        elegidos.forEach(q=>{ const l=porCheque[q.uid]||[]; if(!l.length || !window.__endosarCheque) return;
+          window.__endosarCheque(q.uid, {proveedor:pagoProv.proveedor, compraUid:l[0].compraUid, compraNro:l.map(x=>x.nro).join(' + '), pagoId:l[0].pagoId,
+            pagos:l.map(x=>({compraUid:x.compraUid, pagoId:x.pagoId})), fecha:pagoProv.fecha}); hechos++; });
+        $('cmp-modal-pago-prov').classList.remove('open');
+        render();
+        if(!hechos){ alert('No se pudo registrar el endoso. Probá de nuevo.'); return; }
+        alert('Endosaste '+hechos+' cheque'+(hechos>1?'s':'')+' por '+money(totCh)+' a '+pagoProv.proveedor+', repartidos en '+Object.keys(porCompra).length+' factura(s).\n\nEsos cheques salen de tu cartera. No sale plata de ninguna cuenta tuya.\n\nAcordate de hacer el endoso también en el home banking: acá solo queda registrado.');
+        if(window.__imprimir && window.__imprimir.ordenPago) window.__imprimir.ordenPago({
+          proveedor:pagoProv.proveedor, cuit:cuitDeProveedor(pagoProv.proveedor,''), condIva:(Object.values(aplic)[0]||{comp:{}}).comp.condIva||'',
+          fecha:pagoProv.fecha,
+          valores:elegidos.map(q=>({fecha:pagoProv.fecha, detalle:'Endoso de cheque de tercero N° '+(q.numero||'—')+(q.banco?' — '+q.banco:'')+(q.entidad?' (de '+q.entidad+')':''), monto:q.monto})),
+          facturas:Object.values(aplic).map(a=>({comprobante:refCompraDoc(a.comp), fecha:a.comp.fecha, monto:a.monto, saldo:calc(a.comp).saldo}))
+        });
+        return;
+      }
       // Este modal no ofrece el endoso (reparte un importe entre varias facturas y un cheque no se
       // parte en dos), así que se excluye explícitamente para no crear un cheque propio fantasma.
       const esChequepay = esCheque(medio) && !esEndoso(medio);
@@ -6429,7 +6496,13 @@ function buildFilterTable(cfg){
     const v=DB.ventas.find(x=>x._uid===ventaUid); if(!v) return false;
     const cobros=(v.cobros||[]).map(c=> c.id===cobroId ? {...c, chequeRechazado: val!==false} : c);
     if(!(v.cobros||[]).some(c=>c.id===cobroId)) return false;
-    v.cobros=cobros; persistCobros(ventaUid, cobros); return true; };
+    v.cobros=cobros; persistCobros(ventaUid, cobros);
+    // Un cheque que cubrió VARIAS ventas (Imputar cobro) tiene un cobro por venta, todos con chqRef =
+    // el cobro que sostiene el cheque en el módulo Cheques: si rebota, rebotan todos juntos.
+    DB.ventas.forEach(w=>{ if(!(w.cobros||[]).some(c=>c.chqRef===cobroId)) return;
+      const cs=w.cobros.map(c=> c.chqRef===cobroId ? {...c, chequeRechazado: val!==false} : c);
+      w.cobros=cs; persistCobros(w._uid, cs); });
+    return true; };
   // Ficha corta de una venta, para que el módulo Cheques muestre de qué venta venía el cheque.
   window.__ventaResumen = uid=>{ const v=DB.ventas.find(x=>x._uid===uid); if(!v) return null; const k=calc(v);
     return { uid:v._uid, nro:v.nroFactura||'', cliente:v.cliente||'', fecha:v.fecha||'', saldo:k.saldo, total:k.total }; };
@@ -7066,7 +7139,7 @@ function buildFilterTable(cfg){
     const sinCert=valores.filter(x=>esRetencion(x.medio) && !String(x.retCertificado||'').trim());
     if(sinCert.length && !confirm('Hay una retención sin N° de certificado: sin ese número el contador no puede computar el crédito.\n¿Registrar igual?')) return;
     const piezas=window.__cascadaValores(valores, activos);
-    const cobrosPorVenta={}, cheques=[], aplicados={};
+    const cobrosPorVenta={}, cheques=[], aplicados={}, maestroCh={}, nrosCh={};
     piezas.forEach(p=>{
       const x=activos[p.si], val=valores[p.vi], v=DB.ventas.find(y=>y._uid===x.uid); if(!v) return;
       const rec={ id:'cob_'+newUid(), fecha, monto:p.monto, medio:val.medio, chequeRechazado:false };
@@ -7074,13 +7147,19 @@ function buildFilterTable(cfg){
       else if(esRetencion(val.medio)){ rec.retImpuesto=val.retImpuesto||IMPUESTOS_RET[0]; rec.retCertificado=String(val.retCertificado||'').trim(); }   // sin cuenta A PROPÓSITO (no entró a ningún banco)
       else rec.cuenta=val.cuenta||'';
       (cobrosPorVenta[v._uid]=cobrosPorVenta[v._uid]||[]).push(rec);
-      if(esCheque(val.medio)) cheques.push({ v, rec });
+      // UN solo cheque por valor en el módulo Cheques, por su monto COMPLETO (el papel es uno solo aunque
+      // haya cubierto varias ventas). El primer pedazo lo sostiene; los demás cobros apuntan a él (chqRef).
+      if(esCheque(val.medio)){
+        (nrosCh[p.vi]=nrosCh[p.vi]||[]).push(x.ref||v.nroFactura||'');
+        if(maestroCh[p.vi]==null){ maestroCh[p.vi]=rec.id; cheques.push({ v, rec, vi:p.vi, total:round2(num(val.monto)) }); }
+        else rec.chqRef=maestroCh[p.vi];
+      }
       const a=aplicados[v._uid]=aplicados[v._uid]||{ comprobante:x.ref||'—', fecha:v.fecha, monto:0, saldoAntes:x.saldo };
       a.monto=round2(a.monto+p.monto);
     });
     Object.keys(cobrosPorVenta).forEach(uid=>{
       const v=DB.ventas.find(y=>y._uid===uid); const cobros=(v.cobros||[]).concat(cobrosPorVenta[uid]); v.cobros=cobros; persistCobros(uid, cobros); });
-    cheques.forEach(({v,rec})=>{ if(window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:fecha, fechaVencimiento:rec.chVenc||fecha, chequeRechazado:false }); });
+    cheques.forEach(({v,rec,vi,total})=>{ if(window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:(nrosCh[vi]||[]).join(' + '), entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:total, fechaEmision:fecha, fechaVencimiento:rec.chVenc||fecha, chequeRechazado:false }); });
     const facturas=Object.values(aplicados).map(a=>({ comprobante:a.comprobante, fecha:a.fecha, monto:a.monto, saldo:round2(a.saldoAntes-a.monto) }));
     const cliRef=DB.ventas.find(v=>v.cliente===imputCliente)||{};
     const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):'');
@@ -7597,7 +7676,8 @@ function buildFilterTable(cfg){
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
       const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
       // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
-      if(esCheque(rec.medio) && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
+      if(prev && prev.chqRef) rec.chqRef=prev.chqRef;   // cobro hermano de un cheque que cubrió varias ventas: el papel vive en el cobro maestro
+      if(esCheque(rec.medio) && !rec.chqRef && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
       else if(!esCheque(rec.medio) && window.__deleteChequeCobro){ window.__deleteChequeCobro(rec.id); }
       // Cobro NUEVO (no edición) abierto desde la Ruta de cobranza → el recibo sale solo, una sola vez.
       if(cobroAutoRecibo && !prev){ cobroAutoRecibo=false;
@@ -8485,9 +8565,10 @@ function buildFilterTable(cfg){
       '· El cliente '+(c.entidad||'—')+' vuelve a deberte '+money(num(c.monto))+'.\n'+
       '· La compra '+(c.endosoCompraNro||'')+' de '+(c.endosadoA||'—')+' vuelve a figurar impaga.\n\n¿Confirmás?')) return;
     const fallas=[];
-    if(c.endosoCompraUid && c.endosoPagoId){
-      if(!(window.__anularPagoCompra && window.__anularPagoCompra(c.endosoCompraUid, c.endosoPagoId)))
-        fallas.push('La compra de '+(c.endosadoA||'—')+': borrale el pago a mano en Compras.');
+    const pgs=pagosDeEndoso(c);
+    if(pgs.length){
+      const mal=pgs.filter(p=>!(window.__anularPagoCompra && window.__anularPagoCompra(p.compraUid, p.pagoId)));
+      if(mal.length) fallas.push('La compra de '+(c.endosadoA||'—')+': borrale '+(mal.length>1?'los '+mal.length+' pagos':'el pago')+' a mano en Compras.');
     } else fallas.push('La compra de '+(c.endosadoA||'—')+': el endoso no había quedado vinculado a una factura.');
     if(c.origen==='cobro' && c.refUid && c.refId){
       if(!(window.__marcarCobroRechazado && window.__marcarCobroRechazado(c.refUid, c.refId, true)))
@@ -8502,9 +8583,15 @@ function buildFilterTable(cfg){
   function desendosar(c){
     if(!confirm('¿Deshacer el endoso del cheque N° '+(c.numero||'—')+'?\n\n'+
       'Vuelve a tu cartera y la compra '+(c.endosoCompraNro||'')+' de '+(c.endosadoA||'—')+' vuelve a figurar impaga.')) return;
-    if(c.endosoCompraUid && c.endosoPagoId && window.__anularPagoCompra) window.__anularPagoCompra(c.endosoCompraUid, c.endosoPagoId);
-    persist({...c, estado:'cartera', endosadoA:'', endosoCompraUid:'', endosoCompraNro:'', endosoPagoId:'', fechaEndoso:''});
+    if(window.__anularPagoCompra) pagosDeEndoso(c).forEach(p=>window.__anularPagoCompra(p.compraUid, p.pagoId));
+    persist({...c, estado:'cartera', endosadoA:'', endosoCompraUid:'', endosoCompraNro:'', endosoPagoId:'', endosoPagos:[], fechaEndoso:''});
   }
+  // Un cheque endosado desde "Pago a proveedor" puede haber cubierto VARIAS facturas: guarda un pago por
+  // factura en endosoPagos. Los endosos viejos (una sola factura) solo tienen endosoCompraUid/endosoPagoId.
+  function pagosDeEndoso(c){
+    const l=(c.endosoPagos||[]).filter(p=>p&&p.compraUid&&p.pagoId);
+    if(l.length) return l;
+    return (c.endosoCompraUid && c.endosoPagoId) ? [{compraUid:c.endosoCompraUid, pagoId:c.endosoPagoId}] : []; }
 
   // ================= ENDOSAR un cheque de terceros a un proveedor (modal chd-) =================
   // Los proveedores salen del historial de compras + del catálogo de Base de Datos.
@@ -8885,12 +8972,16 @@ function buildFilterTable(cfg){
   // así el mismo papel NO genera además un cheque propio (eso lo contaría dos veces).
   window.__endosarCheque = (uid, o)=>{ const c=DB.cheques.find(x=>x._uid===uid); if(!c) return false;
     persist({...c, estado:'endosado', endosadoA:(o&&o.proveedor)||'', endosoCompraUid:(o&&o.compraUid)||'',
-      endosoCompraNro:(o&&o.compraNro)||'', endosoPagoId:(o&&o.pagoId)||'', fechaEndoso:(o&&o.fecha)||hoyISO});
+      endosoCompraNro:(o&&o.compraNro)||'', endosoPagoId:(o&&o.pagoId)||'',
+      endosoPagos:(o&&Array.isArray(o.pagos))?o.pagos:[], fechaEndoso:(o&&o.fecha)||hoyISO});
     return true; };
   // Si se borra el pago del endoso, el cheque vuelve a la cartera (no se pierde el papel).
   window.__desendosarChequePorPago = pagoId=>{ if(!pagoId) return false;
-    const c=DB.cheques.find(x=>x.endosoPagoId===pagoId); if(!c) return false;
-    persist({...c, estado:'cartera', endosadoA:'', endosoCompraUid:'', endosoCompraNro:'', endosoPagoId:'', fechaEndoso:''});
+    const c=DB.cheques.find(x=>x.endosoPagoId===pagoId || (x.endosoPagos||[]).some(p=>p&&p.pagoId===pagoId)); if(!c) return false;
+    // Si el papel cubría varias facturas, los OTROS pagos también se anulan: dejarlos pagados con un cheque
+    // que volvió a la cartera permitiría entregarlo de nuevo y pagar dos veces.
+    if(window.__anularPagoCompra) pagosDeEndoso(c).forEach(p=>{ if(p.pagoId!==pagoId) window.__anularPagoCompra(p.compraUid, p.pagoId); });
+    persist({...c, estado:'cartera', endosadoA:'', endosoCompraUid:'', endosoCompraNro:'', endosoPagoId:'', endosoPagos:[], fechaEndoso:''});
     return true; };
 
   window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
