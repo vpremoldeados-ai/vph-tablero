@@ -1504,6 +1504,17 @@
     </div>
   </div>
 
+  <!-- ================= IMPUTAR COBRO EN CUENTA CORRIENTE (overlay) ================= -->
+  <div class="cmp-overlay" id="vnt-modal-imputar">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head">
+        <h3>💰 Imputar cobro en cuenta corriente</h3>
+        <button class="cmp-x" id="vnt-imputar-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="vnt-form-imputar"></div>
+    </div>
+  </div>
+
   <!-- ================= COMPRAS (módulo transaccional propio) ================= -->
   <div class="page" id="page-compras">
     <div class="kpis" id="cmp-kpis"></div>
@@ -6878,12 +6889,127 @@ function buildFilterTable(cfg){
   function renderClientes(all){
     const by={}; all.forEach(({v,k})=>{ if(k.saldo>0.5){ by[v.cliente]=by[v.cliente]||{saldo:0,venc:0}; by[v.cliente].saldo+=k.saldo; if(k.estado==='vencido') by[v.cliente].venc+=k.saldo; } });
     const arr=Object.entries(by).map(([c,x])=>({c,...x})).sort((a,b)=>b.saldo-a.saldo);
-    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num">Vencido</th></tr>';
-    if(!arr.length) html+='<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
-    arr.forEach(r=> html+='<tr><td>'+esc(r.c)+'</td><td class="num"><b>'+money(r.saldo)+'</b></td><td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td></tr>');
+    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num">Vencido</th><th>Acciones</th></tr>';
+    if(!arr.length) html+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
+    arr.forEach(r=> html+='<tr><td>'+esc(r.c)+'</td><td class="num"><b>'+money(r.saldo)+'</b></td><td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td>'+
+      '<td><button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button></td></tr>');
     const tot=arr.reduce((a,r)=>a+r.saldo,0), totV=arr.reduce((a,r)=>a+r.venc,0);
-    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totV)+'</td></tr>';
+    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totV)+'</td><td></td></tr>';
     $('vnt-tabla-cli').innerHTML=html; window.__ordenable('vnt-tabla-cli');
+    $('vnt-tabla-cli').querySelectorAll('button[data-imputar]').forEach(b=> b.onclick=()=> openImputar(b.dataset.imputar));
+  }
+
+  // ---------- 💰 Imputar cobro en cuenta corriente (18/09, pedido de Marcelo/Sofía): cuando un
+  // cliente paga un monto que cubre VARIAS facturas juntas, reparte ese único pago entre sus ventas
+  // pendientes en vez de tener que abrir cada una y calcular a mano cuánto le toca a cada una.
+  // Reparto por defecto: la más VIEJA primero (FIFO) — es como se salda una cuenta corriente real —
+  // con cada monto editable antes de confirmar. Cada venta afectada recibe su PROPIO cobro (mismo
+  // camino que el formulario normal: persistCobros de solo ese campo), así que Cheques/Caja/Finanzas
+  // no tienen que aprender nada nuevo: para ellos es exactamente lo mismo que N cobros cargados a mano.
+  // ⚠️ Medios excluidos a propósito: VIUMI (cada cobro necesita SU liquidación — arancel/IVA/fecha de
+  // acreditación propia, no tiene sentido clonarla en cada venta) y Retención (cada una necesita SU
+  // impuesto/certificado). Para esos dos casos se sigue usando el cobro por venta, uno por uno.
+  const MEDIOS_IMPUTAR = MEDIOS_COBRO.filter(m=> !esPlataforma(m) && !esRetencion(m));
+  let imputCliente=null, imputSplits=[];
+  // Pura y testeable: reparte `monto` entre `ventasSaldo` (ya ordenadas, típicamente FIFO por fecha),
+  // topeando cada una en su propio saldo — nunca asigna de más a una venta ni reparte lo que no hay.
+  window.__repartirFIFO = function repartirFIFO(monto, ventasSaldo){
+    let restante=Math.max(0, round2(num(monto)));
+    return (ventasSaldo||[]).map(x=>{ const asig=round2(Math.min(restante, num(x.saldo))); restante=round2(restante-asig); return {...x, imputado:asig}; });
+  };
+  function ventasPendientesDe(cliente){
+    return DB.ventas.filter(v=> v.cliente===cliente && calc(v).saldo>0.5)
+      .map(v=>({ uid:v._uid, fecha:v.fecha, ref: window.__refComprobante?window.__refComprobante(v):(v.nroFactura||v.nroInterno||''), saldo:calc(v).saldo }))
+      .sort((a,b)=> String(a.fecha||'').localeCompare(String(b.fecha||'')));
+  }
+  function openImputar(cliente){
+    imputCliente=cliente;
+    const pendientes=ventasPendientesDe(cliente);
+    const totalSaldo=round2(pendientes.reduce((a,x)=>a+x.saldo,0));
+    imputSplits=window.__repartirFIFO(totalSaldo, pendientes);
+    pintarImputar(totalSaldo);
+    $('vnt-modal-imputar').classList.add('open');
+  }
+  function pintarImputar(montoDef){
+    const box=$('vnt-form-imputar');
+    const totalSaldo=round2(imputSplits.reduce((a,x)=>a+x.saldo,0));
+    const totalImp=round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0));
+    const medioSel=$('ic-medio')?$('ic-medio').value:MEDIOS_IMPUTAR[0];
+    const chShow=esCheque(medioSel);
+    let h='<p style="margin:0 0 10px;font-size:13px">'+esc(imputCliente||'—')+' — saldo total pendiente <b>'+money(totalSaldo)+'</b></p>'+
+      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
+        field('Monto a imputar','','<input id="ic-monto" value="'+(montoDef!=null?montoDef:totalImp)+'">')+
+        field('Fecha','','<input type="date" id="ic-fecha" value="'+hoyISO+'">')+
+        field('Medio','','<select id="ic-medio">'+medioOpts(MEDIOS_IMPUTAR, medioSel)+'</select>')+
+      '</div>'+
+      '<div id="ic-cuenta-wrap" style="display:'+(chShow?'none':'')+';margin-bottom:8px">'+field('¿En qué cuenta entró?','','<select id="ic-cuenta">'+cuentasOpt()+'</select>')+'</div>'+
+      '<div id="ic-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se cargan en CADA venta que cubra)</div>'+
+        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+          field('N° de cheque','','<input id="ic-ch-num">')+field('Banco','','<input id="ic-ch-banco">')+
+          field('Vencimiento / fecha de cobro','col2','<input type="date" id="ic-ch-venc">')+
+        '</div></div>'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0">'+
+        '<div style="font-size:12.5px;font-weight:800">Reparto por venta (la más vieja primero)</div>'+
+        '<button class="cmp-btn" id="ic-refifo" type="button">🔄 Repartir automático</button></div>';
+    if(!imputSplits.length){
+      h+='<p style="color:var(--muted);font-size:13px;padding:6px 0">Este cliente no tiene ventas con saldo pendiente.</p>';
+    } else {
+      h+='<div style="margin-bottom:8px">'+imputSplits.map((x,i)=>
+        '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12.5px">'+
+          '<span>'+fmtFecha(x.fecha)+' · '+esc(x.ref||'—')+' <span style="color:var(--muted)">(saldo '+money(x.saldo)+')</span></span>'+
+          '<input data-isp="'+i+'" value="'+num(x.imputado)+'" inputmode="decimal" style="width:110px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;text-align:right;font-weight:700"></div>').join('')+
+        '</div>';
+    }
+    const dif=round2(num($('ic-monto')?$('ic-monto').value:montoDef)-totalImp);
+    h+='<div id="ic-check" style="font-size:12.5px;margin-bottom:10px">Repartido: <b>'+money(totalImp)+'</b>'+
+      (Math.abs(dif)>0.5?' — <span style="color:var(--amber)">'+(dif>0?'faltan '+money(dif)+' por repartir':'te pasaste por '+money(-dif))+'</span>':' <span style="color:var(--green)">✓ coincide con el monto</span>')+'</div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="ic-cancel">Cerrar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="ic-confirmar"'+(imputSplits.length?'':' disabled')+'>Registrar cobros</button></div>';
+    box.innerHTML=h;
+    if(window.__tarjetas) window.__tarjetas('ic-medio');
+    $('ic-medio').addEventListener('change',()=>{ const ch=esCheque($('ic-medio').value);
+      $('ic-cheque-extra').style.display=ch?'block':'none'; $('ic-cuenta-wrap').style.display=ch?'none':''; });
+    $('ic-refifo').onclick=()=>{ const m=num($('ic-monto').value); imputSplits=window.__repartirFIFO(m, imputSplits.map(x=>({uid:x.uid,fecha:x.fecha,ref:x.ref,saldo:x.saldo}))); pintarImputar(m); };
+    box.querySelectorAll('input[data-isp]').forEach(el=> el.addEventListener('input',()=>{
+      const i=+el.dataset.isp, v=Math.max(0, Math.min(num(el.value), imputSplits[i].saldo));
+      imputSplits[i]=Object.assign({}, imputSplits[i], {imputado:v}); refrescarCheck(); }));
+    $('ic-monto').addEventListener('input', refrescarCheck);
+    function refrescarCheck(){
+      const totalImp2=round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0));
+      const dif2=round2(num($('ic-monto').value)-totalImp2);
+      $('ic-check').innerHTML='Repartido: <b>'+money(totalImp2)+'</b>'+
+        (Math.abs(dif2)>0.5?' — <span style="color:var(--amber)">'+(dif2>0?'faltan '+money(dif2)+' por repartir':'te pasaste por '+money(-dif2))+'</span>':' <span style="color:var(--green)">✓ coincide con el monto</span>');
+    }
+    $('ic-cancel').onclick=()=>$('vnt-modal-imputar').classList.remove('open');
+    const conf=$('ic-confirmar'); if(conf) conf.onclick=confirmarImputacion;
+  }
+  // Registra UN cobro por venta afectada — cada uno pasa por persistCobros (solo el campo cobros) y,
+  // si es cheque, por __upsertChequeCobro — el MISMO camino que si Sofía los hubiera cargado a mano
+  // uno por uno. Así Caja/Finanzas/Cheques no necesitan enterarse de que vinieron de un reparto.
+  function confirmarImputacion(){
+    const fecha=$('ic-fecha').value, medio=$('ic-medio').value, cuenta=$('ic-cuenta')?$('ic-cuenta').value:'';
+    const chNum=$('ic-ch-num')?$('ic-ch-num').value.trim():'', chBanco=$('ic-ch-banco')?$('ic-ch-banco').value.trim():'', chVenc=$('ic-ch-venc')?$('ic-ch-venc').value:'';
+    const activos=imputSplits.filter(x=>num(x.imputado)>0);
+    if(!activos.length){ alert('Cargá algún monto para al menos una venta.'); return; }
+    if(!fecha){ alert('Poné la fecha del cobro.'); return; }
+    const aplicados=[];
+    activos.forEach(x=>{
+      const v=DB.ventas.find(y=>y._uid===x.uid); if(!v) return;
+      const rec={ id:'cob_'+newUid(), fecha, monto:num(x.imputado), medio, chequeRechazado:false };
+      if(esCheque(medio)){ rec.chNumero=chNum; rec.chBanco=chBanco; rec.chVenc=chVenc||fecha; }
+      else rec.cuenta=cuenta;
+      const cobros=(v.cobros||[]).slice(); cobros.push(rec); v.cobros=cobros; persistCobros(v._uid, cobros);
+      if(esCheque(medio) && window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:chNum, banco:chBanco, monto:rec.monto, fechaEmision:fecha, fechaVencimiento:chVenc||fecha, chequeRechazado:false });
+      aplicados.push({ comprobante:x.ref||'—', fecha:v.fecha, monto:rec.monto, saldo:round2(x.saldo-rec.monto) });
+    });
+    const cliRef=DB.ventas.find(v=>v.cliente===imputCliente)||{};
+    const recibo={ proveedor:imputCliente, cuit:cliRef.cuit||'', condIva:cliRef.condIva||'', fecha,
+      valores:[{fecha, detalle:medio, monto:round2(aplicados.reduce((a,x)=>a+x.monto,0))}], facturas:aplicados };
+    $('vnt-modal-imputar').classList.remove('open');
+    if(confirm('Se registraron '+aplicados.length+' cobro'+(aplicados.length!==1?'s':'')+'. ¿Imprimir el recibo?')){
+      if(window.__imprimir && window.__imprimir.reciboCtaCte) window.__imprimir.reciboCtaCte(recibo);
+    }
   }
 
   // ---------- Formulario ----------
@@ -7897,6 +8023,7 @@ function buildFilterTable(cfg){
   $('vnt-cobro-cerrar').onclick=()=>$('vnt-modal-cobro').classList.remove('open');
   $('vnt-ruta-cobranza').onclick=openRutaCobranza;
   $('vnt-cobranza-cerrar').onclick=()=>$('vnt-modal-cobranza').classList.remove('open');
+  $('vnt-imputar-cerrar').onclick=()=>$('vnt-modal-imputar').classList.remove('open');
   $('vnt-retenciones').onclick=mostrarRetenciones;
   $('vnt-export').onclick=exportJSON;
   $('vnt-import').onclick=()=>$('vnt-import-file').click();
@@ -7906,7 +8033,7 @@ function buildFilterTable(cfg){
   $('vnt-filtro-periodo').addEventListener('change',e=>{ filtro.periodo=e.target.value; render(); });
   $('vnt-cols-btn').onclick=(e)=>{ e.stopPropagation(); const p=$('vnt-cols-pop'); p.style.display = p.style.display==='none' ? 'block' : 'none'; };
   document.addEventListener('click',(e)=>{ const p=$('vnt-cols-pop'); if(p && p.style.display!=='none' && !p.contains(e.target) && e.target!==$('vnt-cols-btn')) p.style.display='none'; });
-  [$('vnt-modal'),$('vnt-modal-cobro'),$('vnt-modal-cobranza')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+  [$('vnt-modal'),$('vnt-modal-cobro'),$('vnt-modal-cobranza'),$('vnt-modal-imputar')].forEach(ov=> ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
 
   window.__ventaCalc = calc;   // expuesto para el módulo Documentos (totales de venta)
   window.__ventasTodas = ()=> (DB.ventas||[]).slice();   // lectura para el Libro IVA
@@ -17688,6 +17815,34 @@ function buildFilterTable(cfg){
     return encabezado('X','ORDEN DE PAGO','', dmy(o.fecha))+bloqueCliente(izq,der)+valores+concepto+firma()+pie();
   }
 
+  // ---------- Recibo de Cobranza — Cuenta Corriente (18/09) ----------
+  // El espejo de ordenPago pero del lado del CLIENTE: un pago que canceló VARIAS ventas juntas (la
+  // Cuenta Corriente de Ventas → 💰 Imputar cobro). Mismo objeto normalizado {proveedor→acá es el
+  // cliente, cuit, condIva, fecha, valores, facturas:[{comprobante,fecha,monto,saldo}]} para no
+  // duplicar el armado de las dos tablas — la única diferencia real con ordenPago es el título y que
+  // "Valores" dice RECIBIDOS en vez de ENTREGADOS.
+  function reciboCtaCte(o){
+    o=o||{};
+    const izq='<b>'+esc(o.proveedor||'—')+'</b>';
+    const der='CUIT: '+esc(o.cuit||'—')+'<br>Cond. IVA: '+esc(o.condIva||'—');
+    const vals=(o.valores||[]).filter(x=>x&&num(x.monto)>0);
+    let filas=vals.map(x=>'<tr><td>'+dmy(x.fecha)+'</td><td>'+esc(x.detalle||'—')+'</td><td class="n">'+money(x.monto)+'</td></tr>').join('');
+    if(!filas) filas='<tr><td colspan="3" style="text-align:center;color:#888">Sin valores.</td></tr>';
+    const tot=vals.reduce((a,x)=>a+num(x.monto),0);
+    const valores='<h4 style="margin:6px 0 4px;font-size:12px">Valores Recibidos</h4>'+
+      '<table class="doc-tab"><tr><th>Fecha</th><th>Forma de Pago</th><th class="n">Monto</th></tr>'+filas+
+      '<tr><td colspan="2" class="n"><b>Total</b></td><td class="n"><b>'+money(tot)+'</b></td></tr></table>';
+    const fs=(o.facturas||[]);
+    const concepto='<h4 style="margin:10px 0 4px;font-size:12px">Comprobantes que cancela</h4>'+
+      '<table class="doc-tab"><tr><th>Comprobante</th><th>Fecha</th><th class="n">Importe aplicado</th><th class="n">Saldo restante</th></tr>'+
+      (fs.length ? fs.map(f=>'<tr><td>'+esc(f.comprobante||'—')+'</td><td>'+dmy(f.fecha)+'</td><td class="n">'+money(f.monto)+'</td>'+
+        '<td class="n">'+(num(f.saldo)>0.5?money(f.saldo):'—')+'</td></tr>').join('')
+        : '<tr><td colspan="4" style="text-align:center;color:#888">Pago a cuenta.</td></tr>')+
+      '</table>'+
+      (fs.some(f=>num(f.saldo)>0.5)?'<div style="font-size:10px;color:#666;margin:-6px 0 8px">Saldo restante: lo que queda debiendo de ese comprobante DESPUÉS de este pago.</div>':'');
+    return encabezado('X','RECIBO DE COBRANZA','', dmy(o.fecha))+bloqueCliente(izq,der)+valores+concepto+firma()+pie();
+  }
+
   // ---------- Remito (recibe objeto normalizado) ----------
   // obj: { numero, fecha, transportista, clienteNombre, clienteCuit, clienteTel, clienteCondIva,
   //        domicilioEntrega, items:[{codigo,desc,obs,cant,pallets}], mixtos, palletResumen }
@@ -18214,6 +18369,7 @@ function buildFilterTable(cfg){
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
     ordenPago:    o => mostrar(ordenPago(o), nombreArchivo('Orden de Pago', '', o.proveedor, o.fecha)),
+    reciboCtaCte: o => mostrar(reciboCtaCte(o), nombreArchivo('Recibo Cta Cte', '', o.proveedor, o.fecha)),
     rutaCobranza: o => mostrar(rutaCobranza(o), nombreArchivo('Ruta de Cobranza', '', '', o.fecha)),
     remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha)),
     // Recibo INTERNO de sueldo (sin aportes) — lo arma el módulo Sueldos con la quincena liquidada.
