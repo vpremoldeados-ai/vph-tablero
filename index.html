@@ -6907,16 +6907,36 @@ function buildFilterTable(cfg){
   // con cada monto editable antes de confirmar. Cada venta afectada recibe su PROPIO cobro (mismo
   // camino que el formulario normal: persistCobros de solo ese campo), así que Cheques/Caja/Finanzas
   // no tienen que aprender nada nuevo: para ellos es exactamente lo mismo que N cobros cargados a mano.
-  // ⚠️ Medios excluidos a propósito: VIUMI (cada cobro necesita SU liquidación — arancel/IVA/fecha de
-  // acreditación propia, no tiene sentido clonarla en cada venta) y Retención (cada una necesita SU
-  // impuesto/certificado). Para esos dos casos se sigue usando el cobro por venta, uno por uno.
-  const MEDIOS_IMPUTAR = MEDIOS_COBRO.filter(m=> !esPlataforma(m) && !esRetencion(m));
-  let imputCliente=null, imputSplits=[];
+  // 2ª vuelta: el pago se arma con VARIOS VALORES (varios e-cheqs, una retención, efectivo…), cada uno
+  // con sus propios datos. Los valores se van "gastando" en orden sobre las ventas (cascada): cada
+  // pedazo valor↔venta termina siendo un cobro común de esa venta.
+  // ⚠️ VIUMI queda afuera a propósito: cada cobro necesita SU liquidación (arancel/IVA/fecha de
+  // acreditación), que no tiene sentido repartir entre ventas. Para VIUMI sigue el cobro por venta.
+  const MEDIOS_IMPUTAR = MEDIOS_COBRO.filter(m=> !esPlataforma(m));
+  let imputCliente=null, imputSplits=[], imputPend=[], imputValores=[], imputFecha=hoyISO, imputManual=false;
   // Pura y testeable: reparte `monto` entre `ventasSaldo` (ya ordenadas, típicamente FIFO por fecha),
   // topeando cada una en su propio saldo — nunca asigna de más a una venta ni reparte lo que no hay.
   window.__repartirFIFO = function repartirFIFO(monto, ventasSaldo){
     let restante=Math.max(0, round2(num(monto)));
     return (ventasSaldo||[]).map(x=>{ const asig=round2(Math.min(restante, num(x.saldo))); restante=round2(restante-asig); return {...x, imputado:asig}; });
+  };
+  // Pura y testeable: "gasta" los valores EN ORDEN sobre las ventas (cada una con su `imputado`) y
+  // devuelve los pedazos {si, vi, monto}: cuánto de qué valor va a qué venta. Un cheque grande puede
+  // cubrir dos ventas y una venta puede pagarse con dos cheques + una retención. La suma de los
+  // pedazos de cada venta es SU imputado, y la de cada valor es SU monto (si los totales coinciden).
+  window.__cascadaValores = function cascadaValores(valores, splits){
+    const out=[]; valores=valores||[]; splits=splits||[];
+    let vi=0, vRest=round2(num(valores[0]&&valores[0].monto));
+    for(let si=0; si<splits.length; si++){
+      let need=round2(num(splits[si].imputado));
+      while(need>0.004 && vi<valores.length){
+        const take=round2(Math.min(need, vRest));
+        if(take>0) out.push({si, vi, monto:take});
+        need=round2(need-take); vRest=round2(vRest-take);
+        if(vRest<=0.004){ vi++; vRest=round2(num(valores[vi]&&valores[vi].monto)); }
+      }
+    }
+    return out;
   };
   function ventasPendientesDe(cliente){
     return DB.ventas.filter(v=> v.cliente===cliente && calc(v).saldo>0.5)
@@ -6929,41 +6949,61 @@ function buildFilterTable(cfg){
     const by={}; DB.ventas.forEach(v=>{ if(v.cliente && calc(v).saldo>0.5) by[v.cliente]=true; });
     return Object.keys(by).sort();
   }
+  const blankValorImp = (medio,monto)=>({ medio:medio||MEDIOS_IMPUTAR[0], monto:monto||0, chNumero:'', chBanco:'', chVenc:'', cuenta:'', retImpuesto:IMPUESTOS_RET[0], retCertificado:'' });
+  const totalValoresImp = ()=> round2(imputValores.reduce((a,x)=>a+num(x.monto),0));
+  // Vuelve a proponer el reparto FIFO con el total de los valores cargados.
+  function recalcSplitsImp(){ imputSplits=window.__repartirFIFO(totalValoresImp(), imputPend); imputManual=false; }
+  function cargarClienteImp(cliente){
+    imputCliente=cliente||'';
+    imputPend=ventasPendientesDe(imputCliente);
+    const totalSaldo=round2(imputPend.reduce((a,x)=>a+x.saldo,0));
+    const medio=imputValores[0]?imputValores[0].medio:MEDIOS_IMPUTAR[0];
+    imputValores=[blankValorImp(medio, totalSaldo)];
+    recalcSplitsImp();
+  }
   // `cliente` es OPCIONAL: el botón de cabecera abre el modal vacío (se elige tipeando/del
   // datalist, igual que "💰 Pago a proveedor"); el botón de cada fila de la Cuenta Corriente lo
   // abre PRECARGADO, como atajo — es el mismo modal en los dos casos, no dos caminos distintos.
   function openImputar(cliente){
-    imputCliente=cliente||'';
-    const pendientes=ventasPendientesDe(imputCliente);
-    const totalSaldo=round2(pendientes.reduce((a,x)=>a+x.saldo,0));
-    imputSplits=window.__repartirFIFO(totalSaldo, pendientes);
-    pintarImputar(totalSaldo);
+    imputValores=[]; imputFecha=hoyISO;
+    cargarClienteImp(cliente);
+    pintarImputar();
     $('vnt-modal-imputar').classList.add('open');
   }
-  function pintarImputar(montoDef){
+  function valorImpHtml(x,i){
+    const ch=esCheque(x.medio), ret=esRetencion(x.medio);
+    const inp='style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px"';
+    let extra='';
+    if(ch) extra='<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr;margin:8px 0 0">'+
+      field('N° de cheque','','<input '+inp+' data-vi="'+i+'" data-vf="chNumero" value="'+esc(x.chNumero)+'">')+
+      field('Banco','','<input '+inp+' data-vi="'+i+'" data-vf="chBanco" value="'+esc(x.chBanco)+'">')+
+      field('Vence / se cobra','','<input '+inp+' type="date" data-vi="'+i+'" data-vf="chVenc" value="'+esc(x.chVenc)+'">')+'</div>';
+    else if(ret) extra='<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr;margin:8px 0 0">'+
+      field('¿Qué impuesto?','','<select '+inp+' data-vi="'+i+'" data-vf="retImpuesto">'+IMPUESTOS_RET.map(t=>'<option'+(t===x.retImpuesto?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select>')+
+      field('N° de certificado','','<input '+inp+' data-vi="'+i+'" data-vf="retCertificado" value="'+esc(x.retCertificado)+'" placeholder="el que figura en el comprobante">')+'</div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH. Para subir el PDF del certificado, usá el ✅ de cada venta.</div>';
+    else extra='<div style="margin-top:8px">'+field('¿En qué cuenta entró?','','<select '+inp+' data-vi="'+i+'" data-vf="cuenta">'+cuentasOpt(x.cuenta)+'</select>')+'</div>';
+    return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+      '<div style="display:flex;gap:8px;align-items:flex-end">'+
+        '<div style="flex:1">'+field('Valor '+(i+1),'','<select '+inp+' data-vi="'+i+'" data-vf="medio">'+medioOpts(MEDIOS_IMPUTAR, x.medio)+'</select>')+'</div>'+
+        '<div style="width:150px">'+field('Monto','','<input '+inp+' inputmode="decimal" data-vi="'+i+'" data-vf="monto" value="'+num(x.monto)+'">')+'</div>'+
+        (imputValores.length>1?'<button class="cmp-rowbtn" type="button" data-vdel="'+i+'" title="Quitar este valor" style="margin-bottom:6px">✕</button>':'')+
+      '</div>'+extra+'</div>';
+  }
+  function pintarImputar(){
     const box=$('vnt-form-imputar');
-    const totalSaldo=round2(imputSplits.reduce((a,x)=>a+x.saldo,0));
-    const totalImp=round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0));
-    const medioSel=$('ic-medio')?$('ic-medio').value:MEDIOS_IMPUTAR[0];
-    const chShow=esCheque(medioSel);
+    const totalSaldo=round2(imputPend.reduce((a,x)=>a+x.saldo,0));
     const clientes=clientesConSaldo();
-    let h='<div class="cmp-form-grid" style="grid-template-columns:1fr">'+
+    let h='<div class="cmp-form-grid" style="grid-template-columns:1fr 160px">'+
         field('Cliente','','<input id="ic-cliente" list="ic-cliente-list" placeholder="Buscar cliente..." value="'+esc(imputCliente||'')+'">'+
           '<datalist id="ic-cliente-list">'+clientes.map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>')+
+        field('Fecha','','<input type="date" id="ic-fecha" value="'+esc(imputFecha)+'">')+
       '</div>'+
       '<p style="margin:-6px 0 10px;font-size:12.5px;color:var(--muted)">'+(imputCliente?'Saldo total pendiente: <b style="color:var(--text)">'+money(totalSaldo)+'</b>':'Elegí un cliente para ver sus facturas pendientes.')+'</p>'+
-      '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr">'+
-        field('Monto a imputar','','<input id="ic-monto" value="'+(montoDef!=null?montoDef:totalImp)+'">')+
-        field('Fecha','','<input type="date" id="ic-fecha" value="'+hoyISO+'">')+
-        field('Medio','','<select id="ic-medio">'+medioOpts(MEDIOS_IMPUTAR, medioSel)+'</select>')+
-      '</div>'+
-      '<div id="ic-cuenta-wrap" style="display:'+(chShow?'none':'')+';margin-bottom:8px">'+field('¿En qué cuenta entró?','','<select id="ic-cuenta">'+cuentasOpt()+'</select>')+'</div>'+
-      '<div id="ic-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--bg,#f8fafc)">'+
-        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se cargan en CADA venta que cubra)</div>'+
-        '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
-          field('N° de cheque','','<input id="ic-ch-num">')+field('Banco','','<input id="ic-ch-banco">')+
-          field('Vencimiento / fecha de cobro','col2','<input type="date" id="ic-ch-venc">')+
-        '</div></div>'+
+      '<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">Cómo pagó</div>'+
+      imputValores.map(valorImpHtml).join('')+
+      '<button class="cmp-btn" type="button" id="ic-addval" style="margin-bottom:6px">＋ Agregar valor (otro e-cheq, una retención, efectivo…)</button>'+
+      '<div id="ic-totval" style="font-size:12.5px;margin:0 0 12px"></div>'+
       '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0">'+
         '<div style="font-size:12.5px;font-weight:800">Reparto por venta (la más vieja primero)</div>'+
         '<button class="cmp-btn" id="ic-refifo" type="button">🔄 Repartir automático</button></div>';
@@ -6976,65 +7016,79 @@ function buildFilterTable(cfg){
           '<input data-isp="'+i+'" value="'+num(x.imputado)+'" inputmode="decimal" style="width:110px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;text-align:right;font-weight:700"></div>').join('')+
         '</div>';
     }
-    // El check inicial compara contra el monto que ESTE render pone en el input, no contra el input
-    // del render anterior (al elegir un cliente desde el buscador el viejo valía 0 → "te pasaste").
-    const dif=round2(num(montoDef!=null?montoDef:totalImp)-totalImp);
-    h+='<div id="ic-check" style="font-size:12.5px;margin-bottom:10px">Repartido: <b>'+money(totalImp)+'</b>'+
-      (Math.abs(dif)>0.5?' — <span style="color:var(--amber)">'+(dif>0?'faltan '+money(dif)+' por repartir':'te pasaste por '+money(-dif))+'</span>':' <span style="color:var(--green)">✓ coincide con el monto</span>')+'</div>'+
+    h+='<div id="ic-check" style="font-size:12.5px;margin-bottom:10px"></div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="ic-cancel">Cerrar</button>'+
       '<button class="cmp-btn cmp-btn-primary" id="ic-confirmar"'+(imputSplits.length?'':' disabled')+'>Registrar cobros</button></div>';
     box.innerHTML=h;
-    if(window.__tarjetas) window.__tarjetas('ic-medio');
+    refrescarCheck();
     // Elegir/tipear otro cliente recalcula sus ventas pendientes y propone el reparto FIFO de nuevo —
     // mismo patrón que ppProv.addEventListener('change',...) en Pago a proveedor (Compras).
-    $('ic-cliente').addEventListener('change',()=>{
-      imputCliente=$('ic-cliente').value.trim();
-      const pendientes=ventasPendientesDe(imputCliente);
-      const totalSaldo=round2(pendientes.reduce((a,x)=>a+x.saldo,0));
-      imputSplits=window.__repartirFIFO(totalSaldo, pendientes);
-      pintarImputar(totalSaldo);
+    $('ic-cliente').addEventListener('change',()=>{ cargarClienteImp($('ic-cliente').value.trim()); pintarImputar(); });
+    $('ic-fecha').addEventListener('change',()=>{ imputFecha=$('ic-fecha').value; });
+    $('ic-addval').onclick=()=>{ imputValores.push(blankValorImp(MEDIOS_IMPUTAR[0], 0)); pintarImputar(); };
+    box.querySelectorAll('button[data-vdel]').forEach(b=> b.onclick=()=>{ imputValores.splice(+b.dataset.vdel,1); if(!imputManual) recalcSplitsImp(); pintarImputar(); });
+    // El estado vive en imputValores (no en el DOM): cambiar el MEDIO repinta todo (cambian los campos)
+    // sin perder nada; tipear en un campo solo actualiza el estado, así no se pierde el foco.
+    box.querySelectorAll('[data-vf]').forEach(el=>{
+      const i=+el.dataset.vi, f=el.dataset.vf, ev=(el.tagName==='SELECT'||el.type==='date')?'change':'input';
+      el.addEventListener(ev,()=>{
+        imputValores[i][f]=(f==='monto')?num(el.value):el.value;
+        if(f==='medio'){ pintarImputar(); return; }
+        if(f==='monto'){ if(!imputManual) recalcSplitsImp(); syncSplitsImp(); refrescarCheck(); }
+      });
     });
-    $('ic-medio').addEventListener('change',()=>{ const ch=esCheque($('ic-medio').value);
-      $('ic-cheque-extra').style.display=ch?'block':'none'; $('ic-cuenta-wrap').style.display=ch?'none':''; });
-    $('ic-refifo').onclick=()=>{ const m=num($('ic-monto').value); imputSplits=window.__repartirFIFO(m, imputSplits.map(x=>({uid:x.uid,fecha:x.fecha,ref:x.ref,saldo:x.saldo}))); pintarImputar(m); };
+    $('ic-refifo').onclick=()=>{ recalcSplitsImp(); pintarImputar(); };
     box.querySelectorAll('input[data-isp]').forEach(el=> el.addEventListener('input',()=>{
       const i=+el.dataset.isp, v=Math.max(0, Math.min(num(el.value), imputSplits[i].saldo));
-      imputSplits[i]=Object.assign({}, imputSplits[i], {imputado:v}); refrescarCheck(); }));
-    $('ic-monto').addEventListener('input', refrescarCheck);
-    function refrescarCheck(){
-      const totalImp2=round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0));
-      const dif2=round2(num($('ic-monto').value)-totalImp2);
-      $('ic-check').innerHTML='Repartido: <b>'+money(totalImp2)+'</b>'+
-        (Math.abs(dif2)>0.5?' — <span style="color:var(--amber)">'+(dif2>0?'faltan '+money(dif2)+' por repartir':'te pasaste por '+money(-dif2))+'</span>':' <span style="color:var(--green)">✓ coincide con el monto</span>');
-    }
+      imputSplits[i]=Object.assign({}, imputSplits[i], {imputado:v}); imputManual=true; refrescarCheck(); }));
     $('ic-cancel').onclick=()=>$('vnt-modal-imputar').classList.remove('open');
     const conf=$('ic-confirmar'); if(conf) conf.onclick=confirmarImputacion;
   }
-  // Registra UN cobro por venta afectada — cada uno pasa por persistCobros (solo el campo cobros) y,
-  // si es cheque, por __upsertChequeCobro — el MISMO camino que si Sofía los hubiera cargado a mano
-  // uno por uno. Así Caja/Finanzas/Cheques no necesitan enterarse de que vinieron de un reparto.
+  function syncSplitsImp(){ document.querySelectorAll('#vnt-form-imputar input[data-isp]').forEach(el=>{ const x=imputSplits[+el.dataset.isp]; if(x) el.value=num(x.imputado); }); }
+  function refrescarCheck(){
+    const tv=totalValoresImp(), ts=round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0)), dif=round2(tv-ts);
+    const t=$('ic-totval'); if(t) t.innerHTML='Total de los valores: <b>'+money(tv)+'</b>';
+    const c=$('ic-check'); if(c) c.innerHTML='Repartido en ventas: <b>'+money(ts)+'</b>'+
+      (Math.abs(dif)>=0.01?' — <span style="color:var(--amber)">'+(dif>0?'faltan '+money(dif)+' por repartir':'te pasaste por '+money(-dif))+'</span>':' <span style="color:var(--green)">✓ coincide con los valores</span>');
+  }
+  // Registra los cobros — uno por cada pedazo valor↔venta (cascada). Cada venta se guarda UNA vez con
+  // persistCobros (solo el campo cobros) y cada cheque pasa por __upsertChequeCobro: el MISMO camino que
+  // si Sofía los hubiera cargado a mano. Así Caja/Finanzas/Cheques no se enteran de que vinieron de un reparto.
   function confirmarImputacion(){
-    const fecha=$('ic-fecha').value, medio=$('ic-medio').value, cuenta=$('ic-cuenta')?$('ic-cuenta').value:'';
-    const chNum=$('ic-ch-num')?$('ic-ch-num').value.trim():'', chBanco=$('ic-ch-banco')?$('ic-ch-banco').value.trim():'', chVenc=$('ic-ch-venc')?$('ic-ch-venc').value:'';
+    const fecha=imputFecha;
     if(!imputCliente){ alert('Elegí un cliente.'); return; }
     const activos=imputSplits.filter(x=>num(x.imputado)>0);
     if(!activos.length){ alert('Cargá algún monto para al menos una venta.'); return; }
     if(!fecha){ alert('Poné la fecha del cobro.'); return; }
-    const aplicados=[];
-    activos.forEach(x=>{
-      const v=DB.ventas.find(y=>y._uid===x.uid); if(!v) return;
-      const rec={ id:'cob_'+newUid(), fecha, monto:num(x.imputado), medio, chequeRechazado:false };
-      if(esCheque(medio)){ rec.chNumero=chNum; rec.chBanco=chBanco; rec.chVenc=chVenc||fecha; }
-      else rec.cuenta=cuenta;
-      const cobros=(v.cobros||[]).slice(); cobros.push(rec); v.cobros=cobros; persistCobros(v._uid, cobros);
-      if(esCheque(medio) && window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:chNum, banco:chBanco, monto:rec.monto, fechaEmision:fecha, fechaVencimiento:chVenc||fecha, chequeRechazado:false });
-      aplicados.push({ comprobante:x.ref||'—', fecha:v.fecha, monto:rec.monto, saldo:round2(x.saldo-rec.monto) });
+    const valores=imputValores.filter(x=>num(x.monto)>0);
+    const tv=round2(valores.reduce((a,x)=>a+num(x.monto),0)), ts=round2(activos.reduce((a,x)=>a+num(x.imputado),0));
+    if(Math.abs(tv-ts)>=0.01){ alert('El total de los valores ('+money(tv)+') no coincide con lo repartido en las ventas ('+money(ts)+'). Ajustalo antes de registrar.'); return; }
+    const sinCert=valores.filter(x=>esRetencion(x.medio) && !String(x.retCertificado||'').trim());
+    if(sinCert.length && !confirm('Hay una retención sin N° de certificado: sin ese número el contador no puede computar el crédito.\n¿Registrar igual?')) return;
+    const piezas=window.__cascadaValores(valores, activos);
+    const cobrosPorVenta={}, cheques=[], aplicados={};
+    piezas.forEach(p=>{
+      const x=activos[p.si], val=valores[p.vi], v=DB.ventas.find(y=>y._uid===x.uid); if(!v) return;
+      const rec={ id:'cob_'+newUid(), fecha, monto:p.monto, medio:val.medio, chequeRechazado:false };
+      if(esCheque(val.medio)){ rec.chNumero=String(val.chNumero||'').trim(); rec.chBanco=String(val.chBanco||'').trim(); rec.chVenc=val.chVenc||fecha; }
+      else if(esRetencion(val.medio)){ rec.retImpuesto=val.retImpuesto||IMPUESTOS_RET[0]; rec.retCertificado=String(val.retCertificado||'').trim(); }   // sin cuenta A PROPÓSITO (no entró a ningún banco)
+      else rec.cuenta=val.cuenta||'';
+      (cobrosPorVenta[v._uid]=cobrosPorVenta[v._uid]||[]).push(rec);
+      if(esCheque(val.medio)) cheques.push({ v, rec });
+      const a=aplicados[v._uid]=aplicados[v._uid]||{ comprobante:x.ref||'—', fecha:v.fecha, monto:0, saldoAntes:x.saldo };
+      a.monto=round2(a.monto+p.monto);
     });
+    Object.keys(cobrosPorVenta).forEach(uid=>{
+      const v=DB.ventas.find(y=>y._uid===uid); const cobros=(v.cobros||[]).concat(cobrosPorVenta[uid]); v.cobros=cobros; persistCobros(uid, cobros); });
+    cheques.forEach(({v,rec})=>{ if(window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:fecha, fechaVencimiento:rec.chVenc||fecha, chequeRechazado:false }); });
+    const facturas=Object.values(aplicados).map(a=>({ comprobante:a.comprobante, fecha:a.fecha, monto:a.monto, saldo:round2(a.saldoAntes-a.monto) }));
     const cliRef=DB.ventas.find(v=>v.cliente===imputCliente)||{};
+    const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):'');
     const recibo={ proveedor:imputCliente, cuit:cliRef.cuit||'', condIva:cliRef.condIva||'', fecha,
-      valores:[{fecha, detalle:medio, monto:round2(aplicados.reduce((a,x)=>a+x.monto,0))}], facturas:aplicados };
+      valores:valores.map(x=>({ fecha, detalle:detalleValor(x), monto:num(x.monto) })), facturas };
     $('vnt-modal-imputar').classList.remove('open');
-    if(confirm('Se registraron '+aplicados.length+' cobro'+(aplicados.length!==1?'s':'')+'. ¿Imprimir el recibo?')){
+    const nCobros=piezas.length;
+    if(confirm('Se registraron '+nCobros+' cobro'+(nCobros!==1?'s':'')+' en '+facturas.length+' venta'+(facturas.length!==1?'s':'')+'. ¿Imprimir el recibo?')){
       if(window.__imprimir && window.__imprimir.reciboCtaCte) window.__imprimir.reciboCtaCte(recibo);
     }
   }
