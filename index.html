@@ -1261,6 +1261,7 @@
 
   <!-- ================= BANDEJA WHATSAPP (bot copiloto) ================= -->
   <div class="page" id="page-wabandeja">
+    <div id="wab-estado"></div>
     <div class="kpis" id="wab-kpis"></div>
     <section>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -14469,7 +14470,7 @@ function buildFilterTable(cfg){
   const waLink=tel=>{ let d=String(tel||'').replace(/\D/g,''); if(!d)return null; if(!d.startsWith('54')){ d=d.replace(/^0/,'').replace(/^15/,''); d='549'+d; } return 'https://wa.me/'+d; };
   const fmtFecha=ts=>{ if(!ts) return '—'; const d = ts.toDate ? ts.toDate() : new Date(ts); return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
 
-  let DB={pendientes:[]}, filtroTipo='', mostrarResueltos=false, unsub=null;
+  let DB={pendientes:[]}, filtroTipo='', mostrarResueltos=false, unsub=null, relojEstado=null;
   // Conversaciones con el historial desplegado (por waId). Vive en memoria del módulo
   // para sobrevivir a los re-render que dispara cada snapshot de Firestore.
   const expandidos=new Set();
@@ -14682,7 +14683,40 @@ function buildFilterTable(cfg){
   // Se juntan por _uid (un pendiente reciente aparece en las dos). Cada una es un filtro sobre UN
   // solo campo, así que no hace falta índice compuesto ni tocar las reglas de Firestore.
   const partes={ pend:[], rec:[] };
-  function juntar(){ const m=new Map(); partes.rec.forEach(x=>m.set(x._uid,x)); partes.pend.forEach(x=>m.set(x._uid,x)); DB.pendientes=Array.from(m.values()); render(); }
+  // Estado del bot (lo escribe el propio bot en vph_config/wa_estado cada 5 min).
+  // Existe porque el bot se cae cada tanto —WhatsApp Web recarga su página y a veces
+  // cierra la sesión— y el problema real era que NADIE se enteraba: el 16/09/2026 se
+  // colgó y estuvo 5 días mudo, sin un solo mensaje llegando a esta Bandeja.
+  let estadoBot=null;
+  const MIN_SIN_SENAL=30;   // más de media hora sin latir = está caído
+  function minutosDesde(ts){ if(!ts) return null; const d=ts.toDate?ts.toDate():new Date(ts); return (Date.now()-d.getTime())/60000; }
+  // Devuelve null si está todo bien, o {sev,titulo,detalle} si hay que avisar.
+  function problemaBot(){
+    if(!estadoBot) return null;               // sin dato todavía: no se inventa una alarma
+    const mins=minutosDesde(estadoBot.cuando);
+    if(estadoBot.estado==='esperando_qr')
+      return {sev:'bad', titulo:'El bot de WhatsApp está DESVINCULADO', detalle:'Hay que escanear el QR desde el celular de la empresa para que vuelva a registrar los mensajes.'};
+    if(mins!==null && mins>MIN_SIN_SENAL)
+      return {sev:'bad', titulo:'El bot de WhatsApp está caído', detalle:'No da señales desde hace '+(mins>=120?Math.round(mins/60)+' horas':Math.round(mins)+' minutos')+'. Los mensajes que entren mientras tanto NO se registran.'};
+    if(estadoBot.estado==='sin_conexion')
+      return {sev:'warn', titulo:'El bot de WhatsApp perdió la conexión', detalle:'Se está reiniciando solo. Si en 10 minutos no vuelve, avisá.'};
+    return null;
+  }
+  function pintarEstadoBot(){
+    const el=$('wab-estado'); if(!el) return;
+    const p=problemaBot();
+    if(!p){
+      el.innerHTML = estadoBot
+        ? '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">🟢 El bot está conectado y registrando mensajes'+(estadoBot.cuando?' (última señal '+fmtFecha(estadoBot.cuando)+')':'')+'</div>'
+        : '';
+      return;
+    }
+    const col=p.sev==='bad'?'var(--red)':'var(--amber)';
+    el.innerHTML='<div style="border:2px solid '+col+';border-radius:12px;padding:12px 14px;margin-bottom:12px;background:'+col+'11">'+
+      '<div style="font-weight:800;color:'+col+'">'+(p.sev==='bad'?'🔴 ':'⚠️ ')+esc(p.titulo)+'</div>'+
+      '<div style="font-size:12.5px;margin-top:3px">'+esc(p.detalle)+'</div></div>';
+  }
+  function juntar(){ pintarEstadoBot(); const m=new Map(); partes.rec.forEach(x=>m.set(x._uid,x)); partes.pend.forEach(x=>m.set(x._uid,x)); DB.pendientes=Array.from(m.values()); render(); }
   function startSync(){
     const c=fb(); if(!c||!c.db) return; stopSync();
     const col=c.FS.collection(c.db,COL);
@@ -14691,7 +14725,12 @@ function buildFilterTable(cfg){
     unsub=[
       c.FS.onSnapshot(c.FS.query(col, c.FS.where('estado','==','pendiente')), snap=>{ partes.pend=mapa(snap); juntar(); }, err=>console.error('wa_pendientes (pendientes):',err)),
       c.FS.onSnapshot(c.FS.query(col, c.FS.where('creadoEn','>=',desde)), snap=>{ partes.rec=mapa(snap); juntar(); }, err=>console.error('wa_pendientes (recientes):',err)),
+      // Un solo documento: es barato y es lo que permite avisar que el bot se cayó.
+      c.FS.onSnapshot(c.FS.doc(c.db,'vph_config','wa_estado'), s=>{ estadoBot=s.exists()?s.data():null; pintarEstadoBot(); if(window.__refreshAlertas) window.__refreshAlertas(); }, ()=>{}),
     ];
+    // Sin latido nuevo el cartel igual tiene que envejecer solo: si el bot se muere,
+    // deja de escribir y nadie dispara un render. Por eso se repinta cada 5 minutos.
+    if(!relojEstado) relojEstado=setInterval(()=>{ pintarEstadoBot(); if(window.__refreshAlertas) window.__refreshAlertas(); }, 5*60000);
   }
   function stopSync(){ if(unsub){ unsub.forEach(u=>{ try{u();}catch(e){} }); unsub=null; } partes.pend=[]; partes.rec=[]; }
   function boot(){
@@ -14704,6 +14743,11 @@ function buildFilterTable(cfg){
 
   // Fuente de alertas EN VIVO: pendientes fuera de horario acumulados
   window.__alertSources.push(()=>{ const A=[];
+    // Que el bot esté caído es MÁS urgente que cualquier mensaje pendiente: mientras
+    // está caído no entra ninguno, y esa es justamente la trampa (parece que no
+    // escribió nadie). Va primero y en rojo.
+    const pb=problemaBot();
+    if(pb) A.push({sev:pb.sev, area:'WhatsApp', t:pb.titulo, act:pb.detalle, go:{page:'Bandeja WhatsApp'}});
     const fuera=DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente' && i.fueraDeHorario);
     if(fuera.length) A.push({sev:'info', area:'WhatsApp', t:fuera.length+' mensaje'+(fuera.length>1?'s':'')+' llegado'+(fuera.length>1?'s':'')+' fuera de horario', act:'Revisar la Bandeja WhatsApp al abrir.', go:{page:'Bandeja WhatsApp'}});
     return A; });
