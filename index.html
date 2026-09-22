@@ -14305,13 +14305,86 @@ function buildFilterTable(cfg){
   // Textos de los dos mensajes. La firma sale de "✍️ Firmo como" (la MISMA de Topes, por PC), con
   // "Sofía" de respaldo: los mayoristas son su cartera. La compra mínima cambia por zona (1 pallet
   // en Capital, 4 afuera — condiciones definidas el 11/08, las mismas del PDF).
-  function mayTexto(row, accion){
+  function mayTexto(row, accion, seg){
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     const interior=String((row&&row.tipo)||'').indexOf('int')===0;
     const nombre=String((row&&row.nombre)||'').trim();
     const hola='Hola'+(nombre?' '+nombre:'')+'! Soy '+firma+' de VPH Premoldeados.';
-    if(accion==='stock') return hola+' ¿Cómo venís de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
+    if(accion==='stock'){
+      // 22/09 (pedido de Marcelo): salvo casos puntuales, los revendedores NO acumulan stock propio —
+      // compran recién cuando tienen un pedido concreto de SU cliente. "¿Necesitás reponer stock?" no
+      // dispara nada en un DORMIDO o en uno que nunca compró (no gestionan inventario para "reponer").
+      // A esos se les pregunta por obras/pedidos en danza — habla de sus clientes, no de su depósito —
+      // y se les recuerda que no hace falta stock propio porque VPH entrega rápido. Al activo/en
+      // atención se lo sigue tratando como reposición: para ellos sí es la pregunta que corresponde.
+      if(seg==='dormido' || seg==='nunca') return hola+' ¿Cómo venís? Te escribo para saber si tenés alguna obra o pedido en danza donde te pueda servir con losetas, green blocks o topes — fabricamos a pedido y entregamos en 7 días hábiles, así no te hace falta tener stock parado. Cualquier consulta estoy acá 👌';
+      return hola+' ¿Cómo venís de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
+    }
     return hola+' Te paso la lista de precios mayorista vigente de '+mayMesLabel(mayPeriodo())+' 👇 Fabricamos a pedido con entrega en 7 días hábiles, así no necesitás stock inmovilizado. ¡Avisame si querés que te reserve producción!';
+  }
+  // ---------- Actividad real del revendedor (22/09, pedido de Marcelo) ----------
+  // El seguimiento por calendario (mensual/quincenal a TODOS por igual) no distingue a quién priorizar.
+  // Acá se cruza cada mayorista contra SU HISTORIAL en vph_ventas (última compra, cuántas y por cuánto
+  // en total) y se clasifica en un semáforo — no para dejar de escribirle a nadie, sino para saber A
+  // QUIÉN primero y CON QUÉ MENSAJE (ver mayTexto arriba).
+  // NO se persiste ni se suscribe: es un cruce de SOLO LECTURA contra ventas, se recalcula al tocar
+  // 🔄 y vive en memoria de quien lo pidió (dos personas pueden ver una "actualizado" distinta) — leer
+  // TODA vph_ventas en cada apertura del panel sería la misma trampa de cuota que ya pasó una vez
+  // (ver §Firestore plan Blaze), por eso es a demanda, igual que "↺ Traer de Clientes y Ventas".
+  const MAY_SEG=[
+    {k:'activo',   l:'🟢 Activo',       c:'#1e9e5a', ord:0},
+    {k:'atencion', l:'🟠 En atención',  c:'#d98324', ord:1},
+    {k:'dormido',  l:'🔴 Dormido',      c:'#c0392b', ord:2},
+    {k:'nunca',    l:'⚪ Nunca compró', c:'#64748b', ord:3}
+  ];
+  function maySeg(k){ return MAY_SEG.find(s=>s.k===k)||MAY_SEG[3]; }
+  // Umbrales en días desde la última compra. No es un "vencimiento" (esto no es cuenta corriente):
+  // es el ritmo típico de un revendedor que SÍ compra seguido — pasado eso conviene un contacto
+  // puntual (obras en danza) en vez de la pregunta genérica de reposición.
+  function maySegmentoDe(act){
+    if(!act || !act.ultima) return 'nunca';
+    if(act.dias<=45) return 'activo';
+    if(act.dias<=90) return 'atencion';
+    return 'dormido';
+  }
+  function mayDiasDesde(fechaISO){
+    const p=String(fechaISO||'').slice(0,10).split('-').map(Number);
+    if(p.length<3 || !p[0]) return null;
+    return Math.round((new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate()) - new Date(p[0],p[1]-1,p[2]))/86400000);
+  }
+  function mayActTsLabel(){
+    if(!mayActTs) return '';
+    const d=mayActTs, p=n=>String(n).padStart(2,'0');
+    const esHoy = d.getFullYear()===HOY.getFullYear() && d.getMonth()===HOY.getMonth() && d.getDate()===HOY.getDate();
+    return (esHoy?'hoy':(p(d.getDate())+'/'+p(d.getMonth()+1)))+' a las '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+  let MAY_ACT={}, mayActTs=null;   // MAY_ACT: nombre normalizado -> {ultima, dias, cant, monto}
+  // Lee TODA vph_ventas una sola vez, al tocar el botón — nunca en automático (misma razón de arriba).
+  async function mayActualizarActividad(){
+    if(!window.__usaNube) return;
+    const c=fb(); if(!c||!c.db) return;
+    try{
+      const snap=await c.FS.getDocs(c.FS.collection(c.db,'vph_ventas'));
+      const act={};
+      snap.forEach(d=>{ const v=d.data(); if(!v || v.tipoComprobante==='Nota de Crédito') return;
+        const n=topesNorm(v.cliente); if(!n) return;
+        const f=String(v.fecha||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}/.test(f)) return;
+        const tot=(typeof window.__ventaCalc==='function') ? window.__ventaCalc(v).total : num(v.total);
+        const a=act[n]||(act[n]={ultima:'',cant:0,monto:0});
+        a.cant++; a.monto+=tot;
+        if(f>a.ultima) a.ultima=f;
+      });
+      Object.keys(act).forEach(n=>{ act[n].dias=mayDiasDesde(act[n].ultima); });
+      MAY_ACT=act; mayActTs=new Date();
+      drawMayoristas();
+    }catch(e){ alert('No pude leer las ventas: '+e.message); }
+  }
+  function mayActResumenHtml(){
+    const cont={activo:0,atencion:0,dormido:0,nunca:0};
+    MAYW.forEach(r=>{ const seg=maySegmentoDe(MAY_ACT[topesNorm(r.nombre)]); cont[seg]=(cont[seg]||0)+1; });
+    return '<div style="font-size:12px;color:#334155;margin-bottom:8px">'+
+      MAY_SEG.map(s=>s.l+': <b>'+cont[s.k]+'</b>').join(' &nbsp;·&nbsp; ')+
+    '</div>';
   }
   let MAYW=[], mayUnsub=null, mayConfirm=null;   // mayConfirm = {mi, accion} tras abrir un chat
   function mayLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
@@ -14373,7 +14446,8 @@ function buildFilterTable(cfg){
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
         '<b>El circuito del mes:</b> 1) Generá los 4 PDF en Base de Datos → 📄 Lista de precios (salen con los precios del día). '+
         '2) Tocá 📲 en cada cliente: se abre su WhatsApp con el mensaje — <b>adjuntá ahí el PDF de SU lista</b> (clip 📎 → Documento; la columna dice cuál). '+
-        '3) Confirmá "✓ Lo mandé" para que el panel lleve la cuenta.</div>'+
+        '3) Confirmá "✓ Lo mandé" para que el panel lleve la cuenta. '+
+        '<b>La columna Actividad</b> prioriza a quién escribirle primero: a un revendedor dormido no le preguntamos si necesita reponer (no acumula stock), le preguntamos si tiene una obra en danza.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">Lista de '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
         (sinTel?('<span style="font-size:12px;color:#c0392b">· '+sinTel+' sin teléfono cargado</span>'):'')+
@@ -14381,20 +14455,27 @@ function buildFilterTable(cfg){
           '<button class="cmp-btn" data-may-importar title="Trae los clientes con lista mayorista desde las fichas de Clientes y desde las Ventas — no pisa los que ya están">↺ Traer de Clientes y Ventas</button>'+
           '<button class="cmp-btn" data-may-agregar>+ Agregar</button>'+
         '</span>'+
-      '</div>';
+      '</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
+        '<button class="cmp-btn" data-may-actualizar-act title="Cruza esta lista contra vph_ventas: última compra, cuántas y por cuánto en total — clasifica a cada uno en Activo / En atención / Dormido / Nunca compró">🔄 Actualizar actividad</button>'+
+        (mayActTs ? ('<span style="font-size:11px;color:#94a3b8">actualizado '+mayActTsLabel()+'</span>') : '<span style="font-size:11px;color:#94a3b8">todavía no se actualizó — tocá 🔄 para ver a quién priorizar</span>')+
+      '</div>'+
+      (mayActTs ? mayActResumenHtml() : '');
     const vista=MAYW.map((r,mi)=>({r,mi}));
     const ordenTipo=k=>MAY_TIPOS.findIndex(t=>t.k===k);
-    vista.sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    const segOrd=r=>maySeg(maySegmentoDe(MAY_ACT[topesNorm(r.nombre)])).ord;
+    vista.sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || (segOrd(b.r)-segOrd(a.r)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
+    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
       if(t.k!==tipoPrev){ tipoPrev=t.k;
-        html+='<tr><td colspan="7" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— PDF: '+esc(t.pdf)+'</span></td></tr>'; }
+        html+='<tr><td colspan="8" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— PDF: '+esc(t.pdf)+'</span></td></tr>'; }
       const tel=String(r.telefono||'').trim();
       const lk=tel ? topesWaLink(tel) : null;
       const conf = mayConfirm && mayConfirm.mi===mi ? mayConfirm.accion : null;
+      const act=MAY_ACT[topesNorm(r.nombre)]; const segK=maySegmentoDe(act); const s=maySeg(segK);
       const celda=(accion, hecho, detalle)=>{
         if(conf===accion) return '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> <button class="cmp-btn" data-may-no="'+mi+'">✗ No</button></span>';
         return (lk?'<button class="cmp-btn" data-may-abrir-chat="'+mi+'" data-may-accion="'+accion+'" title="Abre el WhatsApp con el mensaje'+(accion==='lista'?' — adjuntá el PDF &quot;'+esc(t.pdf)+'&quot;':'')+'">📲</button>':'<span style="color:#c0392b;font-size:11px">sin tel.</span>')+
@@ -14403,9 +14484,13 @@ function buildFilterTable(cfg){
       const listaHecha = r.listaPeriodo===per ? '✓ enviada' : '';
       const listaDet = (!listaHecha && r.listaPeriodo) ? ('últ: '+esc(mayMesLabel(r.listaPeriodo))) : '';
       const stockDet = r.stockFecha ? ('últ: '+esc(String(r.stockFecha).slice(8,10)+'/'+String(r.stockFecha).slice(5,7))) : '';
+      const actCel = !mayActTs ? '<span style="color:#94a3b8">—</span>' :
+        '<span style="color:'+s.c+';font-weight:700;font-size:11.5px">'+esc(s.l)+'</span>'+
+        (act && act.ultima ? ('<div style="font-size:10.5px;color:#94a3b8">'+(act.dias===0?'hoy':'hace '+act.dias+' d')+' · '+act.cant+' compra'+(act.cant===1?'':'s')+'</div>') : '');
       html+='<tr>'+
         '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700"></td>'+
         '<td>'+selTipo(r,mi)+'</td>'+
+        '<td>'+actCel+'</td>'+
         '<td><input data-may-tel="'+mi+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
         '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
         '<td>'+celda('stock', '', stockDet)+'</td>'+
@@ -14413,15 +14498,17 @@ function buildFilterTable(cfg){
         '<td><button class="cmp-x" data-may-borrar="'+mi+'" title="Sacar de esta lista (no toca la ficha del cliente ni sus ventas)">✕</button></td>'+
       '</tr>';
     });
-    if(!vista.length) html+='<tr><td colspan="7" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
+    if(!vista.length) html+='<tr><td colspan="8" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
     tabla.innerHTML=html+'</tbody>';
     // Cableado por querySelectorAll sobre elementos (§ patrón de viajes: testeable con stubs).
     cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
     cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
+    cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
     tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>{
       const mi=+b.dataset.mayAbrirChat, accion=b.dataset.mayAccion, r=MAYW[mi]; if(!r) return;
       const lk=topesWaLink(r.telefono); if(!lk) return;
-      window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion)), '_blank');
+      const seg=maySegmentoDe(MAY_ACT[topesNorm(r.nombre)]);
+      window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion, seg)), '_blank');
       mayConfirm={mi, accion}; drawMayoristas();
     });
     tabla.querySelectorAll('[data-may-si]').forEach(b=>b.onclick=()=>mayConfirmar(true));
