@@ -6988,7 +6988,11 @@ function buildFilterTable(cfg){
     let fViaje=''; if(pe && pe.diaEntrega){ const m=String(pe.diaEntrega).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if(m){ let a=+m[3]; if(a<100)a+=2000; const d=new Date(a,+m[2]-1,+m[1]); if(d.getMonth()===+m[2]-1) fViaje=a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); } }
     // Teléfono: la ficha del cliente casi nunca lo tiene cargado; el lead del CRM sí (__telefonoLead).
     const tel = cli.telefono || (window.__telefonoLead?window.__telefonoLead(v.cliente):'') || '';
-    return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items,
+    // Valor declarado de la mercadería (pedido de Marcelo, 22/09): el remito lo propone a partir del
+    // TOTAL de la venta — es lo que un transporte de carga (Brío, una agencia) pide para cotizar el
+    // seguro. Se puede corregir a mano en el formulario si no corresponde usar el total facturado.
+    const valorDeclarado = Math.max(0, calc(v).total);
+    return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
       ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
@@ -16827,6 +16831,7 @@ function buildFilterTable(cfg){
       // La ficha VIVA manda (es la más fresca); el snapshot del pedido es el que salva la sesión de
       // Gustavo, que no puede leer vph_clientes.
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
+      valorDeclarado:valorMercaderiaDe(pe),
       pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'', ventaUids:(pe.ventaUids||[]).slice() };
   };
   function imprimirRemito(pe){
@@ -17050,9 +17055,34 @@ function buildFilterTable(cfg){
     pe.clienteTel     = cli.telefono || pe.clienteTel     || '';
     return pe;
   }
+  // Valor de la mercadería del pedido (pedido de Marcelo, 22/09): lo necesita el remito cuando el
+  // transporte NO es propio (Brío, una agencia de carga), para que puedan cotizar el seguro del
+  // envío. Sale de sumar el TOTAL de la/s venta/s que originaron el pedido — window.__ventaCalc es
+  // LA función de totales (no se recalcula acá). Gustavo (rol 'produccion') no puede leer
+  // vph_ventas, así que se snapshotea en el pedido con el mismo criterio que snapCliente: solo
+  // COMPLETA (nunca borra) y solo cuando el catálogo de ventas está disponible (sesión admin).
+  function valorMercaderiaDe(pe){
+    const todas = window.__ventasTodas ? window.__ventasTodas() : [];
+    if(todas.length){
+      const uids=[pe.ventaUid].concat(pe.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
+      const tot=uids.reduce((a,u)=>{ const v=todas.find(x=>x._uid===u); return a+((v&&window.__ventaCalc)?window.__ventaCalc(v).total:0); },0);
+      if(tot>0) return tot;
+    }
+    return num(pe.valorMercaderia)||0;
+  }
+  function snapValor(pe){
+    const todas = window.__ventasTodas ? window.__ventasTodas() : [];
+    if(!todas.length) return pe;                     // sin catálogo de ventas (rol produccion) no se toca nada
+    const uids=[pe.ventaUid].concat(pe.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
+    if(!uids.length) return pe;
+    const tot=uids.reduce((a,u)=>{ const v=todas.find(x=>x._uid===u); return a+((v&&window.__ventaCalc)?window.__ventaCalc(v).total:0); },0);
+    if(tot>0) pe.valorMercaderia=tot;
+    return pe;
+  }
   function persistPed(pe){
     if(!pe._uid) pe._uid='ped_'+uniq();
     snapCliente(pe);
+    snapValor(pe);
     // Calcular numeroViaje: secuencia dentro del día+transportista (1, 2, 3...).
     // En un test o contexto sin `pedidos`, asignar 1 por defecto (no fallar).
     const dia=String(pe.diaEntrega||'').trim(); const tr=String(pe.transporte||'').trim();
@@ -18478,12 +18508,22 @@ function buildFilterTable(cfg){
     return String(window.__param?window.__param('transportePropio','Sánchez, Marcelo Vassallo'):'Sánchez, Marcelo Vassallo')
       .split(',').map(s=>normc(s)).filter(Boolean).some(p=>n.indexOf(p)>=0);
   }
+  // ¿Este transporte necesita el valor declarado de la mercadería? Es el MISMO criterio que dispara
+  // la leyenda de pago en origen (Brío, Expreso Biletta, una agencia de carga de larga distancia):
+  // con el envío facturado a nombre de VPH, la agencia pide un valor para cotizar el seguro. Con
+  // Sánchez/Marcelo (transporte propio) o sin transporte de carga (retira cliente, a coordinar) no
+  // hace falta — no hay ninguna agencia externa que tenga que asegurar el viaje.
+  function necesitaValorDeclarado(transportista){
+    const t=normc(transportista);
+    return !!t && SIN_LEYENDA.indexOf(t)<0 && !esTransportePropio(t);
+  }
   function leyendaEnvio(obj){
     const t=normc(obj.transportista);
     if(!t || SIN_LEYENDA.indexOf(t)>=0 || esTransportePropio(t)) return '';
     return '<div style="margin-top:12px;border:2px solid #111;border-radius:4px;padding:8px 10px;font-size:11.5px;line-height:1.6">'+
       '<div style="font-weight:800;margin-bottom:3px">ENVÍO POR '+esc(String(obj.transportista).toUpperCase())+'</div>'+
       '<div><b>Pago del envío:</b> EN ORIGEN — facturar a nombre de <b>'+esc(EMPRESA.razon)+'</b> (CUIT '+esc(EMPRESA.cuit)+').</div>'+
+      (num(obj.valorDeclarado)>0 ? '<div><b>Valor declarado de la mercadería:</b> '+money(obj.valorDeclarado)+' (para el seguro del transporte).</div>' : '')+
       '<div><b>Coordinar entrega en destino con:</b> '+esc(obj.clienteNombre||'—')+
         ' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................')+'</div>'+
     '</div>';
@@ -18685,6 +18725,14 @@ function buildFilterTable(cfg){
         '<label style="'+lbl+'">Dirección de entrega</label><input id="rem-dom" value="'+esc(obj.domicilioEntrega||'')+'" placeholder="Calle, número, localidad" style="'+inp+'">'+
         '<label style="'+lbl+'">Teléfono de contacto</label><input id="rem-tel" value="'+esc(obj.clienteTel||'')+'" placeholder="Con quién se coordina en destino" style="'+inp+'">'+
         '<label style="'+lbl+'">Transporte</label><div id="rem-transp" style="display:flex;flex-wrap:wrap;gap:6px">'+pintarTransp()+'</div>'+
+        // Con un transporte de CARGA (Brío, una agencia) el remito ya avisa que se paga en origen y
+        // se factura a nombre de VPH; con esa leyenda, la agencia pide el valor de lo que transporta
+        // para cotizar el seguro (pedido de Marcelo, 22/09). Con Sánchez/Marcelo (propio) no hace
+        // falta — no hay ninguna agencia externa asegurando el viaje.
+        (necesitaValorDeclarado(transp)?
+          '<label style="'+lbl+'">Valor declarado de la mercadería <span style="font-weight:400;color:#888">(para el seguro del transporte)</span></label>'+
+          '<input id="rem-valor" value="'+esc(obj.valorDeclarado?nf(obj.valorDeclarado):'')+'" placeholder="Ej: 1.500.000" style="'+inp+'">'
+          :'')+
         '<div style="display:flex;gap:8px;margin-top:16px">'+
           '<button id="rem-cancel" class="cmp-btn" style="flex:0 0 auto">Cancelar</button>'+
           '<button id="rem-ok" class="cmp-btn cmp-btn-primary" style="flex:1 1 auto">🚚 Generar remito</button>'+
@@ -18693,7 +18741,8 @@ function buildFilterTable(cfg){
       // documento, así que un getElementById devolvería null y el formulario no llegaría a mostrarse.
       const leer=()=>{ obj.fecha=ov.querySelector('#rem-fecha').value||''; obj.domicilioEntrega=ov.querySelector('#rem-dom').value.trim(); obj.clienteTel=ov.querySelector('#rem-tel').value.trim();
         const uid=ov.querySelector('#rem-venta').value; obj.ventaUid=uid;
-        obj.comprobanteAsoc = labelVentas(uid); };
+        obj.comprobanteAsoc = labelVentas(uid);
+        const campoValor=ov.querySelector('#rem-valor'); if(campoValor) obj.valorDeclarado=num(campoValor.value)||0; };
       ov.querySelectorAll('button[data-re]').forEach(b=> b.onclick=()=>{
         const r=yaEmitidos[+b.dataset.re]; ov.remove();
         try{ window.__imprimir.remito(window.__remitoParaImprimir(r)); }catch(e){ alert('Error al reimprimir: '+e.message); }
@@ -18710,6 +18759,7 @@ function buildFilterTable(cfg){
         leer();
         if(!obj.fecha){ alert('Cargá la fecha de entrega — es la que va impresa en el remito.'); return; }
         if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
+        if(necesitaValorDeclarado(transp) && !(num(obj.valorDeclarado)>0) && !confirm('El remito va a salir SIN el valor declarado de la mercadería — el transporte lo va a pedir para cotizar el seguro.\n\n¿Generarlo igual?')) return;
         obj.transportista=transp;
         const btn=ov.querySelector('#rem-ok'); btn.disabled=true; btn.textContent='Numerando…';
         emitirEImprimir(obj, ov, btn);
@@ -19053,7 +19103,7 @@ function buildFilterTable(cfg){
     return { numero:o.numero||'', numeroInt:Math.round(num(o.numeroInt)), fecha:o.fecha||'',
       cliente:o.clienteNombre||'', clienteCuit:o.clienteCuit||'', clienteCondIva:o.clienteCondIva||'',
       clienteTel:o.clienteTel||'', domicilioEntrega:o.domicilioEntrega||'', transportista:o.transportista||'',
-      ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'',
+      ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'', valorDeclarado:num(o.valorDeclarado)||0,
       items:(o.items||[]).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant), pallets:(it.pallets||null)})),
       usuario:u, ts:new Date().toISOString() };
   }
@@ -19061,7 +19111,7 @@ function buildFilterTable(cfg){
   window.__remitoParaImprimir = function(r){
     return { numero:r.numero||'', numeroInt:r.numeroInt, fecha:r.fecha||'', transportista:r.transportista||'',
       clienteNombre:r.cliente||'', clienteCuit:r.clienteCuit||'', clienteCondIva:r.clienteCondIva||'',
-      clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'',
+      clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'', valorDeclarado:num(r.valorDeclarado)||0,
       comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
   };
 
@@ -19166,6 +19216,9 @@ function buildFilterTable(cfg){
         campo('Cliente','<input id="rmt-cli" value="'+esc(r.cliente||'')+'">','col2')+
         campo('Dirección de entrega','<input id="rmt-dom" value="'+esc(r.domicilioEntrega||'')+'" placeholder="Calle, número, localidad">','col2')+
         campo('Teléfono de contacto','<input id="rmt-tel" value="'+esc(r.clienteTel||'')+'">')+
+        // Solo se pide con un transporte de carga (Brío, una agencia): con Sánchez/Marcelo no hace
+        // falta y no hay que ensuciar el papel con un dato que no le sirve a nadie.
+        campo('Valor declarado (para el seguro del transporte)','<input id="rmt-valor" value="'+esc(r.valorDeclarado?nf(r.valorDeclarado):'')+'" placeholder="Ej: 1.500.000">')+
         campo('Factura / venta asociada','<select id="rmt-venta"><option value="">— Sin asociar —</option>'+
           suyas.map(v=>'<option value="'+esc(v._uid)+'"'+(r.ventaUid===v._uid?' selected':'')+'>'+esc(refDe(v))+'</option>').join('')+
           (r.ventaUid && !suyas.some(v=>v._uid===r.ventaUid) ? '<option value="'+esc(r.ventaUid)+'" selected>'+esc(r.comprobante||'(la venta asociada actual)')+'</option>' : '')+
@@ -19179,6 +19232,7 @@ function buildFilterTable(cfg){
     [['rmt-fecha','fecha'],['rmt-transp','transportista'],['rmt-cli','cliente'],['rmt-dom','domicilioEntrega'],['rmt-tel','clienteTel']].forEach(([id,key])=>{
       const el=$(id); if(el) el.addEventListener('input',()=>{ editando[key]=el.value; });
     });
+    { const ev=$('rmt-valor'); if(ev) ev.addEventListener('input',()=>{ editando.valorDeclarado=num(ev.value)||0; }); }
     $('rmt-venta').addEventListener('change',()=>{
       const uid=$('rmt-venta').value; editando.ventaUid=uid;
       const v=ventas.find(x=>x._uid===uid);
