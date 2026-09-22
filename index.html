@@ -13963,12 +13963,23 @@ function buildFilterTable(cfg){
   // Se prende POR PC (localStorage) y arranca PRENDIDA: es la decisión comercial de hoy.
   function topesPrioridadOn(){ try{ return localStorage.getItem('vph_topes_prioridad_v1')!=='0'; }catch(e){ return true; } }
   const TOPES_TIPO_PRIORIDAD='Topes — constructoras';
+  // PRIORIDAD DE EMPRESAS GRANDES (22/09, pedido de Marcelo: "quiero que los mensajes que mande
+  // prioricen las empresas grandes"). A diferencia de constructoras (que se reconoce por el rubro),
+  // "grande" no es un rubro — abarca Industria, Logística, Salud, Universidad, Shopping, etc. Por eso
+  // es un campo propio `grande:true` en el prospecto (cargado a mano en los ~55 que salieron de la
+  // investigación de empresas de 50+ empleados del 21-22/09), no una regex sobre el rubro.
+  function topesPrioridadGrandesOn(){ try{ return localStorage.getItem('vph_topes_prioridad_grandes_v1')!=='0'; }catch(e){ return true; } }
   function topesElegible(t){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t); }
-  // Próximo a abrir: con la prioridad prendida, primero las constructoras (mismo criterio de rubro
-  // que usa el mensaje); cuando no quedan, sigue con el orden de siempre.
+  // Próximo a abrir: primero empresas grandes (si está prendido); si no queda ninguna, constructoras
+  // y desarrollistas (mismo criterio de rubro que usa el mensaje); cuando no quedan, el orden de
+  // siempre. Las dos prioridades conviven: si las dos están prendidas, grandes gana.
   function topesProxIndice(){
     const elegibles=TOPES.map((t,i)=>({t,i})).filter(x=>topesElegible(x.t));
     if(!elegibles.length) return -1;
+    if(topesPrioridadGrandesOn()){
+      const priG=elegibles.find(x=>x.t.grande===true);
+      if(priG) return priG.i;
+    }
     if(topesPrioridadOn()){
       const pri=elegibles.find(x=>topesTipo(x.t.rubro)===TOPES_TIPO_PRIORIDAD);
       if(pri) return pri.i;
@@ -13977,6 +13988,9 @@ function buildFilterTable(cfg){
   }
   function topesPendientesPrioridad(){
     return TOPES.filter(t=>topesElegible(t) && topesTipo(t.rubro)===TOPES_TIPO_PRIORIDAD).length;
+  }
+  function topesPendientesPrioridadGrandes(){
+    return TOPES.filter(t=>topesElegible(t) && t.grande===true).length;
   }
   function topesSiguientePendiente(){
     const firma=topesFirma();
@@ -14083,6 +14097,7 @@ function buildFilterTable(cfg){
           ? 'El ayudante abre el chat, comprueba que sea el correcto y manda el mensaje y la imagen de su rubro.'
           : 'Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.')+'</span>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Solo en la PC donde está instalado el Ayudante VPH (carpeta ayudante-whatsapp en Drive)"><input type="checkbox" id="topes-ayudante-chk"'+(topesAyudanteOn()?' checked':'')+'> 🤖 Enviar solo (ayudante)</label>'+
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las empresas de más de 50 empleados (industria, salud, universidades, logística...); cuando no queden, sigue con el resto"><input type="checkbox" id="topes-prioridad-grandes-chk"'+(topesPrioridadGrandesOn()?' checked':'')+'> 🏢 Primero grandes ('+topesPendientesPrioridadGrandes()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las constructoras y desarrollistas; cuando no queden, sigue con el resto de la lista"><input type="checkbox" id="topes-prioridad-chk"'+(topesPrioridadOn()?' checked':'')+'> 🏗️ Primero constructoras ('+topesPendientesPrioridad()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Con qué nombre se firma el mensaje en ESTA PC. El tope y la espera se cuentan por persona, porque cada una manda desde su número.">✍️ Firmo como '+
           '<input type="text" id="topes-firma-inp" value="'+esc(firmaPc)+'" placeholder="Tu nombre" style="width:90px;padding:4px 6px;border:1px solid '+(firmaPc?'var(--border)':'#c0392b')+';border-radius:7px;font-size:12px"></label>'
@@ -14142,6 +14157,8 @@ function buildFilterTable(cfg){
     if(inpFirma) inpFirma.onchange=()=>{ try{ localStorage.setItem('vph_topes_firma_v1', String(inpFirma.value||'').trim()); }catch(e){} drawTopes(); };
     const chkAy=controles.querySelector('#topes-ayudante-chk');
     if(chkAy) chkAy.onchange=()=>{ try{ localStorage.setItem('vph_topes_ayudante_v1', chkAy.checked?'1':'0'); }catch(e){} drawTopes(); };
+    const chkPriG=controles.querySelector('#topes-prioridad-grandes-chk');
+    if(chkPriG) chkPriG.onchange=()=>{ try{ localStorage.setItem('vph_topes_prioridad_grandes_v1', chkPriG.checked?'1':'0'); }catch(e){} drawTopes(); };
     const chkPri=controles.querySelector('#topes-prioridad-chk');
     if(chkPri) chkPri.onchange=()=>{ try{ localStorage.setItem('vph_topes_prioridad_v1', chkPri.checked?'1':'0'); }catch(e){} drawTopes(); };
     controles.querySelectorAll('button[data-topesf-e]').forEach(b=>b.onclick=()=>{ topesFiltroEstado=b.dataset.topesfE; drawTopes(); });
