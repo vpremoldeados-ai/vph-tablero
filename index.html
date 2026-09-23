@@ -6988,10 +6988,15 @@ function buildFilterTable(cfg){
     let fViaje=''; if(pe && pe.diaEntrega){ const m=String(pe.diaEntrega).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if(m){ let a=+m[3]; if(a<100)a+=2000; const d=new Date(a,+m[2]-1,+m[1]); if(d.getMonth()===+m[2]-1) fViaje=a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); } }
     // Teléfono: la ficha del cliente casi nunca lo tiene cargado; el lead del CRM sí (__telefonoLead).
     const tel = cli.telefono || (window.__telefonoLead?window.__telefonoLead(v.cliente):'') || '';
-    // Valor declarado de la mercadería (pedido de Marcelo, 22/09): el remito lo propone a partir del
-    // TOTAL de la venta — es lo que un transporte de carga (Brío, una agencia) pide para cotizar el
-    // seguro. Se puede corregir a mano en el formulario si no corresponde usar el total facturado.
-    const valorDeclarado = Math.max(0, calc(v).total);
+    // Valor declarado de la mercadería (pedido de Marcelo, 22/09 y 23/09): el remito lo propone a
+    // partir del TOTAL de la venta — es lo que un transporte de carga (Brío, una agencia) pide para
+    // cotizar el seguro. Se puede corregir a mano en el formulario si no corresponde usar el total.
+    // ⚠️ Si el pedido de Producción UNIÓ varias ventas en el mismo viaje (➕ Unir pedidos, 17/09), el
+    // valor tiene que sumar el total de TODAS, no solo el de esta — si no, un viaje con dos facturas
+    // sale con la mitad del valor declarado. `pe.ventaUids` son las ventas absorbidas.
+    const uidsVenta = [v._uid].concat((pe&&pe.ventaUids)||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
+    const todasV = window.__ventasTodas?window.__ventasTodas():[];
+    const valorDeclarado = Math.max(0, uidsVenta.reduce((a,u)=>{ const vv=(u===v._uid)?v:todasV.find(x=>x._uid===u); return a+(vv?calc(vv).total:0); },0));
     return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
       ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
