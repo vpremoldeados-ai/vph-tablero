@@ -14812,16 +14812,26 @@ function buildFilterTable(cfg){
   // cierra la sesión— y el problema real era que NADIE se enteraba: el 16/09/2026 se
   // colgó y estuvo 5 días mudo, sin un solo mensaje llegando a esta Bandeja.
   let estadoBot=null;
-  const MIN_SIN_SENAL=30;   // más de media hora sin latir = está caído
+  const MIN_SIN_SENAL=30;      // más de media hora sin latir = está caído
+  const MIN_SIN_CONECTAR=15;   // arrancando o reiniciándose sin llegar a conectar
   function minutosDesde(ts){ if(!ts) return null; const d=ts.toDate?ts.toDate():new Date(ts); return (Date.now()-d.getTime())/60000; }
   // Devuelve null si está todo bien, o {sev,titulo,detalle} si hay que avisar.
+  const hace=m => m>=120 ? Math.round(m/60)+' horas' : Math.round(m)+' minutos';
   function problemaBot(){
     if(!estadoBot) return null;               // sin dato todavía: no se inventa una alarma
     const mins=minutosDesde(estadoBot.cuando);
+    // Cuánto hace que llegó a CONECTAR de verdad. Es el dato que importa: un bot
+    // colgado al arrancar, o dando vueltas en reinicios, escribe su estado recién
+    // y parece sano — pero no registra un solo mensaje (23/09: 87 minutos así).
+    const conect=minutosDesde(estadoBot.ultimoConectado || (estadoBot.estado==='conectado' ? estadoBot.cuando : null));
     if(estadoBot.estado==='esperando_qr')
       return {sev:'bad', titulo:'El bot de WhatsApp está DESVINCULADO', detalle:'Hay que escanear el QR desde el celular de la empresa para que vuelva a registrar los mensajes.'};
     if(mins!==null && mins>MIN_SIN_SENAL)
-      return {sev:'bad', titulo:'El bot de WhatsApp está caído', detalle:'No da señales desde hace '+(mins>=120?Math.round(mins/60)+' horas':Math.round(mins)+' minutos')+'. Los mensajes que entren mientras tanto NO se registran.'};
+      return {sev:'bad', titulo:'El bot de WhatsApp está caído', detalle:'No da señales desde hace '+hace(mins)+'. Los mensajes que entren mientras tanto NO se registran.'};
+    // Solo si NO está conectado: un bot conectado cuyo latido se atrasó un poco ya lo
+    // cubre el chequeo de arriba, y decirle "no logra conectarse" sería mentira.
+    if(estadoBot.estado!=='conectado' && (conect===null || conect>MIN_SIN_CONECTAR))
+      return {sev:'bad', titulo:'El bot de WhatsApp no logra conectarse', detalle:'Está reiniciándose sin éxito'+(conect===null?'':' desde hace '+hace(conect))+'. Los mensajes que entren mientras tanto NO se registran.'};
     if(estadoBot.estado==='sin_conexion')
       return {sev:'warn', titulo:'El bot de WhatsApp perdió la conexión', detalle:'Se está reiniciando solo. Si en 10 minutos no vuelve, avisá.'};
     return null;
