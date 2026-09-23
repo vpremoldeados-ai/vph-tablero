@@ -13443,8 +13443,9 @@ function buildFilterTable(cfg){
   // topesTipo, en la carpeta Topes/ del repo (copia achicada de "IMAGENES Y VIDEOS DE PRODUCTOS\
   // PLAN DE VENTAS" en Drive). El nombre sale del tipo, así un tipo nuevo sin imagen lo caza el test
   // que verifica que exista el archivo de cada uno.
-  function topesImagen(rubro){
-    const cat=topesTipo(rubro);
+  function topesImagen(rubro){ return topesImagenDeTipo(topesTipo(rubro)); }
+  // 23/09: el mail por sector también usa la imagen del tipo (antes, una pieza fija): sale del NOMBRE del tipo.
+  function topesImagenDeTipo(cat){
     const slug = cat==='Topes de estacionamiento' ? 'playas-y-estacionamientos'
       : cat.replace(/^Topes — /,'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/,/g,'').replace(/\s+/g,'-');
     return 'Topes/'+slug+'.jpg';
@@ -13458,7 +13459,9 @@ function buildFilterTable(cfg){
     topesImgEstado='';
     try{
       if(!src || typeof navigator==='undefined' || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem==='undefined'){ topesImgEstado='error'; return; }
-      const png=fetch(src).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); })
+      // 23/09: {cache:'no-cache'} = siempre le pregunta al servidor si la imagen cambió (las imágenes se
+      // rehacen con el MISMO nombre de archivo; sin esto el navegador podía copiar la versión vieja).
+      const png=fetch(src,{cache:'no-cache'}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); })
         .then(b=>createImageBitmap(b))
         .then(bmp=>new Promise((ok,ko)=>{ const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height;
           c.getContext('2d').drawImage(bmp,0,0); c.toBlob(x=> x?ok(x):ko(new Error('toBlob')), 'image/png'); }));
@@ -13677,9 +13680,11 @@ function buildFilterTable(cfg){
     const txt=g ? topesMailTexto(g.tipo, firma) : null;
     const emails=g ? [...new Set(g.pendientes.map(x=>String(x.t.email).trim().toLowerCase()))] : [];
     const links=txt ? topesMailGmailLinks(emails, txt.asunto, txt.cuerpo) : [];
-    // 18/09, pedido de Marcelo: en el MAIL va siempre la misma pieza (la de losetas + topes que usa
-    // por WhatsApp), no la imagen por rubro. Se pega al final del cuerpo, debajo de la firma.
-    const img=new URL('Topes/mail-losetas-y-topes.jpg', location.href).href;
+    // 23/09, pedido de Marcelo ("que en los mensajes y en los mails se manden las nuevas imágenes"): el
+    // mail usa la imagen NUEVA del sector (la misma que el WhatsApp; ya trae topes + pisos drenantes).
+    // Antes (18/09) iba siempre una pieza fija de losetas + topes. Se pega debajo de la firma.
+    // El ?v= evita que el navegador muestre la versión vieja guardada (mismo nombre de archivo).
+    const img=new URL(topesImagenDeTipo(g ? g.tipo : 'Topes de estacionamiento'), location.href).href+'?v=2026-09-23';
     const campo='width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12.5px';
     m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:600;display:flex;align-items:center;justify-content:center;padding:12px';
     m.innerHTML=
@@ -13702,7 +13707,7 @@ function buildFilterTable(cfg){
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
                   links.map((l,i)=>'<button class="cmp-btn'+(i===0?' cmp-btn-primary':'')+'" data-topes-mail-g="'+i+'">📧 Abrir Gmail con CCO'+(links.length>1?' ('+l.desde+'–'+l.hasta+')':'')+'</button>').join('')+
                   '<button class="cmp-btn" id="topes-mail-copiar">📋 Copiar el cuerpo</button>'+
-                  '<a class="cmp-btn" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(img)+'">🖼️ Abrir la imagen para el mail</a>'+
+                  '<a class="cmp-btn" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(img)+'">🖼️ Abrir la imagen de este sector</a>'+
                 '</div>'+
                 '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">En Gmail: revisá que estén en <b>CCO</b>, pegá la imagen <b>abajo de la firma</b> (se abre con el botón de arriba, clic derecho → copiar imagen) y mandá. '+
                   (links.length>1?'Son '+links.length+' mails de hasta '+TOPES_MAIL_CCO+' destinatarios cada uno. ':'')+'Después volvé acá y marcá que salieron.</p>'+
