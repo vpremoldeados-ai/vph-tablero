@@ -14083,6 +14083,14 @@ function buildFilterTable(cfg){
         // Mientras hay uno abierto, las respuestas REEMPLAZAN al botón de avanzar: cada una registra
         // qué pasó Y abre el siguiente, así confirmar no agrega ningún clic al recorrido.
         '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc(topesUltimoAbierto)+'</b>. ¿Qué pasó?</span>'+
+        // 23/09 (Marcelo: "cuando toco 📵 la cuenta regresiva empieza de nuevo, pero no mandé
+        // ningún mensaje"): NO reinicia nada — 📵 nunca tocó `ultimaAccionTs` (solo lo hace
+        // "✅ Lo mandé"). Lo que pasaba es que, mientras el chat está abierto, el reloj queda
+        // OCULTO (`topesProgramarCuenta` recibía {ms:0} acá) — si todavía quedaba espera de un
+        // envío REAL anterior, al resolver con 📵 esa espera reaparecía de golpe y parecía nueva.
+        // Ahora se ve TICKEANDO también con el chat abierto, para que quede claro que es la MISMA
+        // cuenta que ya venía corriendo, no una nueva.
+        (esp.ms>0 && esp.ms!==Infinity ? '<span style="font-size:12px;color:var(--muted)" title="Es la espera del último ✅ Lo mandé real, sigue corriendo — 📵 no la reinicia">⏳ Próximo mensaje en <span id="topes-cuenta">'+topesFmtEspera(esp.ms)+'</span></span>' : '')+
         (topesImgEstado==='ok' ? '<span style="font-size:12px;color:#157a1d;font-weight:600">📋 Imagen copiada: pegala en el chat con Ctrl+V</span>'
           : topesImgEstado==='error' ? '<span style="font-size:12px;color:#b45309;font-weight:600">⚠️ No se pudo copiar la imagen: adjuntala a mano (Drive → PLAN DE VENTAS)</span>'
           : topesImgEstado==='ayudante' ? '<span style="font-size:12px;color:#157a1d;font-weight:600">🤖 El ayudante está mandando el mensaje y la imagen: mirá WhatsApp y marcá qué pasó</span>'
@@ -14149,7 +14157,10 @@ function buildFilterTable(cfg){
         '</div>'
       ) : '');
     controles.innerHTML=hc;
-    topesProgramarCuenta(topesUltimoAbierto ? {ms:0} : esp);
+    // 23/09: antes, con el chat abierto, se pasaba {ms:0} y el reloj quedaba mudo — por eso la
+    // espera de un envío real anterior "reaparecía" al resolver y parecía haber arrancado de
+    // nuevo. Ahora tickea siempre que haya espera real, esté o no un chat abierto.
+    topesProgramarCuenta(esp);
     const btnSiguiente=controles.querySelector('#topes-siguiente-btn');
     if(btnSiguiente) btnSiguiente.onclick=topesSiguientePendiente;
     const btnOk=controles.querySelector('#topes-ok-btn');
