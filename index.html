@@ -18659,12 +18659,20 @@ function buildFilterTable(cfg){
     const t=normc(transportista);
     return !!t && SIN_LEYENDA.indexOf(t)<0 && !esTransportePropio(t);
   }
+  // Quién paga el flete es EDITABLE (pedido de Marcelo, 25/09): el default es "EN ORIGEN, facturar
+  // a VPH" (lo de siempre), pero hay casos puntuales donde el cliente lo abona directo en destino —
+  // ahí la leyenda tiene que decir eso, no inventarle a VPH una factura que no le va a llegar.
+  function lineaPagoEnvio(obj){
+    if(obj.pagoEnvio==='destino')
+      return '<div><b>Pago del envío:</b> lo abona <b>'+esc(obj.clienteNombre||'el cliente')+'</b> EN DESTINO, directo al transporte.</div>';
+    return '<div><b>Pago del envío:</b> EN ORIGEN — facturar a nombre de <b>'+esc(EMPRESA.razon)+'</b> (CUIT '+esc(EMPRESA.cuit)+').</div>';
+  }
   function leyendaEnvio(obj){
     const t=normc(obj.transportista);
     if(!t || SIN_LEYENDA.indexOf(t)>=0 || esTransportePropio(t)) return '';
     return '<div style="margin-top:12px;border:2px solid #111;border-radius:4px;padding:8px 10px;font-size:11.5px;line-height:1.6">'+
       '<div style="font-weight:800;margin-bottom:3px">ENVÍO POR '+esc(String(obj.transportista).toUpperCase())+'</div>'+
-      '<div><b>Pago del envío:</b> EN ORIGEN — facturar a nombre de <b>'+esc(EMPRESA.razon)+'</b> (CUIT '+esc(EMPRESA.cuit)+').</div>'+
+      lineaPagoEnvio(obj)+
       (num(obj.valorDeclarado)>0 ? '<div><b>Valor declarado de la mercadería:</b> '+money(obj.valorDeclarado)+' (para el seguro del transporte).</div>' : '')+
       '<div><b>Coordinar entrega en destino con:</b> '+esc(obj.clienteNombre||'—')+
         ' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................')+'</div>'+
@@ -18872,6 +18880,13 @@ function buildFilterTable(cfg){
         // para cotizar el seguro (pedido de Marcelo, 22/09). Con Sánchez/Marcelo (propio) no hace
         // falta — no hay ninguna agencia externa asegurando el viaje.
         (necesitaValorDeclarado(transp)?
+          '<label style="'+lbl+'">¿Quién paga el envío? <span style="font-weight:400;color:#888">(caso puntual: el cliente lo abona en destino)</span></label>'+
+          '<div id="rem-pago" style="display:flex;gap:6px">'+
+            '<button type="button" data-pg="origen" style="flex:1 1 auto;padding:8px 10px;border-radius:8px;cursor:pointer;font:600 12.5px system-ui;'+
+              (obj.pagoEnvio!=='destino'?'border:2px solid #2563eb;background:#eff6ff;color:#1d4ed8':'border:1px solid #cbd5e1;background:#fff;color:#334155')+'">🏭 VPH (en origen)</button>'+
+            '<button type="button" data-pg="destino" style="flex:1 1 auto;padding:8px 10px;border-radius:8px;cursor:pointer;font:600 12.5px system-ui;'+
+              (obj.pagoEnvio==='destino'?'border:2px solid #2563eb;background:#eff6ff;color:#1d4ed8':'border:1px solid #cbd5e1;background:#fff;color:#334155')+'">🚚 El cliente en destino</button>'+
+          '</div>'+
           '<label style="'+lbl+'">Valor declarado de la mercadería <span style="font-weight:400;color:#888">(para el seguro del transporte)</span></label>'+
           '<input id="rem-valor" value="'+esc(obj.valorDeclarado?nf(obj.valorDeclarado):'')+'" placeholder="Ej: 1.500.000" style="'+inp+'">'
           :'')+
@@ -18896,6 +18911,7 @@ function buildFilterTable(cfg){
         transp = (t==='Sin asignar') ? '' : t;
         render();
       });
+      ov.querySelectorAll('#rem-pago button').forEach(b=> b.onclick=()=>{ leer(); obj.pagoEnvio=b.dataset.pg; render(); });
       ov.querySelector('#rem-cancel').onclick=()=>ov.remove();
       ov.querySelector('#rem-ok').onclick=()=>{
         leer();
@@ -19246,6 +19262,7 @@ function buildFilterTable(cfg){
       cliente:o.clienteNombre||'', clienteCuit:o.clienteCuit||'', clienteCondIva:o.clienteCondIva||'',
       clienteTel:o.clienteTel||'', domicilioEntrega:o.domicilioEntrega||'', transportista:o.transportista||'',
       ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'', valorDeclarado:num(o.valorDeclarado)||0,
+      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen',
       items:(o.items||[]).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant), pallets:(it.pallets||null)})),
       usuario:u, ts:new Date().toISOString() };
   }
@@ -19254,6 +19271,7 @@ function buildFilterTable(cfg){
     return { numero:r.numero||'', numeroInt:r.numeroInt, fecha:r.fecha||'', transportista:r.transportista||'',
       clienteNombre:r.cliente||'', clienteCuit:r.clienteCuit||'', clienteCondIva:r.clienteCondIva||'',
       clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'', valorDeclarado:num(r.valorDeclarado)||0,
+      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen',
       comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
   };
 
@@ -19361,6 +19379,8 @@ function buildFilterTable(cfg){
         // Solo se pide con un transporte de carga (Brío, una agencia): con Sánchez/Marcelo no hace
         // falta y no hay que ensuciar el papel con un dato que no le sirve a nadie.
         campo('Valor declarado (para el seguro del transporte)','<input id="rmt-valor" value="'+esc(r.valorDeclarado?nf(r.valorDeclarado):'')+'" placeholder="Ej: 1.500.000">')+
+        campo('Pago del envío','<select id="rmt-pago"><option value="origen"'+(r.pagoEnvio!=='destino'?' selected':'')+'>VPH — pago en origen</option>'+
+          '<option value="destino"'+(r.pagoEnvio==='destino'?' selected':'')+'>El cliente en destino</option></select>')+
         campo('Factura / venta asociada','<select id="rmt-venta"><option value="">— Sin asociar —</option>'+
           suyas.map(v=>'<option value="'+esc(v._uid)+'"'+(r.ventaUid===v._uid?' selected':'')+'>'+esc(refDe(v))+'</option>').join('')+
           (r.ventaUid && !suyas.some(v=>v._uid===r.ventaUid) ? '<option value="'+esc(r.ventaUid)+'" selected>'+esc(r.comprobante||'(la venta asociada actual)')+'</option>' : '')+
@@ -19375,6 +19395,7 @@ function buildFilterTable(cfg){
       const el=$(id); if(el) el.addEventListener('input',()=>{ editando[key]=el.value; });
     });
     { const ev=$('rmt-valor'); if(ev) ev.addEventListener('input',()=>{ editando.valorDeclarado=num(ev.value)||0; }); }
+    { const ep=$('rmt-pago'); if(ep) ep.addEventListener('change',()=>{ editando.pagoEnvio=ep.value; }); }
     $('rmt-venta').addEventListener('change',()=>{
       const uid=$('rmt-venta').value; editando.ventaUid=uid;
       const v=ventas.find(x=>x._uid===uid);
