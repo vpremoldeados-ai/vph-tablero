@@ -12044,6 +12044,7 @@ function buildFilterTable(cfg){
     {g:'CRM', k:'crmDiasReconsulta2', l:'Reconsulta 2 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 2ª reconsulta. En 0 no se agenda.'},
     {g:'CRM', k:'crmDiasReconsulta3', l:'Reconsulta 3 → recordar a los (días hábiles)', def:7, t:'num', hint:'Último intento antes de darlo por perdido. En 0 no se agenda.'},
     {g:'CRM', k:'crmMetaSemanal', l:'Meta de cierre semanal ($)', def:5000000, t:'num', hint:'Cuánto se quiere cerrar por semana (lunes a viernes) en leads confirmados. Se ve en 🎯 Prioridad de hoy. En 0 no se muestra. En agosto se cerraron $7 M en 7 días hábiles.'},
+    {g:'CRM', k:'waMinRespuesta', l:'WhatsApp: avisar si un cliente espera más de (minutos hábiles)', def:30, t:'num', hint:'Cuenta solo lunes a viernes de 9 a 17. Pasado ese tiempo sin marcar el mensaje como resuelto, la bandeja lo marca en rojo y sale una alerta en la Vista Diaria. En 0 no avisa.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'},
     // VIUMI publica una tabla de comisiones por PLAZO de acreditación (1, 2, 5, 10, 20, 40 días
@@ -15014,7 +15015,7 @@ function buildFilterTable(cfg){
       return '<div class="kb-card" style="margin-bottom:8px'+(todoResuelto?';opacity:.55':'')+'">'+
         '<div class="cli">'+esc(ult.nombre||ult.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span>'+
           (msgs.length>1?' <span class="badge">'+msgs.length+' mensajes'+(pend.length&&pend.length<msgs.length?' ('+pend.length+' pend.)':'')+'</span>':'')+'</div>'+
-        '<div class="meta">'+esc(ult.telefono||'')+' · último: '+fmtFecha(ult.creadoEn)+'</div>'+
+        '<div class="meta">'+esc(ult.telefono||'')+' · último: '+fmtFecha(ult.creadoEn)+esperaBadge(pend)+'</div>'+
         filas+
         '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
           (link?'<a class="kb-wa" href="'+link+'" target="_blank" rel="noopener">💬 Abrir WhatsApp</a>':'')+
@@ -15084,6 +15085,45 @@ function buildFilterTable(cfg){
       '<div style="font-weight:800;color:'+col+'">'+(p.sev==='bad'?'🔴 ':'⚠️ ')+esc(p.titulo)+'</div>'+
       '<div style="font-size:12.5px;margin-top:3px">'+esc(p.detalle)+'</div></div>';
   }
+  // ---------- ⏱ Reloj de respuesta (29/09, plan de ventas de Marcelo) ----------
+  // En materiales de construcción gana el que contesta primero. El bot no sabe cuándo se respondió, pero
+  // sí cuándo llegó cada mensaje y Sofía lo marca ✓ Resuelto al atenderlo: la espera es el tiempo del mensaje
+  // PENDIENTE más viejo de la conversación. Se cuenta en minutos HÁBILES (L-V 9 a 17, el mismo horario que
+  // usa el bot para marcar 'fuera de horario'): un mensaje del viernes 18hs no puede estar 'atrasado' el lunes 9:01.
+  // Solo clientes y contactos nuevos (no fábrica ni proveedor) y NO los 'recuperados': esos llegaron mientras
+  // el bot estaba caído y pueden estar contestados por WhatsApp desde antes.
+  const HORA_DESDE=9, HORA_HASTA=17;
+  function tsMs(ts){ if(!ts) return null; if(ts.toDate) return ts.toDate().getTime(); if(typeof ts.seconds==='number') return ts.seconds*1000; const t=new Date(ts).getTime(); return isNaN(t)?null:t; }
+  function minHabiles(desdeMs, hastaMs){
+    if(!(hastaMs>desdeMs)) return 0;
+    desdeMs=Math.max(desdeMs, hastaMs-60*86400000);   // tope: 60 días, así un pendiente eterno no hace un bucle largo
+    let total=0; const d=new Date(desdeMs); d.setHours(0,0,0,0);
+    while(d.getTime()<hastaMs){
+      const dow=d.getDay();
+      if(dow>=1 && dow<=5){ const ini=new Date(d); ini.setHours(HORA_DESDE,0,0,0); const fin=new Date(d); fin.setHours(HORA_HASTA,0,0,0);
+        const a=Math.max(ini.getTime(),desdeMs), b=Math.min(fin.getTime(),hastaMs); if(b>a) total+=(b-a)/60000; }
+      d.setDate(d.getDate()+1);
+    }
+    return total;
+  }
+  function esperaBadge(pend){ const e=esperaDeConv(pend); if(!e || e.min<1) return ''; const u=umbralEspera(); const tarde=u>0 && e.min>u;
+    return ' · <span class="badge" style="'+(tarde?'background:#d6454122;color:#d64541;font-weight:800':'')+'" title="Tiempo que lleva sin marcar como resuelto. Cuenta solo lunes a viernes de 9 a 17.">⏱ espera hace '+etiquetaEspera(e.min)+(tarde?' ⚠':'')+'</span>'; }
+  const TIPOS_CON_RELOJ=['cliente','lead_nuevo','lead_existente'];
+  function esperaDeConv(msgs, ahoraMs){
+    const ps=(msgs||[]).filter(m=>(m.estado||'pendiente')==='pendiente' && TIPOS_CON_RELOJ.includes(m.tipo) && !m.recuperado);
+    const ts=ps.map(m=>tsMs(m.creadoEn)).filter(t=>t!=null); if(!ts.length) return null;
+    const desde=Math.min.apply(null, ts); return { desde, min: minHabiles(desde, ahoraMs==null?Date.now():ahoraMs) };
+  }
+  const umbralEspera=()=>{ const n=Math.round(num(window.__param?window.__param('waMinRespuesta',30):30)); return n>0?n:0; };
+  const etiquetaEspera=min=> min>=60 ? (Math.round(min/6)/10+' h') : (Math.max(1,Math.round(min))+' min');
+  // Todas las conversaciones que esperan más que el umbral, la que más espera primero.
+  function conversacionesEsperando(pendientes, ahoraMs){
+    const u=umbralEspera(); if(!u) return [];
+    const g=new Map(); (pendientes||[]).forEach(i=>{ const k=i.waId||i.telefono||i.nombre||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(i); });
+    const out=[]; g.forEach((msgs,k)=>{ const e=esperaDeConv(msgs, ahoraMs); if(e && e.min>u){ const ult=msgs.slice().sort((a,b)=>(tsMs(b.creadoEn)||0)-(tsMs(a.creadoEn)||0))[0]; out.push({ k, nombre:ult.nombre||ult.telefono||'(sin nombre)', min:e.min }); } });
+    return out.sort((a,b)=>b.min-a.min);
+  }
+  // ---------- fin reloj de respuesta ----------
   function juntar(){ pintarEstadoBot(); const m=new Map(); partes.rec.forEach(x=>m.set(x._uid,x)); partes.pend.forEach(x=>m.set(x._uid,x)); DB.pendientes=Array.from(m.values()); render(); }
   function startSync(){
     const c=fb(); if(!c||!c.db) return; stopSync();
@@ -15098,7 +15138,7 @@ function buildFilterTable(cfg){
     ];
     // Sin latido nuevo el cartel igual tiene que envejecer solo: si el bot se muere,
     // deja de escribir y nadie dispara un render. Por eso se repinta cada 5 minutos.
-    if(!relojEstado) relojEstado=setInterval(()=>{ pintarEstadoBot(); if(window.__refreshAlertas) window.__refreshAlertas(); }, 5*60000);
+    if(!relojEstado) relojEstado=setInterval(()=>{ pintarEstadoBot(); render(); if(window.__refreshAlertas) window.__refreshAlertas(); }, 5*60000);
   }
   function stopSync(){ if(unsub){ unsub.forEach(u=>{ try{u();}catch(e){} }); unsub=null; } partes.pend=[]; partes.rec=[]; }
   function boot(){
@@ -15116,6 +15156,9 @@ function buildFilterTable(cfg){
     // escribió nadie). Va primero y en rojo.
     const pb=problemaBot();
     if(pb) A.push({sev:pb.sev, area:'WhatsApp', t:pb.titulo, act:pb.detalle, go:{page:'Bandeja WhatsApp'}});
+    const esp=conversacionesEsperando(DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente'));
+    if(esp.length){ const u=umbralEspera(); const grave=esp[0].min>u*4;
+      A.push({sev:grave?'bad':'warn', area:'WhatsApp', t:esp.length+' cliente'+(esp.length>1?'s':'')+' esperando respuesta hace más de '+u+' min', act:esp.slice(0,3).map(e=>e.nombre+' ('+etiquetaEspera(e.min)+')').join(' · ')+(esp.length>3?' y '+(esp.length-3)+' más':'')+'. Contestá primero a estos.', go:{page:'Bandeja WhatsApp'}}); }
     const fuera=DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente' && i.fueraDeHorario);
     if(fuera.length) A.push({sev:'info', area:'WhatsApp', t:fuera.length+' mensaje'+(fuera.length>1?'s':'')+' llegado'+(fuera.length>1?'s':'')+' fuera de horario', act:'Revisar la Bandeja WhatsApp al abrir.', go:{page:'Bandeja WhatsApp'}});
     return A; });
