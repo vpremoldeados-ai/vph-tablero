@@ -14454,6 +14454,139 @@ function buildFilterTable(cfg){
     topesUltimoAbierto='';
     if(seguir) topesSiguientePendiente(); else drawTopes();
   }
+  // ENVÍO AUTOMÁTICO (29/09, pedido y autorización de Marcelo: "que lo haga con el ayudante pero
+  // totalmente automático cada 10 minutos"). Chrome no deja abrir un link vphenviar: sin un clic, así
+  // que el Tablero no puede disparar al ayudante solo. En cambio deja cada pedido en un BUZÓN de
+  // Firestore (vph_config/topes_auto_<id de la PC>) y el ayudante, que queda escuchando desde que se
+  // tildó "🔁 Automático" (ese clic sí lo arranca), lo toma, lo manda y anota ahí qué pasó. El resultado
+  // lo registra el Tablero con los MISMOS caminos que ✅/📵 (topesAlEnviar / falta-dato), así que el
+  // tope diario, la espera, la reserva y los contadores por persona funcionan igual que a mano.
+  // 🔴 Ante cualquier cosa rara (el ayudante no contesta, un error, WhatsApp no pasó adelante) se
+  // PAUSA solo y lo dice en la barra: nunca sigue mandando a ciegas.
+  const TOPES_AUTO_ESPERA_MAX=4*60000;   // si el ayudante no contesta un pedido en 4 min, pausa
+  const TOPES_AUTO_LATIDO_MAX=8*60000;   // el ayudante late cada 2 min mientras escucha
+  function topesAutoOn(){ try{ return localStorage.getItem('vph_topes_auto_v1')==='1'; }catch(e){ return false; } }
+  function topesAutoSet(on, nota){
+    try{ localStorage.setItem('vph_topes_auto_v1', on?'1':'0'); if(nota!=null) localStorage.setItem('vph_topes_auto_nota_v1', nota); }catch(e){}
+  }
+  function topesAutoNota(){ try{ return localStorage.getItem('vph_topes_auto_nota_v1')||''; }catch(e){ return ''; } }
+  function topesAutoDocId(){ return 'topes_auto_'+topesPcId(); }
+  let topesAutoBuzon=null, topesAutoTimer=null, topesAutoOcupado=false;
+  // Link que ARRANCA al ayudante en modo escucha (va en el clic de la casilla). Lleva la credencial de
+  // la sesión (refreshToken) para que pueda leer y escribir el buzón: no queda guardada en ningún
+  // archivo, vive en la memoria del ayudante mientras escucha y se pierde al apagarlo.
+  function topesAutoLinkEncender(){
+    const c=fb(); const u=c && c.auth && c.auth.currentUser;
+    if(!u || !u.refreshToken || !c.db) return null;
+    const o=c.db.app.options;
+    return 'vphenviar:?modo=auto&doc='+encodeURIComponent(topesAutoDocId())+'&proj='+encodeURIComponent(o.projectId)+
+      '&key='+encodeURIComponent(o.apiKey)+'&rt='+encodeURIComponent(u.refreshToken);
+  }
+  function topesAutoPausar(motivo){
+    const hh=new Date(); const p=n=>String(n).padStart(2,'0');
+    topesAutoSet(false, '⚠️ Automático en pausa ('+p(hh.getHours())+':'+p(hh.getMinutes())+'): '+motivo);
+    topesAutoEscribirBuzon({salir:true}).catch(()=>{});
+    drawTopes();
+  }
+  function topesAutoEscribirBuzon(datos){
+    const c=fb(); if(!(c && c.FS && c.db)) return Promise.resolve();
+    return c.FS.setDoc(c.FS.doc(c.db,'vph_config',topesAutoDocId()), datos, {merge:true});
+  }
+  const topesSinReserva=row=>{ delete row.abiertoPor; delete row.abiertoPc; delete row.abiertoTs; return row; };
+  // Registra en la ficha lo que contestó el ayudante y deja el buzón en 'registrado'.
+  function topesAutoRegistrar(b){
+    if(b.nombre){
+      topesActualizar(b.nombre, row=>{
+        let r=row;
+        if(b.estado==='enviado') r={...topesAlEnviar(row), ultimaAccionTs:Number(b.enviadoTs)||Date.now()};
+        else if(b.estado==='sinwa') r={...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:topesFirma(), accionPc:topesPcId()};
+        return topesSinReserva(r);
+      });
+    }
+    return topesAutoEscribirBuzon({estado:'registrado', registradoTs:Date.now()});
+  }
+  async function topesAutoTick(){
+    if(topesAutoOcupado || !topesAutoOn()) return;
+    const c=fb(); if(!(c && c.FS && c.db && c.FS.getDoc)) return;
+    topesAutoOcupado=true;
+    try{
+      // Pasó la medianoche con la pestaña abierta: hoyISO quedó viejo y el tope contaría mal.
+      const d=new Date(), p=n=>String(n).padStart(2,'0');
+      if(d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())!==hoyISO){ location.reload(); return; }
+      const snap=await c.FS.getDoc(c.FS.doc(c.db,'vph_config',topesAutoDocId()));
+      const b=snap.exists() ? snap.data() : {};
+      topesAutoBuzon=b;
+      const ahora=Date.now();
+      if(b.estado==='pedido' || b.estado==='enviando'){
+        if(ahora-(Number(b.pedidoTs)||0) > TOPES_AUTO_ESPERA_MAX){
+          if(b.nombre) topesActualizar(b.nombre, topesSinReserva);
+          await topesAutoEscribirBuzon({estado:'registrado', registradoTs:ahora});
+          topesAutoPausar('el ayudante no contestó el envío a '+(b.nombre||'?')+'. Mirá WhatsApp: si salió, marcalo Contactado a mano.');
+        } else drawTopes();
+        return;
+      }
+      if(b.estado==='enviado' || b.estado==='sinwa'){ await topesAutoRegistrar(b); drawTopes(); return; }
+      if(b.estado==='error'){
+        if(b.nombre) topesActualizar(b.nombre, topesSinReserva);
+        await topesAutoEscribirBuzon({estado:'registrado', registradoTs:ahora});
+        topesAutoPausar((b.detalle||'error del ayudante')+(b.nombre?' (con '+b.nombre+')':''));
+        return;
+      }
+      // Listo para el próximo: las mismas condiciones que ▶ Siguiente.
+      if(!topesAyudanteOn() || !topesFirma() || topesUltimoAbierto){ drawTopes(); return; }
+      if(ahora-(Number(b.latidoTs)||0) > TOPES_AUTO_LATIDO_MAX){ drawTopes(); return; }   // el ayudante no está escuchando
+      const tope=topesTope();
+      if(tope && topesEnviadosHoy()>=tope){ drawTopes(); return; }
+      if(topesEspera(ahora).ms>0){ drawTopes(); return; }
+      const idx=topesProxIndice(); if(idx<0){ drawTopes(); return; }
+      const t=TOPES[idx];
+      const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
+      const wa=nro(topesWaLink(t.telefono)), wa2=nro(topesWaLink(t.telefono, true));
+      if(!wa){ drawTopes(); return; }
+      topesActualizar(t.nombre, row=>({...row, abiertoPor:topesFirma(), abiertoPc:topesPcId(), abiertoTs:ahora}));
+      await topesAutoEscribirBuzon({estado:'pedido', pedidoTs:ahora, nombre:t.nombre||'', tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
+        tipo:topesImagen(t.rubro).replace(/^Topes\//,'').replace(/\.jpg$/,''), texto:topesTexto(t.nombre, t.rubro), detalle:'', enviadoTs:0});
+      topesAutoBuzon={...b, estado:'pedido', nombre:t.nombre||''};
+      drawTopes();
+    }catch(e){
+      topesAutoPausar('no se pudo leer o escribir el buzón ('+e.message+')');
+    }finally{ topesAutoOcupado=false; }
+  }
+  function topesAutoArrancarReloj(){
+    if(topesAutoTimer) return;
+    topesAutoTimer=setInterval(topesAutoTick, 30000);
+    setTimeout(topesAutoTick, 1500);
+  }
+  function topesAutoHtml(){
+    const on=topesAutoOn(), b=topesAutoBuzon||{}, nota=topesAutoNota();
+    const escuchando=(Date.now()-(Number(b.latidoTs)||0)) <= TOPES_AUTO_LATIDO_MAX;
+    let estado='';
+    if(on){
+      if(b.estado==='pedido' || b.estado==='enviando') estado='📤 Mandando a <b>'+esc(b.nombre||'')+'</b>…';
+      else if(topesAutoBuzon && !escuchando) estado='<span style="color:#b45309">⏳ Esperando que el ayudante arranque… si en 2 min no arranca, destildá y volvé a tildar 🔁</span>';
+      else if(topesAutoBuzon) estado='🔁 Manda solo cuando termina la espera';
+    }
+    return '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Manda solo, de a uno, respetando la espera, el horario y el tope del día. Necesita esta pestaña del Tablero abierta, la PC prendida y desbloqueada, y WhatsApp de escritorio abierto. Si algo sale raro se pausa solo.">'+
+      '<input type="checkbox" id="topes-auto-chk"'+(on?' checked':'')+(topesAyudanteOn()?'':' disabled')+'> 🔁 Automático</label>'+
+      (estado ? '<span style="font-size:12px">'+estado+'</span>' : '')+
+      (!on && nota ? '<span style="font-size:12px;color:#b45309;font-weight:600">'+esc(nota)+'</span>' : '');
+  }
+  function topesAutoCambiar(on){
+    if(on){
+      if(!topesFirma()){ alert('Antes escribí tu nombre en "✍️ Firmo como".'); drawTopes(); return; }
+      const link=topesAutoLinkEncender();
+      if(!link){ alert('No se pudo leer la sesión del Tablero. Recargá la página e intentá de nuevo.'); drawTopes(); return; }
+      window.open(link, '_blank');   // dentro del clic: es lo único que Chrome deja abrir
+      topesAutoSet(true, '');
+      topesAutoBuzon=null;
+      topesAutoEscribirBuzon({salir:false}).catch(()=>{});
+      topesAutoArrancarReloj();
+    } else {
+      topesAutoSet(false, '');
+      topesAutoEscribirBuzon({salir:true}).catch(()=>{});
+    }
+    drawTopes();
+  }
   function drawTopes(){
     // 08/09: la tabla (#topes-tabla) es un elemento FIJO — nunca se recrea — para que
     // window.__ordenable pueda guardar el orden elegido entre un render y el siguiente (el mismo
@@ -14508,6 +14641,7 @@ function buildFilterTable(cfg){
           ? 'El ayudante abre el chat, comprueba que sea el correcto y manda el mensaje y la imagen de su rubro.'
           : 'Se abre en la app de WhatsApp con el mensaje cargado y la imagen de su rubro queda copiada: en el chat, Ctrl+V y Enviar.')+'</span>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Solo en la PC donde está instalado el Ayudante VPH (carpeta ayudante-whatsapp en Drive)"><input type="checkbox" id="topes-ayudante-chk"'+(topesAyudanteOn()?' checked':'')+'> 🤖 Enviar solo (ayudante)</label>'+
+        topesAutoHtml()+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las empresas de más de 50 empleados (industria, salud, universidades, logística...); cuando no queden, sigue con el resto"><input type="checkbox" id="topes-prioridad-grandes-chk"'+(topesPrioridadGrandesOn()?' checked':'')+'> 🏢 Primero grandes ('+topesPendientesPrioridadGrandes()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las constructoras y desarrollistas; cuando no queden, sigue con el resto de la lista"><input type="checkbox" id="topes-prioridad-chk"'+(topesPrioridadOn()?' checked':'')+'> 🏗️ Primero constructoras ('+topesPendientesPrioridad()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Con qué nombre se firma el mensaje en ESTA PC. El tope y la espera se cuentan por persona, porque cada una manda desde su número.">✍️ Firmo como '+
@@ -14570,7 +14704,12 @@ function buildFilterTable(cfg){
     const inpFirma=controles.querySelector('#topes-firma-inp');
     if(inpFirma) inpFirma.onchange=()=>{ try{ localStorage.setItem('vph_topes_firma_v1', String(inpFirma.value||'').trim()); }catch(e){} drawTopes(); };
     const chkAy=controles.querySelector('#topes-ayudante-chk');
-    if(chkAy) chkAy.onchange=()=>{ try{ localStorage.setItem('vph_topes_ayudante_v1', chkAy.checked?'1':'0'); }catch(e){} drawTopes(); };
+    if(chkAy) chkAy.onchange=()=>{ try{ localStorage.setItem('vph_topes_ayudante_v1', chkAy.checked?'1':'0'); }catch(e){}
+      if(!chkAy.checked && topesAutoOn()){ topesAutoCambiar(false); return; }   // sin ayudante no hay automático
+      drawTopes(); };
+    const chkAuto=controles.querySelector('#topes-auto-chk');
+    if(chkAuto) chkAuto.onchange=()=>topesAutoCambiar(chkAuto.checked);
+    if(topesAutoOn()) topesAutoArrancarReloj();
     const chkPriG=controles.querySelector('#topes-prioridad-grandes-chk');
     if(chkPriG) chkPriG.onchange=()=>{ try{ localStorage.setItem('vph_topes_prioridad_grandes_v1', chkPriG.checked?'1':'0'); }catch(e){} drawTopes(); };
     const chkPri=controles.querySelector('#topes-prioridad-chk');
