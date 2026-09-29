@@ -12043,6 +12043,7 @@ function buildFilterTable(cfg){
     {g:'CRM', k:'crmDiasReconsulta1', l:'Reconsulta 1 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 1ª reconsulta. En 0 no se agenda.'},
     {g:'CRM', k:'crmDiasReconsulta2', l:'Reconsulta 2 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 2ª reconsulta. En 0 no se agenda.'},
     {g:'CRM', k:'crmDiasReconsulta3', l:'Reconsulta 3 → recordar a los (días hábiles)', def:7, t:'num', hint:'Último intento antes de darlo por perdido. En 0 no se agenda.'},
+    {g:'CRM', k:'crmMetaSemanal', l:'Meta de cierre semanal ($)', def:5000000, t:'num', hint:'Cuánto se quiere cerrar por semana (lunes a viernes) en leads confirmados. Se ve en 🎯 Prioridad de hoy. En 0 no se muestra. En agosto se cerraron $7 M en 7 días hábiles.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
     {g:'Finanzas',   k:'diasAvisoCheque', l:'Avisar cheques por vencer (días antes)', def:5,    t:'num', hint:'Ventana de aviso antes del vencimiento de un cheque en cartera o depositado.'},
     // VIUMI publica una tabla de comisiones por PLAZO de acreditación (1, 2, 5, 10, 20, 40 días
@@ -12531,6 +12532,19 @@ function buildFilterTable(cfg){
       rows.map(r=>'<tr><td><b>'+esc(r.origen)+'</b></td><td>'+r.total+'</td><td>'+r.conf+'</td><td>'+r.perd+'</td><td>'+(r.tasa==null?'—':r.tasa+'%')+'</td><td>'+(r.monto>0?money(r.monto):'—')+'</td></tr>').join('')+'</tbody></table></div>'+
       '<p class="note" style="margin:4px 0 0">Conversión = confirmados sobre los ya decididos (confirmado o perdido). "Sin origen" son los leads que nadie marcó: cuanto más grande sea esa fila, menos sirve esta tabla.</p>';
   }
+  // Meta semanal de cierre (29/09): lo confirmado de lunes a hoy contra el parámetro crmMetaSemanal.
+  // Cuenta los leads que pasaron a Confirmado esta semana (fechaConfirmado) por su monto real
+  // (presupuesto vinculado o estimado). No toca ventas ni caja: es un termómetro del pipeline.
+  function lunesDe(iso){ const a=String(iso).slice(0,10).split('-').map(Number); const d=new Date(a[0],a[1]-1,a[2]); const dow=d.getDay(); d.setDate(d.getDate()-(dow===0?6:dow-1)); return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()); }
+  function cerradoSemana(leads, hoy){ const lun=lunesDe(hoy); const cerr=(leads||[]).filter(l=>l.estado==='confirmado' && l.fechaConfirmado && String(l.fechaConfirmado).slice(0,10)>=lun && String(l.fechaConfirmado).slice(0,10)<=hoy);
+    return { desde:lun, cant:cerr.length, monto:cerr.reduce((s,l)=>s+montoLead(l),0) }; }
+  function metaHtml(){
+    const meta=num(window.__param?window.__param('crmMetaSemanal',5000000):5000000); if(!(meta>0)) return '';
+    const c=cerradoSemana(DB.leads, hoyISO); const pct=Math.min(100,Math.round(c.monto/meta*100)); const ok=c.monto>=meta;
+    return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px"><b>🏁 Meta de la semana</b><span>'+money(c.monto)+' de '+money(meta)+' · <b style="color:'+(ok?'#1e9e5a':'#c98a06')+'">'+Math.round(c.monto/meta*100)+'%</b> · '+c.cant+' cierre'+(c.cant!==1?'s':'')+'</span></div>'+
+      '<div style="height:9px;background:#e8edf3;border-radius:6px;margin-top:6px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(ok?'#1e9e5a':'#4aa3ff')+'"></div></div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-top:4px">'+(ok?'¡Meta cumplida! 🎉':'Faltan '+money(meta-c.monto)+'. Los presupuestos dormidos de abajo son el camino más corto.')+' Desde el lunes '+esc(fmtFecha(c.desde))+'. La meta se cambia en Parámetros → CRM.</div></div>'; }
   function renderPrio(){
     const box=$('crm-prio-panel'); if(!box) return;
     if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
@@ -12553,6 +12567,7 @@ function buildFilterTable(cfg){
     const tabla=(rows)=> '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Etapa</th><th>Monto</th><th>Seguimiento</th><th></th></tr></thead><tbody>'+rows.map(fila).join('')+'</tbody></table></div>';
     box.innerHTML=
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h3 style="margin:0">🎯 Prioridad de hoy</h3><button class="cmp-x" id="crm-prio-cerrar" style="margin-left:auto" title="Ocultar">✕</button></div>'+
+      metaHtml()+
       (sinMonto.length?'<div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--amber);border-radius:8px;background:#fff8e6;font-size:12.5px;color:#7a5b00">⚠ <b>'+sinMonto.length+' lead'+(sinMonto.length!==1?'s':'')+' en gestión sin monto</b> (ni presupuesto ni estimado): no entran en el ranking. Cargales el monto estimado para priorizarlos.</div>':'')+
       '<h4 style="margin:8px 0 4px">Los '+top.length+' que más plata mueven</h4>'+
       (top.length?tabla(top):'<p class="note">No hay leads activos con monto cargado.</p>')+
