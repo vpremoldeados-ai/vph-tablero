@@ -7008,7 +7008,7 @@ function buildFilterTable(cfg){
           texto:'chicos hicimos una venta de '+resumenVenta(v)+' para '+(v.cliente||'—')+', ya está cargada en el sistema',
           alConfirmar(){ v.tareasHechas=Object.assign({},v.tareasHechas||{},{grupo:hoyISO}); persistVenta(v); } }) },
       { l:'💬 Enviar presupuesto al cliente', run:()=>window.__wa.modal({ titulo:'Presupuesto → '+(v.cliente||''), telefono:tel, adjunto:'Presupuesto Nº '+(v.nroFactura||'')+'.pdf',
-          texto:'Hola '+(nombre||'')+'! Te paso el presupuesto'+(v.nroFactura?' Nº '+v.nroFactura:'')+'. Total '+money2(k.total)+', válido 7 días. Cualquier duda me decís 😊' }) },
+          texto:'Hola '+(nombre||'')+'! Te paso el presupuesto'+(v.nroFactura?' Nº '+v.nroFactura:'')+'. Total '+money2(k.total)+', válido 7 días. '+((window.__lineaEntrega&&window.__lineaEntrega(v.items))?window.__lineaEntrega(v.items)+' ':'')+'Cualquier duda me decís 😊' }) },
       { l:'💵 Recordatorio de cobro', hide: !(k.saldo>0.5), run:()=>window.__wa.modal({ titulo:'Cobro → '+(v.cliente||''), telefono:tel,
           texto:'Hola '+(nombre||'')+'! Cómo va? Alguna novedad del pago'+(v.nroFactura?' de la factura '+nro:'')+'? Mil gracias!',
           alConfirmar(){ v.tareasHechas=Object.assign({},v.tareasHechas||{},{cobro:hoyISO}); persistVenta(v); } }) },
@@ -10936,7 +10936,7 @@ function buildFilterTable(cfg){
   function enviarWa(p){ const kk=calc(p);
     if(window.__wa){ const nombre=window.__wa.primerNombre(p.cliente), tel=window.__wa.telWa(p.cliente,p.cuit);
       window.__wa.modal({ titulo:'Presupuesto → '+(p.cliente||''), telefono:tel, adjunto:'Presupuesto '+(p.numero||'')+'.pdf',
-        texto:'Hola '+(nombre||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(kk.total)+', válido hasta el '+fmtFecha(venceISO(p))+'. Cualquier duda me decís 😊',
+        texto:'Hola '+(nombre||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(kk.total)+', válido hasta el '+fmtFecha(venceISO(p))+'. '+((window.__lineaEntrega&&window.__lineaEntrega(p.items))?window.__lineaEntrega(p.items)+' ':'')+'Cualquier duda me decís 😊',
         alConfirmar(){ if((p.estado||'borrador')==='borrador'){ p.estado='enviado'; persist(p); } } });
     } else { alert('Módulo de WhatsApp no disponible.'); }
   }
@@ -15379,6 +15379,17 @@ function buildFilterTable(cfg){
   }
   // API para Presupuestos/Ventas: window.__disponibilidadProducto('LC60'|'Loseta...', 46) → {inmediata, fecha?, texto}
   window.__disponibilidadProducto = function(ref, cantidad){ const p=resolverProd(ref,ref); if(!p||(p.tipo||'')==='Servicio') return null; return disponibilidadDe(p,cantidad); };
+  // Línea de ENTREGA para el mensaje de WhatsApp del presupuesto (29/09, plan de ventas): el cliente pide entrega en
+  // menos de 10 días y es lo que nos diferencia de los que tardan. Reusa la MISMA cuenta que la disponibilidad del
+  // formulario (nada se recalcula acá). Manda el PEOR ítem: con uno solo que haya que fabricar, la fecha es la de ese.
+  // Devuelve '' si no se puede afirmar nada (sin ítems, servicios, producto que no matchea) — nunca inventa una fecha.
+  window.__lineaEntrega = function(items){
+    const ds=(items||[]).filter(it=>it && (it.codigo||it.desc) && num(it.cant)>0).map(it=>window.__disponibilidadProducto(it.codigo||it.desc, num(it.cant))).filter(Boolean);
+    if(!ds.length) return '';
+    if(ds.every(d=>d.inmediata)) return 'Tenemos el material curado y disponible: entrega inmediata 🚚';
+    let peor=null; ds.forEach(d=>{ if(!d.inmediata && d.fecha){ const f=(d.fecha instanceof Date)?d.fecha:(/^\d{4}-\d{2}-\d{2}/.test(String(d.fecha))?new Date(+String(d.fecha).slice(0,4),+String(d.fecha).slice(5,7)-1,+String(d.fecha).slice(8,10)):new Date(d.fecha)); if(!isNaN(f) && (!peor||f>peor)) peor=f; } });
+    return peor ? ('Entrega estimada desde el '+fmtF(peor)+' 🚚') : '';
+  };
   // 🔴 Comprometido de los pedidos pendientes que COMPITEN con uno dado. Hace falta para chequear la
   // disponibilidad de un pedido CONTRA SÍ MISMO (Coordinar entregas, el pedido en edición): como
   // `mapaComprometido()` ya reserva la cantidad de ESE pedido (es uno de los `pedidos` pendientes),
