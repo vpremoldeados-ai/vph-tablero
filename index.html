@@ -10774,6 +10774,23 @@ function buildFilterTable(cfg){
     let neto=0,iva=0; const f=1-num(p.descGeneral)/100; (p.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; }); neto*=f; iva*=f; return {neto:round2(neto),iva:round2(iva),total:round2(neto+iva)}; }
   function venceISO(p){ const f=parseF(p.fecha); if(!f) return p.fecha; f.setDate(f.getDate()+ (num(p.validezDias)||15)); return f.getFullYear()+'-'+p2(f.getMonth()+1)+'-'+p2(f.getDate()); }
   function estadoEf(p){ const e=p.estado||'borrador'; if(e==='convertido'||e==='aceptado'||e==='rechazado') return e; const vd=parseF(venceISO(p)); if(vd && vd<HOY) return 'vencido'; return e; }
+  // ---------- ⏳ Presupuestos por vencer (29/09, plan de ventas de Marcelo) ----------
+  // El presupuesto dice 'válido hasta el X' pero al pasar X no ocurría nada. Urgencia HONESTA: un día o dos antes
+  // se le avisa a Sofía para que le escriba al cliente ('vence el jueves, después reviso precios'). Solo los
+  // ENVIADOS y todavía abiertos: los borradores ya tienen su alerta (sin enviar) y los aceptados/convertidos/
+  // rechazados están cerrados. Mismo cálculo de vencimiento que el resto del módulo (venceISO/estadoEf).
+  const diasAvisoVence=()=>{ const n=Math.round(num(window.__param?window.__param('presupAvisoVence',2):2)); return n>0?Math.min(n,30):0; };
+  function diasParaVencer(p){ const vd=parseF(venceISO(p)); return vd ? Math.round((vd.getTime()-HOY.getTime())/86400000) : null; }
+  function porVencer(lista){
+    const n=diasAvisoVence(); if(!n) return [];
+    return (lista||[]).filter(p=>(p.estado||'borrador')==='enviado').map(p=>({ p, dias:diasParaVencer(p) }))
+      .filter(x=>x.dias!==null && x.dias>=0 && x.dias<=n).sort((a,b)=>(a.dias-b.dias)||(calc(b.p).total-calc(a.p).total));
+  }
+  const cuandoVence=d=> d===0?'hoy':(d===1?'mañana':'en '+d+' días');
+  function mensajeVencimiento(p, nombre){
+    return 'Hola '+(nombre||'')+'! Te escribo por el presupuesto '+(p.numero||'')+' ('+money(calc(p).total)+'): vence el '+fmtFecha(venceISO(p))+' ('+cuandoVence(diasParaVencer(p))+'). Pasado ese día tengo que revisar precios y disponibilidad. ¿Lo dejamos reservado? 😊';
+  }
+  // ---------- fin presupuestos por vencer ----------
   function nextNumero(){ let max=0; DB.presupuestos.forEach(p=>{ const m=String(p.numero||'').match(/(\d+)/); if(m){ const n=+m[1]; if(n>max)max=n; } }); return 'P-'+String(max+1).padStart(4,'0'); }
 
   // Catálogo de productos/clientes (Base de Datos) para autocompletar
@@ -10936,7 +10953,7 @@ function buildFilterTable(cfg){
   function enviarWa(p){ const kk=calc(p);
     if(window.__wa){ const nombre=window.__wa.primerNombre(p.cliente), tel=window.__wa.telWa(p.cliente,p.cuit);
       window.__wa.modal({ titulo:'Presupuesto → '+(p.cliente||''), telefono:tel, adjunto:'Presupuesto '+(p.numero||'')+'.pdf',
-        texto:'Hola '+(nombre||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(kk.total)+', válido hasta el '+fmtFecha(venceISO(p))+'. '+((window.__lineaEntrega&&window.__lineaEntrega(p.items))?window.__lineaEntrega(p.items)+' ':'')+'Cualquier duda me decís 😊',
+        texto:(p.estado==='enviado' && porVencer([p]).length) ? mensajeVencimiento(p, nombre) : 'Hola '+(nombre||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(kk.total)+', válido hasta el '+fmtFecha(venceISO(p))+'. '+((window.__lineaEntrega&&window.__lineaEntrega(p.items))?window.__lineaEntrega(p.items)+' ':'')+'Cualquier duda me decís 😊',
         alConfirmar(){ if((p.estado||'borrador')==='borrador'){ p.estado='enviado'; persist(p); } } });
     } else { alert('Módulo de WhatsApp no disponible.'); }
   }
@@ -11268,6 +11285,9 @@ function buildFilterTable(cfg){
   window.__alertSources.push(()=>{ const A=[];
     const borr=DB.presupuestos.filter(p=>estadoEf(p)==='borrador');
     if(borr.length) A.push({sev:'warn', area:'Comercial', t:borr.length+' presupuesto'+(borr.length>1?'s':'')+' sin enviar', act:'Enviarlos al cliente antes de que se enfríen.', go:{page:'Presupuestos'}});
+    const pv=porVencer(DB.presupuestos);
+    if(pv.length){ const tot=pv.reduce((s,x)=>s+calc(x.p).total,0);
+      A.push({sev:pv.some(x=>x.dias===0)?'bad':'warn', area:'Comercial', t:pv.length+' presupuesto'+(pv.length>1?'s':'')+' enviado'+(pv.length>1?'s':'')+' por vencer ('+money(tot)+')', act:pv.slice(0,3).map(x=>(x.p.cliente||'(sin nombre)')+' '+cuandoVence(x.dias)).join(' · ')+(pv.length>3?' y '+(pv.length-3)+' más':'')+'. Escribirles antes de que venzan: en la lista, el 💬 ya trae el recordatorio.', go:{page:'Presupuestos'}}); }
     const venc=DB.presupuestos.filter(p=>estadoEf(p)==='vencido');
     if(venc.length) A.push({sev:'info', area:'Comercial', t:venc.length+' presupuesto'+(venc.length>1?'s':'')+' vencido'+(venc.length>1?'s':'')+' sin cerrar', act:'Reconfirmar precio y renovar la validez, o marcarlos rechazados.', go:{page:'Presupuestos'}});
     return A; });
@@ -12004,6 +12024,7 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'diasCurado',   l:'Días de secado por defecto',                 def:10,   t:'num', hint:'Se puede sobreescribir por producto en su ficha.'},
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
+    {g:'Presupuestos', k:'presupAvisoVence', l:'Avisar presupuestos por vencer (días antes)', def:2, t:'num', hint:'Un presupuesto ENVIADO y todavía abierto que vence dentro de estos días aparece como alerta en la Vista Diaria, con el mensaje de recordatorio listo. En 0 no avisa.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
     // El objetivo se fija en KILOS MINORISTAS y no en pesos facturados a propósito: un kilo minorista
     // deja más del doble de contribución que uno mayorista, así que se puede facturar mucho con mix
