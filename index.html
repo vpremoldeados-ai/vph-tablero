@@ -1167,6 +1167,7 @@
           <button class="kb-viewbtn" id="crm-view-lista" title="Vista en lista, con filtros por columna">📋 Lista</button>
           <button class="kb-viewbtn" id="crm-view-tablero" title="Vista en columnas por etapa">🗂 Tablero</button>
           <button class="kb-viewbtn" id="crm-ver-archivados" title="Los leads Confirmados (venta) y Perdidos se archivan solos y no aparecen en el listado — tocá acá para verlos igual">📦 Ver archivados</button>
+          <button class="kb-viewbtn" id="crm-prio-btn" title="Los leads que más plata mueven y a los que ya toca llamar, los presupuestos dormidos y por qué se pierden las ventas">🎯 Prioridad de hoy</button>
           <span class="result-count" id="crm-count" style="margin:0 0 0 auto"></span>
         </div>
         <!-- ===== MAYORISTAS (18/09, pedido de Sofía): los revendedores que YA compran, agrupados por
@@ -1182,6 +1183,7 @@
           <div id="crm-may-controles"></div>
           <div class="tbl-wrap"><table id="crm-may-tabla"></table></div>
         </div>
+        <div id="crm-prio-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px"></div>
         <div id="crm-sinsegui" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.5;color:#7a5b00"></div>
         <div class="filter-bar" id="crm-filtros" style="display:none"></div>
         <div class="filter-bar" id="crm-filtro-actividad" style="display:none;margin-bottom:16px"></div>
@@ -12495,6 +12497,74 @@ function buildFilterTable(cfg){
   // m² totales del lead: suma de m² por ítem (o el campo viejo l.m2 si no hay ítems con m²)
   function totalM2(l){ const s=(l.items||[]).reduce((a,it)=>a+num(it.m2),0); return s>0?s:num(l.m2); }
 
+  // ---------- 🎯 PRIORIDAD DE HOY + presupuestos dormidos + motivo de pérdida (29/09, pedido de Marcelo) ----------
+  // Sofía no sabía a quién llamar primero (casi ningún lead tenía monto) ni por qué se perdían las ventas.
+  // Nada de esto recalcula plata: el monto sale del presupuesto vinculado (__presupuestoDeLead) o, si no
+  // hay, del estimado cargado a mano. Es solo una vista ordenada del pipeline activo.
+  const MOTIVOS_PERDIDA=['Precio','Plazo de entrega','Flete','Compró en otro lado','Sin obra / postergó','No respondió','Otro'];
+  const PESO_ETAPA={nuevo:0.30,cotizado:0.35,reconsulta1:0.30,reconsulta2:0.20,reconsulta3:0.15};
+  const montoLead=l=>{ const pr=window.__presupuestoDeLead?window.__presupuestoDeLead(l):null; return pr&&num(pr.total)>0?num(pr.total):num(l.monto); };
+  // Puntaje = plata × probabilidad de la etapa. Un lead vencido sube (toca llamarlo YA).
+  function puntajeLead(l){ const m=montoLead(l); const est=l.estado||'nuevo'; let p=m*(PESO_ETAPA[est]||0.2);
+    if(l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO) p*=1.5; return p; }
+  // Un presupuesto "dormido": ya se cotizó (o está en reconsulta) y el recordatorio quedó vencido.
+  const dormido=l=> ['cotizado','reconsulta1','reconsulta2','reconsulta3'].includes(l.estado||'nuevo') && !!l.proximoSeguimiento && l.proximoSeguimiento<hoyISO;
+  // Un mensaje distinto por etapa: no repetir "¿pudiste ver el presupuesto?".
+  function mensajeReconsulta(l){
+    const nom=String(l.cliente||'').trim().split(/\s+/)[0]||''; const hola='Hola'+(nom?' '+nom:'')+', ';
+    const est=l.estado||'nuevo';
+    if(est==='reconsulta1') return hola+'te escribo por el presupuesto que te pasamos. ¿En qué etapa está la obra? Así vemos cuándo te conviene recibir el material.';
+    if(est==='reconsulta2') return hola+'te aviso que hoy tenemos material curado disponible para entrega inmediata. ¿Querés que te reserve los pallets?';
+    if(est==='reconsulta3') return hola+'te dejo el precio del presupuesto vigente hasta el viernes; después lo tengo que revisar. ¿Lo cerramos así?';
+    if(est==='nuevo') return hola+'gracias por tu consulta. ¿Me pasás los m² y el lugar de entrega para armarte el presupuesto?';
+    return hola+'¿pudiste ver el presupuesto? Si tenés alguna duda con el precio o el envío, decime y lo vemos.';
+  }
+  function renderPrio(){
+    const box=$('crm-prio-panel'); if(!box) return;
+    if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
+    box.style.display='';
+    const activos=(DB.leads||[]).filter(l=>ACTIVOS.includes(l.estado||'nuevo'));
+    const sinMonto=activos.filter(l=>montoLead(l)<=0);
+    const top=activos.filter(l=>montoLead(l)>0).sort((a,b)=>puntajeLead(b)-puntajeLead(a)).slice(0,10);
+    const dorm=activos.filter(dormido).filter(l=>montoLead(l)>0).sort((a,b)=>montoLead(b)-montoLead(a));
+    const totDorm=dorm.reduce((s,l)=>s+montoLead(l),0);
+    const perd=(DB.leads||[]).filter(l=>l.estado==='perdido');
+    const cuenta={}; perd.forEach(l=>{ const m=l.motivoPerdida||'Sin motivo cargado'; cuenta[m]=(cuenta[m]||0)+1; });
+    const fila=l=>{ const wa=waLink(l.telefono); const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
+      const msg=mensajeReconsulta(l);
+      return '<tr><td><b>'+esc(l.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">'+esc(resumenPedido(l))+'</div></td>'+
+        '<td><span style="background:'+e.c+';color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">'+esc(e.l)+'</span></td>'+
+        '<td data-sortval="'+montoLead(l)+'"><b>'+money(montoLead(l))+'</b></td>'+
+        '<td>'+(l.proximoSeguimiento?(l.proximoSeguimiento<hoyISO?'<span style="color:#d64541;font-weight:700">⚠ vencido</span>':(l.proximoSeguimiento===hoyISO?'<span style="color:#c98a06;font-weight:700">hoy</span>':esc(fmtFecha(l.proximoSeguimiento)))):'—')+'</td>'+
+        '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(msg)+'" target="_blank" rel="noopener" title="Abre el chat con el mensaje de esta etapa ya escrito">📲 Escribir</a> ':'')+
+          '<button class="cmp-rowbtn" data-prio-edit="'+esc(l._uid)+'">Abrir</button></td></tr>'; };
+    const tabla=(rows)=> '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Etapa</th><th>Monto</th><th>Seguimiento</th><th></th></tr></thead><tbody>'+rows.map(fila).join('')+'</tbody></table></div>';
+    box.innerHTML=
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h3 style="margin:0">🎯 Prioridad de hoy</h3><button class="cmp-x" id="crm-prio-cerrar" style="margin-left:auto" title="Ocultar">✕</button></div>'+
+      (sinMonto.length?'<div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--amber);border-radius:8px;background:#fff8e6;font-size:12.5px;color:#7a5b00">⚠ <b>'+sinMonto.length+' lead'+(sinMonto.length!==1?'s':'')+' en gestión sin monto</b> (ni presupuesto ni estimado): no entran en el ranking. Cargales el monto estimado para priorizarlos.</div>':'')+
+      '<h4 style="margin:8px 0 4px">Los '+top.length+' que más plata mueven</h4>'+
+      (top.length?tabla(top):'<p class="note">No hay leads activos con monto cargado.</p>')+
+      '<h4 style="margin:14px 0 4px">😴 Presupuestos dormidos: '+dorm.length+' · '+money(totDorm)+'</h4>'+
+      '<p class="note" style="margin:0 0 6px">Ya cotizados, con el recordatorio vencido. Ordenados por monto. Cada botón 📲 abre el chat con el mensaje de <b>su etapa</b> (obra → stock disponible → precio con fecha límite).</p>'+
+      (dorm.length?tabla(dorm.slice(0,25)):'<p class="note">Ningún presupuesto dormido. 👏</p>')+(dorm.length>25?'<p class="note">… y '+(dorm.length-25)+' más.</p>':'')+
+      '<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
+      (perd.length?'<div style="display:flex;gap:8px;flex-wrap:wrap">'+Object.keys(cuenta).sort((a,b)=>cuenta[b]-cuenta[a]).map(m=>'<span style="border:1px solid var(--border);border-radius:10px;padding:4px 10px;font-size:12.5px"><b>'+cuenta[m]+'</b> · '+esc(m)+'</span>').join('')+'</div>':'<p class="note">Todavía no hay leads perdidos.</p>');
+    $('crm-prio-cerrar').onclick=()=>{ box.dataset.abierto='0'; renderPrio(); const b=$('crm-prio-btn'); if(b) b.classList.remove('active'); };
+    box.querySelectorAll('[data-prio-edit]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioEdit); if(l) openForm(l); });
+    box.querySelectorAll('table').forEach(t=>{ if(window.__ordenable) window.__ordenable(t); });
+  }
+  // Pide el motivo cuando un lead pasa a Perdido. Si se cancela, el lead NO cambia de estado.
+  function pedirMotivoPerdida(l, alOk, alCancelar){
+    const ov=document.createElement('div'); ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:700;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML='<div style="background:var(--card,#fff);border-radius:14px;padding:18px;max-width:420px;width:100%"><h3 style="margin:0 0 4px">¿Por qué se perdió?</h3>'+
+      '<p class="note" style="margin:0 0 10px">'+esc(l.cliente||'Este lead')+' — elegí el motivo principal. Sirve para saber qué mejorar.</p>'+
+      '<div style="display:flex;flex-direction:column;gap:6px">'+MOTIVOS_PERDIDA.map(m=>'<button class="cmp-btn" data-mot="'+esc(m)+'" style="text-align:left">'+esc(m)+'</button>').join('')+'</div>'+
+      '<button class="cmp-rowbtn" id="mp-cancel" style="margin-top:10px">Cancelar</button></div>';
+    document.body.appendChild(ov);
+    const cerrar=()=>{ if(ov.parentNode) ov.parentNode.removeChild(ov); };
+    ov.querySelectorAll('[data-mot]').forEach(b=> b.onclick=()=>{ cerrar(); alOk(b.dataset.mot); });
+    ov.querySelector('#mp-cancel').onclick=()=>{ cerrar(); if(alCancelar) alCancelar(); };
+  }
   function render(){
     normalizarLeads();
     let leads=DB.leads.slice();
@@ -12542,7 +12612,7 @@ function buildFilterTable(cfg){
     // archivados y ocultos, salvo que Sofía tilde "Ver archivados" o filtre ese estado a mano.
     const ocultarArchivados = !verArchivados && !filtro.estado;
     const leadsVista = ocultarArchivados ? leads.filter(l=>!ARCHIVADOS.includes(l.estado||'nuevo')) : leads;
-    renderSinSegui();
+    renderSinSegui(); renderPrio();
     if(VIEW==='lista') { drawTabla(leadsVista); $('crm-filtro-actividad').style.display='none'; }
     else { renderFilteroActividadKanban(leadsParaConteos); drawBoard(leadsVista); }
     const archivados = leads.length - leadsVista.length;
@@ -12618,7 +12688,9 @@ function buildFilterTable(cfg){
           if((l.estado||'nuevo')==='nuevo'||l.estado==='contactado'){ l.estado='cotizado'; persist(l); }   // el lead pasa a "Cotizado"
           if(window.__presupuestoImprimir) window.__presupuestoImprimir(p);   // abre la vista previa para descargar/imprimir el PDF
         }); } });
-    root.querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ const prev=l.estado; l.estado=sel.value; aplicarAutoSeguimiento(l,prev); persist(l); } });
+    root.querySelectorAll('select[data-move]').forEach(sel=> sel.onchange=()=>{ const l=DB.leads.find(x=>x._uid==sel.dataset.move); if(l){ const prev=l.estado; const nuevo=sel.value;
+      if(nuevo==='perdido' && prev!=='perdido' && !l.motivoPerdida){ pedirMotivoPerdida(l, m=>{ l.motivoPerdida=m; l.estado=nuevo; aplicarAutoSeguimiento(l,prev); persist(l); }, ()=>{ sel.value=prev||'nuevo'; }); return; }
+      l.estado=nuevo; aplicarAutoSeguimiento(l,prev); persist(l); } });
     // Fecha del próximo contacto editada a mano. Se sella `seguiAgendado` para que la franja de
     // "leads sin seguimiento" no lo vuelva a ofrecer, igual que cuando se agendan en lote.
     // ⚠️ Una fecha puesta a mano la puede pisar aplicarAutoSeguimiento si DESPUÉS se cambia el
@@ -12976,7 +13048,9 @@ function buildFilterTable(cfg){
       window.__abrirComparativo({ cliente, zona: editing.zona||'', m2: m2Lead>0?m2Lead:100, categoria: editing.categoria||'' });
       closeForm();  // cierra la ficha del lead
     };
-    $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } aplicarAutoSeguimiento(editing, estadoAlAbrir); persist(editing); closeForm(); };
+    $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } const guardar=()=>{ aplicarAutoSeguimiento(editing, estadoAlAbrir); persist(editing); closeForm(); };
+      if(editing.estado==='perdido' && estadoAlAbrir!=='perdido' && !editing.motivoPerdida){ pedirMotivoPerdida(editing, m=>{ editing.motivoPerdida=m; guardar(); }, ()=>{}); return; }
+      guardar(); };
   }
   // Deduce los m² de una unidad a partir de las medidas del nombre: "Loseta Cribada 60x40" → 0,6 × 0,4 = 0,24 m².
   // Si el nombre trae 3 medidas (ej "Bloque 20x20x40") es ambiguo cuál es la cara → devuelve 0 y no adivina.
@@ -13261,6 +13335,7 @@ function buildFilterTable(cfg){
   $('crm-view-lista').onclick=()=>setView('lista');
   $('crm-view-tablero').onclick=()=>setView('tablero');
   $('crm-ver-archivados').onclick=()=>{ verArchivados=!verArchivados; render(); };
+  $('crm-prio-btn').onclick=()=>{ const p=$('crm-prio-panel'); p.dataset.abierto=p.dataset.abierto==='1'?'0':'1'; $('crm-prio-btn').classList.toggle('active',p.dataset.abierto==='1'); renderPrio(); };
   $('crm-nuevo').onclick=()=>openForm(null);
   $('crm-preg-edit').onclick=()=>openPreg(null);
   $('crm-preg-cerrar').onclick=closePreg;
