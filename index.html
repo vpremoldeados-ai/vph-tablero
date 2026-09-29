@@ -12546,6 +12546,50 @@ function buildFilterTable(cfg){
       '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px"><b>🏁 Meta de la semana</b><span>'+money(c.monto)+' de '+money(meta)+' · <b style="color:'+(ok?'#1e9e5a':'#c98a06')+'">'+Math.round(c.monto/meta*100)+'%</b> · '+c.cant+' cierre'+(c.cant!==1?'s':'')+'</span></div>'+
       '<div style="height:9px;background:#e8edf3;border-radius:6px;margin-top:6px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(ok?'#1e9e5a':'#4aa3ff')+'"></div></div>'+
       '<div style="font-size:11px;color:var(--muted);margin-top:4px">'+(ok?'¡Meta cumplida! 🎉':'Faltan '+money(meta-c.monto)+'. Los presupuestos dormidos de abajo son el camino más corto.')+' Desde el lunes '+esc(fmtFecha(c.desde))+'. La meta se cambia en Parámetros → CRM.</div></div>'; }
+  // ---------- 📦 Stock para empujar (29/09, plan de ventas de Marcelo) ----------
+  // Hay ~110 t en el galpón y la regla es 'vender antes de fabricar más'. Acá se cruzan dos cosas que ya existen:
+  // lo que hay CURADO y SIN comprometer por encima del mínimo (window.__resumenProduccion().porProducto, la MISMA
+  // cuenta de la Vista Diaria: no se recalcula) y los presupuestos DORMIDOS que pidieron justamente ese producto.
+  // Nunca promete de más: si el cliente cotizó más de lo disponible, el mensaje dice cuánto hay ya.
+  const EXC_MIN_KG=300;   // por debajo de esto un sobrante no vale una oferta (menos de un pallet chico)
+  const normP=s=>String(s||'').trim().toUpperCase();
+  function oportunidadesStock(leads, rp){
+    const out={ exceso:[], leads:[] };
+    if(!rp || !Array.isArray(rp.porProducto)) return out;
+    out.exceso=rp.porProducto.filter(p=>p.estadoVenta==='ok' && p.disponible>0 && (p.disponible-Math.max(0,p.minimo))*(p.pesoUnit||0)>=EXC_MIN_KG)
+      .map(p=>({ codigo:p.codigo, nombre:p.nombre, disponible:p.disponible, exceso:p.disponible-Math.max(0,p.minimo), kgExceso:Math.round((p.disponible-Math.max(0,p.minimo))*(p.pesoUnit||0)) }))
+      .sort((a,b)=>b.kgExceso-a.kgExceso);
+    if(!out.exceso.length) return out;
+    const porCod=new Map(out.exceso.map(e=>[normP(e.codigo),e]));
+    (leads||[]).filter(dormido).forEach(l=>{
+      for(const it of (l.items||[])){ if(!it || !it.producto) continue; const p=(typeof matchProd==='function')?matchProd(it.producto):null; const e=p?porCod.get(normP(p.codigo)):null;
+        if(e){ out.leads.push({ lead:l, prod:e, cantidad:num(it.cantidad) }); break; } }
+    });
+    out.leads.sort((a,b)=>montoLead(b.lead)-montoLead(a.lead));
+    return out;
+  }
+  function mensajeStockLead(l, e, cantidad){
+    const nom=String(l.cliente||'').trim().split(/\s+/)[0]||''; const hola='Hola'+(nom?' '+nom:'')+', ';
+    const cuanto=(cantidad>0 && cantidad<=e.disponible) ? ('las '+Math.round(cantidad)+' u que cotizaste están') : ('tenemos '+Math.round(e.disponible)+' u');
+    return hola+'te aviso que '+e.nombre+' lo tenemos curado y disponible para entrega inmediata: '+cuanto+' listas. Si te sirve, te lo reservo hoy y coordinamos la entrega 👌';
+  }
+  function textoOfertaGeneral(exceso){
+    if(!exceso||!exceso.length) return '';
+    return 'Esta semana tenemos material CURADO y disponible para entrega inmediata:\n'+exceso.slice(0,6).map(e=>'• '+e.nombre+' ('+Math.round(e.disponible)+' u)').join('\n')+'\nSi te sirve, te paso el precio por pallet y te reservo. ¡Avisame!';
+  }
+  function stockHtml(){
+    const rp=(window.__resumenProduccion?window.__resumenProduccion():null);
+    const o=oportunidadesStock(DB.leads, rp); if(!rp || !o.exceso.length) return '';
+    const filaLead=x=>'<tr><td><b>'+esc(x.lead.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">cotizó '+esc(x.prod.nombre)+'</div></td>'+
+      '<td data-sortval="'+montoLead(x.lead)+'"><b>'+money(montoLead(x.lead))+'</b></td>'+
+      '<td>'+(waLink(x.lead.telefono)?'<a class="cmp-rowbtn" href="'+waLink(x.lead.telefono)+'?text='+encodeURIComponent(mensajeStockLead(x.lead,x.prod,x.cantidad))+'" target="_blank" rel="noopener">📲 Avisarle</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+'<button class="cmp-rowbtn" data-prio-edit="'+esc(x.lead._uid)+'">Abrir</button></td></tr>';
+    return '<h4 style="margin:14px 0 4px">📦 Stock para empujar esta semana</h4>'+
+      '<p class="note" style="margin:0 0 6px">Curado y sin comprometer, por encima del mínimo. Hay que <b>venderlo antes de fabricar más</b>.</p>'+
+      '<div class="tbl-wrap"><table><thead><tr><th>Producto</th><th>Disponible (u)</th><th>Sobre el mínimo (u)</th><th>Sobrante (kg)</th></tr></thead><tbody>'+
+      o.exceso.map(e=>'<tr><td><b>'+esc(e.codigo)+'</b> '+esc(e.nombre)+'</td><td>'+Math.round(e.disponible)+'</td><td>'+Math.round(e.exceso)+'</td><td data-sortval="'+e.kgExceso+'">'+e.kgExceso.toLocaleString('es-AR')+'</td></tr>').join('')+'</tbody></table></div>'+
+      '<p style="margin:6px 0"><button class="cmp-btn" id="crm-prio-copiar-oferta" title="Copia un texto con estos productos para mandarlo a las listas de difusión o a los mayoristas">📋 Copiar oferta para difusión / mayoristas</button></p>'+
+      (o.leads.length?'<h4 style="margin:10px 0 4px">🎯 Dormidos que cotizaron justo algo que tenemos ('+o.leads.length+')</h4><div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Monto</th><th></th></tr></thead><tbody>'+o.leads.map(filaLead).join('')+'</tbody></table></div>':'<p class="note">Ningún presupuesto dormido pidió estos productos.</p>');
+  }
   function renderPrio(){
     const box=$('crm-prio-panel'); if(!box) return;
     if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
@@ -12576,10 +12620,13 @@ function buildFilterTable(cfg){
       '<p class="note" style="margin:0 0 6px">Ya cotizados, con el recordatorio vencido. Ordenados por monto. Cada botón 📲 abre el chat con el mensaje de <b>su etapa</b> (obra → stock disponible → precio con fecha límite).</p>'+
       (dorm.length?tabla(dorm.slice(0,25)):'<p class="note">Ningún presupuesto dormido. 👏</p>')+(dorm.length>25?'<p class="note">… y '+(dorm.length-25)+' más.</p>':'')+
       origenHtml()+
+      stockHtml()+
       '<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
       (perd.length?'<div style="display:flex;gap:8px;flex-wrap:wrap">'+Object.keys(cuenta).sort((a,b)=>cuenta[b]-cuenta[a]).map(m=>'<span style="border:1px solid var(--border);border-radius:10px;padding:4px 10px;font-size:12.5px"><b>'+cuenta[m]+'</b> · '+esc(m)+'</span>').join('')+'</div>':'<p class="note">Todavía no hay leads perdidos.</p>');
     $('crm-prio-cerrar').onclick=()=>{ box.dataset.abierto='0'; renderPrio(); const b=$('crm-prio-btn'); if(b) b.classList.remove('active'); };
     box.querySelectorAll('[data-prio-edit]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioEdit); if(l) openForm(l); });
+    const bo=$('crm-prio-copiar-oferta'); if(bo) bo.onclick=()=>{ const rp=(window.__resumenProduccion?window.__resumenProduccion():null); const t=textoOfertaGeneral(oportunidadesStock(DB.leads,rp).exceso);
+      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>{ bo.textContent='✓ Copiado'; }, ()=>{ window.prompt('Copiá este texto:', t); }); else window.prompt('Copiá este texto:', t); };
     box.querySelectorAll('table').forEach(t=>{ if(window.__ordenable) window.__ordenable(t); });
   }
   // Pide el motivo cuando un lead pasa a Perdido. Si se cancela, el lead NO cambia de estado.
