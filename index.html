@@ -14542,6 +14542,12 @@ function buildFilterTable(cfg){
     const interior=String((row&&row.tipo)||'').indexOf('int')===0;
     const nombre=String((row&&row.nombre)||'').trim();
     const hola='Hola'+(nombre?' '+nombre:'')+'! Soy '+firma+' de VPH Premoldeados.';
+    if(accion==='stock' && row && row.obra){
+      // 29/09 (plan de ventas de Marcelo): el revendedor compra cuando tiene una OBRA concreta de su cliente.
+      // Si Sofía marcó que tiene una en marcha, la pregunta pasa a ser por ESA obra, sea cual sea su segmento.
+      const que=String(row.obraNota||'').trim();
+      return hola+' ¿Cómo va la obra'+(que?' ('+que+')':'')+'? Si necesitás losetas, green blocks o topes, pasame las cantidades y te armo el precio por pallets. Fabricamos y entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Te reservo producción cuando me digas 👌';
+    }
     if(accion==='stock'){
       // 22/09 (pedido de Marcelo): salvo casos puntuales, los revendedores NO acumulan stock propio —
       // compran recién cuando tienen un pedido concreto de SU cliente. "¿Necesitás reponer stock?" no
@@ -14696,14 +14702,14 @@ function buildFilterTable(cfg){
     const vista=MAYW.map((r,mi)=>({r,mi}));
     const ordenTipo=k=>MAY_TIPOS.findIndex(t=>t.k===k);
     const segOrd=r=>maySeg(maySegmentoDe(MAY_ACT[topesNorm(r.nombre)])).ord;
-    vista.sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || (segOrd(b.r)-segOrd(a.r)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    vista.sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || ((b.r.obra?1:0)-(a.r.obra?1:0)) || (segOrd(b.r)-segOrd(a.r)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
+    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
       if(t.k!==tipoPrev){ tipoPrev=t.k;
-        html+='<tr><td colspan="8" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— PDF: '+esc(t.pdf)+'</span></td></tr>'; }
+        html+='<tr><td colspan="9" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— PDF: '+esc(t.pdf)+'</span></td></tr>'; }
       const tel=String(r.telefono||'').trim();
       const lk=tel ? topesWaLink(tel) : null;
       const conf = mayConfirm && mayConfirm.mi===mi ? mayConfirm.accion : null;
@@ -14723,6 +14729,7 @@ function buildFilterTable(cfg){
         '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700"></td>'+
         '<td>'+selTipo(r,mi)+'</td>'+
         '<td>'+actCel+'</td>'+
+        '<td style="white-space:nowrap"><label title="Tiene una obra en marcha: sube al principio de su grupo y el mensaje de la columna Stock pregunta por la obra"><input type="checkbox" data-may-obra="'+mi+'"'+(r.obra?' checked':'')+'></label> <input data-may-obranota="'+mi+'" value="'+esc(r.obraNota||'')+'" placeholder="¿qué obra?" style="width:110px'+(r.obra?'':';opacity:.5')+'"></td>'+
         '<td><input data-may-tel="'+mi+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
         '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
         '<td>'+celda('stock', '', stockDet)+'</td>'+
@@ -14730,7 +14737,7 @@ function buildFilterTable(cfg){
         '<td><button class="cmp-x" data-may-borrar="'+mi+'" title="Sacar de esta lista (no toca la ficha del cliente ni sus ventas)">✕</button></td>'+
       '</tr>';
     });
-    if(!vista.length) html+='<tr><td colspan="8" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
+    if(!vista.length) html+='<tr><td colspan="9" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
     tabla.innerHTML=html+'</tbody>';
     // Cableado por querySelectorAll sobre elementos (§ patrón de viajes: testeable con stubs).
     cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
@@ -14748,6 +14755,8 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-may-tipo]').forEach(s=>s.onchange=()=>{ mayUpd(+s.dataset.mayTipo, r=>({...r, tipo:s.value})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-obra]').forEach(c=>c.onchange=()=>{ mayUpd(+c.dataset.mayObra, r=>({...r, obra:c.checked, obraFecha:c.checked?hoyISO:''})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-obranota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayObranota, r=>({...r, obraNota:i.value.trim()})));
     tabla.querySelectorAll('[data-may-nota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNota, r=>({...r, notas:i.value})));
     tabla.querySelectorAll('[data-may-borrar]').forEach(b=>b.onclick=()=>{
       const mi=+b.dataset.mayBorrar, r=MAYW[mi]; if(!r) return;
