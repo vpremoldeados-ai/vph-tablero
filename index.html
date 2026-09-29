@@ -12064,6 +12064,7 @@ function buildFilterTable(cfg){
     {g:'CRM', k:'crmDiasReconsulta1', l:'Reconsulta 1 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 1ª reconsulta. En 0 no se agenda.'},
     {g:'CRM', k:'crmDiasReconsulta2', l:'Reconsulta 2 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 2ª reconsulta. En 0 no se agenda.'},
     {g:'CRM', k:'crmDiasReconsulta3', l:'Reconsulta 3 → recordar a los (días hábiles)', def:7, t:'num', hint:'Último intento antes de darlo por perdido. En 0 no se agenda.'},
+    {g:'CRM', k:'crmRetomarDias', l:'Retomar leads perdidos a los (días)', def:30, t:'num', hint:'Un lead perdido aparece en 🎯 Prioridad de hoy para volver a escribirle pasados estos días desde que se perdió, con un mensaje según el motivo. Deja de ofrecerse a los 120 días. En 0 no se ofrece.'},
     {g:'CRM', k:'crmMetaSemanal', l:'Meta de cierre semanal ($)', def:5000000, t:'num', hint:'Cuánto se quiere cerrar por semana (lunes a viernes) en leads confirmados. Se ve en 🎯 Prioridad de hoy. En 0 no se muestra. En agosto se cerraron $7 M en 7 días hábiles.'},
     {g:'CRM', k:'waMinRespuesta', l:'WhatsApp: avisar si un cliente espera más de (minutos hábiles)', def:30, t:'num', hint:'Cuenta solo lunes a viernes de 9 a 17. Pasado ese tiempo sin marcar el mensaje como resuelto, la bandeja lo marca en rojo y sale una alerta en la Vista Diaria. En 0 no avisa.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
@@ -12611,6 +12612,45 @@ function buildFilterTable(cfg){
       '<p style="margin:6px 0"><button class="cmp-btn" id="crm-prio-copiar-oferta" title="Copia un texto con estos productos para mandarlo a las listas de difusión o a los mayoristas">📋 Copiar oferta para difusión / mayoristas</button></p>'+
       (o.leads.length?'<h4 style="margin:10px 0 4px">🎯 Dormidos que cotizaron justo algo que tenemos ('+o.leads.length+')</h4><div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Monto</th><th></th></tr></thead><tbody>'+o.leads.map(filaLead).join('')+'</tbody></table></div>':'<p class="note">Ningún presupuesto dormido pidió estos productos.</p>');
   }
+  // ---------- ♻️ Perdidos para retomar (29/09, plan de ventas de Marcelo) ----------
+  // Un 'no' de hoy no es para siempre: a los 30 días la obra se reactivó, el precio se puede volver a mirar o la
+  // entrega ya no es problema. Se ofrece cada perdido UNA vez, con un mensaje distinto según el MOTIVO que Sofía
+  // eligió al perderlo. Solo con fecha de pérdida real (los perdidos viejos no la tienen y no se inventa).
+  // No se ofrece a quien tiene hoy otro lead abierto con el mismo teléfono (ya lo estamos atendiendo).
+  const RETOMAR_HASTA=120;
+  const ult8=t=>String(t||'').replace(/\D/g,'').slice(-8);
+  const diasRetomar=()=>{ const n=Math.round(num(window.__param?window.__param('crmRetomarDias',30):30)); return n>0?Math.min(n,RETOMAR_HASTA):0; };
+  function diasDesdeISO(iso, hoy){ const a=String(iso||'').slice(0,10).split('-').map(Number), b=String(hoy).slice(0,10).split('-').map(Number); if(a.length<3||!a[0]||b.length<3) return null;
+    return Math.round((new Date(b[0],b[1]-1,b[2])-new Date(a[0],a[1]-1,a[2]))/86400000); }
+  function retomables(leads, hoy){
+    const n=diasRetomar(); if(!n) return [];
+    const abiertos=new Set((leads||[]).filter(l=>ACTIVOS.includes(l.estado||'nuevo')).map(l=>ult8(l.telefono)).filter(Boolean));
+    return (leads||[]).filter(l=>l.estado==='perdido' && l.fechaPerdido && !l.retomadoFecha).map(l=>({ l, dias:diasDesdeISO(l.fechaPerdido, hoy) }))
+      .filter(x=>x.dias!==null && x.dias>=n && x.dias<=RETOMAR_HASTA && !(ult8(x.l.telefono) && abiertos.has(ult8(x.l.telefono))))
+      .sort((a,b)=>montoLead(b.l)-montoLead(a.l));
+  }
+  function mensajeRetomar(l){
+    const nom=String(l.cliente||'').trim().split(/\s+/)[0]||''; const hola='Hola'+(nom?' '+nom:'')+', ¿cómo estás? ';
+    switch(l.motivoPerdida){
+      case 'Precio': return hola+'Te escribo por el presupuesto que hablamos. Tenemos planes de cuotas y precio por cantidad; si querés te armo una cotización nueva para que la compares 👌';
+      case 'Plazo de entrega': return hola+'Hoy tenemos material curado disponible para entrega inmediata. Si todavía lo necesitás, te armo la cotización con fecha de entrega 👌';
+      case 'Flete': return hola+'Revisé el envío de tu presupuesto: te puedo cotizar de nuevo el flete o, si te sirve, retirás por fábrica en Toledo. ¿Lo vemos?';
+      case 'Compró en otro lado': return hola+'¿Cómo te fue con la compra? Si para esta obra u otra necesitás losetas, green blocks o topes, contá con nosotros 👌';
+      case 'Sin obra / postergó': return hola+'¿Se reactivó la obra? Si ya la retomás, te actualizo el presupuesto y te confirmo cuándo podemos entregar 👌';
+      case 'No respondió': return hola+'Retomo el presupuesto que te pasamos por si se te pasó. ¿Lo pudiste ver? Cualquier duda con el precio o el envío lo resolvemos rápido 👌';
+      default: return hola+'Retomo el presupuesto que te pasamos por si todavía te interesa. Si cambió algo en la obra, te lo actualizo sin problema 👌';
+    }
+  }
+  function retomarHtml(){
+    const r=retomables(DB.leads, hoyISO); if(!r.length) return '';
+    return '<h4 style="margin:14px 0 4px">♻️ Perdidos para retomar: '+r.length+'</h4>'+
+      '<p class="note" style="margin:0 0 6px">Se perdieron hace '+diasRetomar()+' días o más. El mensaje depende del motivo. Después de escribirle, tocá <b>✓ Ya le escribí</b> para que no vuelva a salir acá.</p>'+
+      '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Motivo</th><th>Monto</th><th>Hace</th><th></th></tr></thead><tbody>'+
+      r.slice(0,20).map(x=>{ const wa=waLink(x.l.telefono); return '<tr><td><b>'+esc(x.l.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">'+esc(resumenPedido(x.l))+'</div></td>'+
+        '<td>'+esc(x.l.motivoPerdida||'Sin motivo')+'</td><td data-sortval="'+montoLead(x.l)+'">'+(montoLead(x.l)>0?money(montoLead(x.l)):'—')+'</td><td data-sortval="'+x.dias+'">'+x.dias+' d</td>'+
+        '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeRetomar(x.l))+'" target="_blank" rel="noopener">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
+          '<button class="cmp-rowbtn" data-prio-retomado="'+esc(x.l._uid)+'" title="Ya le escribí: no vuelve a salir en esta lista">✓ Ya le escribí</button></td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
+  }
   function renderPrio(){
     const box=$('crm-prio-panel'); if(!box) return;
     if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
@@ -12642,10 +12682,12 @@ function buildFilterTable(cfg){
       (dorm.length?tabla(dorm.slice(0,25)):'<p class="note">Ningún presupuesto dormido. 👏</p>')+(dorm.length>25?'<p class="note">… y '+(dorm.length-25)+' más.</p>':'')+
       origenHtml()+
       stockHtml()+
+      retomarHtml()+
       '<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
       (perd.length?'<div style="display:flex;gap:8px;flex-wrap:wrap">'+Object.keys(cuenta).sort((a,b)=>cuenta[b]-cuenta[a]).map(m=>'<span style="border:1px solid var(--border);border-radius:10px;padding:4px 10px;font-size:12.5px"><b>'+cuenta[m]+'</b> · '+esc(m)+'</span>').join('')+'</div>':'<p class="note">Todavía no hay leads perdidos.</p>');
     $('crm-prio-cerrar').onclick=()=>{ box.dataset.abierto='0'; renderPrio(); const b=$('crm-prio-btn'); if(b) b.classList.remove('active'); };
     box.querySelectorAll('[data-prio-edit]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioEdit); if(l) openForm(l); });
+    box.querySelectorAll('[data-prio-retomado]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioRetomado); if(!l) return; l.retomadoFecha=hoyISO; persist(l); });
     const bo=$('crm-prio-copiar-oferta'); if(bo) bo.onclick=()=>{ const rp=(window.__resumenProduccion?window.__resumenProduccion():null); const t=textoOfertaGeneral(oportunidadesStock(DB.leads,rp).exceso);
       if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>{ bo.textContent='✓ Copiado'; }, ()=>{ window.prompt('Copiá este texto:', t); }); else window.prompt('Copiá este texto:', t); };
     box.querySelectorAll('table').forEach(t=>{ if(window.__ordenable) window.__ordenable(t); });
