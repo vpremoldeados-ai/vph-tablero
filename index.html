@@ -12065,6 +12065,7 @@ function buildFilterTable(cfg){
     {g:'CRM', k:'crmDiasReconsulta2', l:'Reconsulta 2 → recordar a los (días hábiles)', def:5, t:'num', hint:'Días hasta el próximo toque después de la 2ª reconsulta. En 0 no se agenda.'},
     {g:'CRM', k:'crmDiasReconsulta3', l:'Reconsulta 3 → recordar a los (días hábiles)', def:7, t:'num', hint:'Último intento antes de darlo por perdido. En 0 no se agenda.'},
     {g:'CRM', k:'crmRetomarDias', l:'Retomar leads perdidos a los (días)', def:30, t:'num', hint:'Un lead perdido aparece en 🎯 Prioridad de hoy para volver a escribirle pasados estos días desde que se perdió, con un mensaje según el motivo. Deja de ofrecerse a los 120 días. En 0 no se ofrece.'},
+    {g:'CRM', k:'crmRecompraDias', l:'Recompra: volver a escribirle a un cliente a los (días)', def:90, t:'num', hint:'Un cliente minorista que ya compró aparece en 🎯 Prioridad de hoy pasados estos días desde su última compra (hasta 365), con un mensaje para otra obra o para completar con otro producto. En 0 no se ofrece.'},
     {g:'CRM', k:'crmMetaSemanal', l:'Meta de cierre semanal ($)', def:5000000, t:'num', hint:'Cuánto se quiere cerrar por semana (lunes a viernes) en leads confirmados. Se ve en 🎯 Prioridad de hoy. En 0 no se muestra. En agosto se cerraron $7 M en 7 días hábiles.'},
     {g:'CRM', k:'waMinRespuesta', l:'WhatsApp: avisar si un cliente espera más de (minutos hábiles)', def:30, t:'num', hint:'Cuenta solo lunes a viernes de 9 a 17. Pasado ese tiempo sin marcar el mensaje como resuelto, la bandeja lo marca en rojo y sale una alerta en la Vista Diaria. En 0 no avisa.'},
     {g:'Asistente',  k:'diasReCobro',  l:'Recordar cobro vencido cada (días)',         def:7,    t:'num', hint:'Cada cuántos días vuelve a aparecer en la bandeja.'},
@@ -12651,6 +12652,59 @@ function buildFilterTable(cfg){
         '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeRetomar(x.l))+'" target="_blank" rel="noopener">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
           '<button class="cmp-rowbtn" data-prio-retomado="'+esc(x.l._uid)+'" title="Ya le escribí: no vuelve a salir en esta lista">✓ Ya le escribí</button></td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
   }
+  // ---------- 🔁 Recompra y venta cruzada (29/09, plan de ventas de Marcelo) ----------
+  // Vender a quien ya compró es lo más barato que hay: ya nos conoce, ya confió. Se leen las ventas que el módulo
+  // Ventas YA tiene en memoria (window.__ventasTodas): CERO lecturas nuevas de Firestore. Dos oportunidades:
+  //  · COMPLEMENTO: compró piso (losetas/greens) y nunca topes, o al revés → se le ofrece lo que le falta.
+  //  · RECOMPRA: compró hace RECOMPRA_MIN días o más (otra obra) → se le pregunta cómo le fue.
+  // Solo MINORISTAS (los mayoristas tienen su panel), sin Notas de Crédito, y no a quien hoy tiene un lead abierto.
+  // 'Ya le escribí' se guarda en ESTA PC (localStorage): no hay lead donde sellarlo. Si Sofía usa otra PC volverá a salir.
+  const COMPLEMENTO_MIN=30, RECOMPRA_MAX=365, RECOMPRA_KEY='vph_recompra_ofrecidos_v1';
+  const normCli=s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
+  const diasRecompra=()=>{ const n=Math.round(num(window.__param?window.__param('crmRecompraDias',90):90)); return n>0?Math.min(n,RECOMPRA_MAX):0; };
+  function familiaDe(it){ const c=String((it&&(it.codigo||it.desc))||'').trim().toUpperCase();
+    if(/^U?LC\d/.test(c) || /LOSETA/.test(c)) return 'piso'; if(/^U?G[BRC]\d/.test(c) || /GREEN/.test(c)) return 'piso'; if(/^TE[TC]\d/.test(c) || /TOPE/.test(c)) return 'topes'; return ''; }
+  function recompraOfrecidos(){ try{ return JSON.parse(localStorage.getItem(RECOMPRA_KEY))||{}; }catch(e){ return {}; } }
+  function recompraMarcar(nombre){ try{ const o=recompraOfrecidos(); o[normCli(nombre)]=hoyISO; localStorage.setItem(RECOMPRA_KEY, JSON.stringify(o)); }catch(e){} }
+  function oportunidadesRecompra(ventas, leads, hoy, ofrecidos){
+    const min=diasRecompra(); if(!min) return [];
+    const abiertos=new Set((leads||[]).filter(l=>ACTIVOS.includes(l.estado||'nuevo')).map(l=>normCli(l.cliente)).filter(Boolean));
+    const por=new Map();
+    (ventas||[]).forEach(v=>{ if(!v || v.tipoComprobante==='Nota de Crédito') return; const n=normCli(v.cliente); if(!n) return;
+      if(window.__canalVenta && window.__canalVenta(v)==='Mayorista') return;
+      const f=String(v.fecha||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
+      const c=por.get(n)||{ nombre:v.cliente, cuit:v.cuit||'', ultima:'', fams:new Set(), cant:0, monto:0 };
+      c.cant++; if(f>c.ultima){ c.ultima=f; c.nombre=v.cliente; c.cuit=v.cuit||c.cuit; }
+      (v.items||[]).forEach(it=>{ const fm=familiaDe(it); if(fm) c.fams.add(fm); });
+      c.monto+=(typeof window.__ventaCalc==='function')?num(window.__ventaCalc(v).total):num(v.total); por.set(n,c); });
+    const out=[]; por.forEach((c,n)=>{ if(abiertos.has(n) || (ofrecidos&&ofrecidos[n])) return;
+      const dias=diasDesdeISO(c.ultima, hoy); if(dias===null || dias>RECOMPRA_MAX) return;
+      let tipo='';
+      if(dias>=COMPLEMENTO_MIN && c.fams.has('piso') && !c.fams.has('topes')) tipo='topes';
+      else if(dias>=COMPLEMENTO_MIN && c.fams.has('topes') && !c.fams.has('piso')) tipo='piso';
+      else if(dias>=min) tipo='recompra';
+      if(tipo) out.push({ nombre:c.nombre, cuit:c.cuit, norm:n, tipo, dias, ultima:c.ultima, cant:c.cant, monto:c.monto }); });
+    return out.sort((a,b)=>b.monto-a.monto);
+  }
+  function mensajeRecompra(o){
+    const nom=String(o.nombre||'').trim().split(/\s+/)[0]||''; const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
+    const hola='Hola'+(nom?' '+nom:'')+'! Soy '+firma+' de VPH Premoldeados. ';
+    if(o.tipo==='topes') return hola+'Hace un tiempo nos compraste para tu piso y quería saber cómo te fue. Si tenés una cochera o playa, los topes de estacionamiento de hormigón ordenan y protegen: ¿querés que te pase precio? 👌';
+    if(o.tipo==='piso') return hola+'Hace un tiempo nos compraste topes y quería saber cómo te fue. Si querés completar el espacio, tenemos losetas cribadas y green blocks que drenan el agua y se colocan rápido: ¿te paso precio? 👌';
+    return hola+'Hace un tiempo nos compraste y quería saber cómo te fue con el material. Si tenés otra obra o necesitás más, avisame y te armo la cotización con la fecha de entrega 👌';
+  }
+  const ETIQ_RECOMPRA={ topes:'Ofrecerle topes', piso:'Ofrecerle losetas/greens', recompra:'Otra obra' };
+  function recompraHtml(){
+    if(!window.__ventasTodas) return '';
+    const r=oportunidadesRecompra(window.__ventasTodas(), DB.leads, hoyISO, recompraOfrecidos()); if(!r.length) return '';
+    return '<h4 style="margin:14px 0 4px">🔁 Volver a vender a quien ya compró: '+r.length+'</h4>'+
+      '<p class="note" style="margin:0 0 6px">Clientes minoristas que ya nos compraron (ordenados por lo que compraron). Vender de nuevo cuesta mucho menos que conseguir uno nuevo. Tocá <b>✓ Ya le escribí</b> para que no vuelva a salir (se guarda en esta PC).</p>'+
+      '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Oportunidad</th><th>Última compra</th><th>Compró</th><th></th></tr></thead><tbody>'+
+      r.slice(0,20).map(o=>{ let tel=''; try{ tel=(window.__wa&&window.__wa.telWa)?window.__wa.telWa(o.nombre,o.cuit):''; }catch(e){} const wa=waLink(tel);
+        return '<tr><td><b>'+esc(o.nombre)+'</b></td><td>'+esc(ETIQ_RECOMPRA[o.tipo])+'</td><td data-sortval="'+o.dias+'">hace '+o.dias+' d</td><td data-sortval="'+o.monto+'">'+o.cant+' compra'+(o.cant!==1?'s':'')+' · '+money(o.monto)+'</td>'+
+          '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeRecompra(o))+'" target="_blank" rel="noopener">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
+          '<button class="cmp-rowbtn" data-prio-recompra="'+esc(o.norm)+'">✓ Ya le escribí</button></td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
+  }
   function renderPrio(){
     const box=$('crm-prio-panel'); if(!box) return;
     if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
@@ -12683,11 +12737,13 @@ function buildFilterTable(cfg){
       origenHtml()+
       stockHtml()+
       retomarHtml()+
+      recompraHtml()+
       '<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
       (perd.length?'<div style="display:flex;gap:8px;flex-wrap:wrap">'+Object.keys(cuenta).sort((a,b)=>cuenta[b]-cuenta[a]).map(m=>'<span style="border:1px solid var(--border);border-radius:10px;padding:4px 10px;font-size:12.5px"><b>'+cuenta[m]+'</b> · '+esc(m)+'</span>').join('')+'</div>':'<p class="note">Todavía no hay leads perdidos.</p>');
     $('crm-prio-cerrar').onclick=()=>{ box.dataset.abierto='0'; renderPrio(); const b=$('crm-prio-btn'); if(b) b.classList.remove('active'); };
     box.querySelectorAll('[data-prio-edit]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioEdit); if(l) openForm(l); });
     box.querySelectorAll('[data-prio-retomado]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioRetomado); if(!l) return; l.retomadoFecha=hoyISO; persist(l); });
+    box.querySelectorAll('[data-prio-recompra]').forEach(b=> b.onclick=()=>{ recompraMarcar(b.dataset.prioRecompra); renderPrio(); });
     const bo=$('crm-prio-copiar-oferta'); if(bo) bo.onclick=()=>{ const rp=(window.__resumenProduccion?window.__resumenProduccion():null); const t=textoOfertaGeneral(oportunidadesStock(DB.leads,rp).exceso);
       if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>{ bo.textContent='✓ Copiado'; }, ()=>{ window.prompt('Copiá este texto:', t); }); else window.prompt('Copiá este texto:', t); };
     box.querySelectorAll('table').forEach(t=>{ if(window.__ordenable) window.__ordenable(t); });
