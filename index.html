@@ -12519,6 +12519,18 @@ function buildFilterTable(cfg){
     if(est==='nuevo') return hola+'gracias por tu consulta. ¿Me pasás los m² y el lugar de entrega para armarte el presupuesto?';
     return hola+'¿pudiste ver el presupuesto? Si tenés alguna duda con el precio o el envío, decime y lo vemos.';
   }
+  // De dónde vienen los leads y cuánto rinde cada origen (sobre los ya DECIDIDOS, igual que la tasa de arriba).
+  function rendimientoPorOrigen(leads){
+    const m={}; (leads||[]).forEach(l=>{ const o=String(l.origen||'').trim()||'Sin origen'; const r=m[o]||(m[o]={origen:o,total:0,conf:0,perd:0,monto:0});
+      r.total++; if(l.estado==='confirmado'){ r.conf++; r.monto+=montoLead(l); } else if(l.estado==='perdido') r.perd++; });
+    return Object.keys(m).map(k=>{ const r=m[k]; r.decididos=r.conf+r.perd; r.tasa=r.decididos>0?Math.round(r.conf/r.decididos*100):null; return r; }).sort((a,b)=>b.total-a.total);
+  }
+  function origenHtml(){
+    const rows=rendimientoPorOrigen(DB.leads); if(!rows.length) return '';
+    return '<h4 style="margin:14px 0 4px">De dónde vienen y cuánto rinden</h4><div class="tbl-wrap"><table><thead><tr><th>Origen</th><th>Leads</th><th>Confirmados</th><th>Perdidos</th><th>Conversión</th><th>Vendido</th></tr></thead><tbody>'+
+      rows.map(r=>'<tr><td><b>'+esc(r.origen)+'</b></td><td>'+r.total+'</td><td>'+r.conf+'</td><td>'+r.perd+'</td><td>'+(r.tasa==null?'—':r.tasa+'%')+'</td><td>'+(r.monto>0?money(r.monto):'—')+'</td></tr>').join('')+'</tbody></table></div>'+
+      '<p class="note" style="margin:4px 0 0">Conversión = confirmados sobre los ya decididos (confirmado o perdido). "Sin origen" son los leads que nadie marcó: cuanto más grande sea esa fila, menos sirve esta tabla.</p>';
+  }
   function renderPrio(){
     const box=$('crm-prio-panel'); if(!box) return;
     if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
@@ -12547,6 +12559,7 @@ function buildFilterTable(cfg){
       '<h4 style="margin:14px 0 4px">😴 Presupuestos dormidos: '+dorm.length+' · '+money(totDorm)+'</h4>'+
       '<p class="note" style="margin:0 0 6px">Ya cotizados, con el recordatorio vencido. Ordenados por monto. Cada botón 📲 abre el chat con el mensaje de <b>su etapa</b> (obra → stock disponible → precio con fecha límite).</p>'+
       (dorm.length?tabla(dorm.slice(0,25)):'<p class="note">Ningún presupuesto dormido. 👏</p>')+(dorm.length>25?'<p class="note">… y '+(dorm.length-25)+' más.</p>':'')+
+      origenHtml()+
       '<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
       (perd.length?'<div style="display:flex;gap:8px;flex-wrap:wrap">'+Object.keys(cuenta).sort((a,b)=>cuenta[b]-cuenta[a]).map(m=>'<span style="border:1px solid var(--border);border-radius:10px;padding:4px 10px;font-size:12.5px"><b>'+cuenta[m]+'</b> · '+esc(m)+'</span>').join('')+'</div>':'<p class="note">Todavía no hay leads perdidos.</p>');
     $('crm-prio-cerrar').onclick=()=>{ box.dataset.abierto='0'; renderPrio(); const b=$('crm-prio-btn'); if(b) b.classList.remove('active'); };
@@ -12965,7 +12978,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null, estadoAlAbrir=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'Web cotizador', pago:'A confirmar', lugar:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'', pago:'A confirmar', lugar:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); estadoAlAbrir = l ? (l.estado||'nuevo') : null; editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -12978,7 +12991,7 @@ function buildFilterTable(cfg){
         fld('Cliente','col2','<input id="cf-cli" value="'+esc(l.cliente)+'" placeholder="Nombre o empresa">') +
         fld('Teléfono (WhatsApp)','','<input id="cf-tel" value="'+esc(l.telefono)+'" placeholder="351...">') +
         fld('Email','','<input id="cf-email" value="'+esc(l.email)+'">') +
-        fld('Origen','','<select id="cf-origen">'+opt(ORIGENES,l.origen)+'</select>') +
+        fld('Origen'+(l.origen?'':' <span style="color:#d64541">* elegí de dónde llegó</span>'),'','<select id="cf-origen"><option value=""'+(l.origen?'':' selected')+'>— Elegir —</option>'+opt(ORIGENES,l.origen)+'</select>') +
         fld('Estado','','<select id="cf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(l.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
         fld('Forma de entrega (flete)','col2','<select id="cf-zona">'+zonasOpt(l.zona)+'</select>') +
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección">') +
@@ -13035,7 +13048,7 @@ function buildFilterTable(cfg){
     // Tarjetas: origen del lead, etapa del pipeline (con el color de su columna del kanban) y la zona de
     // flete (al tocarla se recalcula la cotización en vivo, igual que en Presupuestos).
     if(window.__tarjetas){
-      window.__tarjetas('cf-origen');
+      window.__tarjetas('cf-origen', {omitir:v=>v===''});
       window.__tarjetas('cf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
       window.__tarjetas('cf-zona');
     }
@@ -13048,7 +13061,8 @@ function buildFilterTable(cfg){
       window.__abrirComparativo({ cliente, zona: editing.zona||'', m2: m2Lead>0?m2Lead:100, categoria: editing.categoria||'' });
       closeForm();  // cierra la ficha del lead
     };
-    $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } const guardar=()=>{ aplicarAutoSeguimiento(editing, estadoAlAbrir); persist(editing); closeForm(); };
+    $('cf-save').onclick=()=>{ if(!String(editing.cliente||'').trim() && !String(editing.telefono||'').trim()){ alert('Cargá al menos el cliente o el teléfono.'); return; } if(estadoAlAbrir===null && !String(editing.origen||'').trim()){ alert('Elegí de dónde llegó el lead (WhatsApp, Instagram, Google Ads, Referido…). Sin eso no podemos saber qué publicidad rinde.'); return; }
+      const guardar=()=>{ aplicarAutoSeguimiento(editing, estadoAlAbrir); persist(editing); closeForm(); };
       if(editing.estado==='perdido' && estadoAlAbrir!=='perdido' && !editing.motivoPerdida){ pedirMotivoPerdida(editing, m=>{ editing.motivoPerdida=m; guardar(); }, ()=>{}); return; }
       guardar(); };
   }
