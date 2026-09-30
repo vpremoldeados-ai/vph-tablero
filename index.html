@@ -12978,7 +12978,11 @@ function buildFilterTable(cfg){
     $('crm-tab-topes').classList.toggle('active', t==='topes');
     $('crm-leads-section').style.display = t==='leads' ? '' : 'none';
     $('crm-topes-panel').style.display = t==='topes' ? '' : 'none';
-    if(t==='topes') drawTopes(); else render();
+    if(t==='topes'){
+      // 30/09 (velocidad): las ~4.000 fichas se bajan recien al abrir esta pestaña; el snapshot la dibuja al llegar.
+      if(window.__usaNube && !topesCargado){ const tb=$('topes-tabla'); if(tb) tb.innerHTML='<tr><td style="padding:14px;color:var(--muted)">Cargando prospectos…</td></tr>'; topesSubscribe(); }
+      else drawTopes();
+    } else render();
   }
   function setView(v){ VIEW=v; localStorage.setItem('vph_crm_view', v);
     $('crm-view-lista').classList.toggle('active', v==='lista');
@@ -13695,7 +13699,7 @@ function buildFilterTable(cfg){
   // Registra siempre la fecha (11/09, pedido de Marcelo: "que registres la fecha de la última
   // acción en el prospecto") — mandar el mensaje es una acción, cambie o no el estado.
   const topesAlEnviar=row=> ({...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:Date.now(), accionPor:(typeof topesFirma==='function' ? topesFirma() : ''), accionPc:(typeof topesPcId==='function' ? topesPcId() : '')});
-  let TOPES=[], topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='', topesImgEstado='';
+  let TOPES=[], topesCargado=false, topesUnsub=null, topesFiltroEstado='', topesFiltroRubro='', topesFiltroTexto='', topesFormAbierto=false, topesUltimoAbierto='', topesImgEstado='';
   // 29/09 (velocidad): la tabla dibujaba las ~4.000 fichas juntas = 98.000 nodos del DOM (81% de todo el Tablero) y la rehacia
   // en cada cambio. Ahora dibuja de a TOPES_PAGINA; los filtros y el buscador siguen mirando TODA la lista.
   const TOPES_PAGINA=150; let topesLimite=TOPES_PAGINA;
@@ -13770,8 +13774,8 @@ function buildFilterTable(cfg){
                ...del.map(id=>b=>b.delete(c.FS.doc(c.db,TOPES_FICHAS,id)))];
     for(let i=0;i<ops.length;i+=400){ const b=c.FS.writeBatch(c.db); ops.slice(i,i+400).forEach(f=>f(b)); b.commit().catch(e=>alert('Error al guardar: '+e.message)); }
   }
-  function topesSubscribe(){ if(!window.__usaNube){ TOPES=topesLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(topesUnsub)topesUnsub();
-    topesUnsub=c.FS.onSnapshot(c.FS.collection(c.db,TOPES_FICHAS), snap=>{ TOPES=snap.docs.map(d=>({...d.data(), _uid:d.id})).sort((a,b)=>(Number(a.orden)||0)-(Number(b.orden)||0));
+  function topesSubscribe(){ if(!window.__usaNube){ TOPES=topesLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(topesUnsub) return;  // 30/09: se suscribe una sola vez, y recien cuando hace falta (ver topesSubscribeSiCorresponde)
+    topesUnsub=c.FS.onSnapshot(c.FS.collection(c.db,TOPES_FICHAS), snap=>{ topesCargado=true; TOPES=snap.docs.map(d=>({...d.data(), _uid:d.id})).sort((a,b)=>(Number(a.orden)||0)-(Number(b.orden)||0));
       const btn=$('crm-tab-topes'); if(btn){ const n=TOPES.filter(t=>t.estado&&t.estado!=='pendiente').length; btn.textContent='🔩 Topes ('+n+'/'+TOPES.length+')'; }
       if(crmTab==='topes') drawTopes();
       if(topesRutaAbierta) drawTopesRuta();
@@ -15107,7 +15111,10 @@ function buildFilterTable(cfg){
   // un botón). Sigue sin ser un overlay, ahora es una vista propia que reemplaza a la de Leads.
   $('crm-tab-leads').onclick=()=>setCrmTab('leads');
   $('crm-tab-topes').onclick=()=>setCrmTab('topes');
-  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>topesSubscribe()); }
+  // 30/09: solo se baja la lista si la pestaña Topes esta abierta o el envio automatico esta prendido (lo necesita);
+  // si no, se espera a que alguien abra Topes (setCrmTab). En modo local no hay costo: se carga siempre.
+  function topesSubscribeSiCorresponde(){ if(crmTab==='topes' || topesAutoOn()) topesSubscribe(); }
+  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>topesSubscribeSiCorresponde()); }
   else topesSubscribe();
   // El buscador vive FUERA de #crm-topes-controles (que drawTopes reescribe entero) para no perder
   // el foco ni el cursor en cada tecla — mismo criterio que crm-buscar/bd-buscar.
