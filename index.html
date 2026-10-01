@@ -1157,6 +1157,7 @@
             <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
             <button class="cmp-btn" id="crm-cartel-abrir" title="Marcelo va visitando los corralones para ver si tienen la cartelería de VPH">🪧 Cartelería</button>
             <button class="cmp-btn" id="crm-may-abrir" title="Los revendedores mayoristas agrupados por su lista de precios (CBA/Interior × Facturado/Contado) — para mandarles el listado del mes y consultarles stock por WhatsApp">🧱 Mayoristas</button>
+            <button class="cmp-btn" id="crm-bn-abrir" title="Prospectos de la Base Nivel BNV-40 (apoyo regulable para módulos y contenedores): fabricantes y alquiladores de módulos">📐 Base Nivel</button>
             <button class="cmp-btn" id="crm-export">Exportar JSON</button>
             <button class="cmp-btn" id="crm-import">Importar JSON</button>
             <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -1182,6 +1183,16 @@
           </div>
           <div id="crm-may-controles"></div>
           <div class="tbl-wrap"><table id="crm-may-tabla"></table></div>
+        </div>
+        <!-- ===== BASE NIVEL BNV-40 (01/10, pedido de Marcelo): producto nuevo para fabricantes y alquiladores
+             de módulos y contenedores. Lista propia (vph_config/crm_basenivel), aparte de Topes. -->
+        <div id="crm-bn-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <h3 style="margin:0">📐 Base Nivel BNV-40 — módulos y contenedores</h3>
+            <button class="cmp-x" id="crm-bn-cerrar" style="margin-left:auto" title="Ocultar el panel de Base Nivel">✕</button>
+          </div>
+          <div id="crm-bn-controles"></div>
+          <div class="tbl-wrap"><table id="crm-bn-tabla"></table></div>
         </div>
         <div id="crm-prio-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px"></div>
         <div id="crm-sinsegui" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.5;color:#7a5b00"></div>
@@ -15106,6 +15117,186 @@ function buildFilterTable(cfg){
       maySave(MAYW.filter((x,j)=>j!==mi)); drawMayoristas();
     });
   }
+  // ---------- BASE NIVEL BNV-40 (01/10, pedido de Marcelo: "armá la sección Base Nivel en el CRM") ----------
+  // Producto NUEVO (apoyo de hormigón regulable para módulos y contenedores) que se vende a OTRO
+  // público que los topes: fabricantes y alquiladores de módulos. Por eso va APARTE de Topes (otra
+  // lista, otro mensaje, otro flyer) y con el mismo patrón que Mayoristas: un documento propio
+  // (vph_config/crm_basenivel, campo `filas`) — sin colección nueva ni cambio de reglas.
+  // Son pocos prospectos (~40-100) y se trabajan a mano: sin cola, tope ni ayudante automático.
+  // Textos: los de Mensajes_BNV-40.md (carpeta BASENIVEL de Drive). El flyer va en BaseNivel/ del repo.
+  const BN_COL='vph_config', BN_DOC='crm_basenivel', BN_KEY='vph_crm_basenivel_v1';
+  const BN_FLYER_PNG='BaseNivel/flyer-bnv40.png', BN_FLYER_PDF='BaseNivel/flyer-bnv40.pdf';
+  const BN_ESTADOS=[
+    {k:'pendiente',   l:'Pendiente',           c:'#64748b'},
+    {k:'falta-dato',  l:'Falta dato',          c:'#b45309'},
+    {k:'contactado',  l:'Contactado',          c:'#2563eb'},
+    {k:'interesado',  l:'Interesado',          c:'#1e9e5a'},
+    {k:'muestra',     l:'Muestra entregada',   c:'#7c3aed'},
+    {k:'cliente',     l:'Compró',              c:'#15803d'},
+    {k:'sin-interes', l:'Sin interés',         c:'#94a3b8'}
+  ];
+  const BN_SEGUI_DIAS=3;   // el seguimiento se ofrece a los 3 días del primer contacto (Mensajes_BNV-40.md: 3 a 5)
+  function bnEstado(k){ return BN_ESTADOS.find(e=>e.k===k)||BN_ESTADOS[0]; }
+  function bnFirma(){ const f=((typeof topesFirma==='function') && topesFirma()) || 'Marcelo'; return /^marcelo$/i.test(f.trim()) ? 'Marcelo Vassallo' : f.trim(); }
+  function bnDiasDesde(fechaISO){
+    const p=String(fechaISO||'').slice(0,10).split('-').map(Number);
+    if(p.length<3 || !p[0]) return null;
+    return Math.round((new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate()) - new Date(p[0],p[1]-1,p[2]))/86400000);
+  }
+  // ¿Toca el seguimiento? Contactado hace BN_SEGUI_DIAS o más, sin respuesta registrada y sin seguimiento hecho.
+  function bnTocaSeguimiento(r){
+    if(!r || r.estado!=='contactado' || !r.contactoFecha || r.seguimientoFecha) return false;
+    const d=bnDiasDesde(r.contactoFecha); return d!=null && d>=BN_SEGUI_DIAS;
+  }
+  function bnTexto(accion){
+    const f=bnFirma();
+    if(accion==='seguimiento') return 'Hola, ¿pudieron ver el flyer de la Base Nivel? Si quieren, les acercamos una para que la vean y la prueben en un módulo. Quedo atento. '+f+', Vassallo Premoldeados.';
+    return 'Hola, ¿cómo están? Soy '+f+', de Vassallo Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
+      'Desarrollamos la *Base Nivel BNV-40*, un apoyo de hormigón regulable para módulos y contenedores. Se apoya en el terreno y se nivela con llave el mismo día (regula de 0 a 100 mm), sin encofrar ni esperar fragüe, y se reajusta si el terreno se asienta.\n\n'+
+      'Les paso el flyer. ¿Les interesaría que les acerque una para verla y probarla en uno de sus módulos?';
+  }
+  function bnMail(){
+    const f=bnFirma();
+    return {asunto:'Base regulable de hormigón para instalar sus módulos el mismo día',
+      cuerpo:'Hola, ¿cómo están?\n\n'+
+        'Soy '+f+(/^Marcelo Vassallo$/.test(f)?', ingeniero civil y director':'')+' de Vassallo Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
+        'Desarrollamos la Base Nivel BNV-40, un apoyo premoldeado para módulos habitables, oficinas y contenedores:\n\n'+
+        '- Se instala y nivela con llave el mismo día, sin encofrar ni esperar fragüe.\n'+
+        '- Regula la altura de 0 a 100 mm y se reajusta si el terreno se asienta.\n'+
+        '- Base de hormigón de 400×400 mm (≈50 kg), varilla roscada de 1" y placas galvanizadas.\n'+
+        '- Se puede reutilizar cuando el módulo se traslada.\n\n'+
+        'Les adjunto el flyer. Nos gustaría acercarles una para que la prueben en uno de sus módulos y nos den su opinión.\n\n'+
+        'Saludos,\n'+f+'\nVassallo Premoldeados de Hormigón\nWhatsApp 351 760-5362 · https://www.vpremoldeados.com'};
+  }
+  function bnGmailLink(email){
+    const m=bnMail();
+    return 'https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(String(email||'').trim())+'&su='+encodeURIComponent(m.asunto)+'&body='+encodeURIComponent(m.cuerpo);
+  }
+  let BNW=[], bnUnsub=null, bnConfirm=null, bnImg='', bnFiltro='';   // bnConfirm = {bi, accion} tras abrir un chat/mail
+  function bnLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(BN_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
+  function bnSave(list){ BNW=list.slice();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,BN_COL,BN_DOC),{filas:BNW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else { try{ localStorage.setItem(BN_KEY, JSON.stringify(BNW)); }catch(e){} }
+  }
+  function bnBtnLabel(){ const seg=BNW.filter(bnTocaSeguimiento).length;
+    return '📐 Base Nivel'+(BNW.length?(' ('+BNW.length+(seg?(' · '+seg+' a seguir'):'')+')'):''); }
+  function bnSubscribe(){ if(!window.__usaNube){ BNW=bnLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(bnUnsub)bnUnsub();
+    bnUnsub=c.FS.onSnapshot(c.FS.doc(c.db,BN_COL,BN_DOC), snap=>{ const d=snap.exists()?snap.data():null; BNW=(d&&Array.isArray(d.filas))?d.filas:[];
+      const btn=$('crm-bn-abrir'); if(btn) btn.textContent=bnBtnLabel();
+      const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); }, err=>console.error('basenivel:',err)); }
+  function bnUpd(bi, fn){ const l=BNW.slice(); if(!l[bi]) return; l[bi]=fn({...l[bi]}); bnSave(l); }
+  // El flyer va al portapapeles DENTRO del clic y ANTES de abrir WhatsApp (Chrome exige gesto y foco,
+  // misma lección que la imagen de Topes): en el chat, Ctrl+V y Enviar.
+  function bnCopiarFlyer(){
+    bnImg='';
+    try{
+      if(typeof navigator==='undefined' || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem==='undefined'){ bnImg='error'; return; }
+      const png=fetch(BN_FLYER_PNG,{cache:'no-cache'}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); })
+        .then(b=>createImageBitmap(b))
+        .then(bmp=>new Promise((ok,ko)=>{ const cv=document.createElement('canvas'); cv.width=bmp.width; cv.height=bmp.height;
+          cv.getContext('2d').drawImage(bmp,0,0); cv.toBlob(x=> x?ok(x):ko(new Error('toBlob')), 'image/png'); }));
+      bnImg='copiando';
+      navigator.clipboard.write([new ClipboardItem({'image/png':png})])
+        .then(()=>{ bnImg='ok'; drawBaseNivel(); })
+        .catch(()=>{ bnImg='error'; drawBaseNivel(); });
+    }catch(e){ bnImg='error'; }
+  }
+  // Registrar lo que pasó recién AL CONFIRMARLO (lección de Topes del 11/09: marcar al abrir dejaba
+  // como "contactado" a quien nunca recibió nada).
+  function bnConfirmar(ok, sinWa){
+    const p=bnConfirm; bnConfirm=null; bnImg='';
+    if(!p || !ok){
+      if(p && sinWa) bnUpd(p.bi, r=>({...r, estado:'falta-dato', notas:('📵 sin WhatsApp '+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'. '+(r.notas||'')).trim()}));
+      drawBaseNivel(); return;
+    }
+    const firma=bnFirma();
+    if(p.accion==='seguimiento') bnUpd(p.bi, r=>({...r, seguimientoFecha:hoyISO, accionPor:firma}));
+    else if(p.accion==='mail') bnUpd(p.bi, r=>({...r, mailFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado), contactoFecha:(r.contactoFecha||hoyISO)}));
+    else bnUpd(p.bi, r=>({...r, contactoFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado)}));
+    const btn=$('crm-bn-abrir'); if(btn) btn.textContent=bnBtnLabel();
+    drawBaseNivel();
+  }
+  function drawBaseNivel(){
+    const cont=$('crm-bn-controles'), tabla=$('crm-bn-tabla'); if(!cont||!tabla) return;
+    const n=k=>BNW.filter(r=>(r.estado||'pendiente')===k).length;
+    const seg=BNW.filter(bnTocaSeguimiento).length;
+    cont.innerHTML=
+      '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
+        '<b>Cómo se usa:</b> 📲 abre el WhatsApp con el mensaje y deja el <b>flyer copiado</b> (en el chat: Ctrl+V y Enviar). Después confirmá si salió. '+
+        'A los '+BN_SEGUI_DIAS+' días, a los que no contestaron les aparece <b>🔁 Seguimiento</b>. ✉️ arma el mail en tu Gmail: <b>adjuntá el PDF del flyer</b> (<a href="'+BN_FLYER_PDF+'" target="_blank" rel="noopener">descargalo acá</a>). '+
+        'Cuando alguien contesta, cambiale el estado (Interesado / Muestra entregada / Compró).</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+        '<span style="font-weight:800;font-size:13px">'+BNW.length+' prospectos</span>'+
+        BN_ESTADOS.map(e=>'<button class="filter-btn'+(bnFiltro===e.k?' active':'')+'" data-bn-filtro="'+e.k+'">'+esc(e.l)+' ('+n(e.k)+')</button>').join('')+
+        (seg?('<button class="filter-btn'+(bnFiltro==='seguir'?' active':'')+'" data-bn-filtro="seguir" style="border-color:#d98324;color:#b45309;font-weight:700">🔁 Toca seguimiento ('+seg+')</button>'):'')+
+        (bnFiltro?'<button class="filter-btn" data-bn-filtro="">✕ Todos</button>':'')+
+        '<span style="margin-left:auto;display:flex;gap:8px">'+
+          '<a class="cmp-btn" href="'+BN_FLYER_PNG+'" target="_blank" rel="noopener" title="Ver el flyer">🖼️ Flyer</a>'+
+          '<button class="cmp-btn" data-bn-agregar>+ Agregar</button>'+
+        '</span>'+
+      '</div>'+
+      (bnConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
+        (bnImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Flyer copiado: pegalo en el chat con Ctrl+V. </span>' : bnImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar el flyer: adjuntalo a mano (🖼️ Flyer). </span>' : '')+
+        '¿Salió el '+(bnConfirm.accion==='mail'?'mail':'mensaje')+' a <b>'+esc((BNW[bnConfirm.bi]||{}).nombre||'')+'</b>? '+
+        '<button class="cmp-btn" data-bn-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
+        (bnConfirm.accion!=='mail'?'<button class="cmp-btn" data-bn-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> ':'')+
+        '<button class="cmp-btn" data-bn-no>✗ No salió</button></div>') : '');
+    const vista=BNW.map((r,bi)=>({r,bi})).filter(({r})=> !bnFiltro || (bnFiltro==='seguir' ? bnTocaSeguimiento(r) : (r.estado||'pendiente')===bnFiltro));
+    const ordEst=k=>({pendiente:0,contactado:1,interesado:2,muestra:3,'falta-dato':4,cliente:5,'sin-interes':6})[k||'pendiente'];
+    vista.sort((a,b)=> ((bnTocaSeguimiento(b.r)?1:0)-(bnTocaSeguimiento(a.r)?1:0)) || (ordEst(a.r.estado)-ordEst(b.r.estado)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    const fmt=f=>f?(String(f).slice(8,10)+'/'+String(f).slice(5,7)):'';
+    let html='<thead><tr><th>Prospecto</th><th>Teléfono</th><th>Email</th><th>Estado</th><th>📲 WhatsApp</th><th>✉️ Mail</th><th>Notas</th><th></th></tr></thead><tbody>';
+    vista.forEach(({r,bi})=>{
+      const tel=String(r.telefono||'').trim(), lk=tel?topesWaLink(tel):null;
+      const e=bnEstado(r.estado);
+      const wa = !lk ? '<span style="color:#94a3b8;font-size:11px">sin tel.</span>' :
+        (bnTocaSeguimiento(r) ? '<button class="cmp-btn" data-bn-chat="'+bi+'" data-bn-accion="seguimiento" style="border-color:#d98324;color:#b45309" title="Mensaje de seguimiento: no contestó el primero">🔁 Seguimiento</button>'
+          : '<button class="cmp-btn" data-bn-chat="'+bi+'" data-bn-accion="contacto" title="Abre el WhatsApp con el mensaje y copia el flyer">📲</button>')+
+        (r.contactoFecha?('<div style="font-size:10.5px;color:#64748b">contacto '+fmt(r.contactoFecha)+(r.seguimientoFecha?(' · seg. '+fmt(r.seguimientoFecha)):'')+'</div>'):'');
+      const em=String(r.email||'').trim();
+      const ml = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em) ? ('<button class="cmp-btn" data-bn-mail="'+bi+'" title="Abre el mail en tu Gmail (adjuntá el PDF del flyer)">✉️</button>'+(r.mailFecha?('<div style="font-size:10.5px;color:#157a1d">enviado '+fmt(r.mailFecha)+'</div>'):'')) : '<span style="color:#94a3b8;font-size:11px">—</span>';
+      html+='<tr>'+
+        '<td class="cel-nombre"><input data-bn-nombre="'+bi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
+          '<div style="font-size:10.5px;color:#64748b">'+esc([r.rubro,r.zona].filter(Boolean).join(' · '))+(r.instagram?(' · '+esc(r.instagram)):'')+'</div></td>'+
+        '<td><input data-bn-tel="'+bi+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
+        '<td><input data-bn-email="'+bi+'" value="'+esc(r.email||'')+'" placeholder="—" style="width:150px"></td>'+
+        '<td data-sortval="'+esc(e.l)+'"><select data-bn-estado="'+bi+'" style="color:'+e.c+';font-weight:700">'+BN_ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===(r.estado||'pendiente')?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></td>'+
+        '<td style="white-space:nowrap">'+wa+'</td>'+
+        '<td style="white-space:nowrap">'+ml+'</td>'+
+        '<td><input data-bn-nota="'+bi+'" value="'+esc(r.notas||'')+'" title="'+esc(r.notas||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;color:#475569"></td>'+
+        '<td><button class="cmp-x" data-bn-borrar="'+bi+'" title="Sacar de la lista">✕</button></td>'+
+      '</tr>';
+    });
+    if(!vista.length) html+='<tr><td colspan="8" style="color:#94a3b8">'+(BNW.length?'Ningún prospecto con ese filtro.':'Todavía no hay prospectos cargados.')+'</td></tr>';
+    tabla.innerHTML=html+'</tbody>';
+    cont.querySelectorAll('[data-bn-filtro]').forEach(b=>b.onclick=()=>{ bnFiltro=b.dataset.bnFiltro; drawBaseNivel(); });
+    cont.querySelectorAll('[data-bn-agregar]').forEach(b=>b.onclick=()=>{ bnSave([{nombre:'', rubro:'', zona:'', telefono:'', email:'', estado:'pendiente', notas:''}].concat(BNW)); bnFiltro=''; drawBaseNivel(); });
+    cont.querySelectorAll('[data-bn-si]').forEach(b=>b.onclick=()=>bnConfirmar(true));
+    cont.querySelectorAll('[data-bn-no]').forEach(b=>b.onclick=()=>bnConfirmar(false));
+    cont.querySelectorAll('[data-bn-sinwa]').forEach(b=>b.onclick=()=>bnConfirmar(false, true));
+    tabla.querySelectorAll('[data-bn-chat]').forEach(b=>b.onclick=()=>{
+      const bi=+b.dataset.bnChat, accion=b.dataset.bnAccion, r=BNW[bi]; if(!r) return;
+      const lk=topesWaLink(r.telefono); if(!lk) return;
+      if(accion!=='seguimiento') bnCopiarFlyer();   // ANTES de abrir: al abrir WhatsApp la página pierde el foco
+      window.open(lk+'&text='+encodeURIComponent(bnTexto(accion)), '_blank');
+      bnConfirm={bi, accion}; drawBaseNivel();
+    });
+    tabla.querySelectorAll('[data-bn-mail]').forEach(b=>b.onclick=()=>{
+      const bi=+b.dataset.bnMail, r=BNW[bi]; if(!r) return;
+      window.open(bnGmailLink(r.email), '_blank');
+      bnConfirm={bi, accion:'mail'}; drawBaseNivel();
+    });
+    tabla.querySelectorAll('[data-bn-estado]').forEach(s=>s.onchange=()=>{ bnUpd(+s.dataset.bnEstado, r=>({...r, estado:s.value, estadoFecha:hoyISO})); drawBaseNivel(); });
+    tabla.querySelectorAll('[data-bn-nombre]').forEach(i=>i.onchange=()=>bnUpd(+i.dataset.bnNombre, r=>({...r, nombre:i.value.trim()})));
+    tabla.querySelectorAll('[data-bn-tel]').forEach(i=>i.onchange=()=>{ bnUpd(+i.dataset.bnTel, r=>({...r, telefono:i.value.trim(), estado:(r.estado==='falta-dato'&&i.value.trim()?'pendiente':r.estado)})); drawBaseNivel(); });
+    tabla.querySelectorAll('[data-bn-email]').forEach(i=>i.onchange=()=>{ bnUpd(+i.dataset.bnEmail, r=>({...r, email:i.value.trim()})); drawBaseNivel(); });
+    tabla.querySelectorAll('[data-bn-nota]').forEach(i=>i.onchange=()=>bnUpd(+i.dataset.bnNota, r=>({...r, notas:i.value})));
+    tabla.querySelectorAll('[data-bn-borrar]').forEach(b=>b.onclick=()=>{
+      const bi=+b.dataset.bnBorrar, r=BNW[bi]; if(!r) return;
+      if(!confirm('¿Sacar a "'+(r.nombre||'(sin nombre)')+'" de la lista de Base Nivel?')) return;
+      bnSave(BNW.filter((x,j)=>j!==bi)); drawBaseNivel();
+    });
+  }
   // Pestaña Topes (24/09, pedido de Marcelo: separar los prospectos fríos del pipeline de leads
   // Minorista/Mayorista — antes convivían en la misma pantalla con un panel inline que se abría con
   // un botón). Sigue sin ser un overlay, ahora es una vista propia que reemplaza a la de Leads.
@@ -15133,6 +15324,19 @@ function buildFilterTable(cfg){
   }
   const mayCerrarBtn=$('crm-may-cerrar');
   if(mayCerrarBtn) mayCerrarBtn.onclick=()=>$('crm-may-panel').style.display='none';
+
+  // Base Nivel: mismo esquema que Mayoristas.
+  const bnAbrirBtn=$('crm-bn-abrir');
+  if(bnAbrirBtn){ bnAbrirBtn.onclick=()=>{ const panel=$('crm-bn-panel');
+      const abrir = panel.style.display==='none';
+      panel.style.display = abrir ? '' : 'none';
+      if(abrir){ drawBaseNivel(); panel.scrollIntoView({behavior:'smooth', block:'start'}); }
+    };
+    if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>bnSubscribe()); }
+    else bnSubscribe();
+  }
+  const bnCerrarBtn=$('crm-bn-cerrar');
+  if(bnCerrarBtn) bnCerrarBtn.onclick=()=>$('crm-bn-panel').style.display='none';
 
   boot();
 })();
