@@ -1144,6 +1144,7 @@
         <div style="display:flex;gap:8px" id="crm-tabs">
           <button class="kb-viewbtn" id="crm-tab-leads" title="El embudo de ventas: leads minoristas y mayoristas, desde el alta hasta la venta">📋 Leads (Minorista/Mayorista)</button>
           <button class="kb-viewbtn" id="crm-tab-topes" title="Prospección en frío de playas de estacionamiento para ofrecerles los topes — lista aparte del embudo de leads">🔩 Topes</button>
+          <button class="kb-viewbtn" id="crm-tab-basenivel" title="Prospectos de la Base Nivel BNV-40 (apoyo regulable para módulos y contenedores): fabricantes y alquiladores de módulos — lista aparte de Topes y de los leads">📐 Base Nivel</button>
         </div>
       </div>
 
@@ -1157,7 +1158,6 @@
             <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
             <button class="cmp-btn" id="crm-cartel-abrir" title="Marcelo va visitando los corralones para ver si tienen la cartelería de VPH">🪧 Cartelería</button>
             <button class="cmp-btn" id="crm-may-abrir" title="Los revendedores mayoristas agrupados por su lista de precios (CBA/Interior × Facturado/Contado) — para mandarles el listado del mes y consultarles stock por WhatsApp">🧱 Mayoristas</button>
-            <button class="cmp-btn" id="crm-bn-abrir" title="Prospectos de la Base Nivel BNV-40 (apoyo regulable para módulos y contenedores): fabricantes y alquiladores de módulos">📐 Base Nivel</button>
             <button class="cmp-btn" id="crm-export">Exportar JSON</button>
             <button class="cmp-btn" id="crm-import">Importar JSON</button>
             <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -1184,16 +1184,6 @@
           <div id="crm-may-controles"></div>
           <div class="tbl-wrap"><table id="crm-may-tabla"></table></div>
         </div>
-        <!-- ===== BASE NIVEL BNV-40 (01/10, pedido de Marcelo): producto nuevo para fabricantes y alquiladores
-             de módulos y contenedores. Lista propia (vph_config/crm_basenivel), aparte de Topes. -->
-        <div id="crm-bn-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <h3 style="margin:0">📐 Base Nivel BNV-40 — módulos y contenedores</h3>
-            <button class="cmp-x" id="crm-bn-cerrar" style="margin-left:auto" title="Ocultar el panel de Base Nivel">✕</button>
-          </div>
-          <div id="crm-bn-controles"></div>
-          <div class="tbl-wrap"><table id="crm-bn-tabla"></table></div>
-        </div>
         <div id="crm-prio-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px"></div>
         <div id="crm-sinsegui" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.5;color:#7a5b00"></div>
         <div class="filter-bar" id="crm-filtros" style="display:none"></div>
@@ -1208,6 +1198,15 @@
            a quién ofrecerles los topes. Vive en su propia colección (vph_topes_prospectos),
            no en vph_leads — recién se vuelve un Lead real cuando alguien responde (botón 📈 Lead, que
            lo pasa al pipeline de la otra pestaña con origen "Prospección topes"). -->
+      <!-- ============ PESTAÑA: BASE NIVEL BNV-40 (01/10, pedido de Marcelo: "separalos aparte también de
+           los de Topes") — producto nuevo para fabricantes y alquiladores de módulos y contenedores.
+           Lista propia (vph_config/crm_basenivel), aparte de Topes y del embudo de leads. ============ -->
+      <div id="crm-bn-panel" style="display:none">
+        <h3 style="margin:0 0 10px">📐 Base Nivel BNV-40 — módulos y contenedores</h3>
+        <div id="crm-bn-controles"></div>
+        <div class="tbl-wrap"><table id="crm-bn-tabla"></table></div>
+      </div>
+
       <div id="crm-topes-panel" style="display:none">
         <input type="text" class="search-box" id="topes-buscar" placeholder="Buscar por lugar, rubro, zona, teléfono, email..." style="margin:0 0 10px;width:100%;max-width:420px">
         <div id="crm-topes-controles"></div>
@@ -12485,7 +12484,7 @@ function buildFilterTable(cfg){
   let VIEW = localStorage.getItem('vph_crm_view')==='lista' ? 'lista' : 'tablero';
   // Pestaña activa del CRM (24/09): 'leads' = pipeline Minorista/Mayorista · 'topes' = prospección
   // en frío de Topes. Se recuerda por PC, como VIEW.
-  let crmTab = localStorage.getItem('vph_crm_tab_v1')==='topes' ? 'topes' : 'leads';
+  let crmTab = (()=>{ const v=localStorage.getItem('vph_crm_tab_v1'); return (v==='topes'||v==='basenivel') ? v : 'leads'; })();
   // `canal` separa MAYORISTA de MINORISTA: desde que se cargaron los ~31 corralones revendedores
   // (06/08) el pipeline mezcla dos negocios muy distintos, y sin este filtro Sofía no puede
   // trabajar una tanda sin tropezarse con la otra.
@@ -12987,8 +12986,11 @@ function buildFilterTable(cfg){
   function setCrmTab(t){ crmTab=t; localStorage.setItem('vph_crm_tab_v1', t);
     $('crm-tab-leads').classList.toggle('active', t==='leads');
     $('crm-tab-topes').classList.toggle('active', t==='topes');
+    $('crm-tab-basenivel').classList.toggle('active', t==='basenivel');
     $('crm-leads-section').style.display = t==='leads' ? '' : 'none';
     $('crm-topes-panel').style.display = t==='topes' ? '' : 'none';
+    $('crm-bn-panel').style.display = t==='basenivel' ? '' : 'none';
+    if(t==='basenivel'){ drawBaseNivel(); return; }
     if(t==='topes'){
       // 30/09 (velocidad): las ~4.000 fichas se bajan recien al abrir esta pestaña; el snapshot la dibuja al llegar.
       if(window.__usaNube && !topesCargado){ const tb=$('topes-tabla'); if(tb) tb.innerHTML='<tr><td style="padding:14px;color:var(--muted)">Cargando prospectos…</td></tr>'; topesSubscribe(); }
@@ -15182,7 +15184,7 @@ function buildFilterTable(cfg){
     return '📐 Base Nivel'+(BNW.length?(' ('+BNW.length+(seg?(' · '+seg+' a seguir'):'')+')'):''); }
   function bnSubscribe(){ if(!window.__usaNube){ BNW=bnLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(bnUnsub)bnUnsub();
     bnUnsub=c.FS.onSnapshot(c.FS.doc(c.db,BN_COL,BN_DOC), snap=>{ const d=snap.exists()?snap.data():null; BNW=(d&&Array.isArray(d.filas))?d.filas:[];
-      const btn=$('crm-bn-abrir'); if(btn) btn.textContent=bnBtnLabel();
+      const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
       const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); }, err=>console.error('basenivel:',err)); }
   function bnUpd(bi, fn){ const l=BNW.slice(); if(!l[bi]) return; l[bi]=fn({...l[bi]}); bnSave(l); }
   // El flyer va al portapapeles DENTRO del clic y ANTES de abrir WhatsApp (Chrome exige gesto y foco,
@@ -15213,7 +15215,7 @@ function buildFilterTable(cfg){
     if(p.accion==='seguimiento') bnUpd(p.bi, r=>({...r, seguimientoFecha:hoyISO, accionPor:firma}));
     else if(p.accion==='mail') bnUpd(p.bi, r=>({...r, mailFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado), contactoFecha:(r.contactoFecha||hoyISO)}));
     else bnUpd(p.bi, r=>({...r, contactoFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado)}));
-    const btn=$('crm-bn-abrir'); if(btn) btn.textContent=bnBtnLabel();
+    const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
     drawBaseNivel();
   }
   function drawBaseNivel(){
@@ -15325,18 +15327,10 @@ function buildFilterTable(cfg){
   const mayCerrarBtn=$('crm-may-cerrar');
   if(mayCerrarBtn) mayCerrarBtn.onclick=()=>$('crm-may-panel').style.display='none';
 
-  // Base Nivel: mismo esquema que Mayoristas.
-  const bnAbrirBtn=$('crm-bn-abrir');
-  if(bnAbrirBtn){ bnAbrirBtn.onclick=()=>{ const panel=$('crm-bn-panel');
-      const abrir = panel.style.display==='none';
-      panel.style.display = abrir ? '' : 'none';
-      if(abrir){ drawBaseNivel(); panel.scrollIntoView({behavior:'smooth', block:'start'}); }
-    };
-    if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>bnSubscribe()); }
-    else bnSubscribe();
-  }
-  const bnCerrarBtn=$('crm-bn-cerrar');
-  if(bnCerrarBtn) bnCerrarBtn.onclick=()=>$('crm-bn-panel').style.display='none';
+  // Base Nivel: pestaña propia (01/10, "separalos aparte también de los de Topes") + suscripción a su documento.
+  $('crm-tab-basenivel').onclick=()=>setCrmTab('basenivel');
+  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>bnSubscribe()); }
+  else bnSubscribe();
 
   boot();
 })();
