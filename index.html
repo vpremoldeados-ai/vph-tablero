@@ -13886,8 +13886,10 @@ function buildFilterTable(cfg){
   // salieron HOY y cuántos se permiten. Se cuenta desde la lista compartida (ultimaAccion de hoy y ya
   // no pendiente), así vale igual desde cualquier PC. Cambiar el estado a mano también sella la fecha,
   // así que puede contar de más, nunca de menos: para esto conviene pecar de prudente.
+  // 01/10: suma los WhatsApp de Base Nivel (bnEnviosHoy): salen del mismo número, el tope es uno solo.
   function topesEnviadosHoy(){
-    return TOPES.filter(t=> t.ultimaAccion===hoyISO && ['contactado','interesado','sin-interes'].includes(t.estado) && topesEsMio(t)).length;
+    return TOPES.filter(t=> t.ultimaAccion===hoyISO && ['contactado','interesado','sin-interes'].includes(t.estado) && topesEsMio(t)).length +
+      (typeof bnEnviosHoy==='function' ? bnEnviosHoy() : 0);
   }
   // ENVIADOS POR PERSONA (16/09, pedido de Marcelo: ver por separado cuántos mandó Sofía y cuántos él).
   // Cada prospecto guarda solo su ÚLTIMA acción (accionPor = la firma de la PC), así que esto cuenta
@@ -14324,7 +14326,8 @@ function buildFilterTable(cfg){
   // un reloj POR PC: solo cuenta lo que ESTA PC mandó (accionPc). Lo marcado sin accionPc (una pestaña
   // con código viejo) ya no hace esperar a las dos. Un 📵 No tiene WhatsApp no sella la hora.
   function topesUltimoEnvioTs(){
-    return TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && t.accionPc && t.accionPc===topesPcId() && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
+    const t0=TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && t.accionPc && t.accionPc===topesPcId() && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
+    return Math.max(t0, typeof bnUltimoEnvioTs==='function' ? bnUltimoEnvioTs() : 0);   // 01/10: Base Nivel sale del mismo número
   }
   function topesEspera(ahoraMs){
     const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
@@ -14519,9 +14522,16 @@ function buildFilterTable(cfg){
     return c.FS.setDoc(c.FS.doc(c.db,'vph_config',topesAutoDocId()), datos, {merge:true});
   }
   const topesSinReserva=row=>{ delete row.abiertoPor; delete row.abiertoPc; delete row.abiertoTs; return row; };
+  // 01/10: el pedido puede ser de Base Nivel (origen 'basenivel'): esa fila vive en otra lista.
+  const topesAutoEsBN=b=>b.origen==='basenivel' && typeof bnAutoRegistrar==='function';
+  function topesAutoLiberar(b){
+    if(topesAutoEsBN(b)) bnAutoRegistrar({...b, estado:'liberar'});
+    else if(b.nombre) topesActualizar(b.nombre, topesSinReserva);
+  }
   // Registra en la ficha lo que contestó el ayudante y deja el buzón en 'registrado'.
   function topesAutoRegistrar(b){
-    if(b.nombre){
+    if(topesAutoEsBN(b)) bnAutoRegistrar(b);
+    else if(b.nombre){
       topesActualizar(b.nombre, row=>{
         let r=row;
         if(b.estado==='enviado') r={...topesAlEnviar(row), ultimaAccionTs:Number(b.enviadoTs)||Date.now()};
@@ -14533,6 +14543,7 @@ function buildFilterTable(cfg){
   }
   async function topesAutoTick(){
     if(topesAutoOcupado || !topesAutoOn()) return;
+    if(window.__usaNube && !topesCargado) return;   // 01/10: sin la lista de Topes el tope del día contaría de menos
     const c=fb(); if(!(c && c.FS && c.db && c.FS.getDoc)) return;
     topesAutoOcupado=true;
     try{
@@ -14545,7 +14556,7 @@ function buildFilterTable(cfg){
       const ahora=Date.now();
       if(b.estado==='pedido' || b.estado==='enviando'){
         if(ahora-(Number(b.pedidoTs)||0) > TOPES_AUTO_ESPERA_MAX){
-          if(b.nombre) topesActualizar(b.nombre, topesSinReserva);
+          topesAutoLiberar(b);
           await topesAutoEscribirBuzon({estado:'registrado', registradoTs:ahora});
           topesAutoPausar('el ayudante no contestó el envío a '+(b.nombre||'?')+'. Mirá WhatsApp: si salió, marcalo Contactado a mano.');
         } else drawTopes();
@@ -14553,7 +14564,7 @@ function buildFilterTable(cfg){
       }
       if(b.estado==='enviado' || b.estado==='sinwa'){ await topesAutoRegistrar(b); drawTopes(); return; }
       if(b.estado==='error'){
-        if(b.nombre) topesActualizar(b.nombre, topesSinReserva);
+        topesAutoLiberar(b);
         await topesAutoEscribirBuzon({estado:'registrado', registradoTs:ahora});
         topesAutoPausar((b.detalle||'error del ayudante')+(b.nombre?' (con '+b.nombre+')':''));
         return;
@@ -14564,6 +14575,13 @@ function buildFilterTable(cfg){
       const tope=topesTope();
       if(tope && topesEnviadosHoy()>=tope){ drawTopes(); return; }
       if(topesEspera(ahora).ms>0){ drawTopes(); return; }
+      // 01/10: primero los de Base Nivel (si su casilla está tildada en esta PC); cuando no queda ninguno, Topes.
+      const bnPed=(typeof bnAutoPedido==='function') ? bnAutoPedido(ahora) : null;
+      if(bnPed){
+        await topesAutoEscribirBuzon({estado:'pedido', pedidoTs:ahora, detalle:'', enviadoTs:0, ...bnPed});
+        topesAutoBuzon={...b, estado:'pedido', nombre:bnPed.nombre, origen:'basenivel'};
+        drawTopes(); return;
+      }
       const idx=topesProxIndice(); if(idx<0){ drawTopes(); return; }
       const t=TOPES[idx];
       const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
@@ -14571,8 +14589,9 @@ function buildFilterTable(cfg){
       if(!wa){ drawTopes(); return; }
       topesActualizar(t.nombre, row=>({...row, abiertoPor:topesFirma(), abiertoPc:topesPcId(), abiertoTs:ahora}));
       await topesAutoEscribirBuzon({estado:'pedido', pedidoTs:ahora, nombre:t.nombre||'', tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
-        tipo:topesImagen(t.rubro).replace(/^Topes\//,'').replace(/\.jpg$/,''), texto:topesTexto(t.nombre, t.rubro), detalle:'', enviadoTs:0});
-      topesAutoBuzon={...b, estado:'pedido', nombre:t.nombre||''};
+        tipo:topesImagen(t.rubro).replace(/^Topes\//,'').replace(/\.jpg$/,''), texto:topesTexto(t.nombre, t.rubro), detalle:'', enviadoTs:0,
+        origen:'topes', accion:'', bnTel:''});   // el buzón se escribe con merge: hay que limpiar lo de un pedido de Base Nivel anterior
+      topesAutoBuzon={...b, estado:'pedido', nombre:t.nombre||'', origen:'topes'};
       drawTopes();
     }catch(e){
       topesAutoPausar('no se pudo leer o escribir el buzón ('+e.message+')');
@@ -15124,7 +15143,7 @@ function buildFilterTable(cfg){
   // público que los topes: fabricantes y alquiladores de módulos. Por eso va APARTE de Topes (otra
   // lista, otro mensaje, otro flyer) y con el mismo patrón que Mayoristas: un documento propio
   // (vph_config/crm_basenivel, campo `filas`) — sin colección nueva ni cambio de reglas.
-  // Son pocos prospectos (~40-100) y se trabajan a mano: sin cola, tope ni ayudante automático.
+  // Se pueden mandar a mano (📲) o con el ayudante automático de Topes (ver bnAutoPedido, 01/10).
   // Textos: los de Mensajes_BNV-40.md (carpeta BASENIVEL de Drive). El flyer va en BaseNivel/ del repo.
   const BN_COL='vph_config', BN_DOC='crm_basenivel', BN_KEY='vph_crm_basenivel_v1';
   const BN_FLYER_PNG='BaseNivel/flyer-bnv40.png', BN_FLYER_PDF='BaseNivel/flyer-bnv40.pdf';
@@ -15203,20 +15222,87 @@ function buildFilterTable(cfg){
         .catch(()=>{ bnImg='error'; drawBaseNivel(); });
     }catch(e){ bnImg='error'; }
   }
+  // Lo que queda en la fila cuando un WhatsApp SALIÓ (a mano o con el ayudante). Sella además
+  // ultimoEnvio* (fecha, hora y PC): con eso la espera y el tope del día de Topes cuentan también los de
+  // Base Nivel, porque salen del MISMO número (ver bnEnviosHoy / bnUltimoEnvioTs).
+  function bnAplicarEnvio(r, accion, firma, pc, ts){
+    const x={...r, accionPor:firma, ultimoEnvioFecha:hoyISO, ultimoEnvioTs:ts, ultimoEnvioPc:pc};
+    if(accion==='seguimiento') return {...x, seguimientoFecha:hoyISO};
+    return {...x, contactoFecha:hoyISO, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado)};
+  }
+  function bnSinWa(r){ return {...r, estado:'falta-dato', notas:('📵 sin WhatsApp '+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'. '+(r.notas||'')).trim()}; }
+  function bnSinReserva(r){ delete r.abiertoPc; delete r.abiertoTs; return r; }
   // Registrar lo que pasó recién AL CONFIRMARLO (lección de Topes del 11/09: marcar al abrir dejaba
   // como "contactado" a quien nunca recibió nada).
   function bnConfirmar(ok, sinWa){
     const p=bnConfirm; bnConfirm=null; bnImg='';
     if(!p || !ok){
-      if(p && sinWa) bnUpd(p.bi, r=>({...r, estado:'falta-dato', notas:('📵 sin WhatsApp '+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'. '+(r.notas||'')).trim()}));
+      if(p && sinWa) bnUpd(p.bi, bnSinWa);
       drawBaseNivel(); return;
     }
     const firma=bnFirma();
-    if(p.accion==='seguimiento') bnUpd(p.bi, r=>({...r, seguimientoFecha:hoyISO, accionPor:firma}));
-    else if(p.accion==='mail') bnUpd(p.bi, r=>({...r, mailFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado), contactoFecha:(r.contactoFecha||hoyISO)}));
-    else bnUpd(p.bi, r=>({...r, contactoFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado)}));
+    if(p.accion==='mail') bnUpd(p.bi, r=>({...r, mailFecha:hoyISO, accionPor:firma, estado:(['pendiente','falta-dato'].includes(r.estado||'pendiente')?'contactado':r.estado), contactoFecha:(r.contactoFecha||hoyISO)}));
+    else bnUpd(p.bi, r=>bnAplicarEnvio(r, p.accion, firma, topesPcId(), Date.now()));
     const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
     drawBaseNivel();
+  }
+  // ENVÍO AUTOMÁTICO (01/10, pedido de Marcelo: "quiero tener un ayudante y automatizar el envío de los
+  // prospectos de basenivel"). NO es un circuito aparte: usa el MISMO ayudante y el MISMO buzón que
+  // 🔁 Automático de Topes, porque sale del MISMO número de WhatsApp. Por eso la espera entre mensajes, el
+  // horario y el tope del día son UNO solo para los dos — dos relojes harían que el número mande el doble,
+  // y eso es justo lo que hizo que WhatsApp lo restringiera el 14/09. Con la casilla de esta pestaña
+  // tildada, el automático manda primero los de Base Nivel (seguimientos que tocan, después primeros
+  // contactos) y cuando no queda ninguno sigue con Topes. Se prende POR PC, como el de Topes.
+  const BN_RESERVA_MS=30*60000;
+  function bnAutoOn(){ try{ return localStorage.getItem('vph_bn_auto_v1')==='1'; }catch(e){ return false; } }
+  function bnAutoCandidatos(ahora){
+    const pc=topesPcId(), seg=[], cont=[];
+    BNW.forEach((r,bi)=>{
+      if(!r || !String(r.telefono||'').trim() || !topesWaLink(r.telefono)) return;
+      if(r.abiertoPc && r.abiertoPc!==pc && ahora-(Number(r.abiertoTs)||0)<BN_RESERVA_MS) return;   // lo está mandando la otra PC
+      if(bnTocaSeguimiento(r)) seg.push({bi, accion:'seguimiento'});
+      else if((r.estado||'pendiente')==='pendiente' && !r.contactoFecha) cont.push({bi, accion:'contacto'});
+    });
+    return seg.concat(cont);
+  }
+  // El próximo pedido para el buzón (o null). Reserva la fila para que la otra PC no la tome.
+  function bnAutoPedido(ahora){
+    if(!bnAutoOn()) return null;
+    const c=bnAutoCandidatos(ahora)[0]; if(!c) return null;
+    const r=BNW[c.bi];
+    const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
+    const wa=nro(topesWaLink(r.telefono)), wa2=nro(topesWaLink(r.telefono, true));
+    if(!wa) return null;
+    bnUpd(c.bi, x=>({...x, abiertoPc:topesPcId(), abiertoTs:ahora}));
+    return {origen:'basenivel', accion:c.accion, nombre:r.nombre||'', bnTel:String(r.telefono||''), tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
+      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion)};
+  }
+  // Lo que contestó el ayudante (estado enviado / sinwa; cualquier otro = solo liberar la reserva).
+  // La fila se busca por nombre Y teléfono: el orden de la lista puede cambiar mientras el ayudante manda.
+  function bnAutoRegistrar(b){
+    let bi=BNW.findIndex(r=>r && (r.nombre||'')===(b.nombre||'') && String(r.telefono||'')===String(b.bnTel||''));
+    if(bi<0) bi=BNW.findIndex(r=>r && (r.nombre||'')===(b.nombre||''));
+    if(bi<0) return;
+    if(b.estado==='enviado') bnUpd(bi, r=>bnSinReserva(bnAplicarEnvio(r, b.accion, bnFirma(), topesPcId(), Number(b.enviadoTs)||Date.now())));
+    else if(b.estado==='sinwa') bnUpd(bi, r=>bnSinReserva(bnSinWa(r)));
+    else bnUpd(bi, r=>bnSinReserva({...r}));
+    const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
+  }
+  // Para la espera y el tope de Topes (topesUltimoEnvioTs / topesEnviadosHoy): lo que ESTA PC mandó hoy.
+  function bnEnviosHoy(){ const pc=topesPcId(); return BNW.filter(r=>r && r.ultimoEnvioFecha===hoyISO && (!r.ultimoEnvioPc || r.ultimoEnvioPc===pc)).length; }
+  function bnUltimoEnvioTs(){ const pc=topesPcId(); return BNW.reduce((m,r)=> r && r.ultimoEnvioFecha===hoyISO && r.ultimoEnvioPc===pc && Number(r.ultimoEnvioTs)>m ? Number(r.ultimoEnvioTs) : m, 0); }
+  function bnAutoHtml(){
+    const on=bnAutoOn(), c=bnAutoCandidatos(Date.now());
+    const nSeg=c.filter(x=>x.accion==='seguimiento').length, nCont=c.length-nSeg;
+    const b=(typeof topesAutoBuzon!=='undefined' && topesAutoBuzon) || {};
+    let nota='';
+    if(on && !topesAutoOn()) nota='<span style="color:#b45309;font-weight:600">⚠️ Falta prender <b>🔁 Automático</b> en la pestaña Topes (es el mismo ayudante).</span>';
+    else if(on && b.origen==='basenivel' && (b.estado==='pedido'||b.estado==='enviando')) nota='📤 Mandando a <b>'+esc(b.nombre||'')+'</b>…';
+    else if(on) nota='En cola: <b>'+nCont+'</b> primeros contactos · <b>'+nSeg+'</b> seguimientos. Salen antes que los de Topes, con la misma espera, horario y tope del día.';
+    return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-size:12.5px">'+
+      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="El ayudante de Topes manda también estos: el mensaje con el flyer y, a los '+BN_SEGUI_DIAS+' días, el seguimiento. Necesita 🔁 Automático prendido en Topes.">'+
+      '<input type="checkbox" id="bn-auto-chk"'+(on?' checked':'')+'> 🤖 Que el ayudante los mande solo</label>'+
+      (nota?('<span>'+nota+'</span>'):'')+'</div>';
   }
   function drawBaseNivel(){
     const cont=$('crm-bn-controles'), tabla=$('crm-bn-tabla'); if(!cont||!tabla) return;
@@ -15227,6 +15313,7 @@ function buildFilterTable(cfg){
         '<b>Cómo se usa:</b> 📲 abre el WhatsApp con el mensaje y deja el <b>flyer copiado</b> (en el chat: Ctrl+V y Enviar). Después confirmá si salió. '+
         'A los '+BN_SEGUI_DIAS+' días, a los que no contestaron les aparece <b>🔁 Seguimiento</b>. ✉️ arma el mail en tu Gmail: <b>adjuntá el PDF del flyer</b> (<a href="'+BN_FLYER_PDF+'" target="_blank" rel="noopener">descargalo acá</a>). '+
         'Cuando alguien contesta, cambiale el estado (Interesado / Muestra entregada / Compró).</div>'+
+      bnAutoHtml()+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+BNW.length+' prospectos</span>'+
         BN_ESTADOS.map(e=>'<button class="filter-btn'+(bnFiltro===e.k?' active':'')+'" data-bn-filtro="'+e.k+'">'+esc(e.l)+' ('+n(e.k)+')</button>').join('')+
@@ -15273,6 +15360,10 @@ function buildFilterTable(cfg){
     tabla.innerHTML=html+'</tbody>';
     cont.querySelectorAll('[data-bn-filtro]').forEach(b=>b.onclick=()=>{ bnFiltro=b.dataset.bnFiltro; drawBaseNivel(); });
     cont.querySelectorAll('[data-bn-agregar]').forEach(b=>b.onclick=()=>{ bnSave([{nombre:'', rubro:'', zona:'', telefono:'', email:'', estado:'pendiente', notas:''}].concat(BNW)); bnFiltro=''; drawBaseNivel(); });
+    const chkAuto=cont.querySelector('#bn-auto-chk');
+    if(chkAuto) chkAuto.onchange=()=>{ try{ localStorage.setItem('vph_bn_auto_v1', chkAuto.checked?'1':'0'); }catch(e){}
+      if(chkAuto.checked && topesAutoOn()) topesAutoArrancarReloj();
+      drawBaseNivel(); };
     cont.querySelectorAll('[data-bn-si]').forEach(b=>b.onclick=()=>bnConfirmar(true));
     cont.querySelectorAll('[data-bn-no]').forEach(b=>b.onclick=()=>bnConfirmar(false));
     cont.querySelectorAll('[data-bn-sinwa]').forEach(b=>b.onclick=()=>bnConfirmar(false, true));
@@ -15306,7 +15397,9 @@ function buildFilterTable(cfg){
   $('crm-tab-topes').onclick=()=>setCrmTab('topes');
   // 30/09: solo se baja la lista si la pestaña Topes esta abierta o el envio automatico esta prendido (lo necesita);
   // si no, se espera a que alguien abra Topes (setCrmTab). En modo local no hay costo: se carga siempre.
-  function topesSubscribeSiCorresponde(){ if(crmTab==='topes' || topesAutoOn()) topesSubscribe(); }
+  // 01/10: el reloj del automático arranca también sin abrir la pestaña Topes (antes solo lo prendía
+  // drawTopes): si Marcelo deja el Tablero en Base Nivel, igual tiene que seguir mandando.
+  function topesSubscribeSiCorresponde(){ if(crmTab==='topes' || topesAutoOn()) topesSubscribe(); if(topesAutoOn()) topesAutoArrancarReloj(); }
   if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>topesSubscribeSiCorresponde()); }
   else topesSubscribe();
   // El buscador vive FUERA de #crm-topes-controles (que drawTopes reescribe entero) para no perder
