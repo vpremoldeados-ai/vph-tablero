@@ -2283,30 +2283,92 @@ function pintarKpisInicio(){
     kpi('Kg vendidos '+META.mesEnCurso, _kgVen==null?'—':Math.round(_kgVen).toLocaleString('es-AR')+' kg', 'Vendido/facturado en el mes'+(rm?' · en vivo':''), (_kgFab!=null&&_kgVen!=null&&_kgVen>_kgFab)?'warn':'info');
 }
 
-// --- Mensaje para el grupo de WhatsApp de la empresa (pedido de Marcelo, 18/08) ---
-// Los 3 indicadores de la tarjeta "Producción promedio" + "Kg vendidos", en un mensaje listo para
-// copiar y pegar. Felicita al equipo SOLO si el promedio del mes realmente llegó al objetivo — no
-// hardcodea el elogio, para no terminar felicitando por un mes flojo si esto se usa más adelante.
-// ⚠️ Esta función y su wiring van ANTES de `pintarKpisInicio();`: si esa llamada tira una excepción
+// --- Kilos EQUIVALENTES y punto de equilibrio EN KILOS (pedido de Marcelo, 02/10) ---
+// Para que todo el equipo siga el mes sin hablar de plata. No todos los kilos dejan lo mismo (un
+// minorista o un tope deja más del doble que un mayorista), así que lo vendido se convierte a
+// "kilos equivalentes": 1 kg equivalente = lo que deja un kilo PROMEDIO de los últimos meses cerrados.
+//   kg equivalentes del mes = contribución del mes ÷ contribución por kilo de referencia
+//   objetivo (equilibrio)   = costos fijos de referencia ÷ contribución NETA por kilo de referencia
+// La contribución del mes es precio − costo de receta de lo vendido (sube con cada venta, no baja
+// cuando se carga un flete); las variables del período (flete, comisión, embalaje, diesel) se
+// descuentan en la valla, con el promedio por kilo de los meses de referencia.
+// ⚠️ No recalcula nada por su cuenta: usa __resumenMes, __resumenCompras y __peFijosRef (los mismos
+// meses de referencia que el Punto de Equilibrio), así no puede contradecirlos.
+// El objetivo se puede FIJAR a mano en Parámetros (peKgObjetivo); en 0 se calcula solo.
+function kgEquivalentes(){
+  const RM=window.__resumenMes, RC=window.__resumenCompras, FR=window.__peFijosRef;
+  if(!RM || !RC || !FR) return null;
+  const fr=FR(), rc=RC()||[], rm=RM();
+  if(!fr || !rm || !Array.isArray(fr.meses) || !fr.meses.length) return null;
+  const contribDe = r => (r.netoVendido||0)*(r.coberturaCosto||0) - (r.costoVariable||0);
+  let C=0, K=0, VP=0;
+  fr.meses.forEach(mes=>{ const r=RM(mes); if(!r || !(r.kgVendidos>0)) return;
+    const c=contribDe(r); if(!(c>0)) return;       // un mes con datos rotos no puede fijar la referencia
+    const x=rc.find(m=>m.mes===mes);
+    C+=c; K+=r.kgVendidos; VP+= x ? (x.varPeriodoNeto||0) : 0; });
+  if(!(K>0)) return null;
+  const cRef=C/K, netRef=(C-VP)/K;
+  if(!(cRef>0) || !(netRef>0)) return null;
+  const kgReales=rm.kgVendidos||0;
+  const kgEq=Math.max(0, contribDe(rm)/cRef);
+  const peAuto=Math.ceil(fr.ref/netRef/1000)*1000;   // redondeado al millar: es un número para repetir de memoria
+  const fijado=Math.round(Number(window.__param ? window.__param('peKgObjetivo',0) : 0)) || 0;
+  const objetivo = fijado>0 ? fijado : peAuto;
+  return { kgEq, kgReales, objetivo, peAuto, fijado:fijado>0, pct:kgEq/objetivo*100,
+           factor: kgReales>0 ? kgEq/kgReales : null, meses:fr.meses.slice() };
+}
+window.__kgEquivalentes = kgEquivalentes;
+
+// --- Mensaje para el grupo de WhatsApp de la empresa (pedido de Marcelo, 18/08; ampliado 02/10) ---
+// Producción del mes, stock de hoy (vendido sin entregar / disponible / en secado) y ventas en kilos
+// equivalentes contra el punto de equilibrio en kilos. NI UN PESO: lo lee todo el equipo.
+// Felicita SOLO si el promedio del mes realmente llegó al objetivo — no hardcodea el elogio.
+// ⚠️ Estas funciones y su wiring van ANTES de pintarKpisInicio(): si esa llamada tira una excepción
 // (pasa en el modo local sin login, y podría pasar en producción si falta algún dato), el resto del
-// script se corta ahí — y el botón se quedaría sin `onclick` para siempre si el wiring fuera después.
+// script se corta ahí — y el botón se quedaría sin onclick para siempre si el wiring fuera después.
+function textoMensajeEquipo(rp, rm, ke, dh, hoy){
+  const nf = n => Math.round(n).toLocaleString('es-AR');
+  const mes = hoy.toLocaleDateString('es-AR',{month:'long'});
+  const mesCap = mes.charAt(0).toUpperCase()+mes.slice(1);
+  const dia = String(hoy.getDate()).padStart(2,'0')+'/'+String(hoy.getMonth()+1).padStart(2,'0');
+  const cumple = rp.diasConProduccionMes>0 && rp.promedioMesKgDia>=rp.objetivo;
+  let t = '🏭📈 *Cómo venimos — '+mesCap+' '+hoy.getFullYear()+'* (al '+dia+')\n\n'+
+    '*PRODUCCIÓN del mes*\n'+
+    '✅ *Promedio diario:* '+nf(rp.promedioMesKgDia)+' kg/día'+(cumple?' — por encima del objetivo de '+nf(rp.objetivo)+' kg/día 🎯':' (objetivo: '+nf(rp.objetivo)+' kg/día)')+'\n'+
+    '🏗️ *Total fabricado:* '+nf(rp.kgProducidosMes)+' kg\n';
+  if(rp.kgStock!=null && rp.kgDisponible!=null){
+    t += '\n*STOCK de hoy*\n'+
+      '🧱 *En planta:* '+nf(rp.kgStock)+' kg\n'+
+      '🚚 *Ya vendido, falta entregar:* '+nf(rp.kgComprometido||0)+' kg\n'+
+      '🟢 *Disponible para vender ya:* '+nf(rp.kgDisponible)+' kg\n'+
+      '⏳ *En secado:* '+nf(rp.kgEnCurado||0)+' kg\n';
+  }
+  t += '\n*VENTAS del mes*\n'+
+    '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n';
+  if(ke && ke.objetivo>0){
+    const pct=ke.pct, llenos=Math.max(0,Math.min(10,Math.round(pct/10)));
+    const barra='▓'.repeat(llenos)+'░'.repeat(10-llenos);
+    const dRest = dh ? Math.max(dh.tot-dh.tra,0) : 0;
+    const falta = Math.max(ke.objetivo-ke.kgEq,0);
+    t += '⚖️ *En kilos equivalentes:* '+nf(ke.kgEq)+' kg\n'+
+      '🎯 *Objetivo del mes (punto de equilibrio):* '+nf(ke.objetivo)+' kg equivalentes\n'+
+      barra+' '+pct.toFixed(0)+'% del objetivo'+(dh&&dh.tot>0 ? ' · van '+dh.tra+' de '+dh.tot+' días hábiles' : '')+'\n'+
+      (falta<=0 ? '🏆 *¡Objetivo superado por '+nf(ke.kgEq-ke.objetivo)+' kg!*\n'
+                : 'Faltan '+nf(falta)+' kg equivalentes'+(dRest>0 ? ' → '+nf(falta/dRest)+' por día hábil que queda' : '')+'\n')+
+      '\n_Kilo equivalente: cada kilo vendido cuenta según el producto y la lista de precios. Los que más le dejan a la empresa suman más de 1 kilo; los que menos, suman menos._\n';
+  }
+  t += '\n'+(cumple
+      ? 'Estamos cumpliendo el objetivo de producción día a día. Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado.\n\n¡Vamos que se puede sostener así todo el mes! 💪👏'
+      : 'Todavía no llegamos al objetivo de producción, pero vamos por buen camino. ¡Sigamos empujando entre todos para cerrar el mes arriba de la marca! 💪');
+  return t;
+}
 function armarMensajeEquipo(){
   const rp = window.__resumenProduccion ? window.__resumenProduccion() : null;
   const rm = window.__resumenMes ? window.__resumenMes() : null;
   if(!rp || rm==null || rm.kgVendidos==null){ alert('Los datos en vivo todavía no cargaron. Probá de nuevo en un momento.'); return; }
-  const nf = n => Math.round(n).toLocaleString('es-AR');
-  const HOYd = new Date(); const mes = HOYd.toLocaleDateString('es-AR',{month:'long'}); const anio = HOYd.getFullYear();
-  const mesCap = mes.charAt(0).toUpperCase()+mes.slice(1);
-  const cumple = rp.diasConProduccionMes>0 && rp.promedioMesKgDia>=rp.objetivo;
-  const texto =
-    '🏭📈 *Balance de Producción — '+mesCap+' '+anio+'*\n\n'+
-    'Los números en lo que va de '+mes+':\n\n'+
-    '✅ *Promedio diario:* '+nf(rp.promedioMesKgDia)+' kg/día'+(cumple?' — por encima del objetivo de '+nf(rp.objetivo)+' kg/día 🎯':' (objetivo: '+nf(rp.objetivo)+' kg/día)')+'\n'+
-    '🏗️ *Total fabricado:* '+nf(rp.kgProducidosMes)+' kg\n'+
-    '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n\n'+
-    (cumple
-      ? 'Estamos cumpliendo el objetivo de producción día a día, y las ventas acompañan el ritmo. Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado.\n\n¡Vamos que se puede sostener así todo el mes! 💪👏'
-      : 'Todavía no llegamos al objetivo, pero vamos por buen camino. ¡Sigamos empujando entre todos para cerrar el mes arriba de la marca! 💪');
+  let ke=null; try{ ke=kgEquivalentes(); }catch(e){ ke=null; }   // sin referencia, el mensaje sale igual sin ese bloque
+  let dh=null; try{ dh=diasHabilesMes(); }catch(e){ dh=null; }
+  const texto = textoMensajeEquipo(rp, rm, ke, dh, new Date());
   window.__wa.modal({ titulo:'Mensaje para el grupo del equipo', destino:'Copiá y pegá en el grupo de WhatsApp de la empresa', texto });
 }
 { const b=document.getElementById('btn-msj-equipo'); if(b) b.onclick=armarMensajeEquipo; }
@@ -12055,6 +12117,7 @@ function buildFilterTable(cfg){
     // deja más del doble de contribución que uno mayorista, así que se puede facturar mucho con mix
     // malo y no cubrir la estructura igual. Lo muestra el widget de arriba de todo en la Vista Diaria.
     {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
+    {g:'Comercial', k:'peKgObjetivo', l:'Punto de equilibrio en KILOS equivalentes (objetivo del mes para el equipo)', def:0, t:'num', hint:'Es el objetivo que sale en el 📲 Mensaje para el equipo de la Vista Diaria. En 0 lo calcula solo el Tablero con los costos fijos y el mix de los últimos meses cerrados; con un número, queda fijo en ese valor.'},
     // 14/09: WhatsApp restringió el número tras 54 mensajes en frío en una mañana. El tope frena ▶ Siguiente.
     {g:'Comercial', k:'topesTopeDiario', l:'Topes: máximo de WhatsApp en frío por día',   def:25, t:'num', hint:'Cuenta los prospectos marcados como contactados HOY (en todas las PC). Al llegar, ▶ Siguiente se frena y avisa. El 14/09 se mandaron 54 y WhatsApp restringió el número; el 22/09 se subió de 15 a 25. En 0 no hay tope.'},
     // 15/09: el Tablero marca el ritmo. Reparte lo que queda del tope en lo que queda del horario, con este piso.
