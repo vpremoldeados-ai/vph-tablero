@@ -14887,11 +14887,11 @@ function buildFilterTable(cfg){
   // acá no está el riesgo de restricción del número que obligó a frenar Topes el 14/09.
   const MAY_COL='vph_config', MAY_DOC='crm_mayoristas', MAY_KEY='vph_crm_mayoristas_v1';
   const MAY_TIPOS=[
-    {k:'cbaFact', l:'CBA · Facturado',       pdf:'Mayorista Facturado'},
-    {k:'cbaSF',   l:'CBA · Contado',         pdf:'Mayorista Contado'},
-    {k:'intFact', l:'Interior · Facturado',  pdf:'Mayorista Facturado — hasta 100 km'},
-    {k:'intSF',   l:'Interior · Contado',    pdf:'Mayorista Contado — hasta 100 km'}
-  ];
+    {k:'cbaFact', l:'CBA · Facturado',       pdf:'Mayorista Facturado',                 lp:'may'},
+    {k:'cbaSF',   l:'CBA · Contado',         pdf:'Mayorista Contado',                   lp:'maySF'},
+    {k:'intFact', l:'Interior · Facturado',  pdf:'Mayorista Facturado — hasta 100 km',  lp:'may100'},
+    {k:'intSF',   l:'Interior · Contado',    pdf:'Mayorista Contado — hasta 100 km',    lp:'maySF100'}
+  ];   // lp = la lista del 📄 de Base de Datos (LISTAS_PDF) que le corresponde a cada grupo
   function mayTipo(k){ return MAY_TIPOS.find(t=>t.k===k)||MAY_TIPOS[0]; }
   // A qué tipo de lista pertenece un cliente, deducido de sus datos. "Sin factura" en la lista de
   // precios → Contado. El Interior NO se puede deducir de la venta (la zona no viaja en la lista):
@@ -14932,7 +14932,9 @@ function buildFilterTable(cfg){
       if(seg==='dormido' || seg==='nunca') return hola+' ¿Cómo venís? Te escribo para saber si tenés alguna obra o pedido en danza donde te pueda servir con losetas, green blocks o topes — fabricamos a pedido y entregamos en 7 días hábiles, así no te hace falta tener stock parado. Cualquier consulta estoy acá 👌';
       return hola+' ¿Cómo venís de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
     }
-    return hola+' Te paso la lista de precios mayorista vigente de '+mayMesLabel(mayPeriodo())+' 👇 Fabricamos a pedido con entrega en 7 días hábiles, así no necesitás stock inmovilizado. ¡Avisame si querés que te reserve producción!';
+    // 02/10 (decisión del pedido de envío con la lista adjunta): avisa que la lista CAMBIÓ — el +3% del
+    // 01/10 se mandaba con un texto que no decía que los precios eran otros.
+    return hola+' Te paso la lista de precios mayorista actualizada, vigente desde '+mayMesLabel(mayPeriodo())+' 👇 Fabricamos a pedido con entrega en 7 días hábiles, así no necesitás stock inmovilizado. ¡Avisame si querés que te reserve producción!';
   }
   // ---------- Actividad real del revendedor (22/09, pedido de Marcelo) ----------
   // El seguimiento por calendario (mensual/quincenal a TODOS por igual) no distingue a quién priorizar.
@@ -15016,7 +15018,10 @@ function buildFilterTable(cfg){
   // El ✓ de "lo mandé" recién sella al confirmarlo — lección de Topes (11/09): marcar al ABRIR el
   // chat dejaba como enviados mensajes que nunca salieron (número sin WhatsApp, PDF sin adjuntar).
   function mayConfirmar(ok){
-    const p=mayConfirm; mayConfirm=null;
+    const p=mayConfirm; mayConfirm=null; mayImg='';
+    // "✗ No salió" con la lista: ese cliente queda SALTEADO por esta sesión, para que ▶ Siguiente no
+    // vuelva a ofrecer el mismo una y otra vez (número sin WhatsApp, por ejemplo). No se escribe nada.
+    if(p && !ok && p.accion==='lista' && MAYW[p.mi]) maySaltados[mayClave(MAYW[p.mi])]=1;
     if(!p || !ok){ drawMayoristas(); return; }
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
@@ -15049,20 +15054,116 @@ function buildFilterTable(cfg){
     maySave(MAYW.concat(nuevos)); drawMayoristas();
     alert('Se sumaron '+nuevos.length+' mayoristas.\n\nRevisá el TIPO DE LISTA de cada uno (el Interior no se puede deducir solo — salvo DELTA POLO quedaron en CBA) y completá los teléfonos que falten.');
   }
+  // ---------- La lista viaja SOLA con el mensaje (02/10) ----------
+  // Pedido: "algo más automático, similar a los mensajes de Topes: que ya arme el mensaje y adjunte el
+  // listado". Hasta acá el 📲 abría el chat y el PDF había que generarlo y adjuntarlo a mano. Ahora:
+  //  · al abrir el chat de la LISTA, la lista de SU grupo queda copiada como imagen (Ctrl+V en el chat).
+  //    Va como imagen porque el portapapeles del navegador no acepta un PDF; sale de la misma cuenta
+  //    que el 📄 de Base de Datos (window.__imprimir.listaPreciosImagen), con los precios del momento.
+  //  · ▶ Siguiente recorre de a uno a los que todavía no recibieron la lista del mes.
+  // Lo que NO cambia: el ✓ recién sella al confirmar "Lo mandé" (el Tablero no ve si el mensaje salió).
+  let mayImg='';        // '', 'copiando', 'ok' o 'error': qué pasó con la imagen del último chat abierto
+  let maySaltados={};   // los "✗ No salió" de esta sesión (ver mayConfirmar)
+  function mayClave(r){ return topesNorm(r&&r.nombre)+'|'+String((r&&r.telefono)||'').replace(/\D/g,''); }
+  // Por qué NO se puede mandar la lista de este cliente ('' si se puede). Hoy: las de Interior con el
+  // flete de Biletta en 0 no se generan — no hay lista que mandar, así que tampoco se ofrece el
+  // mensaje que la anuncia. Si Documentos todavía no cargó no se frena nada (solo no habrá imagen).
+  function mayListaError(row){
+    const im=window.__imprimir;
+    if(!im || typeof im.listaPreciosError!=='function') return '';
+    return im.listaPreciosError({lista:mayTipo(row&&row.tipo).lp}) || '';
+  }
+  // El orden de la tabla ES el orden de la cola: por grupo de lista, primero los que tienen obra en
+  // marcha y los que hace más que no compran. data-mi = índice en MAYW (el que usan los guardados).
+  function mayVista(){
+    const ordenTipo=k=>MAY_TIPOS.findIndex(t=>t.k===k);
+    const segOrd=r=>maySeg(maySegmentoDe(MAY_ACT[topesNorm(r.nombre)])).ord;
+    return MAYW.map((r,mi)=>({r,mi})).sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || ((b.r.obra?1:0)-(a.r.obra?1:0)) || (segOrd(b.r)-segOrd(a.r)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+  }
+  // A quiénes les falta la lista de este mes Y se les puede mandar ahora (con teléfono, con lista
+  // generable y sin haberlos salteado en esta sesión).
+  function mayPendientes(){
+    const per=mayPeriodo();
+    return mayVista().filter(({r})=> r.listaPeriodo!==per && String(r.telefono||'').trim() && topesWaLink(r.telefono) && !maySaltados[mayClave(r)] && !mayListaError(r));
+  }
+  // Deja la lista en el portapapeles. El write() va DENTRO del clic y ANTES de abrir WhatsApp (Chrome
+  // exige el gesto y el foco: misma lección que la imagen de Topes); el ClipboardItem recibe la PROMESA,
+  // así no importa si la imagen termina de armarse un instante después. Nunca frena el envío: si falla,
+  // el cartel lo dice y la imagen se abre a mano con 🖼️ Ver lista.
+  function mayCopiarLista(row){
+    mayImg='';
+    try{
+      const im=window.__imprimir;
+      const r=(im && typeof im.listaPreciosImagen==='function') ? im.listaPreciosImagen({lista:mayTipo(row&&row.tipo).lp}) : null;
+      if(!r || r.error || !r.png || typeof navigator==='undefined' || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem==='undefined'){ mayImg='error'; return; }
+      mayImg='copiando';
+      navigator.clipboard.write([new ClipboardItem({'image/png':r.png})])
+        .then(()=>{ mayImg='ok'; drawMayoristas(); })
+        .catch(()=>{ mayImg='error'; drawMayoristas(); });
+    }catch(e){ mayImg='error'; }
+  }
+  // Abre el chat de UNA fila con su mensaje (lo usan el 📲 de la fila y ▶ Siguiente: un solo camino).
+  function mayAbrirChat(mi, accion){
+    const r=MAYW[mi]; if(!r) return false;
+    const lk=topesWaLink(r.telefono); if(!lk) return false;
+    if(accion==='lista'){
+      const err=mayListaError(r);
+      if(err){ alert('La lista de "'+(r.nombre||'este cliente')+'" ('+mayTipo(r.tipo).l+') todavía no se puede mandar:\n\n'+err); return false; }
+      mayCopiarLista(r);
+    } else mayImg='';
+    const seg=maySegmentoDe(MAY_ACT[topesNorm(r.nombre)]);
+    window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion, seg)), '_blank');
+    mayConfirm={mi, accion}; drawMayoristas();
+    return true;
+  }
+  function maySiguiente(){
+    if(mayConfirm){ alert('Primero marcá si salió el mensaje del chat que quedó abierto (✓ Lo mandé / ✗ No salió).'); return false; }
+    const p=mayPendientes()[0];
+    if(!p){ alert('No queda nadie en la cola: todos los que tienen teléfono y lista ya recibieron la de este mes (o los salteaste).'); return false; }
+    return mayAbrirChat(p.mi, 'lista');
+  }
+  // 🖼️ Ver lista: la imagen que se manda, en una pestaña (para revisarla o copiarla a mano). La pestaña
+  // se abre DENTRO del clic: abierta después de la promesa, el navegador la bloquea como pop-up.
+  function mayVerLista(lp){
+    const im=window.__imprimir; if(!im || typeof im.listaPreciosImagen!=='function') return;
+    const r=im.listaPreciosImagen({lista:lp});
+    if(r.error){ alert(r.error); return; }
+    const w=window.open('', '_blank');
+    r.png.then(b=>{ const u=URL.createObjectURL(b); if(w) w.location.href=u; else window.open(u,'_blank'); })
+      .catch(()=>{ if(w) w.close(); alert('No se pudo armar la imagen de la lista.'); });
+  }
   function drawMayoristas(){
     const cont=$('crm-may-controles'), tabla=$('crm-may-tabla'); if(!cont||!tabla) return;
     const per=mayPeriodo(), mes=mayMesLabel(per);
     const env=MAYW.filter(r=>r.listaPeriodo===per).length;
     const sinTel=MAYW.filter(r=>!String(r.telefono||'').trim()).length;
+    // Un error por grupo de lista (se pregunta una vez por grupo, no por fila).
+    const errTipo={}; MAY_TIPOS.forEach(t=>{ errTipo[t.k]=mayListaError({tipo:t.k}); });
+    const sinLista=MAYW.filter(r=>errTipo[mayTipo(r.tipo).k] && r.listaPeriodo!==per).length;
+    const pend=mayPendientes(), nSalt=Object.keys(maySaltados).length;
+    const cf=(mayConfirm && MAYW[mayConfirm.mi]) ? mayConfirm : null;
+    const cartel = !cf ? '' : (()=>{ const r=MAYW[cf.mi], t=mayTipo(r.tipo);
+      const img = cf.accion!=='lista' ? '' :
+        mayImg==='ok' ? '<span style="color:#157a1d;font-weight:700">🖼️ La lista «'+esc(t.pdf)+'» quedó copiada: en el chat, Ctrl+V y Enviar. </span>' :
+        mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
+        '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
+      return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista de '+esc(mes)) : 'consulta de stock')+'. '+img+
+        '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
+        '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
-        '<b>El circuito del mes:</b> 1) Generá los 4 PDF en Base de Datos → 📄 Lista de precios (salen con los precios del día). '+
-        '2) Tocá 📲 en cada cliente: se abre su WhatsApp con el mensaje — <b>adjuntá ahí el PDF de SU lista</b> (clip 📎 → Documento; la columna dice cuál). '+
-        '3) Confirmá "✓ Lo mandé" para que el panel lleve la cuenta. '+
+        '<b>El circuito del mes:</b> 1) Tocá <b>▶ Siguiente</b>: se abre el WhatsApp del próximo cliente con el mensaje escrito y <b>su lista de precios queda copiada</b> (la de su grupo, con los precios de hoy). '+
+        '2) En el chat: <b>Ctrl+V y Enviar</b>. 3) Volvé y marcá "✓ Lo mandé" para que el panel lleve la cuenta. '+
+        'El 📲 de cada fila hace lo mismo con ese cliente. '+
         '<b>La columna Actividad</b> prioriza a quién escribirle primero: a un revendedor dormido no le preguntamos si necesita reponer (no acumula stock), le preguntamos si tiene una obra en danza.</div>'+
+      cartel+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+        '<button class="cmp-btn" data-may-siguiente'+((pend.length && !cf)?'':' disabled')+' style="background:#1e9e5a;color:#fff;font-weight:800'+((pend.length && !cf)?'':';opacity:.5')+'" title="Abre el WhatsApp del próximo cliente sin la lista de este mes, con el mensaje escrito y su lista copiada para pegar">▶ Siguiente ('+pend.length+')</button>'+
         '<span style="font-weight:800;font-size:13px">Lista de '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
         (sinTel?('<span style="font-size:12px;color:#c0392b">· '+sinTel+' sin teléfono cargado</span>'):'')+
+        (sinLista?('<span style="font-size:12px;color:#b45309" title="Las listas «hasta 100 km» no se generan hasta cargar el flete por pallet de Biletta en Base de Datos → ⚙️ Parámetros">· '+sinLista+' de Interior sin lista (falta el flete)</span>'):'')+
+        (nSalt?('<span style="font-size:12px;color:#64748b">· '+nSalt+' salteado'+(nSalt>1?'s':'')+' <button class="cmp-btn" data-may-resaltar title="Vuelve a ofrecerlos en ▶ Siguiente">↺ reintentar</button></span>'):'')+
         '<span style="margin-left:auto;display:flex;gap:8px">'+
           '<button class="cmp-btn" data-may-importar title="Trae los clientes con lista mayorista desde las fichas de Clientes y desde las Ventas — no pisa los que ya están">↺ Traer de Clientes y Ventas</button>'+
           '<button class="cmp-btn" data-may-agregar>+ Agregar</button>'+
@@ -15073,24 +15174,27 @@ function buildFilterTable(cfg){
         (mayActTs ? ('<span style="font-size:11px;color:#94a3b8">actualizado '+mayActTsLabel()+'</span>') : '<span style="font-size:11px;color:#94a3b8">todavía no se actualizó — tocá 🔄 para ver a quién priorizar</span>')+
       '</div>'+
       (mayActTs ? mayActResumenHtml() : '');
-    const vista=MAYW.map((r,mi)=>({r,mi}));
-    const ordenTipo=k=>MAY_TIPOS.findIndex(t=>t.k===k);
-    const segOrd=r=>maySeg(maySegmentoDe(MAY_ACT[topesNorm(r.nombre)])).ord;
-    vista.sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || ((b.r.obra?1:0)-(a.r.obra?1:0)) || (segOrd(b.r)-segOrd(a.r)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
     let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
       if(t.k!==tipoPrev){ tipoPrev=t.k;
-        html+='<tr><td colspan="9" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— PDF: '+esc(t.pdf)+'</span></td></tr>'; }
+        html+='<tr><td colspan="9" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— Lista: '+esc(t.pdf)+'</span> '+
+          (errTipo[t.k] ? '<span style="color:#b45309;font-weight:700" title="'+esc(errTipo[t.k])+'">⚠️ todavía no se puede generar (falta el flete hasta 100 km en ⚙️ Parámetros)</span>'
+            : '<button class="cmp-btn" data-may-ver="'+t.lp+'" style="padding:1px 8px;font-size:11px" title="Abre en otra pestaña la imagen de esta lista, tal cual se le manda al cliente">🖼️ Ver lista</button>')+
+          '</td></tr>'; }
       const tel=String(r.telefono||'').trim();
       const lk=tel ? topesWaLink(tel) : null;
       const conf = mayConfirm && mayConfirm.mi===mi ? mayConfirm.accion : null;
       const act=MAY_ACT[topesNorm(r.nombre)]; const segK=maySegmentoDe(act); const s=maySeg(segK);
       const celda=(accion, hecho, detalle)=>{
         if(conf===accion) return '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> <button class="cmp-btn" data-may-no="'+mi+'">✗ No</button></span>';
-        return (lk?'<button class="cmp-btn" data-may-abrir-chat="'+mi+'" data-may-accion="'+accion+'" title="Abre el WhatsApp con el mensaje'+(accion==='lista'?' — adjuntá el PDF &quot;'+esc(t.pdf)+'&quot;':'')+'">📲</button>':'<span style="color:#c0392b;font-size:11px">sin tel.</span>')+
+        const sinL = accion==='lista' && errTipo[t.k];   // no hay lista que mandar: tampoco el mensaje que la anuncia
+        return (!lk ? '<span style="color:#c0392b;font-size:11px">sin tel.</span>'
+            : sinL ? '<span style="color:#b45309;font-size:11px" title="'+esc(errTipo[t.k])+'">sin lista</span>'
+            : '<button class="cmp-btn" data-may-abrir-chat="'+mi+'" data-may-accion="'+accion+'" title="Abre el WhatsApp con el mensaje'+(accion==='lista'?' y deja copiada la lista &quot;'+esc(t.pdf)+'&quot; para pegarla con Ctrl+V':'')+'">📲</button>')+
           ' '+(hecho?('<span style="color:#1e9e5a;font-weight:700;font-size:11.5px">'+hecho+'</span>'):'')+(detalle?('<span style="color:#94a3b8;font-size:11px"> '+detalle+'</span>'):'');
       };
       const listaHecha = r.listaPeriodo===per ? '✓ enviada' : '';
@@ -15117,15 +15221,19 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
     cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
     cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
-    tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>{
-      const mi=+b.dataset.mayAbrirChat, accion=b.dataset.mayAccion, r=MAYW[mi]; if(!r) return;
-      const lk=topesWaLink(r.telefono); if(!lk) return;
-      const seg=maySegmentoDe(MAY_ACT[topesNorm(r.nombre)]);
-      window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion, seg)), '_blank');
-      mayConfirm={mi, accion}; drawMayoristas();
+    cont.querySelectorAll('[data-may-siguiente]').forEach(b=>b.onclick=()=>maySiguiente());
+    cont.querySelectorAll('[data-may-resaltar]').forEach(b=>b.onclick=()=>{ maySaltados={}; drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-ver]').forEach(b=>b.onclick=()=>mayVerLista(b.dataset.mayVer));
+    tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>mayAbrirChat(+b.dataset.mayAbrirChat, b.dataset.mayAccion));
+    // "¿Salió?" está en la fila Y en el cartel de arriba (con 20 filas, la fila puede quedar fuera de pantalla).
+    [cont, tabla].forEach(z=>{
+      z.querySelectorAll('[data-may-si]').forEach(b=>b.onclick=()=>mayConfirmar(true));
+      z.querySelectorAll('[data-may-no]').forEach(b=>b.onclick=()=>mayConfirmar(false));
     });
-    tabla.querySelectorAll('[data-may-si]').forEach(b=>b.onclick=()=>mayConfirmar(true));
-    tabla.querySelectorAll('[data-may-no]').forEach(b=>b.onclick=()=>mayConfirmar(false));
+    // Deja armadas las imágenes de las listas en uso: cuando se toque 📲 ya están listas para copiar.
+    try{ const im=window.__imprimir;
+      if(im && typeof im.listaPreciosImagen==='function') MAY_TIPOS.forEach(t=>{ if(!errTipo[t.k] && MAYW.some(r=>mayTipo(r.tipo).k===t.k)) im.listaPreciosImagen({lista:t.lp}); });
+    }catch(e){}
     tabla.querySelectorAll('[data-may-tipo]').forEach(s=>s.onchange=()=>{ mayUpd(+s.dataset.mayTipo, r=>({...r, tipo:s.value})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
@@ -19884,16 +19992,18 @@ function buildFilterTable(cfg){
     maySF100:{ campo:'precioMayoristaSF', nombre:'Mayorista Contado hasta 100 km', may:1, flete100:1,
                cond:'Precios por unidad. '+LP_PAGO_CONT+' Compra mínima: 4 pallets. '+LP_100+' '+LP_COMUN }
   };
-  function listaPrecios(o){
+  // Los DATOS de una lista (qué productos entran y a qué precio), separados del papel. Los consumen
+  // el PDF (listaPrecios) y la IMAGEN para WhatsApp (listaPreciosImagen, 02/10): es UNA sola cuenta,
+  // así la imagen que se le manda al revendedor no puede decir un precio distinto del PDF.
+  // Si la lista no se puede armar devuelve {error} y quien la pidió decide cómo avisar.
+  function listaPreciosDatos(o){
     o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
     // El flete "hasta 100 km" (Expreso Biletta) se edita en ⚙️ Parámetros porque el transporte lo
     // actualiza cuando quiere. En 0 = sin cotizar → la lista NO se genera: mandar precios sin el
     // flete sería regalar el envío sin enterarse (mismo criterio que las tasas de Financiación).
     const flete100 = L.flete100 ? num(window.__param ? window.__param('fletePallet100',0) : 0) : 0;
-    if(L.flete100 && !(flete100>0)){
-      alert('Falta cargar el "Flete por pallet hasta 100 km" en Base de Datos → ⚙️ Parámetros (es lo que cobra Expreso Biletta por pallet). Con ese dato cargado, esta lista se genera sola.');
-      return;
-    }
+    if(L.flete100 && !(flete100>0))
+      return {error:'Falta cargar el "Flete por pallet hasta 100 km" en Base de Datos → ⚙️ Parámetros (es lo que cobra Expreso Biletta por pallet). Con ese dato cargado, esta lista se genera sola.'};
     const margen = num(window.__param ? window.__param('margenSugerido',75) : 75);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
       .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
@@ -19905,26 +20015,34 @@ function buildFilterTable(cfg){
       .filter(p=>!L.flete100 || num(p.udPorPallet)>0)
       // Ordena por el nombre IMPRESO (los topes renombrados quedan juntos igual).
       .sort((a,b)=>nombreLista(a).localeCompare(nombreLista(b),'es'));
-    if(!prods.length){ alert('No hay productos con precio cargado en la lista "'+L.nombre+'".'); return; }
+    if(!prods.length) return {error:'No hay productos con precio cargado en la lista "'+L.nombre+'".'};
     const d=new Date(); const pad=n=>String(n).padStart(2,'0');
     const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
     const hoyISO=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
-    const conM2=prods.some(p=>num(p.unidadesPorM2)>0);
     // Todo lo derivado se redondea al peso entero (regla de Marcelo para los precios publicados).
     const unit = p => { const base=num(p[L.campo]);
       return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
+    const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
+      return { codigo:p.codigo, nombre:nombreLista(p), pu:pu, sugerido:Math.round(pu*(1+margen/100)),
+        uxm2:uxm2, m2:Math.round(pu*uxm2), peso:num(p.pesoUnit), ud:ud, pallet:pu*ud }; });
+    return { L:L, margen:margen, hoy:hoy, hoyISO:hoyISO, conM2:filas.some(f=>f.uxm2>0), filas:filas };
+  }
+  function listaPrecios(o){
+    const D=listaPreciosDatos(o);
+    if(D.error){ alert(D.error); return; }
+    const L=D.L, margen=D.margen, hoy=D.hoy, hoyISO=D.hoyISO, conM2=D.conM2;
     // La foto al lado del código, igual que en presupuestos/ventas/remitos (pedido de Sofía, 11/08:
     // que el corralón identifique el producto de un vistazo). celdaCodigo no rompe si falta la foto.
-    const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
-      return '<tr><td style="white-space:nowrap">'+celdaCodigo(p.codigo)+'</td><td>'+esc(nombreLista(p))+'</td>'+
+    const filas=D.filas.map(f=>{ const pu=f.pu, uxm2=f.uxm2, ud=f.ud;
+      return '<tr><td style="white-space:nowrap">'+celdaCodigo(f.codigo)+'</td><td>'+esc(f.nombre)+'</td>'+
         '<td class="n"><b>'+money(pu)+'</b></td>'+
-        (L.may?('<td class="n">'+money(Math.round(pu*(1+margen/100)))+'</td>'):'')+
+        (L.may?('<td class="n">'+money(f.sugerido)+'</td>'):'')+
         // Precio x m² en un renglón y la cantidad de unidades en otro más chico debajo (pedido de
         // Sofía, 11/08): inline se partía feo en la columna angosta ("$18.904,00 (8" / "u/m²)").
-        (conM2?('<td class="n">'+(uxm2>0?'<span style="white-space:nowrap">'+money(Math.round(pu*uxm2))+'</span><br><span style="color:#666;font-size:9px;white-space:nowrap">'+pct(uxm2)+' u/m²</span>':'—')+'</td>'):'')+
-        '<td class="n">'+(num(p.pesoUnit)>0?pct(p.pesoUnit)+' kg':'—')+'</td>'+
+        (conM2?('<td class="n">'+(uxm2>0?'<span style="white-space:nowrap">'+money(f.m2)+'</span><br><span style="color:#666;font-size:9px;white-space:nowrap">'+pct(uxm2)+' u/m²</span>':'—')+'</td>'):'')+
+        '<td class="n">'+(f.peso>0?pct(f.peso)+' kg':'—')+'</td>'+
         '<td class="n">'+(ud>0?nf(ud):'—')+'</td>'+
-        (L.may?('<td class="n">'+(ud>0?money(pu*ud):'—')+'</td>'):'')+
+        (L.may?('<td class="n">'+(ud>0?money(f.pallet):'—')+'</td>'):'')+
         '</tr>'; }).join('');
     const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
       (L.may?'<div class="doc-obs" style="margin-bottom:6px"><b>Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.</b></div>':'')+
@@ -19936,6 +20054,125 @@ function buildFilterTable(cfg){
       'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
       '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Lista '+esc(L.nombre)+' — vigente desde '+esc(hoy)+'</span></div>';
     mostrar(html, nombreArchivo('Lista de precios '+L.nombre, '', '', hoyISO));
+  }
+
+  // ---------- La lista de precios como IMAGEN, para pegar en WhatsApp (02/10) ----------
+  // Pedido: mandarles la lista a los revendedores "más automático, como Topes" — el chat se abre con
+  // el mensaje y la lista queda copiada para pegarla con Ctrl+V. El portapapeles del navegador NO
+  // acepta un PDF (solo imágenes), así que la lista se dibuja en un canvas. Sale de listaPreciosDatos:
+  // los MISMOS precios que el PDF. Pensada para leerse en el celular: un renglón por producto y el
+  // precio grande. listaImagenModelo es PURA (deja los textos armados) para poder testearla en node;
+  // listaImagenPintar solo dibuja lo que el modelo dice.
+  // Sin centavos: todos los precios publicados van redondeados al peso (mismo valor que el PDF).
+  function lpPlata(n){ return '$'+nf(n); }
+  function listaImagenModelo(D){
+    const L=D.L;
+    return {
+      titulo:'LISTA DE PRECIOS', sub:L.nombre, vigente:'Vigente desde '+D.hoy,
+      lema: L.may ? 'Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.' : '',
+      filas: D.filas.map(f=>{
+        const det=[];
+        if(L.may) det.push('Reventa sugerida '+lpPlata(f.sugerido));
+        if(f.uxm2>0) det.push('m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
+        if(f.peso>0) det.push(pct(f.peso)+' kg');
+        if(f.ud>0) det.push(nf(f.ud)+' u/pallet');
+        const img=IMG_PRODUCTO[String(f.codigo||'').trim().toUpperCase()];
+        return { codigo:String(f.codigo||''), nombre:String(f.nombre||''), precio:lpPlata(f.pu), det:det.join(' · '),
+          pallet:(L.may && f.ud>0) ? ('Pallet '+lpPlata(f.pallet)) : '', foto: img ? ('Productos/'+img) : '' };
+      }),
+      cond:'Condiciones: '+L.cond+' Precios sujetos a modificación sin previo aviso.',
+      contacto:'Consultas y pedidos: '+EMPRESA.tel+' · '+EMPRESA.web,
+      pie:[EMPRESA.razon+' · '+EMPRESA.web, 'Lista '+L.nombre+' — vigente desde '+D.hoy]
+    };
+  }
+  // Una foto que falta (producto nuevo sin imagen cargada) no frena la lista: ese renglón va sin foto.
+  function lpCargarImg(src){
+    return new Promise(ok=>{ if(!src){ ok(null); return; }
+      const im=new Image(); im.onload=()=>ok(im); im.onerror=()=>ok(null); im.src=src; });
+  }
+  function lpPartir(x, texto, ancho){
+    const out=[]; let linea='';
+    String(texto).split(/\s+/).forEach(p=>{ const t=linea ? linea+' '+p : p;
+      if(linea && x.measureText(t).width>ancho){ out.push(linea); linea=p; } else linea=t; });
+    if(linea) out.push(linea);
+    return out;
+  }
+  function listaImagenPintar(M){
+    return Promise.all([lpCargarImg('Productos/logo.png')].concat(M.filas.map(f=>lpCargarImg(f.foto)))).then(imgs=>{
+      const W=1080, PAD=32, FAM="'Segoe UI',system-ui,Arial,sans-serif";
+      const cv=document.createElement('canvas'), x=cv.getContext('2d');
+      const fuente=(px,peso)=>{ x.font=(peso||400)+' '+px+'px '+FAM; };
+      // Achica la letra hasta que el texto entre en el ancho (un nombre largo no puede pisar el precio).
+      const ajustar=(texto,ancho,px,peso,min)=>{ let p=px; fuente(p,peso);
+        while(p>(min||14) && x.measureText(texto).width>ancho){ p--; fuente(p,peso); } };
+      // 1) Lo que envuelve se mide ANTES: define el alto del canvas.
+      fuente(22); const condL=lpPartir(x, M.cond, W-2*PAD);
+      const H_CAB=150, H_LEMA=M.lema?54:0, H_TH=40, H_FILA=100, H_COND=30+condL.length*31+50, H_PIE=60;
+      const H=H_CAB+H_LEMA+H_TH+M.filas.length*H_FILA+H_COND+H_PIE;
+      cv.width=W; cv.height=H;
+      x.fillStyle='#ffffff'; x.fillRect(0,0,W,H); x.textBaseline='alphabetic';
+      // 2) Encabezado: logo a la izquierda, qué lista es y desde cuándo rige a la derecha.
+      const logo=imgs[0];
+      if(logo && logo.height){ const h=92, w=Math.min(340, logo.width*h/logo.height); x.drawImage(logo, PAD, 26, w, h); }
+      else { x.textAlign='left'; x.fillStyle='#0e1726'; fuente(52,800); x.fillText('VPH', PAD, 92); }
+      x.textAlign='right';
+      x.fillStyle='#0e1726'; fuente(40,800); x.fillText(M.titulo, W-PAD, 64);
+      x.fillStyle='#1e7a4a'; ajustar(M.sub, 620, 30, 700, 20); x.fillText(M.sub, W-PAD, 102);
+      x.fillStyle='#64748b'; fuente(21); x.fillText(M.vigente, W-PAD, 133);
+      x.fillStyle='#38b26a'; x.fillRect(0, H_CAB-5, W, 5);
+      let y=H_CAB;
+      if(M.lema){ x.fillStyle='#eef6f1'; x.fillRect(0,y,W,H_LEMA);
+        x.fillStyle='#14532d'; x.textAlign='center'; ajustar(M.lema, W-2*PAD, 22, 600, 16); x.fillText(M.lema, W/2, y+35); y+=H_LEMA; }
+      x.fillStyle='#f1f5f9'; x.fillRect(0,y,W,H_TH);
+      x.fillStyle='#64748b'; fuente(16,700);
+      x.textAlign='left'; x.fillText('PRODUCTO', PAD, y+26);
+      x.textAlign='right'; x.fillText('PRECIO POR UNIDAD', W-PAD, y+26);
+      y+=H_TH;
+      // 3) Un renglón por producto.
+      const IZQ=PAD+92, ANCHO_TXT=W-PAD-250-IZQ;
+      M.filas.forEach((f,i)=>{
+        if(i%2){ x.fillStyle='#f8fafc'; x.fillRect(0,y,W,H_FILA); }
+        const im=imgs[i+1];
+        if(im && im.width && im.height){ const L=76, r=Math.min(im.width, im.height);   // recorte cuadrado centrado
+          x.drawImage(im, (im.width-r)/2, (im.height-r)/2, r, r, PAD, y+12, L, L); }
+        x.textAlign='left';
+        x.fillStyle='#0f172a'; ajustar(f.nombre, ANCHO_TXT, 28, 700, 17); x.fillText(f.nombre, IZQ, y+40);
+        const wNom=x.measureText(f.nombre).width;
+        fuente(16,600);
+        if(f.codigo && wNom+14+x.measureText(f.codigo).width<=ANCHO_TXT){ x.fillStyle='#94a3b8'; x.fillText(f.codigo, IZQ+wNom+14, y+40); }
+        if(f.det){ x.fillStyle='#475569'; ajustar(f.det, W-PAD-250-IZQ+40, 21, 400, 14); x.fillText(f.det, IZQ, y+73); }
+        x.textAlign='right';
+        x.fillStyle='#0f172a'; fuente(38,800); x.fillText(f.precio, W-PAD, f.pallet ? y+46 : y+62);
+        if(f.pallet){ x.fillStyle='#1e7a4a'; fuente(21,600); x.fillText(f.pallet, W-PAD, y+78); }
+        x.fillStyle='#e2e8f0'; x.fillRect(PAD, y+H_FILA-1, W-2*PAD, 1);
+        y+=H_FILA;
+      });
+      // 4) Condiciones y contacto.
+      x.textAlign='left'; x.fillStyle='#334155'; fuente(22);
+      let yc=y+44;
+      condL.forEach(l=>{ x.fillText(l, PAD, yc); yc+=31; });
+      x.fillStyle='#0f172a'; ajustar(M.contacto, W-2*PAD, 22, 700, 15); x.fillText(M.contacto, PAD, yc+10);
+      // 5) Pie.
+      x.fillStyle='#0e1726'; x.fillRect(0, H-H_PIE, W, H_PIE);
+      x.fillStyle='#ffffff'; fuente(18,600);
+      x.textAlign='left'; x.fillText(M.pie[0], PAD, H-H_PIE+37);
+      x.fillStyle='#cbd5e1'; fuente(17); x.textAlign='right'; x.fillText(M.pie[1], W-PAD, H-H_PIE+37);
+      return new Promise((ok,ko)=> cv.toBlob(b=> b ? ok(b) : ko(new Error('no se pudo armar la imagen')), 'image/png'));
+    });
+  }
+  // La imagen de una lista se arma UNA vez y se reusa mientras no cambie nada de lo que muestra
+  // (un precio, un parámetro o el día): así, cuando se toca 📲, ya está lista para el portapapeles.
+  // Devuelve {error} (misma causa que frena el PDF) o {png: promesa del PNG, nombre, modelo}.
+  let lpImgCache={};
+  function listaPreciosImagen(o){
+    const D=listaPreciosDatos(o); if(D.error) return {error:D.error};
+    const M=listaImagenModelo(D), firma=JSON.stringify(M), k=String((o&&o.lista)||'may');
+    let c=lpImgCache[k];
+    if(!c || c.firma!==firma){
+      c=lpImgCache[k]={firma:firma, png:listaImagenPintar(M)};
+      c.png.catch(()=>{ if(lpImgCache[k]===c) delete lpImgCache[k]; });
+    }
+    return {png:c.png, nombre:D.L.nombre, modelo:M};
   }
 
   // ---------- Hoja de Ruta de Cobranza (08/09) ----------
@@ -19967,6 +20204,10 @@ function buildFilterTable(cfg){
 
   window.__imprimir = {
     listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'may100'|'maySF100'|'min'} — la usa Base de Datos (📄 Lista de precios)
+    // La misma lista como IMAGEN para pegar en WhatsApp (la usa el panel Mayoristas del CRM), y por qué
+    // una lista no se puede generar ('' si se puede) — para no ofrecer mandar una que no existe.
+    listaPreciosImagen: listaPreciosImagen,
+    listaPreciosError: o => (listaPreciosDatos(o).error || ''),
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
