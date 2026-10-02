@@ -15188,7 +15188,7 @@ function buildFilterTable(cfg){
         'Desarrollamos la Base Nivel BNV-40, un apoyo de hormigón regulable para módulos habitables, oficinas y contenedores. Se apoya en el terreno y se nivela con llave el mismo día (regula de 0 a 100 mm), sin encofrar ni esperar fragüe, y se reajusta si el terreno se asienta.\n\n'+
         '- Base de hormigón de 400×400 mm (≈50 kg), varilla roscada de 1" y placas galvanizadas.\n'+
         '- Se puede reutilizar cuando el módulo se traslada.\n\n'+
-        'Les adjunto el flyer con foto e información técnica.\n\n'+
+        'Les paso la imagen con foto e información técnica.\n\n'+
         '¿Les interesaría que les acerque una para verla y probarla en uno de sus módulos?\n\n'+
         'Saludos,\n'+f+'\nVASSALLO Fábrica de Premoldeados de Hormigón\nWhatsApp 351 760-5362 · https://www.vpremoldeados.com'};
   }
@@ -15314,7 +15314,7 @@ function buildFilterTable(cfg){
     cont.innerHTML=
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
         '<b>Cómo se usa:</b> 📲 abre el WhatsApp con el mensaje y deja el <b>flyer copiado</b> (en el chat: Ctrl+V y Enviar). Después confirmá si salió. '+
-        'A los '+BN_SEGUI_DIAS+' días, a los que no contestaron les aparece <b>🔁 Seguimiento</b>. ✉️ arma el mail en tu Gmail: <b>adjuntá el PDF del flyer</b> (<a href="'+BN_FLYER_PDF+'" target="_blank" rel="noopener">descargalo acá</a>). '+
+        'A los '+BN_SEGUI_DIAS+' días, a los que no contestaron les aparece <b>🔁 Seguimiento</b>. ✉️ arma el mail en tu Gmail y también deja el <b>flyer copiado</b>: pegalo con <b>Ctrl+V abajo de la firma</b>, así se ve dentro del mail (no como adjunto). '+
         'Cuando alguien contesta, cambiale el estado (Interesado / Muestra entregada / Compró).</div>'+
       bnAutoHtml()+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
@@ -15328,7 +15328,7 @@ function buildFilterTable(cfg){
         '</span>'+
       '</div>'+
       (bnConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
-        (bnImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Flyer copiado: pegalo en el chat con Ctrl+V. </span>' : bnImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar el flyer: adjuntalo a mano (🖼️ Flyer). </span>' : '')+
+        (bnImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Flyer copiado: '+(bnConfirm.accion==='mail'?'pegalo en el mail con Ctrl+V, abajo de la firma. ':'pegalo en el chat con Ctrl+V. ')+'</span>' : bnImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar el flyer: adjuntalo a mano (🖼️ Flyer). </span>' : '')+
         '¿Salió el '+(bnConfirm.accion==='mail'?'mail':'mensaje')+' a <b>'+esc((BNW[bnConfirm.bi]||{}).nombre||'')+'</b>? '+
         '<button class="cmp-btn" data-bn-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         (bnConfirm.accion!=='mail'?'<button class="cmp-btn" data-bn-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> ':'')+
@@ -15346,7 +15346,7 @@ function buildFilterTable(cfg){
           : '<button class="cmp-btn" data-bn-chat="'+bi+'" data-bn-accion="contacto" title="Abre el WhatsApp con el mensaje y copia el flyer">📲</button>')+
         (r.contactoFecha?('<div style="font-size:10.5px;color:#64748b">contacto '+fmt(r.contactoFecha)+(r.seguimientoFecha?(' · seg. '+fmt(r.seguimientoFecha)):'')+'</div>'):'');
       const em=String(r.email||'').trim();
-      const ml = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em) ? ('<button class="cmp-btn" data-bn-mail="'+bi+'" title="Abre el mail en tu Gmail (adjuntá el PDF del flyer)">✉️</button>'+(r.mailFecha?('<div style="font-size:10.5px;color:#157a1d">enviado '+fmt(r.mailFecha)+'</div>'):'')) : '<span style="color:#94a3b8;font-size:11px">—</span>';
+      const ml = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em) ? ('<button class="cmp-btn" data-bn-mail="'+bi+'" title="Abre el mail en tu Gmail y copia el flyer: pegalo con Ctrl+V abajo de la firma">✉️</button>'+(r.mailFecha?('<div style="font-size:10.5px;color:#157a1d">enviado '+fmt(r.mailFecha)+'</div>'):'')) : '<span style="color:#94a3b8;font-size:11px">—</span>';
       html+='<tr>'+
         '<td class="cel-nombre"><input data-bn-nombre="'+bi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
           '<div style="font-size:10.5px;color:#64748b">'+esc([r.rubro,r.zona].filter(Boolean).join(' · '))+(r.instagram?(' · '+esc(r.instagram)):'')+'</div></td>'+
@@ -15379,6 +15379,7 @@ function buildFilterTable(cfg){
     });
     tabla.querySelectorAll('[data-bn-mail]').forEach(b=>b.onclick=()=>{
       const bi=+b.dataset.bnMail, r=BNW[bi]; if(!r) return;
+      bnCopiarFlyer();   // 02/10 (Marcelo): la imagen va DENTRO del mail, no adjunta → Ctrl+V en Gmail. Antes de abrir (gesto + foco).
       window.open(bnGmailLink(r.email), '_blank');
       bnConfirm={bi, accion:'mail'}; drawBaseNivel();
     });
