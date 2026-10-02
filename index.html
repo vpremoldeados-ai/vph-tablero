@@ -15169,12 +15169,20 @@ function buildFilterTable(cfg){
     if(!r || r.estado!=='contactado' || !r.contactoFecha || r.seguimientoFecha) return false;
     const d=bnDiasDesde(r.contactoFecha); return d!=null && d>=BN_SEGUI_DIAS;
   }
-  function bnTexto(accion){
+  // 02/10 (Marcelo): el saludo nombra a la empresa ("¿cómo están en Conte House?"). Se limpia el nombre
+  // cargado para que suene natural: sin lo que va entre paréntesis o después de " - ", sin S.A./SRL/SAS.
+  function bnNombreSaludo(nombre){
+    let n=String(nombre||'').replace(/\([^)]*\)/g,' ').split(/\s[-–—|]\s/)[0];
+    n=n.replace(/[\s,]+(S\.?\s?A\.?\s?S\.?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?|Ltda\.?)\s*$/i,'').replace(/\s+/g,' ').trim();
+    return n.length>=2 ? n : '';
+  }
+  function bnSaludo(nombre){ const n=bnNombreSaludo(nombre); return n ? 'Hola, ¿cómo están en '+n+'?' : 'Hola, ¿cómo están?'; }
+  function bnTexto(accion, nombre){
     const f=bnFirma();
-    if(accion==='seguimiento') return 'Hola, ¿pudieron ver el flyer de la Base Nivel? Si quieren, les acercamos una para que la vean y la prueben en un módulo. Quedo atento. '+f+', Vassallo Premoldeados.';
+    if(accion==='seguimiento') return bnSaludo(nombre)+' ¿Pudieron ver el flyer de la Base Nivel? Si quieren, les acercamos una para que la vean y la prueben en un módulo. Quedo atento. '+f+', Vassallo Premoldeados.';
     // 02/10: texto de Marcelo. Firma con el nombre de "✍️ Firmo como" tal cual (Marcelo, Sofía), sin apellido.
     const nom=(((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
-    return 'Hola, ¿cómo están? Soy '+nom+' de VASSALLO Fábrica de Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
+    return bnSaludo(nombre)+' Soy '+nom+' de VASSALLO Fábrica de Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
       'Desarrollamos la *Base Nivel BNV-40*, un apoyo de hormigón regulable para módulos y contenedores. Se apoya en el terreno y se nivela con llave el mismo día (regula de 0 a 100 mm), sin encofrar ni esperar fragüe, y se reajusta si el terreno se asienta.\n\n'+
       'Les paso la imagen con foto e información técnica.\n\n'+
       '¿Les interesaría que les acerque una para verla y probarla en uno de sus módulos?';
@@ -15278,7 +15286,7 @@ function buildFilterTable(cfg){
     if(!wa) return null;
     bnUpd(c.bi, x=>({...x, abiertoPc:topesPcId(), abiertoTs:ahora}));
     return {origen:'basenivel', accion:c.accion, nombre:r.nombre||'', bnTel:String(r.telefono||''), tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
-      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion)};
+      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion, r.nombre)};
   }
   // Lo que contestó el ayudante (estado enviado / sinwa; cualquier otro = solo liberar la reserva).
   // La fila se busca por nombre Y teléfono: el orden de la lista puede cambiar mientras el ayudante manda.
@@ -15374,7 +15382,7 @@ function buildFilterTable(cfg){
       const bi=+b.dataset.bnChat, accion=b.dataset.bnAccion, r=BNW[bi]; if(!r) return;
       const lk=topesWaLink(r.telefono); if(!lk) return;
       if(accion!=='seguimiento') bnCopiarFlyer();   // ANTES de abrir: al abrir WhatsApp la página pierde el foco
-      window.open(lk+'&text='+encodeURIComponent(bnTexto(accion)), '_blank');
+      window.open(lk+'&text='+encodeURIComponent(bnTexto(accion, r.nombre)), '_blank');
       bnConfirm={bi, accion}; drawBaseNivel();
     });
     tabla.querySelectorAll('[data-bn-mail]').forEach(b=>b.onclick=()=>{
