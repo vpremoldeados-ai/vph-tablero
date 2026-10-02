@@ -6615,6 +6615,10 @@ function buildFilterTable(cfg){
   let unsub=null;
   let uidSeq = Date.now();
   function newUid(){ return 'v'+(uidSeq++).toString(36); }
+  // Momento en que se cargó la venta: el _uid ES la hora de alta ('v' + ms en base 36). Un id con
+  // otro formato (importado) devuelve 0 y queda como la más vieja de su día.
+  function cargaTs(v){ const m=/^v([0-9a-z]{8,9})$/.exec(String(v&&v._uid||'')); if(!m) return 0;
+    const t=parseInt(m[1],36); return (t>1.5e12 && t<4.1e12) ? t : 0; }
   const fb = ()=> window.__fbctx;
   function loadLocal(){ try{ const raw=localStorage.getItem(KEY); if(raw){ const d=JSON.parse(raw); if(Array.isArray(d.ventas)) return d; } }catch(e){} return { ventas: [] }; }
   function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){ alert('No se pudo guardar: '+e.message); } }
@@ -6865,7 +6869,12 @@ function buildFilterTable(cfg){
       else if(filtro.sortCol==='total'){va=a.k.total;vb=b.k.total;}
       else if(filtro.sortCol==='saldo'){va=a.k.saldo;vb=b.k.saldo;}
       else {va=a.v[filtro.sortCol];vb=b.v[filtro.sortCol];}
-      return (typeof va==='string'?va.localeCompare(vb):(va-vb))*filtro.sortDir; });
+      const r=(typeof va==='string'?va.localeCompare(vb):(va-vb))*filtro.sortDir;
+      if(r) return r;
+      // Empate (típico: varias ventas el MISMO día): desempata el momento de carga, así la lista
+      // queda cronológica de verdad. Ordenando por otra columna, el empate va de la más nueva a la más vieja.
+      if(filtro.sortCol==='fecha') return (cargaTs(a.v)-cargaTs(b.v))*filtro.sortDir;
+      return String(b.v.fecha||'').localeCompare(String(a.v.fecha||'')) || (cargaTs(b.v)-cargaTs(a.v)); });
 
     renderKpis(ventas); renderSummary(rows); renderFiltros(ventas); renderTabla(rows); renderCatChart(rows); renderClientes(ventas);
     $('vnt-periodo-lbl').textContent = filtro.periodo ? '· '+labelPeriodo(filtro.periodo) : '· todos los períodos';
