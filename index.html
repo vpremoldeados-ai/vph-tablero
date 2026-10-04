@@ -2314,7 +2314,13 @@ function kgEquivalentes(){
   const peAuto=Math.ceil(fr.ref/netRef/1000)*1000;   // redondeado al millar: es un número para repetir de memoria
   const fijado=Math.round(Number(window.__param ? window.__param('peKgObjetivo',0) : 0)) || 0;
   const objetivo = fijado>0 ? fijado : peAuto;
+  // META de superación (pedido de Marcelo, 04/10): el punto de equilibrio es el PISO — solo cubre
+  // la estructura —, así que al equipo se le muestra una meta un % por encima (peKgDesafioPct).
+  // En 0 no hay meta aparte y el objetivo del mensaje es el piso.
+  const dPct=Math.max(0, Number(window.__param ? window.__param('peKgDesafioPct',10) : 10) || 0);
+  const meta = dPct>0 ? Math.ceil(objetivo*(1+dPct/100)/1000)*1000 : objetivo;
   return { kgEq, kgReales, objetivo, peAuto, fijado:fijado>0, pct:kgEq/objetivo*100,
+           meta, desafioPct:dPct, pctMeta:kgEq/meta*100,
            factor: kgReales>0 ? kgEq/kgReales : null, meses:fr.meses.slice() };
 }
 window.__kgEquivalentes = kgEquivalentes;
@@ -2344,21 +2350,29 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy){
   const cumple = rp.diasConProduccionMes>0 && rp.promedioMesKgDia>=rp.objetivo;
   const hayKe = !!(ke && ke.objetivo>0);
   const dRest = dh ? Math.max(dh.tot-dh.tra,0) : 0;
-  const falta = hayKe ? Math.max(ke.objetivo-ke.kgEq,0) : 0;
+  // Con meta de superación, TODO el mensaje apunta a la meta; el punto de equilibrio queda como piso.
+  const hayMeta = hayKe && ke.meta>ke.objetivo;
+  const tope = hayKe ? (hayMeta ? ke.meta : ke.objetivo) : 0;
+  const pctT = hayKe ? ke.kgEq/tope*100 : 0;
+  const falta = hayKe ? Math.max(tope-ke.kgEq,0) : 0;
   const logrado = hayKe && falta<=0;
+  const pisoOk = hayKe && ke.kgEq>=ke.objetivo;
   const pctDias = (dh && dh.tot>0) ? dh.tra/dh.tot*100 : 0;
-  const enCamino = hayKe && ke.pct>=pctDias;
+  const enCamino = hayKe && pctT>=pctDias;
 
   let t = '☀️ *¡Buen día, equipo!* — '+diaSem+' '+dia+'\n*Así venimos en '+mes+':*\n\n'+
     '*VENTAS del mes*\n'+
     '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n';
   if(hayKe){
-    const llenos=Math.max(0,Math.min(10,Math.round(ke.pct/10)));
+    const llenos=Math.max(0,Math.min(10,Math.round(pctT/10)));
     t += '⚖️ *En kilos equivalentes:* '+nf(ke.kgEq)+' kg\n'+
-      '🎯 *Objetivo del mes (punto de equilibrio):* '+nf(ke.objetivo)+' kg equivalentes\n'+
-      '▓'.repeat(llenos)+'░'.repeat(10-llenos)+' '+ke.pct.toFixed(0)+'% del objetivo'+(dh&&dh.tot>0 ? ' · van '+dh.tra+' de '+dh.tot+' días hábiles' : '')+'\n'+
-      (logrado ? '🏆 *¡Objetivo superado por '+nf(ke.kgEq-ke.objetivo)+' kg!*\n'
-               : 'Faltan '+nf(falta)+' kg equivalentes'+(dRest>0 ? ' → '+nf(falta/dRest)+' por día hábil que queda' : '')+'\n');
+      (hayMeta ? '🎯 *Meta del mes:* '+nf(ke.meta)+' kg equivalentes\n'
+               : '🎯 *Objetivo del mes (punto de equilibrio):* '+nf(ke.objetivo)+' kg equivalentes\n')+
+      '▓'.repeat(llenos)+'░'.repeat(10-llenos)+' '+pctT.toFixed(0)+'% '+(hayMeta?'de la meta':'del objetivo')+(dh&&dh.tot>0 ? ' · van '+dh.tra+' de '+dh.tot+' días hábiles' : '')+'\n'+
+      (hayMeta ? (pisoOk ? '✅ *Piso superado* (punto de equilibrio: '+nf(ke.objetivo)+' kg)\n'
+                         : '🚩 *Piso* (punto de equilibrio): '+nf(ke.objetivo)+' kg · faltan '+nf(ke.objetivo-ke.kgEq)+'\n') : '')+
+      (logrado ? '🏆 *¡'+(hayMeta?'Meta superada':'Objetivo superado')+' por '+nf(ke.kgEq-tope)+' kg!*\n'
+               : 'Faltan '+nf(falta)+' kg equivalentes'+(hayMeta?' para la meta':'')+(dRest>0 ? ' → '+nf(falta/dRest)+' por día hábil que queda' : '')+'\n');
   }
   const hayStock = rp.kgStock!=null && rp.kgDisponible!=null;
   if(hayStock){
@@ -2386,7 +2400,7 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy){
       t += '🏭 *Fabricar:* todos los productos están sobre su mínimo 👏\n';
     }
     t += '🛒 *Vender:* '+
-      (hayKe && !logrado && dRest>0 ? nf(falta/dRest)+' kg equivalentes por día para llegar al objetivo. ' : '')+
+      (hayKe && !logrado && dRest>0 ? nf(falta/dRest)+' kg equivalentes por día para llegar '+(hayMeta?'a la meta':'al objetivo')+'. ' : '')+
       (paraVender.length ? 'Para entrega inmediata hay '+paraVender.slice(0,3).map(p=>p.nombre+' ('+nf(p.disponible)+' u)').join(', ')+'.' : 'Hoy no hay stock para entrega inmediata: ofrecer con fecha de entrega.')+'\n';
     if((rp.kgComprometido||0)>0){
       t += '🚚 *Entregar:* '+nf(rp.kgComprometido)+' kg ya vendidos esperando salir'+(rp.pedidosPend>0 ? ' ('+rp.pedidosPend+' pedido'+(rp.pedidosPend!==1?'s':'')+')' : '')+'. Cada entrega a tiempo es un cliente que vuelve.\n';
@@ -2397,7 +2411,8 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy){
   }
   // El cierre acompaña el estado REAL del mes: no se felicita por un mes flojo.
   t += '\n'+(hayKe
-      ? (logrado ? '🏆 ¡Objetivo del mes cumplido! Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado. ¡A seguir sumando! 💪👏'
+      ? (logrado ? '🏆 ¡'+(hayMeta?'Meta':'Objetivo')+' del mes cumplid'+(hayMeta?'a':'o')+'! Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado. ¡A seguir sumando! 💪👏'
+        : (hayMeta && pisoOk) ? 'Ya pasamos el piso del mes. Esto es mérito de TODO el equipo. ¡Ahora vamos por la meta, que cada kilo cuenta! 💪👏'
         : enCamino ? 'Venimos por encima del ritmo que necesitamos. Esto es mérito de TODO el equipo. ¡Sigamos así, que cada kilo cuenta! 💪👏'
                    : 'Estamos por debajo del ritmo que necesitamos, pero el mes no terminó: cada venta cerrada, cada pallet fabricado y cada entrega a tiempo nos acerca. ¡Vamos, equipo! 💪')
       : (cumple
@@ -12161,6 +12176,7 @@ function buildFilterTable(cfg){
     // malo y no cubrir la estructura igual. Lo muestra el widget de arriba de todo en la Vista Diaria.
     {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
     {g:'Comercial', k:'peKgObjetivo', l:'Punto de equilibrio en KILOS equivalentes (objetivo del mes para el equipo)', def:0, t:'num', hint:'Es el objetivo que sale en el 📲 Mensaje para el equipo de la Vista Diaria. En 0 lo calcula solo el Tablero con los costos fijos y el mix de los últimos meses cerrados; con un número, queda fijo en ese valor.'},
+    {g:'Comercial', k:'peKgDesafioPct', l:'Meta del equipo: % por encima del punto de equilibrio en kilos', def:10, t:'num', hint:'El punto de equilibrio solo cubre los costos: es el piso. La meta que ve el equipo en el 📲 Mensaje diario es ese piso más este porcentaje (redondeada al millar). En 0 no hay meta aparte.'},
     // 14/09: WhatsApp restringió el número tras 54 mensajes en frío en una mañana. El tope frena ▶ Siguiente.
     {g:'Comercial', k:'topesTopeDiario', l:'Topes: máximo de WhatsApp en frío por día',   def:25, t:'num', hint:'Cuenta los prospectos marcados como contactados HOY (en todas las PC). Al llegar, ▶ Siguiente se frena y avisa. El 14/09 se mandaron 54 y WhatsApp restringió el número; el 22/09 se subió de 15 a 25. En 0 no hay tope.'},
     // 15/09: el Tablero marca el ritmo. Reparte lo que queda del tope en lo que queda del horario, con este piso.
