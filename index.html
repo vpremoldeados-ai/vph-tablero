@@ -2326,40 +2326,83 @@ window.__kgEquivalentes = kgEquivalentes;
 // ⚠️ Estas funciones y su wiring van ANTES de pintarKpisInicio(): si esa llamada tira una excepción
 // (pasa en el modo local sin login, y podría pasar en producción si falta algún dato), el resto del
 // script se corta ahí — y el botón se quedaría sin onclick para siempre si el wiring fuera después.
+// Qué hace falta FABRICAR, por producto: lo que falta para llegar al mínimo contando lo que ya está
+// secando (disponible + en secado = físico − comprometido). Primero lo URGENTE (vendido por encima
+// de todo lo fabricado: ese pedido no sale si no se fabrica), después por kilos. Pura.
+function faltaFabricar(porProducto){
+  return (porProducto||[]).map(p=>{
+    const cubierto=(p.disponible||0)+(p.enCurado||0);
+    const u=Math.max(0, Math.round((p.minimo||0)-cubierto));
+    return { nombre:p.nombre||p.codigo||'', u, kg:u*(p.pesoUnit||0), urgente:cubierto<0 };
+  }).filter(x=>x.u>0).sort((a,b)=> (b.urgente-a.urgente) || (b.kg-a.kg));
+}
 function textoMensajeEquipo(rp, rm, ke, dh, hoy){
   const nf = n => Math.round(n).toLocaleString('es-AR');
   const mes = hoy.toLocaleDateString('es-AR',{month:'long'});
-  const mesCap = mes.charAt(0).toUpperCase()+mes.slice(1);
+  const diaSem = hoy.toLocaleDateString('es-AR',{weekday:'long'});
   const dia = String(hoy.getDate()).padStart(2,'0')+'/'+String(hoy.getMonth()+1).padStart(2,'0');
   const cumple = rp.diasConProduccionMes>0 && rp.promedioMesKgDia>=rp.objetivo;
-  let t = '🏭📈 *Cómo venimos — '+mesCap+' '+hoy.getFullYear()+'* (al '+dia+')\n\n'+
-    '*PRODUCCIÓN del mes*\n'+
-    '✅ *Promedio diario:* '+nf(rp.promedioMesKgDia)+' kg/día'+(cumple?' — por encima del objetivo de '+nf(rp.objetivo)+' kg/día 🎯':' (objetivo: '+nf(rp.objetivo)+' kg/día)')+'\n'+
-    '🏗️ *Total fabricado:* '+nf(rp.kgProducidosMes)+' kg\n';
-  if(rp.kgStock!=null && rp.kgDisponible!=null){
+  const hayKe = !!(ke && ke.objetivo>0);
+  const dRest = dh ? Math.max(dh.tot-dh.tra,0) : 0;
+  const falta = hayKe ? Math.max(ke.objetivo-ke.kgEq,0) : 0;
+  const logrado = hayKe && falta<=0;
+  const pctDias = (dh && dh.tot>0) ? dh.tra/dh.tot*100 : 0;
+  const enCamino = hayKe && ke.pct>=pctDias;
+
+  let t = '☀️ *¡Buen día, equipo!* — '+diaSem+' '+dia+'\n*Así venimos en '+mes+':*\n\n'+
+    '*VENTAS del mes*\n'+
+    '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n';
+  if(hayKe){
+    const llenos=Math.max(0,Math.min(10,Math.round(ke.pct/10)));
+    t += '⚖️ *En kilos equivalentes:* '+nf(ke.kgEq)+' kg\n'+
+      '🎯 *Objetivo del mes (punto de equilibrio):* '+nf(ke.objetivo)+' kg equivalentes\n'+
+      '▓'.repeat(llenos)+'░'.repeat(10-llenos)+' '+ke.pct.toFixed(0)+'% del objetivo'+(dh&&dh.tot>0 ? ' · van '+dh.tra+' de '+dh.tot+' días hábiles' : '')+'\n'+
+      (logrado ? '🏆 *¡Objetivo superado por '+nf(ke.kgEq-ke.objetivo)+' kg!*\n'
+               : 'Faltan '+nf(falta)+' kg equivalentes'+(dRest>0 ? ' → '+nf(falta/dRest)+' por día hábil que queda' : '')+'\n');
+  }
+  const hayStock = rp.kgStock!=null && rp.kgDisponible!=null;
+  if(hayStock){
     t += '\n*STOCK de hoy*\n'+
       '🧱 *En planta:* '+nf(rp.kgStock)+' kg\n'+
       '🚚 *Ya vendido, falta entregar:* '+nf(rp.kgComprometido||0)+' kg\n'+
-      '🟢 *Disponible para vender ya:* '+nf(rp.kgDisponible)+' kg\n'+
+      '🟢 *Disponible para vender ya:* '+nf(rp.kgDisponible)+' kg'+(rp.kgMinimo>0 ? ' (mínimo: '+nf(rp.kgMinimo)+' kg)' : '')+'\n'+
       '⏳ *En secado:* '+nf(rp.kgEnCurado||0)+' kg\n';
   }
-  t += '\n*VENTAS del mes*\n'+
-    '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n';
-  if(ke && ke.objetivo>0){
-    const pct=ke.pct, llenos=Math.max(0,Math.min(10,Math.round(pct/10)));
-    const barra='▓'.repeat(llenos)+'░'.repeat(10-llenos);
-    const dRest = dh ? Math.max(dh.tot-dh.tra,0) : 0;
-    const falta = Math.max(ke.objetivo-ke.kgEq,0);
-    t += '⚖️ *En kilos equivalentes:* '+nf(ke.kgEq)+' kg\n'+
-      '🎯 *Objetivo del mes (punto de equilibrio):* '+nf(ke.objetivo)+' kg equivalentes\n'+
-      barra+' '+pct.toFixed(0)+'% del objetivo'+(dh&&dh.tot>0 ? ' · van '+dh.tra+' de '+dh.tot+' días hábiles' : '')+'\n'+
-      (falta<=0 ? '🏆 *¡Objetivo superado por '+nf(ke.kgEq-ke.objetivo)+' kg!*\n'
-                : 'Faltan '+nf(falta)+' kg equivalentes'+(dRest>0 ? ' → '+nf(falta/dRest)+' por día hábil que queda' : '')+'\n')+
-      '\n_Kilo equivalente: cada kilo vendido cuenta según el producto y la lista de precios. Los que más le dejan a la empresa suman más de 1 kilo; los que menos, suman menos._\n';
+  t += '\n*PRODUCCIÓN del mes*\n'+
+    '✅ *Promedio diario:* '+nf(rp.promedioMesKgDia)+' kg/día'+(cumple?' — por encima del objetivo de '+nf(rp.objetivo)+' kg/día 🎯':' (objetivo: '+nf(rp.objetivo)+' kg/día)')+'\n'+
+    '🏗️ *Total fabricado:* '+nf(rp.kgProducidosMes)+' kg\n';
+
+  // ---- Qué hace falta HOY: una línea de acción para cada sector ----
+  const pp = Array.isArray(rp.porProducto) ? rp.porProducto : null;
+  if(pp){
+    const fab = faltaFabricar(pp);
+    const paraVender = pp.filter(p=>p.disponible>0 && p.kgDisponible>0).sort((a,b)=>b.kgDisponible-a.kgDisponible);
+    t += '\n*QUÉ HACE FALTA HOY*\n';
+    if(fab.length){
+      t += '🏭 *Fabricar* (en este orden):\n'+
+        fab.slice(0,5).map((x,i)=>'   '+(i+1)+'. '+x.nombre+': '+nf(x.u)+' u'+(x.urgente?' ⚠️ ya vendido':'')).join('\n')+'\n'+
+        (fab.length>5 ? '   …y '+(fab.length-5)+' producto'+(fab.length-5!==1?'s':'')+' más para reponer\n' : '');
+    } else {
+      t += '🏭 *Fabricar:* todos los productos están sobre su mínimo 👏\n';
+    }
+    t += '🛒 *Vender:* '+
+      (hayKe && !logrado && dRest>0 ? nf(falta/dRest)+' kg equivalentes por día para llegar al objetivo. ' : '')+
+      (paraVender.length ? 'Para entrega inmediata hay '+paraVender.slice(0,3).map(p=>p.nombre+' ('+nf(p.disponible)+' u)').join(', ')+'.' : 'Hoy no hay stock para entrega inmediata: ofrecer con fecha de entrega.')+'\n';
+    if((rp.kgComprometido||0)>0){
+      t += '🚚 *Entregar:* '+nf(rp.kgComprometido)+' kg ya vendidos esperando salir'+(rp.pedidosPend>0 ? ' ('+rp.pedidosPend+' pedido'+(rp.pedidosPend!==1?'s':'')+')' : '')+'. Cada entrega a tiempo es un cliente que vuelve.\n';
+    }
   }
-  t += '\n'+(cumple
-      ? 'Estamos cumpliendo el objetivo de producción día a día. Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado.\n\n¡Vamos que se puede sostener así todo el mes! 💪👏'
-      : 'Todavía no llegamos al objetivo de producción, pero vamos por buen camino. ¡Sigamos empujando entre todos para cerrar el mes arriba de la marca! 💪');
+  if(hayKe){
+    t += '\n_Kilo equivalente: cada kilo vendido cuenta según el producto y la lista de precios. Los que más le dejan a la empresa suman más de 1 kilo; los que menos, suman menos._\n';
+  }
+  // El cierre acompaña el estado REAL del mes: no se felicita por un mes flojo.
+  t += '\n'+(hayKe
+      ? (logrado ? '🏆 ¡Objetivo del mes cumplido! Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado. ¡A seguir sumando! 💪👏'
+        : enCamino ? 'Venimos por encima del ritmo que necesitamos. Esto es mérito de TODO el equipo. ¡Sigamos así, que cada kilo cuenta! 💪👏'
+                   : 'Estamos por debajo del ritmo que necesitamos, pero el mes no terminó: cada venta cerrada, cada pallet fabricado y cada entrega a tiempo nos acerca. ¡Vamos, equipo! 💪')
+      : (cumple
+        ? 'Estamos cumpliendo el objetivo de producción día a día. Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado.\n\n¡Vamos que se puede sostener así todo el mes! 💪👏'
+        : 'Todavía no llegamos al objetivo de producción, pero vamos por buen camino. ¡Sigamos empujando entre todos para cerrar el mes arriba de la marca! 💪'));
   return t;
 }
 function armarMensajeEquipo(){
