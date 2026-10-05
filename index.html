@@ -2361,6 +2361,50 @@ function lineasEntregasEquipo(ent, nf){
   if(ent.sinFecha>0) s+='❓ '+ent.sinFecha+' pedido'+(ent.sinFecha!==1?'s':'')+' sin fecha de entrega\n';
   return s;
 }
+// Cinco versiones del mensaje, una por día de la semana (pedido de Marcelo, 05/10): para que no se
+// lea siempre igual. Cambian SOLO las frases (saludo, calidad y la última línea de cada estado del
+// mes); los NÚMEROS y los bloques son siempre los mismos. Lenguaje de obra, sin formalidades.
+// ⚠️ Cada estado conserva su frase clave porque la verifica un test y le da sentido al cierre:
+// "por encima del ritmo" + "mérito de TODO el equipo" · "por debajo del ritmo" (sin felicitar) ·
+// "Ya pasamos el piso del mes" + "vamos por la meta" · "Meta/Objetivo del mes cumplida/o".
+// Sábado y domingo (si se toca el botón a mano) usan la versión del martes, que es la más neutra.
+// Ningún texto lleva importes. "costo" va SOLO en el párrafo de calidad (se habla del concepto).
+function varianteEquipo(hoy){
+  const wd=hoy.getDay(), i=(wd>=1 && wd<=5) ? wd-1 : 1;
+  const V=[
+    { saludo:'☀️ *¡Buen día, equipo! A arrancar la semana*', sub:m=>'*Así venimos en '+m+', mate en mano:* ☕',
+      calidad:'🔎 *Calidad y cuidado:* una pieza mala es un cliente enojado, y el cliente es el que nos paga los sueldos a todos. Y el material que se tira es un costo más: después hay que vender más para llegar al mismo lugar. Hoy: bien a la primera y sin desperdiciar. ¡El mate se toma, el cemento no se tira! ☕🧱',
+      camino:'Eso es mérito de TODO el equipo. ¡Que no se enfríe el mate, a seguir así! ☕💪',
+      atras:'Cada venta cerrada, cada pallet fabricado y cada entrega a tiempo nos acerca. ¡Arriba, equipo, que la semana recién arranca! 💪',
+      piso:'¡Ahora vamos por la meta, y con el mate bien caliente! ☕💪',
+      logrado:'¡Felicitaciones, muchachos! A seguir sumando 💪👏' },
+    { saludo:'☀️ *¡Buen día, equipo!*', sub:m=>'*Así venimos en '+m+':*',
+      calidad:'🔎 *Calidad y cuidado:* el cliente que recibe una pieza fallada se enoja, y sin clientes contentos no hay sueldos. Cada kilo de materia prima que se desperdicia es un costo más, y ese costo lo tapamos vendiendo más. Una pieza torcida no se arregla con buena onda ni con cinta 😅. Si algo no cierra, avisá antes de seguir.',
+      camino:'Es mérito de TODO el equipo: todos tirando para el mismo lado. ¡Dale que va! 🔥',
+      atras:'Cada venta cerrada, cada pallet fabricado y cada entrega a tiempo nos acerca. ¡Dale, equipo! 💪',
+      piso:'¡Ahora vamos por la meta, que cada kilo cuenta! 💪👏',
+      logrado:'¡Para sacarse el casco! A seguir sumando 👷👏' },
+    { saludo:'☀️ *¡Buen día, equipo! Mitad de semana, ni aflojamos ni nos dormimos*', sub:m=>'*Así venimos en '+m+':*',
+      calidad:'🔎 *Calidad y cuidado:* pieza bien hecha, cliente contento, y así se pagan los sueldos; pieza fallada, cliente enojado y reclamo por teléfono. Todo el material que se desperdicia es un costo más que nos obliga a vender más para llegar. Revisá bien la mezcla y el desmolde: la bolsa de cemento no se regala, ¡ni se la lleva el viento! 🌬️🧱',
+      camino:'Mitad de semana y se nota el laburo: es mérito de TODO el equipo. ¡A seguir igual! 🧱💪',
+      atras:'Todavía hay tiempo de darlo vuelta: una venta más, un pallet más, una entrega a tiempo. ¡A meterle ganas, equipo! 🧱💪',
+      piso:'¡Ahora vamos por la meta: mitad de semana y con ganas! 🧱💪',
+      logrado:'¡Esto se festeja con un buen asado, pero primero a seguir sumando! 🥩💪' },
+    { saludo:'☀️ *¡Buen día, equipo! Jueves, ya casi casi*', sub:m=>'*Así venimos en '+m+', sin cuento:*',
+      calidad:'🔎 *Calidad y cuidado:* el cliente conforme vuelve y el enojado no, y es el cliente el que paga los sueldos de todos. Cada kilo de materia prima que va al piso es un costo más, y después hay que vender más para taparlo. El material tirado siempre vuelve a aparecer en la cuenta, como la humedad en una pared mal hecha 😅',
+      camino:'Un empujón más y llegamos tranquilos. Es mérito de TODO el equipo, ¡así se hace! 🚀',
+      atras:'No hay nada perdido: con un buen empujón entre todos lo damos vuelta. ¡Vamos, equipo! 🔥',
+      piso:'¡Ahora vamos por la meta, un empujón más! 🚀',
+      logrado:'¡Qué equipazo! A seguir sumando 💪👏' },
+    { saludo:'☀️ *¡Buen día, equipo! ¡Llegó el viernes!*', sub:m=>'*Así venimos en '+m+' antes del finde:*',
+      calidad:'🔎 *Calidad y cuidado:* antes de irnos de finde, dejemos todo bien hecho: una pieza mala es un cliente enojado, y el cliente es el que paga los sueldos. Y el material desperdiciado es un costo más que nos obliga a vender más. ¡Que nadie se lleve un reclamo para el asado del domingo! 🥩',
+      camino:'Cerremos la semana bien parados: es mérito de TODO el equipo. ¡Gracias a todos! 🍻',
+      atras:'Quedan días para acomodarlo: una venta más, un pallet más, una entrega más. ¡Vamos, equipo, a cerrar la semana con todo! 💪',
+      piso:'¡Ahora vamos por la meta antes del finde! 🍻',
+      logrado:'¡A festejar el finde, bien merecido! 🍻👏' }
+  ];
+  return V[i];
+}
 function textoMensajeEquipo(rp, rm, ke, dh, hoy, ent){
   const nf = n => Math.round(n).toLocaleString('es-AR');
   const mes = hoy.toLocaleDateString('es-AR',{month:'long'});
@@ -2379,7 +2423,8 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy, ent){
   const pctDias = (dh && dh.tot>0) ? dh.tra/dh.tot*100 : 0;
   const enCamino = hayKe && pctT>=pctDias;
 
-  let t = '☀️ *¡Buen día, equipo!* — '+diaSem+' '+dia+'\n*Así venimos en '+mes+':*\n\n'+
+  const V = varianteEquipo(hoy);
+  let t = V.saludo+' — '+diaSem+' '+dia+'\n'+V.sub(mes)+'\n\n'+
     '*VENTAS del mes*\n'+
     '📦 *Total vendido:* '+nf(rm.kgVendidos)+' kg\n';
   if(hayKe){
@@ -2429,13 +2474,13 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy, ent){
   // (05/10, pedido de Marcelo: sin el párrafo que explicaba qué es el kilo equivalente.)
   // Recordatorio fijo de CALIDAD y cuidado de la materia prima (05/10, pedido de Marcelo). Habla del
   // concepto, nunca de importes: lo lee todo el equipo.
-  t += '\n🔎 *Calidad y cuidado:* cada pieza mala es un cliente disconforme, y el cliente es el que paga los sueldos de todos. Y cada kilo de materia prima que se desperdicia es un costo más: sube la cantidad que tenemos que vender para llegar al objetivo. Hagamos cada pieza bien a la primera y cuidemos el material. 🧱\n';
+  t += '\n'+V.calidad+'\n';
   // El cierre acompaña el estado REAL del mes: no se felicita por un mes flojo.
   t += '\n'+(hayKe
-      ? (logrado ? '🏆 ¡'+(hayMeta?'Meta':'Objetivo')+' del mes cumplid'+(hayMeta?'a':'o')+'! Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado. ¡A seguir sumando! 💪👏'
-        : (hayMeta && pisoOk) ? 'Ya pasamos el piso del mes. Esto es mérito de TODO el equipo. ¡Ahora vamos por la meta, que cada kilo cuenta! 💪👏'
-        : enCamino ? 'Venimos por encima del ritmo que necesitamos. Esto es mérito de TODO el equipo. ¡Sigamos así, que cada kilo cuenta! 💪👏'
-                   : 'Estamos por debajo del ritmo que necesitamos, pero el mes no terminó: cada venta cerrada, cada pallet fabricado y cada entrega a tiempo nos acerca. ¡Vamos, equipo! 💪')
+      ? (logrado ? '🏆 ¡'+(hayMeta?'Meta':'Objetivo')+' del mes cumplid'+(hayMeta?'a':'o')+'! Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado. '+V.logrado
+        : (hayMeta && pisoOk) ? 'Ya pasamos el piso del mes. Esto es mérito de TODO el equipo. '+V.piso
+        : enCamino ? 'Venimos por encima del ritmo que necesitamos. '+V.camino
+                   : 'Estamos por debajo del ritmo que necesitamos, pero el mes no terminó. '+V.atras)
       : (cumple
         ? 'Estamos cumpliendo el objetivo de producción día a día. Esto es mérito de TODO el equipo — fábrica, ventas y logística remando para el mismo lado.\n\n¡Vamos que se puede sostener así todo el mes! 💪👏'
         : 'Todavía no llegamos al objetivo de producción, pero vamos por buen camino. ¡Sigamos empujando entre todos para cerrar el mes arriba de la marca! 💪'));
