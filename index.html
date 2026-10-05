@@ -2342,7 +2342,26 @@ function faltaFabricar(porProducto){
     return { nombre:p.nombre||p.codigo||'', u, kg:u*(p.pesoUnit||0), urgente:cubierto<0 };
   }).filter(x=>x.u>0).sort((a,b)=> (b.urgente-a.urgente) || (b.kg-a.kg));
 }
-function textoMensajeEquipo(rp, rm, ke, dh, hoy){
+// Renglones de ENTREGAS del parte (pedido de Marcelo, 05/10: "no menciona que hay entregas
+// programadas"). ent = window.__entregasProgramadas(fecha del parte). Pura.
+function lineasEntregasEquipo(ent, nf){
+  if(!ent) return '';
+  const DS=['dom','lun','mar','mié','jue','vie','sáb'];
+  const uno = x => x.cliente+(x.transporte?' ('+x.transporte+')':'');
+  const kgDe = l => l.reduce((a,x)=>a+(x.kg||0),0);
+  const dm = t => { const d=new Date(t); return DS[d.getDay()]+' '+String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); };
+  let s='';
+  if(ent.hoy && ent.hoy.length) s+='🚚 *Entregas de HOY ('+ent.hoy.length+'):* '+ent.hoy.map(uno).join(' · ')+(kgDe(ent.hoy)>0?' — '+nf(kgDe(ent.hoy))+' kg':'')+'\n';
+  else s+='🚚 *Entregas de HOY:* no hay entregas programadas\n';
+  if(ent.atrasadas && ent.atrasadas.length) s+='⚠️ *Atrasadas ('+ent.atrasadas.length+'):* '+ent.atrasadas.map(x=>uno(x)+' — era el '+dm(x.fecha)).join(' · ')+'\n';
+  if(ent.proximas && ent.proximas.length){
+    s+='📅 *Próximas:* '+ent.proximas.slice(0,4).map(g=>dm(g.fecha)+': '+g.items.map(uno).join(', ')).join(' · ')+
+      (ent.proximas.length>4 ? ' · y '+(ent.proximas.length-4)+' día'+(ent.proximas.length-4!==1?'s':'')+' más' : '')+'\n';
+  }
+  if(ent.sinFecha>0) s+='❓ '+ent.sinFecha+' pedido'+(ent.sinFecha!==1?'s':'')+' sin fecha de entrega\n';
+  return s;
+}
+function textoMensajeEquipo(rp, rm, ke, dh, hoy, ent){
   const nf = n => Math.round(n).toLocaleString('es-AR');
   const mes = hoy.toLocaleDateString('es-AR',{month:'long'});
   const diaSem = hoy.toLocaleDateString('es-AR',{weekday:'long'});
@@ -2402,8 +2421,9 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy){
     t += '🛒 *Vender:* '+
       (hayKe && !logrado && dRest>0 ? nf(falta/dRest)+' kg equivalentes por día para llegar '+(hayMeta?'a la meta':'al objetivo')+'. ' : '')+
       (paraVender.length ? 'Para entrega inmediata hay '+paraVender.slice(0,3).map(p=>p.nombre+' ('+nf(p.disponible)+' u)').join(', ')+'.' : 'Hoy no hay stock para entrega inmediata: ofrecer con fecha de entrega.')+'\n';
+    if(ent) t += lineasEntregasEquipo(ent, nf);
     if((rp.kgComprometido||0)>0){
-      t += '🚚 *Entregar:* '+nf(rp.kgComprometido)+' kg ya vendidos esperando salir'+(rp.pedidosPend>0 ? ' ('+rp.pedidosPend+' pedido'+(rp.pedidosPend!==1?'s':'')+')' : '')+'. Cada entrega a tiempo es un cliente que vuelve.\n';
+      t += (ent?'📦 *En total por entregar:* ':'🚚 *Entregar:* ')+nf(rp.kgComprometido)+' kg ya vendidos esperando salir'+(rp.pedidosPend>0 ? ' ('+rp.pedidosPend+' pedido'+(rp.pedidosPend!==1?'s':'')+')' : '')+'. Cada entrega a tiempo es un cliente que vuelve.\n';
     }
   }
   if(hayKe){
@@ -2426,7 +2446,8 @@ function armarMensajeEquipo(){
   if(!rp || rm==null || rm.kgVendidos==null){ alert('Los datos en vivo todavía no cargaron. Probá de nuevo en un momento.'); return; }
   let ke=null; try{ ke=kgEquivalentes(); }catch(e){ ke=null; }   // sin referencia, el mensaje sale igual sin ese bloque
   let dh=null; try{ dh=diasHabilesMes(); }catch(e){ dh=null; }
-  const texto = textoMensajeEquipo(rp, rm, ke, dh, new Date());
+  const _hoy=new Date(); let ent=null; try{ ent = window.__entregasProgramadas ? window.__entregasProgramadas(_hoy) : null; }catch(e){ ent=null; }
+  const texto = textoMensajeEquipo(rp, rm, ke, dh, _hoy, ent);
   window.__wa.modal({ titulo:'Mensaje para el grupo del equipo', destino:'Copiá y pegá en el grupo de WhatsApp de la empresa', texto });
 }
 // --- PARTE DIARIO AUTOMÁTICO al grupo del equipo (pedido de Marcelo, 04/10) ---
@@ -2443,11 +2464,12 @@ function parteEsHabil(d){ const wd=d.getDay(); if(wd<1||wd>5) return false;
 function parteEquipoDatos(rp, rm, ke, hoy){
   const o={ textoHoy:'', fechaHoy:'', textoProx:'', fechaProx:'' };
   if(!rp || !rm || rm.kgVendidos==null || !ke) return o;
-  if(parteEsHabil(hoy)){ o.textoHoy=textoMensajeEquipo(rp, rm, ke, diasHabilesMes(hoy), hoy); o.fechaHoy=parteIso(hoy); }
+  const entDe = d => { try{ return window.__entregasProgramadas ? window.__entregasProgramadas(d) : null; }catch(e){ return null; } };
+  if(parteEsHabil(hoy)){ o.textoHoy=textoMensajeEquipo(rp, rm, ke, diasHabilesMes(hoy), hoy, entDe(hoy)); o.fechaHoy=parteIso(hoy); }
   let px=null; const x=new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()+1);
   for(let i=0;i<10 && !px;i++){ if(parteEsHabil(x)) px=new Date(x.getTime()); else x.setDate(x.getDate()+1); }
   if(px && px.getMonth()===hoy.getMonth() && px.getFullYear()===hoy.getFullYear()){
-    o.textoProx=textoMensajeEquipo(rp, rm, ke, diasHabilesMes(px), px); o.fechaProx=parteIso(px); }
+    o.textoProx=textoMensajeEquipo(rp, rm, ke, diasHabilesMes(px), px, entDe(px)); o.fechaProx=parteIso(px); }
   return o;
 }
 let _parteUlt='', _parteTs=0;
@@ -17598,6 +17620,29 @@ function buildFilterTable(cfg){
     if(m){ const d=new Date(+m[1],+m[2]-1,+m[3]); return (d.getMonth()===+m[2]-1 && d.getDate()===+m[3]) ? d : null; }
     return null;
   }
+  // Entregas PROGRAMADAS (pedidos todavía sin entregar) vistas desde una fecha: las de ese día, las
+  // atrasadas, las próximas por día y cuántas no tienen fecha. La consume el parte diario del equipo
+  // (Vista Diaria), que la pide para HOY y para el próximo día hábil. Solo lee; los kilos salen de
+  // cargaRows (lo mismo que arma el camión), así un Flete o un servicio no suman kilos.
+  function entregasProgramadas(ref){
+    const r0=ref||new Date(), base=new Date(r0.getFullYear(), r0.getMonth(), r0.getDate()).getTime();
+    const out={ hoy:[], atrasadas:[], proximas:[], sinFecha:0 }, porDia={};
+    pedidos.filter(pe=>pe && pe.estado!=='entregado').forEach(pe=>{
+      let kg=0; try{ cargaRows(pe).forEach(x=>{ kg+=(x.cant||0)*(x.peso||0); }); }catch(e){}
+      const tr=String(pe.transporte||'').trim();
+      const it={ cliente:String(pe.cliente||'').trim()||'(sin nombre)', transporte:(tr && tr!=='Sin asignar')?tr:'', kg:Math.round(kg) };
+      const d=fechaDeDia(pe.diaEntrega);
+      if(!d){ out.sinFecha++; return; }
+      const t=new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      if(t===base) out.hoy.push(it);
+      else if(t<base){ it.fecha=t; out.atrasadas.push(it); }
+      else (porDia[t]=porDia[t]||[]).push(it);
+    });
+    out.atrasadas.sort((a,b)=>a.fecha-b.fecha);
+    out.proximas=Object.keys(porDia).map(Number).sort((a,b)=>a-b).map(t=>({ fecha:t, items:porDia[t] }));
+    return out;
+  }
+  window.__entregasProgramadas = entregasProgramadas;
   // 📋 ENTREGAS REALIZADAS, agrupadas por VIAJE (fecha de entrega + transportista).
   // ⚠️ Retrocompatible: los pedidos entregados ANTES de que esto existiera no tienen
   // `transporteEntrega`/`viajeEntrega`, así que se cae a `pe.transporte` y a `fechaEntregado`. Se
