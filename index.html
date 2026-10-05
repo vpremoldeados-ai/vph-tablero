@@ -2429,6 +2429,46 @@ function armarMensajeEquipo(){
   const texto = textoMensajeEquipo(rp, rm, ke, dh, new Date());
   window.__wa.modal({ titulo:'Mensaje para el grupo del equipo', destino:'Copiá y pegá en el grupo de WhatsApp de la empresa', texto });
 }
+// --- PARTE DIARIO AUTOMÁTICO al grupo del equipo (pedido de Marcelo, 04/10) ---
+// El Tablero NO manda nada: deja el mensaje YA ARMADO en vph_config/parte_diario y el ayudante de
+// WhatsApp de la PC de Marcelo (enviar.ps1, ParteTick) lo manda al grupo a la mañana. Se publican dos
+// textos: el de HOY y el del PRÓXIMO día hábil, porque a las 7 puede no haber ningún Tablero abierto
+// y el ayudante usa el que quedó preparado la tarde anterior (de noche no hay ventas ni producción).
+// ⚠️ El próximo día hábil de OTRO mes no se prepara: el mes nuevo arranca en cero y el texto de hoy
+// mentiría. Ese día sale solo si alguien abre el Tablero antes de la hora, o a mano con el botón.
+// ⚠️ Sin la referencia del punto de equilibrio no se publica nada (parte incompleto = no se manda).
+function parteIso(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function parteEsHabil(d){ const wd=d.getDay(); if(wd<1||wd>5) return false;
+  let fer=false; try{ fer=!!(window.__esFeriado && window.__esFeriado(parteIso(d))); }catch(e){} return !fer; }
+function parteEquipoDatos(rp, rm, ke, hoy){
+  const o={ textoHoy:'', fechaHoy:'', textoProx:'', fechaProx:'' };
+  if(!rp || !rm || rm.kgVendidos==null || !ke) return o;
+  if(parteEsHabil(hoy)){ o.textoHoy=textoMensajeEquipo(rp, rm, ke, diasHabilesMes(hoy), hoy); o.fechaHoy=parteIso(hoy); }
+  let px=null; const x=new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()+1);
+  for(let i=0;i<10 && !px;i++){ if(parteEsHabil(x)) px=new Date(x.getTime()); else x.setDate(x.getDate()+1); }
+  if(px && px.getMonth()===hoy.getMonth() && px.getFullYear()===hoy.getFullYear()){
+    o.textoProx=textoMensajeEquipo(rp, rm, ke, diasHabilesMes(px), px); o.fechaProx=parteIso(px); }
+  return o;
+}
+let _parteUlt='', _parteTs=0;
+function publicarParteEquipo(){
+  if(window.__rol!=='admin' || !window.__fbctx) return;
+  if(Date.now()-_parteTs < 10*60*1000) return;          // a lo sumo una escritura cada 10 minutos
+  const rp = window.__resumenProduccion ? window.__resumenProduccion() : null;
+  const rm = window.__resumenMes ? window.__resumenMes() : null;
+  if(!rp || !Array.isArray(rp.porProducto) || !rm) return;
+  let ke=null; try{ ke=kgEquivalentes(); }catch(e){ ke=null; }
+  const d=parteEquipoDatos(rp, rm, ke, new Date());
+  if(!d.textoHoy && !d.textoProx) return;
+  const firma=JSON.stringify(d); if(firma===_parteUlt) return;   // sin cambios, no se escribe
+  _parteTs=Date.now();
+  const FS=window.__fbctx.FS, db=window.__fbctx.db;
+  // merge: la configuración del envío (grupo, hora, activo) y el sello de "enviado" viven en el
+  // mismo documento y los escribe otro (Marcelo / el ayudante): acá no se pisan.
+  FS.setDoc(FS.doc(db,'vph_config','parte_diario'), Object.assign({ generadoTs:Date.now() }, d), { merge:true })
+    .then(function(){ _parteUlt=firma; }).catch(function(){});
+}
+window.__publicarParteEquipo = publicarParteEquipo;
 { const b=document.getElementById('btn-msj-equipo'); if(b) b.onclick=armarMensajeEquipo; }
 pintarKpisInicio();
 
@@ -2485,7 +2525,7 @@ function pintarAlertas(){
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
 // 30/09 (velocidad): cada panel se repinta SOLO si su pagina esta a la vista; al entrar a una pagina se repinta en el acto (nav).
 const _pgAct=function(id){ const p=document.getElementById('page-'+id); return !!(p&&p.classList.contains('active')); };
-window.__refreshAlertasYa = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); if(_pgAct('inicio')) try{ pintarKpisInicio(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarStockDisp) window.__pintarStockDisp(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} if(_pgAct('metas')) try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} if(_pgAct('costos')) try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} if(_pgAct('resultado')) try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} if(_pgAct('comercial')) try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} };
+window.__refreshAlertasYa = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); if(_pgAct('inicio')) try{ pintarKpisInicio(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarStockDisp) window.__pintarStockDisp(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} if(_pgAct('metas')) try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} if(_pgAct('costos')) try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} if(_pgAct('resultado')) try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} if(_pgAct('comercial')) try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} try{ publicarParteEquipo(); }catch(e){} };
 // 29/09: los datos en vivo disparan __refreshAlertas desde ~11 lugares (cada snapshot, cada 60 s...) y cada
 // llamada recalcula 11 paneles. Se junta todo en UNA repintada por tanda (250 ms). __refreshAlertasYa es la
 // version inmediata, para cuando el usuario acaba de entrar a la Vista Diaria.
@@ -2506,8 +2546,9 @@ setInterval(()=>{ try{ window.__refreshAlertas(); }catch(e){} }, 60000);
 // ⚠️ __esFeriado vive en el módulo Producción, que carga DESPUÉS de este script: en el primer pintado
 // todavía no existe y se cuentan todos los lun-vie. __refreshAlertas repinta cuando llegan los
 // feriados y ahí se corrige solo (mismo patrón que el resto de los widgets en vivo).
-function diasHabilesMes(){
-  const h=new Date(), y=h.getFullYear(), m=h.getMonth(), last=new Date(y,m+1,0).getDate();
+function diasHabilesMes(ref){
+  // ref opcional: el parte del equipo se arma también para el próximo día hábil (ver parteEquipoDatos).
+  const h=ref||new Date(), y=h.getFullYear(), m=h.getMonth(), last=new Date(y,m+1,0).getDate();
   let tot=0, tra=0;
   for(let d=1; d<=last; d++){
     const wd=new Date(y,m,d).getDay(); if(wd<1||wd>5) continue;
