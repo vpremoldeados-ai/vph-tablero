@@ -2339,15 +2339,18 @@ function faltaFabricar(porProducto){
   return (porProducto||[]).map(p=>{
     const cubierto=(p.disponible||0)+(p.enCurado||0);
     const u=Math.max(0, Math.round((p.minimo||0)-cubierto));
-    return { nombre:p.nombre||p.codigo||'', u, kg:u*(p.pesoUnit||0), urgente:cubierto<0 };
-  }).filter(x=>x.u>0).sort((a,b)=> (b.urgente-a.urgente) || (b.kg-a.kg));
+    const clientes=Array.isArray(p.urgClientes)?p.urgClientes:[];
+    // 🔥 como el plan de Gustavo: un pedido URGENTE cuenta solo si el producto tiene faltante (ya vendido
+    // por encima de todo lo fabricado). Si hay stock de sobra no entra a fabricar y no se marca.
+    return { nombre:p.nombre||p.codigo||'', u, kg:u*(p.pesoUnit||0), urgente:cubierto<0, pedidoUrgente:cubierto<0 && clientes.length>0, clientes };
+  }).filter(x=>x.u>0).sort((a,b)=> (b.pedidoUrgente-a.pedidoUrgente) || (b.urgente-a.urgente) || (b.kg-a.kg));
 }
 // Renglones de ENTREGAS del parte (pedido de Marcelo, 05/10: "no menciona que hay entregas
 // programadas"). ent = window.__entregasProgramadas(fecha del parte). Pura.
 function lineasEntregasEquipo(ent, nf){
   if(!ent) return '';
   const DS=['dom','lun','mar','mié','jue','vie','sáb'];
-  const uno = x => x.cliente+(x.transporte?' ('+x.transporte+')':'');
+  const uno = x => (x.urgente?'🔥 ':'')+x.cliente+(x.transporte?' ('+x.transporte+')':'');
   const kgDe = l => l.reduce((a,x)=>a+(x.kg||0),0);
   const dm = t => { const d=new Date(t); return DS[d.getDay()]+' '+String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); };
   let s='';
@@ -2458,7 +2461,7 @@ function textoMensajeEquipo(rp, rm, ke, dh, hoy, ent){
     t += '\n*QUÉ HACE FALTA HOY*\n';
     if(fab.length){
       t += '🏭 *Fabricar* (en este orden):\n'+
-        fab.slice(0,5).map((x,i)=>'   '+(i+1)+'. '+x.nombre+': '+nf(x.u)+' u'+(x.urgente?' ⚠️ ya vendido':'')).join('\n')+'\n'+
+        fab.slice(0,5).map((x,i)=>'   '+(i+1)+'. '+x.nombre+': '+nf(x.u)+' u'+(x.pedidoUrgente ? ' 🔥 URGENTE ('+x.clientes.slice(0,2).join(', ')+(x.clientes.length>2?' y '+(x.clientes.length-2)+' más':'')+')' : x.urgente ? ' ⚠️ ya vendido' : '')).join('\n')+'\n'+
         (fab.length>5 ? '   …y '+(fab.length-5)+' producto'+(fab.length-5!==1?'s':'')+' más para reponer\n' : '');
     } else {
       t += '🏭 *Fabricar:* todos los productos están sobre su mínimo 👏\n';
@@ -16497,13 +16500,19 @@ function buildFilterTable(cfg){
     // Base de Datos → Productos), no el físico: si está curando todavía no se puede vender.
     const isoDe=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     let kgDisp=0, kgCur=0, kgMin=0, nBajoMin=0;
+    // 🔥 Clientes con un pedido URGENTE sin entregar, por producto (misma regla que renderPlan: el casillero
+    // del pedido). Lo consume el parte del equipo para que "Fabricar" diga lo mismo que el plan de Gustavo.
+    const urgPorK={};
+    pedidos.forEach(pe=>{ if(!pe || pe.estado==='entregado' || !pe.urgente) return;
+      (pe.items||[]).filter(Boolean).forEach(it=>{ const kk=keyDe(it.codigo,it.producto); const a=urgPorK[kk]=urgPorK[kk]||[];
+        const c=String(pe.cliente||'').trim(); if(c && !a.includes(c)) a.push(c); }); });
     const porProducto=filas.map((f,i)=>{ const p=acts[i]; const pe=pesoDe(f.k);
       const disp=f.disponible, min=Math.max(0,f.min);
       kgDisp+=Math.max(0,disp)*pe; kgCur+=Math.max(0,f.enCurado)*pe; kgMin+=min*pe;
       const estadoVenta = disp<0 ? 'falta' : (min>0 && disp<min ? 'bajo' : 'ok');
       if(estadoVenta!=='ok') nBajoMin++;
       const l0=(f.lotes&&f.lotes[0])||null;
-      return { k:f.k, codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe,
+      return { k:f.k, codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe, urgClientes:urgPorK[f.k]||[],
         disponible:Math.round(disp), minimo:Math.round(min), comprometido:Math.round(f.comprometido),
         enCurado:Math.round(f.enCurado), kgDisponible:Math.round(Math.max(0,disp)*pe),
         estadoVenta, proxLote: l0 ? { fecha: isoDe(l0.el), cantidad: Math.round(l0.cantidad) } : null };
@@ -17686,7 +17695,7 @@ function buildFilterTable(cfg){
     pedidos.filter(pe=>pe && pe.estado!=='entregado').forEach(pe=>{
       let kg=0; try{ cargaRows(pe).forEach(x=>{ kg+=(x.cant||0)*(x.peso||0); }); }catch(e){}
       const tr=String(pe.transporte||'').trim();
-      const it={ cliente:String(pe.cliente||'').trim()||'(sin nombre)', transporte:(tr && tr!=='Sin asignar')?tr:'', kg:Math.round(kg) };
+      const it={ cliente:String(pe.cliente||'').trim()||'(sin nombre)', transporte:(tr && tr!=='Sin asignar')?tr:'', kg:Math.round(kg), urgente:!!pe.urgente };
       const d=fechaDeDia(pe.diaEntrega);
       if(!d){ out.sinFecha++; return; }
       const t=new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
