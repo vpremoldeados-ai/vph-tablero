@@ -16772,22 +16772,26 @@ function buildFilterTable(cfg){
     // Urgencia por producto según los pedidos activos: fecha requerida más próxima (ignorando "puede esperar")
     const urg={};
     pedidos.forEach(pe=>{ if(pe.estado==='entregado') return; (pe.items||[]).filter(Boolean).forEach(it=>{
-      const kk=keyDe(it.codigo,it.producto); const u=urg[kk]=urg[kk]||{fecha:'', espera:false, clientes:[]};
-      if(pe.puedeEsperar){ u.espera=true; if(pe.cliente&&!u.clientes.includes(pe.cliente+' 🕐')) u.clientes.push(pe.cliente+' 🕐'); }
+      const kk=keyDe(it.codigo,it.producto); const u=urg[kk]=urg[kk]||{fecha:'', espera:false, clientes:[], urgente:false, urgClientes:[]};
+      // 🔥 URGENTE (pedido de Marcelo, 05/10): casillero del pedido para que Gustavo sepa qué fabricar
+      // primero. Manda sobre "puede esperar" y sobre la fecha: va primero en el plan.
+      if(pe.urgente){ u.urgente=true; if(pe.cliente&&!u.urgClientes.includes(pe.cliente)) u.urgClientes.push(pe.cliente); }
+      if(pe.puedeEsperar&&!pe.urgente){ u.espera=true; if(pe.cliente&&!u.clientes.includes(pe.cliente+' 🕐')) u.clientes.push(pe.cliente+' 🕐'); }
       else { if(pe.fechaRequerida && (!u.fecha||pe.fechaRequerida<u.fecha)) u.fecha=pe.fechaRequerida; if(pe.cliente&&!u.clientes.includes(pe.cliente)) u.clientes.push(pe.cliente); } }); });
     // A fabricar: cubrir faltante y reponer hasta el mínimo
     let items=filas.map(({p,s})=>{ const min=s.min>0?s.min:0;
       const dispCur=s.dispReal;   // físico − comprometido: lo en curado también cubre demanda, no re-fabricarlo
       const aFab=Math.max(0, min - dispCur, -dispCur); if(aFab<=0) return null;
-      const u=urg[s.k]||{fecha:'',espera:false,clientes:[]};
-      const grupo = dispCur<0 ? (u.fecha?0:(u.espera&&!u.clientes.some(c=>!c.endsWith('🕐'))?2:1)) : 3;  // 0 urgente c/fecha · 1 faltante s/fecha · 2 puede esperar · 3 reposición a mínimo
+      const u=urg[s.k]||{fecha:'',espera:false,clientes:[],urgente:false,urgClientes:[]};
+      const grupo = dispCur<0 ? ((u.urgente||u.fecha)?0:(u.espera&&!u.clientes.some(c=>!c.endsWith('🕐'))?2:1)) : 3;  // 0 urgente c/fecha · 1 faltante s/fecha · 2 puede esperar · 3 reposición a mínimo
       return { p, s, aFab, kg:aFab*pesoDe(s.k), u, grupo };
     }).filter(Boolean);
-    items.sort((a,b)=> a.grupo-b.grupo || String(a.u.fecha||'9999').localeCompare(String(b.u.fecha||'9999')) || b.kg-a.kg);
+    items.sort((a,b)=> a.grupo-b.grupo || (b.u.urgente?1:0)-(a.u.urgente?1:0) || String(a.u.fecha||'9999').localeCompare(String(b.u.fecha||'9999')) || b.kg-a.kg);
     const ritmo=ritmoKgDia();
     let acumKg=0;
     items.forEach(it=>{ acumKg+=it.kg; const dias=Math.max(1,Math.ceil(acumKg/ritmo)); it.finFab=addDiasHabiles(HOY,dias); it.listo=addDias(it.finFab, it.s.dias); });
-    const motivo=it=> it.grupo===0 ? '<span style="color:var(--red);font-weight:700">🎯 '+fmtFecha(it.u.fecha)+'</span>'+(it.u.clientes.length?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.u.clientes.slice(0,2).join(', '))+'</div>':'')
+    const motivo=it=> it.grupo===0 && it.u.urgente ? '<span style="color:var(--red);font-weight:800">🔥 URGENTE</span>'+(it.u.fecha?' <span style="color:var(--red);font-weight:700">🎯 '+fmtFecha(it.u.fecha)+'</span>':'')+'<div style="font-size:10.5px;color:var(--red);font-weight:700">'+esc(it.u.urgClientes.slice(0,3).join(', '))+'</div>'
+      : it.grupo===0 ? '<span style="color:var(--red);font-weight:700">🎯 '+fmtFecha(it.u.fecha)+'</span>'+(it.u.clientes.length?'<div style="font-size:10.5px;color:var(--muted)">'+esc(it.u.clientes.slice(0,2).join(', '))+'</div>':'')
       : it.grupo===1 ? '<span style="color:var(--red)">Faltante'+(it.u.clientes.length?' · '+esc(it.u.clientes[0]):'')+'</span>'
       : it.grupo===2 ? '<span style="color:var(--muted)">🕐 Puede esperar'+(it.u.clientes.length?' · '+esc(it.u.clientes[0].replace(' 🕐',''))+'':'')+'</span>'
       : '<span style="color:var(--amber)">Reponer a mínimo ('+nf(it.s.min)+')</span>';
@@ -17902,7 +17906,7 @@ function buildFilterTable(cfg){
           '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
           // La fila entera se puede ARRASTRAR a otro viaje (el ⠿ es la señal visual; el botón sigue siendo botón).
-          return '<div draggable="true" data-arr="'+esc(p._uid)+'" title="Arrastrá para moverlo a otro viaje" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border);cursor:grab"><span style="color:var(--muted)">⠿</span><span style="flex:1;min-width:130px">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
+          return '<div draggable="true" data-arr="'+esc(p._uid)+'" title="Arrastrá para moverlo a otro viaje" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border);cursor:grab"><span style="color:var(--muted)">⠿</span><span style="flex:1;min-width:130px">'+(p.urgente?'<b style="color:var(--red)">🔥 URGENTE</b> ':'')+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
             // 🖨️ Remito POR CLIENTE del viaje armado (pedido de Marcelo, 20/08): Gustavo imprime mirando
             // el viaje que va a cargar, no la tabla de abajo. Va con el MISMO data-pact que la tabla, así
             // que lo toma bindAccionesPedido y no hay una segunda copia de la lógica de impresión.
@@ -18002,7 +18006,7 @@ function buildFilterTable(cfg){
     if(filtroPed==='activos') rows=rows.filter(p=>p.estado!=='entregado');
     else if(filtroPed==='entregado') rows=rows.filter(p=>p.estado==='entregado');
     if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+resumenPed(p)).toLowerCase().includes(s)); }
-    rows.sort((a,b)=> (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0) || String(a.fechaRequerida||'9999').localeCompare(String(b.fechaRequerida||'9999')) || String(a.diaEntrega||'zzz').localeCompare(String(b.diaEntrega||'zzz')) || String(b.fecha||'').localeCompare(String(a.fecha||'')));
+    rows.sort((a,b)=> (b.urgente?1:0)-(a.urgente?1:0) || (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0) || String(a.fechaRequerida||'9999').localeCompare(String(b.fechaRequerida||'9999')) || String(a.diaEntrega||'zzz').localeCompare(String(b.diaEntrega||'zzz')) || String(b.fecha||'').localeCompare(String(a.fecha||'')));
     const badge={ pendiente:'<span class="cmp-estado apagar">Pendiente</span>', programado:'<span class="cmp-estado parcial">Programado</span>', entregado:'<span class="cmp-estado pagado">Entregado</span>' };
     let html='<tr><th>Cliente</th><th>Entrega</th><th>Transporte</th><th>Pedido</th><th>Entregar en</th><th>Estado</th><th></th></tr>';
     if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">Sin pedidos. Creá con "→ Entrega" desde una Venta o "+ Nuevo pedido".</td></tr>';
@@ -18015,7 +18019,9 @@ function buildFilterTable(cfg){
       const entregaCell = '<input type="date" class="pe-inl" data-pinl="dia" data-id="'+esc(pe._uid)+'" value="'+isoDia+'" title="Fecha del viaje — se guarda al elegirla">'
         + (!fDia && pe.diaEntrega ? '<div style="font-size:10.5px;color:var(--muted)">✍️ '+esc(pe.diaEntrega)+'</div>' : '')
         + (pe.fechaRequerida?'<div style="font-size:10.5px;color:var(--red);font-weight:700">🎯 requerida '+fmtFecha(pe.fechaRequerida)+'</div>':'')
-        + (pe.puedeEsperar?'<div style="font-size:10.5px;color:var(--muted)">🕐 puede esperar</div>':'');
+        + (pe.puedeEsperar&&!pe.urgente?'<div style="font-size:10.5px;color:var(--muted)">🕐 puede esperar</div>':'')
+        // 🔥 Urgente: se tilda en la fila (pedido de Marcelo, 05/10) y se ve igual en el plan y en los viajes.
+        + (pe.estado!=='entregado'?'<label style="display:flex;gap:4px;align-items:center;font-size:11px;font-weight:700;margin-top:3px;cursor:pointer;color:'+(pe.urgente?'var(--red)':'var(--muted)')+'"><input type="checkbox" data-pinl="urgente" data-id="'+esc(pe._uid)+'"'+(pe.urgente?' checked':'')+'> 🔥 Urgente</label>':'');
       const trAct=pe.transporte||'Sin asignar';
       const trLista=TRANSPORTES.indexOf(trAct)>=0?TRANSPORTES:TRANSPORTES.concat([trAct]);
       const transpCell='<select class="pe-inl" data-pinl="transp" data-id="'+esc(pe._uid)+'" title="Cambiar el transportista — se guarda al elegirlo">'+
@@ -18056,6 +18062,7 @@ function buildFilterTable(cfg){
         pe.diaEntrega = v ? (v.slice(8,10)+'/'+v.slice(5,7)+'/'+v.slice(2,4)) : '';
         persistPed(pe); render(); return;
       }
+      if(k==='urgente'){ pe.urgente=!!el.checked; if(pe.urgente) pe.puedeEsperar=false; persistPed(pe); render(); return; }
       if(k==='transp'){ pe.transporte=el.value; persistPed(pe); render(); return; }
       if(k==='estado'){
         if(el.value==='entregado'){
@@ -18227,7 +18234,7 @@ function buildFilterTable(cfg){
       persistPed(pe);
       const nuevo = Object.assign(blankPed(), {
         cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
-        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, nota:pe.nota||'',
+        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, nota:pe.nota||'',
         items:nuevoItems, diaEntrega:fecha2, transporte:transp2, estado:pe.estado==='programado'?'programado':'pendiente'
       });
       persistPed(nuevo);
@@ -18455,7 +18462,7 @@ function buildFilterTable(cfg){
 
   // Form de pedido
   let editPed=null;
-  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
+  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
   function openPed(pe){ editPed = pe?JSON.parse(JSON.stringify(pe)):blankPed(); if(!editPed.items||!editPed.items.length)editPed.items=[{producto:'',codigo:'',cantidad:1}]; $('pe-ped-title').textContent=pe?'Editar pedido':'Nuevo pedido'; drawPed(); $('pe-modal-ped').classList.add('open'); }
   function drawPed(){
     const pe=editPed;
@@ -18471,7 +18478,8 @@ function buildFilterTable(cfg){
           '<input type="date" id="pp-dia-cal" title="Elegir del calendario" style="width:40px;padding:0 2px">'+
         '</div></div>'+
         '<div class="cmp-field"><label>Fecha requerida (cliente)</label><input type="date" id="pp-freq" value="'+esc(pe.fechaRequerida||'')+'"></div>'+
-        '<div class="cmp-field"><label>Prioridad</label><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:9px 0;cursor:pointer"><input type="checkbox" id="pp-espera"'+(pe.puedeEsperar?' checked':'')+'> 🕐 El cliente puede esperar</label></div>'+
+        '<div class="cmp-field"><label>Prioridad</label><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:9px 0;cursor:pointer"><input type="checkbox" id="pp-espera"'+(pe.puedeEsperar?' checked':'')+'> 🕐 El cliente puede esperar</label>'+
+          '<label style="display:flex;gap:8px;align-items:center;font-weight:800;padding:4px 0 9px;cursor:pointer;color:var(--red)"><input type="checkbox" id="pp-urgente"'+(pe.urgente?' checked':'')+'> 🔥 URGENTE — fabricar y entregar primero</label></div>'+
         '<div class="cmp-field"><label>Transporte</label><select id="pp-transp">'+opt(TRANSPORTES,pe.transporte)+'</select></div>'+
         '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
         '<div class="cmp-field col2"><label>Dirección de entrega</label><input id="pp-dir" value="'+esc(pe.direccion)+'" placeholder="Dónde hay que descargar"></div>'+
@@ -18489,7 +18497,8 @@ function buildFilterTable(cfg){
     drawPlanCarga();
     drawDisponibilidadPed();
     [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; if(id==='pp-dia') drawDisponibilidadPed(); }); });
-    $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; });
+    $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; if(editPed.puedeEsperar){ editPed.urgente=false; $('pp-urgente').checked=false; } });
+    $('pp-urgente').addEventListener('change',()=>{ editPed.urgente=$('pp-urgente').checked; if(editPed.urgente){ editPed.puedeEsperar=false; $('pp-espera').checked=false; } });
     // "Día de entrega" se guarda como texto dd/mm/aa (así lo carga Sofía, es lo que entiende
     // fechaDeDia() en Coordinar entregas) — el calendario es solo un ATAJO para escribirlo: al
     // elegir una fecha ahí, se formatea a dd/mm/aa y se pisa el campo de texto. No se guarda el
