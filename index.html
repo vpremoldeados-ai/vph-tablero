@@ -17445,18 +17445,38 @@ function buildFilterTable(cfg){
 
   // ---------- Deshacer última carga (producción/entrega) — ventana de 5 minutos ----------
   let ultimaCarga=null, ultimaCargaTimeout=null;
-  function registrarUltimaCarga(col,ids,resumen){
-    ultimaCarga={col,ids,resumen}; clearTimeout(ultimaCargaTimeout);
+  /* `pedsPrevios` (opcional, 06/10): la foto del ESTADO que tenía cada pedido ANTES de entregarlo.
+     Sin esto, deshacer borraba los movimientos de `vph_entregas` —o sea devolvía el stock— pero los
+     pedidos quedaban marcados "entregado": el stock volvía y la entrega seguía figurando como hecha.
+     Con un camión de 4 clientes el desfasaje era 4 veces más grande. Las cargas de producción y de
+     entregas sueltas no mandan nada acá y se deshacen igual que siempre. */
+  function registrarUltimaCarga(col,ids,resumen,pedsPrevios){
+    ultimaCarga={col,ids,resumen,peds:pedsPrevios||[]}; clearTimeout(ultimaCargaTimeout);
     const btn=$('pe-btn-deshacer'); if(btn){ btn.style.display=''; btn.title='Deshace: '+resumen+' (disponible 5 min)'; }
     ultimaCargaTimeout=setTimeout(()=>{ ultimaCarga=null; if(btn) btn.style.display='none'; }, 5*60*1000);
   }
+  // La foto se saca ANTES de entregar: después `entregarPedido` ya le escribió 'entregado' encima.
+  const fotoPedido = pe => ({ uid:pe._uid, estado:pe.estado||'pendiente', fechaEntregado:pe.fechaEntregado||'',
+    transporteEntrega:pe.transporteEntrega||'', viajeEntrega:pe.viajeEntrega||'' });
   function deshacerUltimaCarga(){
     if(!ultimaCarga){ alert('No hay ninguna carga reciente para deshacer.'); return; }
-    if(!confirm('¿Deshacer esta carga?\n\n'+ultimaCarga.resumen)) return;
+    const nPed=(ultimaCarga.peds||[]).length;
+    if(!confirm('¿Deshacer esta carga?\n\n'+ultimaCarga.resumen
+      + (nPed ? '\n\nSe devuelve el stock y '+(nPed===1?'el pedido vuelve':'los '+nPed+' pedidos vuelven')+' al estado que tenían antes de entregarlos.' : ''))) return;
     const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
     ultimaCarga.ids.forEach(id=> c.FS.deleteDoc(c.FS.doc(c.db,ultimaCarga.col,id)).catch(e=>console.error('deshacer:',e)));
+    // Se vuelve al estado que TENÍA cada uno (programado, pendiente…), no a uno fijo. El pedido se
+    // busca por uid en la lista viva: la referencia guardada hace 5 minutos puede haber sido
+    // reemplazada por un snapshot de Firestore en el medio.
+    (ultimaCarga.peds||[]).forEach(f=>{
+      const pe=(typeof pedidos!=='undefined'&&Array.isArray(pedidos)) ? pedidos.find(x=>x&&x._uid===f.uid) : null;
+      if(!pe) return;
+      pe.estado=f.estado; pe.fechaEntregado=f.fechaEntregado;
+      pe.transporteEntrega=f.transporteEntrega; pe.viajeEntrega=f.viajeEntrega;
+      persistPed(pe);
+    });
     clearTimeout(ultimaCargaTimeout); ultimaCarga=null; const btn=$('pe-btn-deshacer'); if(btn) btn.style.display='none';
-    alert('Carga deshecha.');
+    alert('Carga deshecha.'+(nPed?' '+(nPed===1?'El pedido volvió':'Los '+nPed+' pedidos volvieron')+' a su estado anterior.':''));
   }
 
   // ---------- Cargar producción (orden por preferencia, id único por evento) ----------
@@ -18056,15 +18076,15 @@ function buildFilterTable(cfg){
        no tienen día asignado.
        Lo de arriba no se toca: 🔥 urgente primero, 🕐 "puede esperar" al final, y la fecha REQUERIDA
        por el cliente manda sobre el día del viaje. */
-    const dNum  = f => f ? f.getFullYear()*10000+(f.getMonth()+1)*100+f.getDate() : 0;
-    const isoNum= s => { const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s||'')); return m ? +(m[1]+m[2]+m[3]) : 0; };
-    /* UNA sola fecha por pedido: la MÁS PRÓXIMA entre el día del viaje y la fecha que pidió el
-       cliente. Antes la requerida se comparaba ANTES que el día del viaje, así que un pedido con
-       fecha requerida lejana quedaba arriba de otro que salía mañana — y lo que se busca mirando
-       esta lista es qué entrega viene primero. Sin ninguna de las dos (ni día ni requerida, o un
-       texto libre que no se entiende) va al final: no hay nada que coordinar todavía. */
-    const cronPed = pe => { const v=[dNum(fechaDeDia(pe.diaEntrega)), isoNum(pe.fechaRequerida)].filter(x=>x>0);
-      return v.length ? Math.min.apply(null, v) : 99999999; };
+    const dNum = f => f ? f.getFullYear()*10000+(f.getMonth()+1)*100+f.getDate() : 0;
+    /* La lista se ordena por la fecha de la COLUMNA ENTREGA (pedido de Marcelo, 06/10): la más
+       próxima arriba. Es lo que se está mirando en la pantalla, así que el orden tiene que coincidir
+       con esa columna y con nada más — la fecha REQUERIDA por el cliente se sigue viendo debajo (🎯)
+       pero ya no mueve la fila de lugar.
+       Sin día de entrega, o con un texto libre que no se entiende ("la semana que viene"), va al
+       final: no hay nada que coordinar todavía; entre esos manda la fecha de carga, el más viejo
+       arriba. */
+    const cronPed = pe => { const d=dNum(fechaDeDia(pe.diaEntrega)); return d>0 ? d : 99999999; };
     rows.sort((a,b)=> (b.urgente?1:0)-(a.urgente?1:0) || (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0)
       || cronPed(a)-cronPed(b)
       || String(a.fecha||'9999').localeCompare(String(b.fecha||'9999')));
@@ -18502,8 +18522,9 @@ function buildFilterTable(cfg){
     const c=fb(); if(!c||!c.db) return;
     const det=detalleEntrega(pe);
     if(!confirm('¿Marcar como ENTREGADO el pedido de '+(pe.cliente||'—')+'?\n\nSe descuenta del stock:\n'+(det||'(sin ítems)'))) return;
+    const foto=fotoPedido(pe);                       // ANTES de entregar: es lo que restaura el ↩ Deshacer
     const ids=entregarPedido(pe, c);
-    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO));
+    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO), [foto]);
   }
   /* ---------- ✓ ENTREGAR EL CAMIÓN COMPLETO (06/10, pedido de Marcelo) --------------------------
      Gustavo descarga el camión entero, no de a un cliente. Es UNA sola confirmación con TODO lo que
@@ -18520,9 +18541,10 @@ function buildFilterTable(cfg){
       + (v.dia && v.dia!=='Sin fecha' ? ' · '+v.dia : '')+'\n\nSe descuenta del stock:\n\n';
     const cuerpo=peds.map(p=> '— '+(p.cliente||'—')+'\n'+(detalleEntrega(p)||'  (sin ítems)')).join('\n\n');
     if(!confirm(cabecera+cuerpo)) return;
-    const ids=[]; let n=0;
-    peds.forEach(p=>{ const r=entregarPedido(p, c); if(p.estado==='entregado') n++; ids.push.apply(ids, r); });
-    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del camión de '+(v.tr||'—')+' · '+n+' cliente'+(n!==1?'s':'')+' · '+fmtFecha(hoyISO));
+    const ids=[], fotos=[]; let n=0;
+    peds.forEach(p=>{ fotos.push(fotoPedido(p));     // ANTES de entregar, uno por uno
+      const r=entregarPedido(p, c); if(p.estado==='entregado') n++; ids.push.apply(ids, r); });
+    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del camión de '+(v.tr||'—')+' · '+n+' cliente'+(n!==1?'s':'')+' · '+fmtFecha(hoyISO), fotos);
     alert('Listo: '+n+' entrega'+(n!==1?'s':'')+' registrada'+(n!==1?'s':'')+'.');
   }
   /* Lo que de verdad ENTREGA un pedido: registra los movimientos de stock, congela con qué viaje
