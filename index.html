@@ -414,6 +414,9 @@
   .pe-pallets .pp-cod{font-weight:800;color:var(--text)}
   .pe-pallets .pp-org{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:0 4px}
   .pe-pallets .pp-ref{font-size:10px;color:var(--amber);font-weight:700}
+  /* En las tarjetas de viaje el armado cuelga de la fila del cliente: sangrado para que se vea de
+     cuál es (en la tabla no hace falta, ahí está adentro de su propia celda). */
+  #pe-viajes .pe-pallets{padding-left:18px;margin:0 0 5px;border-top:0;padding-top:0}
   /* Encabezado de grupo por PROVEEDOR en la tabla de insumos y en el modal de conteo */
   .pe-ins-prov td{background:var(--bg,#f2f5f9);font-size:12px;padding:7px 11px;border-bottom:2px solid var(--border)}
   .pe-ins-provh{background:var(--bg,#f2f5f9);border-radius:8px;padding:7px 10px;font-size:12.5px;font-weight:800;margin:14px 0 6px}
@@ -17922,8 +17925,20 @@ function buildFilterTable(cfg){
             // 🖨️ Remito POR CLIENTE del viaje armado (pedido de Marcelo, 20/08): Gustavo imprime mirando
             // el viaje que va a cargar, no la tabla de abajo. Va con el MISMO data-pact que la tabla, así
             // que lo toma bindAccionesPedido y no hay una segunda copia de la lógica de impresión.
+            /* ✓ Entregado desde la tarjeta (pedido de Marcelo, 06/10): Gustavo descarga el camión
+               mirando ESTO, no la tabla de abajo. Va con el MISMO `data-pact` que la tabla, así que
+               lo toma `bindAccionesPedido` y termina en `marcarEntregado` (confirma y descuenta
+               stock) — nunca un atajo que escriba el estado directo. El viaje solo lista pendientes,
+               pero la guarda queda igual: entregar dos veces sería descontar stock dos veces. */
+            (p.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(p._uid)+'" title="Marcar entregado el pedido de '+esc(p.cliente||'')+' — descuenta stock" style="flex:0 0 auto">✓ Entregado</button>':'')+
             '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(p._uid)+'" title="Imprimir el remito de '+esc(p.cliente||'')+'" style="flex:0 0 auto">🖨️ Remito</button></div>'+
-            (seco?'<div style="color:var(--red);font-size:11px;padding:0 0 3px">⚠️ no va a estar seco para ese día: '+esc(seco.join(' · '))+'</div>':''); }).join('')+'</div>'+
+            (seco?'<div style="color:var(--red);font-size:11px;padding:0 0 3px">⚠️ no va a estar seco para ese día: '+esc(seco.join(' · '))+'</div>':'')+
+            /* CÓMO se arma la carga de ese cliente, a la vista (pedido de Marcelo, 06/10). La tarjeta
+               decía solo "5 pal": el reparto real (75+75+75+75+30, cuáles van mixtos) estaba únicamente
+               en la tabla de abajo, y el camión se carga mirando ESTA tarjeta — sobre todo en la banda
+               "Sin fecha de entrega", que es la que se usa para decidir qué entra. Es la MISMA función
+               que usa la tabla y el remito (`cargaDetalle`), no una segunda cuenta que pueda discrepar. */
+            cargaDetalle(p); }).join('')+'</div>'+
         sugerenciaHtml+
       '</div>';
     }
