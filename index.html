@@ -640,6 +640,76 @@
     }
     return {condIva:'', tipo:'', seguro:false, motivo:'faltan dígitos: un DNI tiene 7 u 8 y un CUIT 11'};
   };
+  // ---------- Padrón de ARCA (06/10, pedido de Marcelo) ----------
+  // Con un CUIT válido le pregunta a ARCA (constancia de inscripción, vía el Worker de facturación):
+  // razón social, domicilio fiscal y condición frente al IVA. Es la fuente de verdad: pisa la deducción
+  // por prefijo/historial de __fiscalPorCuit. SOLO LEE; nunca guarda nada por su cuenta.
+  const PADRON_URL='https://vph-facturacion-arca.vpremoldeados.workers.dev';
+  const _padronCache=new Map();
+  window.__padronConsultar = async function(cuit){
+    const d=String(cuit||'').replace(/\D/g,'');
+    if(d.length!==11 || !window.__cuitValido(d)) return {ok:false, error:'el CUIT no verifica: revisá los dígitos', codigo:'cuit'};
+    if(_padronCache.has(d)) return _padronCache.get(d);
+    const c=window.__fbctx;
+    if(!c || !c.auth || !c.auth.currentUser) return {ok:false, error:'la consulta a ARCA necesita sesión iniciada', codigo:'sin_sesion'};
+    let ctl=null; try{ ctl=new AbortController(); }catch(e){}
+    const to=setTimeout(()=>{ try{ if(ctl) ctl.abort(); }catch(e){} }, 20000);
+    try{
+      const tok=await c.auth.currentUser.getIdToken();
+      const r=await fetch(PADRON_URL+'/padron?cuit='+d,{headers:{'Authorization':'Bearer '+tok}, signal:ctl?ctl.signal:undefined});
+      let j={}; try{ j=await r.json(); }catch(e){}
+      // Worker viejo (todavía sin la ruta /padron): se dice claro en vez de mostrar "ruta inexistente".
+      if(r.status===404 && /ruta inexistente/i.test(String(j.error||''))) return {ok:false, codigo:'worker_viejo', error:'el sistema de facturación todavía no tiene activada la consulta al padrón de ARCA'};
+      if(!r.ok) return {ok:false, error:j.error||('error HTTP '+r.status), codigo:j.codigo||('http_'+r.status)};   // un error NO se cachea
+      const out={ok:true, data:j}; _padronCache.set(d,out); return out;
+    }catch(e){
+      return {ok:false, codigo:'red', error:(e&&e.name==='AbortError')?'ARCA tardó demasiado en responder':'no se pudo conectar con el sistema de facturación'};
+    } finally { clearTimeout(to); }
+  };
+  // Respuesta del padrón → lo que usa el Tablero. RI → A · Monotributo → C (así se muestra en el Libro IVA) ·
+  // IVA exento / no inscripto en IVA → B. El monotributo y el exento SIEMPRE reciben Factura B.
+  window.__padronFicha = function(data){
+    data=data||{};
+    const COND={RI:'A', MONOTRIBUTO:'C', EXENTO:'B', CONSUMIDOR_FINAL:'B'};
+    const ROT={RI:'Responsable Inscripto', MONOTRIBUTO:'Monotributista', EXENTO:'IVA Exento', CONSUMIDOR_FINAL:'no inscripto en IVA'};
+    const condIva=COND[data.condicionIva]||'';
+    return { condIva, tipo:window.__tipoPorCondIva(condIva), nombre:String(data.nombre||'').trim(),
+      domicilio:String(data.domicilio&&data.domicilio.texto||'').trim(), condTxt:ROT[data.condicionIva]||'', tipoPersona:data.tipoPersona||'' };
+  };
+  // Consulta (con una pequeña espera, para no preguntar en cada tecla) y completa el formulario.
+  //   ctx = { box, cuit(), setCond(c)→false si no se pudo, getDom/setDom, getNombre/setNombre, sugBox? }
+  // Solo COMPLETA: el domicilio y el nombre se cargan únicamente si el campo está vacío.
+  window.__padronAuto = function(cuit, ctx, opts){
+    opts=opts||{}; const box=ctx&&ctx.box; if(!box) return;
+    const d=String(cuit||'').replace(/\D/g,'');
+    if(d.length!==11 || !window.__cuitValido(d)){ box.__padronUlt=''; box.innerHTML=''; return; }
+    if(box.__padronUlt===d && !opts.forzar) return;
+    box.__padronUlt=d;
+    const e=t=>String(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    if(!box.__padronLigado){ box.__padronLigado=1; box.addEventListener('click',ev=>{
+      const a=ev.target&&ev.target.closest&&ev.target.closest('[data-padron-retry]');
+      if(a){ ev.preventDefault(); window.__padronAuto(ctx.cuit(), ctx, {forzar:true, demora:0}); } }); }
+    box.innerHTML='<span style="color:var(--muted)">Consultando ARCA…</span>';
+    clearTimeout(box.__padronT);
+    box.__padronT=setTimeout(async()=>{
+      const res=await window.__padronConsultar(d);
+      if(box.__padronUlt!==d) return;   // mientras tanto se tipeó otro CUIT
+      const retry=' <a href="#" data-padron-retry style="color:var(--blue,#2563eb);font-weight:700">↻ reintentar</a>';
+      if(!res.ok){
+        box.innerHTML='<span style="color:var(--amber);font-weight:700">⚠ ARCA:</span> <span style="color:var(--muted)">'+e(res.error)+'</span>'+(res.codigo==='cuit'?'':retry);
+        return;
+      }
+      const f=window.__padronFicha(res.data); const hechos=[];
+      if(f.condIva && ctx.setCond && ctx.setCond(f.condIva)!==false) hechos.push('condición de IVA');
+      if(f.domicilio && ctx.setDom && !String(ctx.getDom&&ctx.getDom()||'').trim()){ ctx.setDom(f.domicilio); hechos.push('domicilio de facturación'); }
+      if(f.nombre && ctx.setNombre && !String(ctx.getNombre&&ctx.getNombre()||'').trim()){ ctx.setNombre(f.nombre); hechos.push('nombre'); }
+      if(ctx.sugBox) ctx.sugBox.innerHTML='';   // la respuesta de ARCA reemplaza la deducción por prefijo
+      box.innerHTML='<span style="color:var(--green);font-weight:700">✓ ARCA</span> <b>'+e(f.nombre)+'</b> · '+e(f.condTxt)+
+        (f.tipo&&f.tipo!=='Sin factura'?' → <b>'+e(f.tipo)+'</b>':'')+
+        (f.domicilio?'<br><span style="color:var(--muted)">Domicilio fiscal: '+e(f.domicilio)+'</span>':'<br><span style="color:var(--amber)">ARCA no informa domicilio fiscal</span>')+
+        (hechos.length?'<br><span style="color:var(--muted)">Completé: '+hechos.join(', ')+'</span>':'');
+    }, opts.demora==null?450:opts.demora);
+  };
   // Texto corto para mostrar debajo del campo CUIT en los tres formularios.
   window.__fiscalSugHtml = function(sug){
     if(!sug) return '';
@@ -6963,7 +7033,9 @@ function buildFilterTable(cfg){
   // (exento, etc.) se afinan antes de pasar a producción.
   function condIvaReceptorDe(v, cbteTipo){
     if([1,2,3].includes(cbteTipo)) return 1;   // letra A (factura y sus notas) → Responsable Inscripto
-    return String(v.condIva||'').toUpperCase()==='M' ? 6 : 5;
+    // Monotributista = 6. En el Tablero se carga como "C" (así lo muestra el Libro IVA y así lo deja el padrón
+    // de ARCA) o como "M"; antes solo la M daba 6 y una C salía como consumidor final.
+    return ['M','C'].includes(String(v.condIva||'').toUpperCase()) ? 6 : 5;
   }
   async function facturarVenta(v){
     if(v.cae){ alert('Esta venta ya está facturada.\nCAE '+v.cae+' · comprobante '+(v.puntoVenta||'')+'-'+(v.nroFactura||'')); return; }
@@ -7736,7 +7808,7 @@ function buildFilterTable(cfg){
     $('vnt-form').innerHTML =
       '<div class="cmp-form-grid">'+
         field('Cliente','col2','<input id="vf-cli" list="vf-cli-list" value="'+esc(v.cliente)+'" placeholder="Nombre del cliente">'+datalistCli()) +
-        field('CUIT / DNI','','<input id="vf-cuit" value="'+esc(v.cuit)+'" placeholder="00-00000000-0"><div id="vf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div>') +
+        field('CUIT / DNI','','<input id="vf-cuit" value="'+esc(v.cuit)+'" placeholder="00-00000000-0"><div id="vf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div><div id="vf-padron" style="font-size:10.5px;margin-top:3px"></div>') +
         field('Cond. IVA','','<select id="vf-cond">'+opt(COND_IVA,v.condIva)+'</select>') +
         field('Categoría','col2','<select id="vf-cat">'+opt(CATEGORIAS,v.categoria)+'</select>') +
         field('Vendedor','','<input id="vf-vend" list="vf-vend-list" value="'+esc(v.vendedor)+'" placeholder="Vendedor">'+datalistVend()) +
@@ -7819,7 +7891,13 @@ function buildFilterTable(cfg){
       if(editing.condIva!==sug.condIva){ editing.condIva=sug.condIva; const c=$('vf-cond'); if(c) c.value=sug.condIva; }
       aplicarTipoPorCond(sug.condIva);
     }
-    $('vf-cuit').addEventListener('input',()=>sugerirFiscalVta(true));
+    // Consulta al padrón de ARCA: completa condición de IVA, domicilio de facturación y (si está vacío) el nombre.
+    const ctxPadronVta={ box:$('vf-padron'), sugBox:$('vf-fiscal-sug'), cuit:()=>$('vf-cuit').value,
+      setCond:(c)=>{ if(editing.condIva==='X' && esSinFacturar(editing.listaPrecios, editing.categoria)) return false;   // venta sin facturar: manda la lista
+        editing.condIva=c; const s=$('vf-cond'); if(s) s.value=c; aplicarTipoPorCond(c); return true; },
+      getDom:()=>editing.domicilioFacturacion, setDom:(t)=>{ editing.domicilioFacturacion=t; const i=$('vf-domfact'); if(i) i.value=t; },
+      getNombre:()=>editing.cliente, setNombre:(t)=>{ editing.cliente=t; const i=$('vf-cli'); if(i) i.value=t; } };
+    $('vf-cuit').addEventListener('input',()=>{ sugerirFiscalVta(true); window.__padronAuto($('vf-cuit').value, ctxPadronVta); });
     $('vf-cond').addEventListener('change',()=>{ aplicarTipoPorCond($('vf-cond').value); sugerirFiscalVta(false); });
     sugerirFiscalVta(false);   // al abrir, solo mostrar (no pisar una venta ya cargada)
     $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond; aplicarTipoPorCond(f.cond);} sugerirFiscalVta(false); }
@@ -11339,7 +11417,7 @@ function buildFilterTable(cfg){
         field('Validez (días)','','<input id="pf-val" value="'+esc(p.validezDias)+'">') +
         field('Estado','','<select id="pf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(p.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
         field('Cliente','col2','<input id="pf-cli" list="pf-cli-list" value="'+esc(p.cliente)+'" placeholder="Nombre del cliente">'+datalistCli()) +
-        field('CUIT / DNI','','<input id="pf-cuit" value="'+esc(p.cuit)+'" placeholder="00-00000000-0"><div id="pf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div>') +
+        field('CUIT / DNI','','<input id="pf-cuit" value="'+esc(p.cuit)+'" placeholder="00-00000000-0"><div id="pf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div><div id="pf-padron" style="font-size:10.5px;margin-top:3px"></div>') +
         field('Cond. IVA','','<select id="pf-cond">'+opt(COND_IVA,p.condIva)+'</select><div id="pf-fiscal-tipo" style="font-size:10.5px;margin-top:3px;color:var(--muted)"></div>') +
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
         field('Lista de precios','','<select id="pf-lista">'+opt(window.__listaOpts(p.listaPrecios),p.listaPrecios)+'</select>') +
@@ -11384,7 +11462,12 @@ function buildFilterTable(cfg){
         editing.condIva=sug.condIva; const c=$('pf-cond'); if(c) c.value=sug.condIva; }
       pintarTipoPre();
     }
-    $('pf-cuit').addEventListener('input',()=>sugerirFiscalPre(true));
+    const ctxPadronPre={ box:$('pf-padron'), sugBox:$('pf-fiscal-sug'), cuit:()=>$('pf-cuit').value,
+      setCond:(c)=>{ if(editing.condIva==='X' && esSinFacturarPre(editing.listaPrecios, editing.categoria)) return false;
+        editing.condIva=c; const s=$('pf-cond'); if(s) s.value=c; pintarTipoPre(); return true; },
+      getDom:()=>editing.domicilioFacturacion, setDom:(t)=>{ editing.domicilioFacturacion=t; const i=$('pf-domfact'); if(i) i.value=t; },
+      getNombre:()=>editing.cliente, setNombre:(t)=>{ editing.cliente=t; const i=$('pf-cli'); if(i) i.value=t; } };
+    $('pf-cuit').addEventListener('input',()=>{ sugerirFiscalPre(true); window.__padronAuto($('pf-cuit').value, ctxPadronPre); });
     $('pf-cond').addEventListener('change',pintarTipoPre);
     $('pf-lista').addEventListener('change',()=>setTimeout(pintarTipoPre,0));   // la lista "sin facturar" fuerza X DESPUÉS de este handler: repintar al terminar
     sugerirFiscalPre(false);
@@ -13573,7 +13656,7 @@ function buildFilterTable(cfg){
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
         fld('Lista de precios','','<select id="cf-lista">'+opt(window.__listaOpts(l.listaPrecios),l.listaPrecios)+'</select>') +
-        fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'"><div id="cf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div>') +
+        fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'"><div id="cf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div><div id="cf-padron" style="font-size:10.5px;margin-top:3px"></div>') +
         fld('Cond. IVA','','<select id="cf-cond">'+opt(['A','B','C','M','X'],l.condIva)+'</select><div id="cf-fiscal-tipo" style="font-size:10.5px;margin-top:3px;color:var(--muted)"></div>') +
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Pedido</h4>'+
@@ -13612,7 +13695,11 @@ function buildFilterTable(cfg){
         if(aplicar && sug && sug.seguro && editing.condIva!==sug.condIva){ editing.condIva=sug.condIva; const c=$('cf-cond'); if(c) c.value=sug.condIva; }
         pintarTipo(); };
       const cu=$('cf-cuit'), co=$('cf-cond');
-      if(cu) cu.addEventListener('input',()=>sugerir(true));
+      const ctxPadron={ box:$('cf-padron'), sugBox:$('cf-fiscal-sug'), cuit:()=>$('cf-cuit').value,
+        setCond:(c)=>{ editing.condIva=c; const s=$('cf-cond'); if(s) s.value=c; pintarTipo(); return true; },
+        getDom:()=>editing.domicilioFacturacion, setDom:(t)=>{ editing.domicilioFacturacion=t; const i=$('cf-domfact'); if(i) i.value=t; },
+        getNombre:()=>editing.cliente, setNombre:(t)=>{ editing.cliente=t; const i=$('cf-cli'); if(i) i.value=t; } };
+      if(cu) cu.addEventListener('input',()=>{ sugerir(true); window.__padronAuto(cu.value, ctxPadron); });
       if(co) co.addEventListener('input',pintarTipo);
       sugerir(false);
     })();
