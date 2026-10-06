@@ -409,6 +409,7 @@
     #rmt-tabla td:last-child{white-space:normal;min-width:106px;max-width:130px}
     #rmt-tabla td:last-child .cmp-rowbtn{margin:2px 3px 2px 0}
   }
+  .pe-pintar{margin-top:5px;background:#000;color:#ffd400;font-size:12px;font-weight:800;letter-spacing:.02em;line-height:1.35;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-pallets{margin-top:4px;border-top:1px dashed var(--border);padding-top:4px}
   .pe-pallets .pp-lin{font-size:11px;line-height:1.45;color:#3c4c63}
   .pe-pallets .pp-cod{font-weight:800;color:var(--text)}
@@ -17838,8 +17839,30 @@ function buildFilterTable(cfg){
      para el planificador de viajes y para el remito; acá solo se hace visible.
      Distingue el armado GUARDADO en el pedido del reparto automático por udPorPallet, porque no son
      lo mismo: uno es una decisión y el otro una estimación. */
+  // 🎨 PINTADO (06/10, pedido de Marcelo): un tope sale pintado de amarillo si el pedido trae el servicio
+  // de pintado (PINTVA, por tope). Como es un Servicio, cargaRows lo descarta (no es carga) y Gustavo no
+  // se enteraba: acá se ve en NEGRO con letra AMARILLA. Va en cargaDetalle, o sea en la tabla de
+  // Entregas a coordinar Y en las tarjetas de Viajes armados con una sola función.
+  function pintadoHtml(pe){
+    let pint=0;
+    (pe.items||[]).filter(Boolean).forEach(it=>{
+      if(!it.producto && !it.codigo) return;
+      const pr=resolverProd(it.producto,it.codigo);
+      const cod=String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase();
+      const esPint = cod==='PINTVA' || (pr ? ((pr.tipo||'')==='Servicio' && /pintad/i.test(pr.nombre||'')) : /pintad/i.test(String(it.producto||'')));
+      const cant=Math.round(num(it.cantidad));
+      if(esPint && cant>0) pint+=cant;
+    });
+    if(!pint) return '';
+    // Qué topes lleva el pedido, para que se vea CUÁLES hay que pintar y cuántos del total.
+    const topes=cargaRows(pe).filter(r=>/tope/i.test(r.nombre||'') || /^TE[CT]\d/i.test(r.codigo||''));
+    const totTopes=topes.reduce((a,r)=>a+r.cant,0);
+    const detTopes = topes.length ? ' · de '+nf(totTopes)+' tope'+(totTopes!==1?'s':'')+' del pedido ('+topes.map(r=>esc(r.codigo||r.nombre)+' '+nf(r.cant)).join(', ')+')' : '';
+    return '<div class="pe-pintar">🎨 PINTAR '+nf(pint)+' tope'+(pint!==1?'s':'')+' amarillo'+detTopes+'</div>';
+  }
   function cargaDetalle(pe){
-    const rows=cargaRows(pe); if(!rows.length) return '';
+    const pint=pintadoHtml(pe);
+    const rows=cargaRows(pe); if(!rows.length) return pint;
     // Las tandas que van en un pallet mixto se marcan con 🧩 en la línea del producto, y cada grupo
     // tiene su propia línea con la composición — es lo que Gustavo necesita para armarlo.
     const mix=mixtosDe(pe, rows);
@@ -17863,7 +17886,7 @@ function buildFilterTable(cfg){
         return '<div class="pp-lin">🧩 <b>Pallet mixto'+(mix.length>1?' '+String.fromCharCode(65+gi):'')+'</b>: '+
           g.map(y=>nf(y.u)+' '+esc(y.row.codigo||y.row.nombre)).join(' + ')+(kg>0?' · '+nf(kg)+' kg':'')+'</div>';
       }).join('')
-    +'</div>';
+    +'</div>'+pint;
   }
   // ---------- Planificador de viajes: agrupa por transportista + día y compara con la capacidad ----------
   // Sofía junta clientes para que salgan en el mismo camión el mismo día, aprovechando al máximo la carga
