@@ -17838,6 +17838,11 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-partir-idx]').forEach(btn=> btn.onclick=()=>{
       const p=solosPed[+btn.dataset.partirIdx]; if(p) abrirPartirPedido(p);
     });
+    // ✓ Entregar el camión completo (06/10). El índice apunta a `viajes`, el mismo array que usa el
+    // arrastre (data-vgrab): así el botón entrega EXACTAMENTE los pedidos de la tarjeta que se tocó.
+    cont.querySelectorAll('button[data-ventregar]').forEach(btn=> btn.onclick=()=>{
+      const v=viajes[+btn.dataset.ventregar]; if(v) marcarViajeEntregado(v);
+    });
     bindAccionesPedido(cont);   // los 🖨️ Remito de cada cliente del viaje
     // ---------- Arrastrar una entrega para reprogramarla (pedido de Marcelo, 09/09) ----------
     // Soltarla sobre OTRO viaje la mueve ahí (día + transportista + camión); soltarla en la zona
@@ -17916,9 +17921,15 @@ function buildFilterTable(cfg){
           '<div style="margin-left:auto;font-weight:800;font-size:14px;color:'+col+'">'+v.pallets+(cap>0?(' / '+cap):'')+' pallet'+(v.pallets!==1?'s':'')+'</div>'+
         '</div>'+
         (cap>0?'<div class="progress" style="height:10px;margin:6px 0"><i style="width:'+pct+'%;background:'+col+'"></i></div>':'<div style="height:6px"></div>')+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)">'+estado+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted)">'+estado+
           (v.peso>0?'<span>· '+(Math.round(v.peso/100)/10)+' t</span>':'')+
-          '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span></div>'+
+          '<span>· '+v.peds.length+' cliente'+(v.peds.length!==1?'s':'')+'</span>'+
+          /* ✓ Entregar el CAMIÓN COMPLETO (pedido de Marcelo, 06/10): Gustavo descarga el camión
+             entero, no de a un cliente. Una sola confirmación con todo lo que se descuenta y después
+             el mismo `entregarPedido` de siempre para cada uno. El botón por cliente sigue estando
+             para cuando se entrega solo a uno. */
+          '<button class="cmp-rowbtn" data-ventregar="'+vi+'" title="Marcar entregados los '+v.peds.length+' pedidos de este camión — descuenta stock" style="margin-left:auto">✓ Entregar camión completo</button>'+
+        '</div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
           // La fila entera se puede ARRASTRAR a otro viaje (el ⠿ es la señal visual; el botón sigue siendo botón).
           return '<div draggable="true" data-arr="'+esc(p._uid)+'" title="Arrastrá para moverlo a otro viaje" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border);cursor:grab"><span style="color:var(--muted)">⠿</span><span style="flex:1;min-width:130px">'+(p.urgente?'<b style="color:var(--red)">🔥 URGENTE</b> ':'')+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
@@ -18045,10 +18056,17 @@ function buildFilterTable(cfg){
        no tienen día asignado.
        Lo de arriba no se toca: 🔥 urgente primero, 🕐 "puede esperar" al final, y la fecha REQUERIDA
        por el cliente manda sobre el día del viaje. */
-    const diaNum = pe => { const f=fechaDeDia(pe.diaEntrega); return f ? f.getFullYear()*10000+(f.getMonth()+1)*100+f.getDate() : 99999999; };
+    const dNum  = f => f ? f.getFullYear()*10000+(f.getMonth()+1)*100+f.getDate() : 0;
+    const isoNum= s => { const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s||'')); return m ? +(m[1]+m[2]+m[3]) : 0; };
+    /* UNA sola fecha por pedido: la MÁS PRÓXIMA entre el día del viaje y la fecha que pidió el
+       cliente. Antes la requerida se comparaba ANTES que el día del viaje, así que un pedido con
+       fecha requerida lejana quedaba arriba de otro que salía mañana — y lo que se busca mirando
+       esta lista es qué entrega viene primero. Sin ninguna de las dos (ni día ni requerida, o un
+       texto libre que no se entiende) va al final: no hay nada que coordinar todavía. */
+    const cronPed = pe => { const v=[dNum(fechaDeDia(pe.diaEntrega)), isoNum(pe.fechaRequerida)].filter(x=>x>0);
+      return v.length ? Math.min.apply(null, v) : 99999999; };
     rows.sort((a,b)=> (b.urgente?1:0)-(a.urgente?1:0) || (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0)
-      || String(a.fechaRequerida||'9999').localeCompare(String(b.fechaRequerida||'9999'))
-      || diaNum(a)-diaNum(b)
+      || cronPed(a)-cronPed(b)
       || String(a.fecha||'9999').localeCompare(String(b.fecha||'9999')));
     const badge={ pendiente:'<span class="cmp-estado apagar">Pendiente</span>', programado:'<span class="cmp-estado parcial">Programado</span>', entregado:'<span class="cmp-estado pagado">Entregado</span>' };
     let html='<tr><th>Cliente</th><th>Entrega</th><th>Transporte</th><th>Pedido</th><th>Entregar en</th><th>Estado</th><th></th></tr>';
@@ -18471,15 +18489,48 @@ function buildFilterTable(cfg){
     if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), {...pe}).catch(e=>alert('Error al guardar el pedido: '+e.message));
     else alert('Iniciá sesión.');
   }
-  function marcarEntregado(pe){
-    const c=fb(); if(!c||!c.db) return;
-    // Los pallets NO se recalculan acá: se usan los del plan REAL del pedido (cargaRows), que es el mismo
-    // que usó el comprometido. Recalcular con ceil(cant/ud) desincronizaría el stock del refuerzo.
-    const rows=cargaRows(pe);
-    const det=rows.filter(r=>r.cant>0).map(r=> r.ref
+  /* Qué se le descuenta al stock por este pedido, en texto. Es lo que se muestra ANTES de confirmar,
+     y lo usan tanto el pedido suelto como el camión completo: un solo texto, una sola cuenta.
+     Los pallets NO se recalculan: se usan los del plan REAL del pedido (cargaRows), el mismo que usó
+     el comprometido. Recalcular con ceil(cant/ud) desincronizaría el stock del refuerzo. */
+  function detalleEntrega(pe){
+    return cargaRows(pe).filter(r=>r.cant>0).map(r=> r.ref
       ? ('• '+r.nombre+': '+nf(r.ref.neto)+'  +  '+nf(r.ref.cant)+' '+r.ref.nombre+' (base del pallet)')
       : ('• '+r.nombre+': '+nf(r.cant))).join('\n');
+  }
+  function marcarEntregado(pe){
+    const c=fb(); if(!c||!c.db) return;
+    const det=detalleEntrega(pe);
     if(!confirm('¿Marcar como ENTREGADO el pedido de '+(pe.cliente||'—')+'?\n\nSe descuenta del stock:\n'+(det||'(sin ítems)'))) return;
+    const ids=entregarPedido(pe, c);
+    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO));
+  }
+  /* ---------- ✓ ENTREGAR EL CAMIÓN COMPLETO (06/10, pedido de Marcelo) --------------------------
+     Gustavo descarga el camión entero, no de a un cliente. Es UNA sola confirmación con TODO lo que
+     se va a descontar —cliente por cliente— y después el MISMO `entregarPedido` de siempre para cada
+     uno: no hay un segundo camino que mueva stock.
+     ⚠️ Nunca se arma un confirm por pedido en un for: cuatro carteles seguidos se contestan que sí
+     sin leer, y acá cada "sí" descuenta stock de verdad. */
+  function marcarViajeEntregado(v){
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    const peds=((v&&v.peds)||[]).filter(p=>p && p.estado!=='entregado');
+    if(!peds.length){ alert('No queda nada pendiente en este viaje.'); return; }
+    const cabecera='¿Marcar como ENTREGADO el CAMIÓN COMPLETO?\n\n'
+      + peds.length+' cliente'+(peds.length!==1?'s':'')+' · '+(v.tr||'sin transportista')
+      + (v.dia && v.dia!=='Sin fecha' ? ' · '+v.dia : '')+'\n\nSe descuenta del stock:\n\n';
+    const cuerpo=peds.map(p=> '— '+(p.cliente||'—')+'\n'+(detalleEntrega(p)||'  (sin ítems)')).join('\n\n');
+    if(!confirm(cabecera+cuerpo)) return;
+    const ids=[]; let n=0;
+    peds.forEach(p=>{ const r=entregarPedido(p, c); if(p.estado==='entregado') n++; ids.push.apply(ids, r); });
+    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del camión de '+(v.tr||'—')+' · '+n+' cliente'+(n!==1?'s':'')+' · '+fmtFecha(hoyISO));
+    alert('Listo: '+n+' entrega'+(n!==1?'s':'')+' registrada'+(n!==1?'s':'')+'.');
+  }
+  /* Lo que de verdad ENTREGA un pedido: registra los movimientos de stock, congela con qué viaje
+     salió y guarda. SIN confirm adentro — lo pide quien llama — y devuelve los ids de `vph_entregas`
+     que generó, para poder deshacerlos. */
+  function entregarPedido(pe, c){
+    if(!pe || pe.estado==='entregado') return [];
+    const rows=cargaRows(pe);
     // 📋 REGISTRO DE LA ENTREGA (pedido de Marcelo, 20/08): con qué transportista salió y en qué viaje.
     // ⚠️ Se CONGELA acá, no se lee después de `pe.transporte`: ese campo se sigue pudiendo editar, así
     // que no sirve como registro de lo que REALMENTE pasó. La clave del viaje es
@@ -18497,10 +18548,10 @@ function buildFilterTable(cfg){
       const k=keyDe(it.codigo,it.producto); const j=occ[k]||0; occ[k]=j+1;
       const r=rows.find(x=>x.key===k && x.j===j);
       ids.push.apply(ids, registrarEntrega(c, hoyISO, pe.cliente||'', {producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, pe._uid, r?r.pallets:null, transpEnt, viajeEnt)); } });
-    if(ids.length) registrarUltimaCarga('vph_entregas', ids, 'Entrega del pedido de '+(pe.cliente||'—')+' · '+fmtFecha(hoyISO));
     pe.estado='entregado'; pe.fechaEntregado=hoyISO;
     pe.transporteEntrega=transpEnt; pe.viajeEntrega=viajeEnt;
     persistPed(pe);
+    return ids;
   }
 
   // Form de pedido
