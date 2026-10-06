@@ -18028,7 +18028,9 @@ function buildFilterTable(cfg){
   }
   function renderViajes(){
     const cont=$('pe-viajes'); if(!cont) return;
-    const pend=pedidos.filter(p=>p.estado!=='entregado');
+    // Solo camiones CON fecha de entrega (06/10, pedido de Marcelo): lo que todavía no tiene día se
+    // coordina abajo, en "Entregas a coordinar", y recién al ponerle fecha pasa a armarse como viaje.
+    const pend=pedidos.filter(p=>p.estado!=='entregado' && fechaDeDia(p.diaEntrega));
     const g={};
     pend.forEach(p=>{ const dia=String(p.diaEntrega||'').trim()||'Sin fecha'; const tr=String(p.transporte||'').trim()||'Sin asignar';
       const nv=p.numeroViaje||1;  // número de viaje: 1, 2, 3... dentro de cada día+transportista
@@ -18070,8 +18072,8 @@ function buildFilterTable(cfg){
     if(asof) asof.textContent = viajes.length
       ? (viajes.length+' viaje'+(viajes.length!==1?'s':'')+' · '+pend.length+' pedido'+(pend.length!==1?'s':'')+' pendiente'+(pend.length!==1?'s':'')
          +' · '+(enSemana?enSemana+' en la semana en curso':'ninguno esta semana'))
-      : 'Sin pedidos pendientes';
-    if(!viajes.length){ cont.innerHTML='<div style="text-align:center;color:var(--green);padding:20px;border:1px dashed var(--border);border-radius:12px">✅ No hay entregas pendientes de coordinar.</div>'; return; }
+      : 'Sin camiones con fecha de entrega';
+    if(!viajes.length){ cont.innerHTML='<div style="text-align:center;color:var(--muted);padding:20px;border:1px dashed var(--border);border-radius:12px">No hay camiones con fecha de entrega.</div>'; return; }
     // Chip con el NOMBRE DEL DÍA: "MARTES 11/08 · HOY". Es lo primero que mira Gustavo en el celular.
     const CHIP=[ {k:'atrasado', t:'ATRASADO'}, {k:'hoy', t:'HOY'}, {k:'manana', t:'MAÑANA'},
                  {k:'semana', t:''},           {k:'despues', t:''}, {k:'sinfecha', t:''} ];
@@ -18302,13 +18304,10 @@ function buildFilterTable(cfg){
   }
   function renderCoord(){
     renderViajes();
-    const defs=[['activos','A entregar'],['todos','Todos'],['entregado','Entregados']];
-    const cnt={ activos:pedidos.filter(p=>p.estado!=='entregado').length, todos:pedidos.length, entregado:pedidos.filter(p=>p.estado==='entregado').length };
-    $('pe-ped-filtros').innerHTML=defs.map(([v,l])=>'<button class="filter-btn'+(filtroPed===v?' active':'')+'" data-pf="'+v+'">'+l+' ('+cnt[v]+')</button>').join('');
-    $('pe-ped-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtroPed=b.dataset.pf; render(); });
-    let rows=pedidos.slice();
-    if(filtroPed==='activos') rows=rows.filter(p=>p.estado!=='entregado');
-    else if(filtroPed==='entregado') rows=rows.filter(p=>p.estado==='entregado');
+    // Solo lo PENDIENTE (06/10, pedido de Marcelo): lo programado ya está coordinado y se ve en Viajes
+    // armados; lo entregado está en 📋 Entregas realizadas. Se sacaron los filtros Todos/Entregados.
+    let rows=pedidos.filter(p=>p.estado==='pendiente');
+    $('pe-ped-filtros').innerHTML='<span class="asof" style="margin:0">Pendientes de coordinar: '+rows.length+'</span>';
     if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+resumenPed(p)).toLowerCase().includes(s)); }
     /* ---------- Orden CRONOLÓGICO de la tabla (06/10, pedido de Marcelo) --------------------------
        🔴 `diaEntrega` se comparaba como TEXTO "dd/mm/aa", así que "03/09/26" quedaba ANTES que
