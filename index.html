@@ -590,6 +590,64 @@
     return 'Sin canal';
   };
 
+  // ---------- Qué factura le corresponde a un cliente (06/10, pedido de Marcelo) ----------
+  // VPH es Responsable Inscripto: a otro RI le hace Factura A (IVA discriminado); a un consumidor
+  // final, monotributista o exento, Factura B; "X" es la venta sin facturar. UNA sola tabla para
+  // Ventas, Presupuestos y CRM (son IIFE distintas: va acá, en el global, igual que __canalVenta).
+  window.__tipoPorCondIva = function(cond){
+    const c=String(cond||'').trim().toUpperCase();
+    if(c==='A') return 'Factura A';
+    if(c==='B'||c==='C'||c==='M') return 'Factura B';
+    if(c==='X') return 'Sin factura';
+    return '';
+  };
+  // Dígito verificador de AFIP (misma cuenta que usa el lector de tickets en Compras).
+  window.__cuitValido = function(d){
+    d=String(d||'').replace(/\D/g,''); if(d.length!==11) return false;
+    const pesos=[5,4,3,2,7,6,5,4,3,2]; let t=0; for(let i=0;i<10;i++) t+=+d[i]*pesos[i];
+    let dv=11-(t%11); if(dv===11) dv=0; if(dv===10) return false;
+    return dv===+d[10];
+  };
+  // Sugerencia fiscal a partir del CUIT/DNI tipeado. `conocidos` = [{nombre,cuit,cond}] de fichas y
+  // ventas anteriores. Devuelve null si no hay nada tipeado, o {condIva, tipo, seguro, motivo}:
+  //   · DNI (7-8 dígitos)            → consumidor final → Factura B (seguro).
+  //   · CUIT 30/33/34 (sociedad)     → Responsable Inscripto → Factura A (seguro). Una sociedad no es
+  //     consumidor final; manda sobre el historial, así un error ya cargado (una B a una S.A., pasó
+  //     con JCP el 05/10) no se repite — pero se avisa que antes figuraba distinto.
+  //   · CUIT 20/23/24/27 (persona)   → puede ser RI (A) o monotributista (B): se usa lo que ya se le
+  //     facturó antes; si no hay historial NO se adivina (seguro:false) y se pide la constancia.
+  //   · CUIT que no verifica          → aviso, sin tocar nada.
+  window.__fiscalPorCuit = function(cuit, conocidos){
+    const d=String(cuit||'').replace(/\D/g,'');
+    if(!d) return null;
+    const prev=(conocidos||[]).find(c=> c && String(c.cuit||'').replace(/\D/g,'')===d && c.cond && String(c.cond).toUpperCase()!=='X');
+    const prevCond=prev ? String(prev.cond).toUpperCase() : '';
+    const quien=prev && prev.nombre ? ' ('+prev.nombre+')' : '';
+    if(d.length===7||d.length===8) return {condIva:'B', tipo:'Factura B', seguro:true, motivo:'DNI → consumidor final'};
+    if(d.length===11){
+      if(!window.__cuitValido(d)) return {condIva:'', tipo:'', seguro:false, motivo:'el CUIT no verifica: revisá los dígitos'};
+      const pre=d.slice(0,2);
+      if(pre==='30'||pre==='33'||pre==='34'){
+        let m='CUIT de empresa → Responsable Inscripto';
+        if(prevCond && prevCond!=='A') m+=' · ojo: antes se le cargó "'+prevCond+'"'+quien;
+        return {condIva:'A', tipo:'Factura A', seguro:true, motivo:m};
+      }
+      if(pre==='20'||pre==='23'||pre==='24'||pre==='27'){
+        if(prevCond) return {condIva:prevCond, tipo:window.__tipoPorCondIva(prevCond), seguro:true, motivo:'ya se le facturó así'+quien};
+        return {condIva:'', tipo:'', seguro:false, motivo:'CUIT de persona: si es Responsable Inscripto va Factura A, si es monotributista Factura B — pedile la constancia de ARCA'};
+      }
+      return {condIva:'', tipo:'', seguro:false, motivo:'prefijo de CUIT desconocido'};
+    }
+    return {condIva:'', tipo:'', seguro:false, motivo:'faltan dígitos: un DNI tiene 7 u 8 y un CUIT 11'};
+  };
+  // Texto corto para mostrar debajo del campo CUIT en los tres formularios.
+  window.__fiscalSugHtml = function(sug){
+    if(!sug) return '';
+    const e=t=>String(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    if(sug.seguro) return '<span style="color:var(--green);font-weight:700">→ '+e(sug.tipo)+'</span> <span style="color:var(--muted)">· '+e(sug.motivo)+'</span>';
+    return '<span style="color:var(--amber);font-weight:700">⚠ '+e(sug.motivo)+'</span>';
+  };
+
   /* ---------- Tarjetas cliqueables en vez de listas desplegables ----------
      Convierte un <select> YA EXISTENTE en tarjetas, sin tocar nada de la lógica que lo usa:
      el <select> NO se saca del DOM (queda oculto) y se mantiene sincronizado — al tocar una tarjeta se
@@ -7016,12 +7074,21 @@ function buildFilterTable(cfg){
     // Si se contara, el saldo daría 0 y esos pesos desaparecían de "A cobrar" y de la proyección de caja
     // (el cheque rechazado tampoco cuenta como pendiente, así que no quedaba en ningún lado).
     const cobrado=(v.cobros||[]).reduce((a,c)=>a+(c.chequeRechazado?0:num(c.monto)),0);
-    const saldo=round2(total-cobrado);
+    // Una NOTA DE CRÉDITO que corrige esta venta (compAsoc) le DESCUENTA su importe: si la cubre
+    // entera, la venta queda ANULADA y deja de figurar como deuda a cobrar en Ventas, Finanzas y Caja.
+    // Hasta el 06/10 la factura seguía pendiente aunque su NC ya estuviera emitida (pasó con la
+    // Factura B a JCP del 05/10, que se anuló para rehacerla como A). La NC es signo<0 y no mira a
+    // otras, así que no hay recursión. `DB` puede no existir cuando calc() corre extraída en un test.
+    const ncAplicado = (signo>0 && v._uid && typeof DB!=='undefined' && DB && Array.isArray(DB.ventas))
+      ? DB.ventas.reduce((a,n)=> a + ((n && n!==v && n.tipoComprobante==='Nota de Crédito' && n.compAsoc===v._uid) ? Math.abs(calc(n).total) : 0), 0)
+      : 0;
+    const saldo=round2(total-cobrado-ncAplicado);
+    const anulada = signo>0 && ncAplicado>0.5 && ncAplicado>=total-1 && cobrado<0.5;
     let estado;
     if(signo<0) estado='cobrado';   // Nota de Crédito: se considera aplicada, no queda pendiente/vencida
-    else if(Math.abs(saldo)<1) estado='cobrado';   // tolerancia de redondeo (centavos)
+    else if(Math.abs(saldo)<1) estado='cobrado';   // tolerancia de redondeo (centavos); una venta anulada por NC cae acá
     else { const venc=parseF(v.vencimiento); estado=(venc&&venc<HOY)?'vencido':(cobrado>0?'parcial':'acobrar'); }
-    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaDebito:round2(iva*signo), total:round2(total), cobrado:round2(cobrado), saldo, estado, signo };
+    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaDebito:round2(iva*signo), total:round2(total), cobrado:round2(cobrado), saldo, estado, signo, ncAplicado:round2(ncAplicado), anulada };
   }
 
   // periodo:'' = "Todos los períodos" (pedido de Marcelo, 10/08 — mismo criterio que Compras). Antes
@@ -7212,7 +7279,7 @@ function buildFilterTable(cfg){
     // El estado de cobro va arriba (es el que más se mira) y debajo los 3 pasos del circuito.
     // Van en esta misma columna y no en una nueva: la tabla recién entra en pantalla sin scroll
     // horizontal y una columna más la volvía a desbordar.
-    {k:'estado', h:'Estado', opt:true, cell:r=>(badgeEstado[r.k.estado]||'')+chipsCircuito(r)},
+    {k:'estado', h:'Estado', opt:true, cell:r=>(r.k.anulada ? '<span class="cmp-estado pagado" title="Anulada por Nota de Crédito: no es deuda a cobrar">Anulada (NC)</span>' : (badgeEstado[r.k.estado]||''))+chipsCircuito(r)},
     {k:'arca', h:'ARCA', opt:true, off:true, cell:r=>arcaBadge(r.v.arca)},
     {k:'fecha', h:'Emisión', sort:'fecha', opt:true, cell:r=>fmtFecha(r.v.fecha)},
     {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<div class="cel-nombre" title="'+esc(r.v.cliente||'')+'"><b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')+'</div>'},
@@ -7669,7 +7736,7 @@ function buildFilterTable(cfg){
     $('vnt-form').innerHTML =
       '<div class="cmp-form-grid">'+
         field('Cliente','col2','<input id="vf-cli" list="vf-cli-list" value="'+esc(v.cliente)+'" placeholder="Nombre del cliente">'+datalistCli()) +
-        field('CUIT / DNI','','<input id="vf-cuit" value="'+esc(v.cuit)+'" placeholder="00-00000000-0">') +
+        field('CUIT / DNI','','<input id="vf-cuit" value="'+esc(v.cuit)+'" placeholder="00-00000000-0"><div id="vf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div>') +
         field('Cond. IVA','','<select id="vf-cond">'+opt(COND_IVA,v.condIva)+'</select>') +
         field('Categoría','col2','<select id="vf-cat">'+opt(CATEGORIAS,v.categoria)+'</select>') +
         field('Vendedor','','<input id="vf-vend" list="vf-vend-list" value="'+esc(v.vendedor)+'" placeholder="Vendedor">'+datalistVend()) +
@@ -7729,7 +7796,33 @@ function buildFilterTable(cfg){
       w.style.display = esNota?'':'none';
       if(!esNota && editing){ editing.compAsoc=''; const s=$('vf-asoc'); if(s) s.value=''; }
     });
-    $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond;} }
+    // ---- Qué factura corresponde (06/10): el tipo de comprobante SIGUE a la condición de IVA ----
+    // Si el comprobante es una factura (A/B/C) o no está definido, se alinea con la condición: RI → A,
+    // consumidor final/monotributo → B, X → Sin factura. Una Nota de Crédito/Débito, un Presupuesto o
+    // un Remito NO se tocan: ahí el tipo lo eligió la persona a propósito.
+    function aplicarTipoPorCond(cond){
+      const t=window.__tipoPorCondIva(cond); if(!t) return;
+      const actual=String(editing.tipoComprobante||'');
+      if(actual && !/^Factura [ABC]$/.test(actual) && actual!=='Sin factura') return;
+      if(actual===t) return;
+      editing.tipoComprobante=t; const s=$('vf-tipo'); if(s){ s.value=t; s.dispatchEvent(new Event('change')); }
+    }
+    // Al tipear el CUIT/DNI se deduce la condición (empresa → RI → A · DNI → consumidor final → B);
+    // si no se puede saber con certeza (CUIT de persona sin historial) solo se avisa, no se adivina.
+    function sugerirFiscalVta(aplicar){
+      const box=$('vf-fiscal-sug'); if(!box) return;
+      const conocidos=clientesConocidos().concat((window.__catalogoClientes?window.__catalogoClientes():[]).map(c=>({nombre:c.nombre,cuit:c.cuit,cond:c.condIva})));
+      const sug=window.__fiscalPorCuit($('vf-cuit').value, conocidos);
+      box.innerHTML=window.__fiscalSugHtml(sug);
+      if(!aplicar || !sug || !sug.seguro) return;
+      if(editing.condIva==='X' && esSinFacturar(editing.listaPrecios, editing.categoria)) return;   // venta sin facturar: manda la lista
+      if(editing.condIva!==sug.condIva){ editing.condIva=sug.condIva; const c=$('vf-cond'); if(c) c.value=sug.condIva; }
+      aplicarTipoPorCond(sug.condIva);
+    }
+    $('vf-cuit').addEventListener('input',()=>sugerirFiscalVta(true));
+    $('vf-cond').addEventListener('change',()=>{ aplicarTipoPorCond($('vf-cond').value); sugerirFiscalVta(false); });
+    sugerirFiscalVta(false);   // al abrir, solo mostrar (no pisar una venta ya cargada)
+    $('vf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('vf-cli').value); if(f && !$('vf-cuit').value){ $('vf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){$('vf-cond').value=f.cond; editing.condIva=f.cond; aplicarTipoPorCond(f.cond);} sugerirFiscalVta(false); }
       // La CATEGORÍA sale de la ficha de Base de Datos: es donde se marca a un cliente como "sin
       // facturar" (las categorías con el 10,5%). Solo se copia si la ficha la tiene cargada.
       const fx=fichaCliente($('vf-cli').value);
@@ -8714,6 +8807,9 @@ function buildFilterTable(cfg){
   window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
+    // El tipo de factura sigue a la condición del lead (consumidor final → B, RI → A). Antes la venta
+    // nacía SIEMPRE "Factura A" y había que acordarse de cambiarla (06/10).
+    { const t=window.__tipoPorCondIva(v.condIva); if(t && t!=='Sin factura') v.tipoComprobante=t; }
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=normLista(lead.listaPrecios);
     v.domicilioFacturacion = lead.domicilioFacturacion||'';
     v.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
@@ -8735,6 +8831,7 @@ function buildFilterTable(cfg){
   window.__ventaDesdePresupuesto = function(p, onSaved){
     const v=blankVenta();
     v.cliente=p.cliente||''; v.cuit=p.cuit||''; if(p.condIva)v.condIva=p.condIva;
+    { const t=window.__tipoPorCondIva(v.condIva); if(t && t!=='Sin factura') v.tipoComprobante=t; }   // ídem lead (06/10)
     if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
     v.domicilioFacturacion = p.domicilioFacturacion||'';
     v.domicilioEntrega = p.domicilioEntrega||'';   // la dirección de entrega viaja del presupuesto a la venta
@@ -11242,8 +11339,8 @@ function buildFilterTable(cfg){
         field('Validez (días)','','<input id="pf-val" value="'+esc(p.validezDias)+'">') +
         field('Estado','','<select id="pf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(p.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
         field('Cliente','col2','<input id="pf-cli" list="pf-cli-list" value="'+esc(p.cliente)+'" placeholder="Nombre del cliente">'+datalistCli()) +
-        field('CUIT / DNI','','<input id="pf-cuit" value="'+esc(p.cuit)+'" placeholder="00-00000000-0">') +
-        field('Cond. IVA','','<select id="pf-cond">'+opt(COND_IVA,p.condIva)+'</select>') +
+        field('CUIT / DNI','','<input id="pf-cuit" value="'+esc(p.cuit)+'" placeholder="00-00000000-0"><div id="pf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div>') +
+        field('Cond. IVA','','<select id="pf-cond">'+opt(COND_IVA,p.condIva)+'</select><div id="pf-fiscal-tipo" style="font-size:10.5px;margin-top:3px;color:var(--muted)"></div>') +
         field('Categoría','','<select id="pf-cat">'+opt(CATEGORIAS,p.categoria)+'</select>') +
         field('Lista de precios','','<select id="pf-lista">'+opt(window.__listaOpts(p.listaPrecios),p.listaPrecios)+'</select>') +
         field('Vendedor','','<input id="pf-vend" value="'+esc(p.vendedor)+'" placeholder="Vendedor">') +
@@ -11274,7 +11371,24 @@ function buildFilterTable(cfg){
     drawItems();
     ['pf-num:numero','pf-fecha:fecha','pf-val:validezDias','pf-estado:estado','pf-cli:cliente','pf-cuit:cuit','pf-cond:condIva','pf-cat:categoria','pf-lista:listaPrecios','pf-vend:vendedor','pf-doment:domicilioEntrega','pf-domfact:domicilioFacturacion','pf-notacli:notaCliente','pf-nota:nota','pf-descg:descGeneral'].forEach(pair=>{
       const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); }); });
-    $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } });
+    // ---- Qué factura va a salir (06/10): el presupuesto no tiene tipo de comprobante, pero su
+    // condición de IVA es la que después decide la letra de la venta. Se muestra debajo de Cond. IVA,
+    // y al tipear el CUIT/DNI se deduce la condición (empresa → RI → A · DNI → consumidor final → B).
+    function pintarTipoPre(){ const b=$('pf-fiscal-tipo'); if(!b) return; const t=window.__tipoPorCondIva(editing.condIva);
+      b.textContent = t ? ('Al pasar a venta: '+t) : ''; }
+    function sugerirFiscalPre(aplicar){
+      const box=$('pf-fiscal-sug'); if(!box) return;
+      const sug=window.__fiscalPorCuit($('pf-cuit').value, clientesConocidos());
+      box.innerHTML=window.__fiscalSugHtml(sug);
+      if(aplicar && sug && sug.seguro && editing.condIva!==sug.condIva && !(editing.condIva==='X' && esSinFacturarPre(editing.listaPrecios, editing.categoria))){
+        editing.condIva=sug.condIva; const c=$('pf-cond'); if(c) c.value=sug.condIva; }
+      pintarTipoPre();
+    }
+    $('pf-cuit').addEventListener('input',()=>sugerirFiscalPre(true));
+    $('pf-cond').addEventListener('change',pintarTipoPre);
+    $('pf-lista').addEventListener('change',()=>setTimeout(pintarTipoPre,0));   // la lista "sin facturar" fuerza X DESPUÉS de este handler: repintar al terminar
+    sugerirFiscalPre(false);
+    $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } sugerirFiscalPre(false); });
     $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); }
       // Una cotización SIN FACTURAR va con condición de IVA X: no se identifica al comprador. El
       // presupuesto no tiene "tipo de comprobante" (siempre es un presupuesto), pero esta condición
@@ -13459,8 +13573,8 @@ function buildFilterTable(cfg){
         fld('Monto estimado $','','<input id="cf-monto" value="'+l.monto+'">') +
         fld('Categoría','','<select id="cf-cat">'+opt(CATS,l.categoria)+'</select>') +
         fld('Lista de precios','','<select id="cf-lista">'+opt(window.__listaOpts(l.listaPrecios),l.listaPrecios)+'</select>') +
-        fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'">') +
-        fld('Cond. IVA','','<select id="cf-cond">'+opt(['A','B','C','M','X'],l.condIva)+'</select>') +
+        fld('CUIT / DNI','','<input id="cf-cuit" value="'+esc(l.cuit)+'"><div id="cf-fiscal-sug" style="font-size:10.5px;margin-top:3px;min-height:13px"></div>') +
+        fld('Cond. IVA','','<select id="cf-cond">'+opt(['A','B','C','M','X'],l.condIva)+'</select><div id="cf-fiscal-tipo" style="font-size:10.5px;margin-top:3px;color:var(--muted)"></div>') +
       '</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">Pedido</h4>'+
       '<p class="note" style="margin:0 0 6px">Tocá el producto para agregarlo (un clic) y después cargale los <b>m²</b>: si tiene definidas las <b>unidades por m²</b> (Base de Datos → Productos), la <b>cantidad</b> se calcula sola con el 5% de recorte incluido.</p>'+
@@ -13484,6 +13598,24 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn" id="cf-comparativo" title="Generar PDF comparativo de 4 modelos para este cliente">📋 Comparativo</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
     [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona') drawFleteBox(); }); });
+    // ---- Qué factura le va a corresponder (06/10, pedido de Marcelo): consumidor final → B, RI → A.
+    // Se muestra debajo de Cond. IVA y al tipear el CUIT/DNI se deduce la condición (empresa → A,
+    // DNI → B); con un CUIT de persona sin historial solo se avisa. Es la condición que después
+    // viaja al presupuesto y a la venta, donde ya decide la letra de la factura.
+    (function(){
+      const conocidos=()=> (window.__catalogoClientes?window.__catalogoClientes():[]).map(c=>({nombre:c.nombre,cuit:c.cuit,cond:c.condIva}))
+        .concat((window.__ventasTodas?window.__ventasTodas():[]).map(v=>({nombre:v.cliente,cuit:v.cuit,cond:v.condIva})));
+      const pintarTipo=()=>{ const b=$('cf-fiscal-tipo'); if(!b) return; const t=window.__tipoPorCondIva(editing.condIva); b.textContent = t ? ('Le corresponde: '+t) : ''; };
+      const sugerir=(aplicar)=>{ const box=$('cf-fiscal-sug'); if(!box) return;
+        const sug=window.__fiscalPorCuit($('cf-cuit').value, conocidos());
+        box.innerHTML=window.__fiscalSugHtml(sug);
+        if(aplicar && sug && sug.seguro && editing.condIva!==sug.condIva){ editing.condIva=sug.condIva; const c=$('cf-cond'); if(c) c.value=sug.condIva; }
+        pintarTipo(); };
+      const cu=$('cf-cuit'), co=$('cf-cond');
+      if(cu) cu.addEventListener('input',()=>sugerir(true));
+      if(co) co.addEventListener('input',pintarTipo);
+      sugerir(false);
+    })();
     // ⚠️ Cambiar la lista de precios TIENE que re-preciar lo que ya está cargado, igual que en Ventas
     // y en Presupuestos. Este módulo era el único que no lo hacía: el lead quedaba con la lista NUEVA
     // y el precio de la VIEJA, y como el presupuesto respeta el precio del lead tal cual, el número
