@@ -18033,7 +18033,23 @@ function buildFilterTable(cfg){
     if(filtroPed==='activos') rows=rows.filter(p=>p.estado!=='entregado');
     else if(filtroPed==='entregado') rows=rows.filter(p=>p.estado==='entregado');
     if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+resumenPed(p)).toLowerCase().includes(s)); }
-    rows.sort((a,b)=> (b.urgente?1:0)-(a.urgente?1:0) || (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0) || String(a.fechaRequerida||'9999').localeCompare(String(b.fechaRequerida||'9999')) || String(a.diaEntrega||'zzz').localeCompare(String(b.diaEntrega||'zzz')) || String(b.fecha||'').localeCompare(String(a.fecha||'')));
+    /* ---------- Orden CRONOLÓGICO de la tabla (06/10, pedido de Marcelo) --------------------------
+       🔴 `diaEntrega` se comparaba como TEXTO "dd/mm/aa", así que "03/09/26" quedaba ANTES que
+       "12/08/26": septiembre arriba de agosto. Es el MISMO bug que se arregló en 🚚 Viajes armados el
+       11/08 y que en esta tabla había quedado sin tocar. Ahora se convierte a fecha de verdad con
+       `fechaDeDia()` — el mismo parser que usan los viajes y el remito, un solo criterio.
+       Y los pedidos SIN día de entrega (o con un texto libre que no se entiende, tipo "la semana que
+       viene") iban del más NUEVO al más viejo, que es justo al revés de cronológico. Van por la fecha
+       en que se cargó el pedido, **el más viejo arriba**: el que hace más tiempo que espera es el que
+       hay que coordinar primero. Todos ellos quedan al final de la tabla, que es donde corresponde:
+       no tienen día asignado.
+       Lo de arriba no se toca: 🔥 urgente primero, 🕐 "puede esperar" al final, y la fecha REQUERIDA
+       por el cliente manda sobre el día del viaje. */
+    const diaNum = pe => { const f=fechaDeDia(pe.diaEntrega); return f ? f.getFullYear()*10000+(f.getMonth()+1)*100+f.getDate() : 99999999; };
+    rows.sort((a,b)=> (b.urgente?1:0)-(a.urgente?1:0) || (a.puedeEsperar?1:0)-(b.puedeEsperar?1:0)
+      || String(a.fechaRequerida||'9999').localeCompare(String(b.fechaRequerida||'9999'))
+      || diaNum(a)-diaNum(b)
+      || String(a.fecha||'9999').localeCompare(String(b.fecha||'9999')));
     const badge={ pendiente:'<span class="cmp-estado apagar">Pendiente</span>', programado:'<span class="cmp-estado parcial">Programado</span>', entregado:'<span class="cmp-estado pagado">Entregado</span>' };
     let html='<tr><th>Cliente</th><th>Entrega</th><th>Transporte</th><th>Pedido</th><th>Entregar en</th><th>Estado</th><th></th></tr>';
     if(!rows.length) html+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">Sin pedidos. Creá con "→ Entrega" desde una Venta o "+ Nuevo pedido".</td></tr>';
