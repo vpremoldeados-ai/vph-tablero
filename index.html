@@ -8015,11 +8015,29 @@ function buildFilterTable(cfg){
     }).then(n=>{ v.nroInterno=n; return v; })
       .catch(e=>{ console.warn('nro interno:', e.message); return v; });
   }
+  // ---------- Vínculo lead→venta al cargar una venta NUEVA a mano (07/10, pedido de Marcelo) ----------
+  // Las ventas no guardaban de qué lead venían: para saber cuánto vende Google Ads, o cualquier origen, había que
+  // cruzar por nombre (y se perdían los que estaban escritos distinto). Las que nacen desde un lead o un presupuesto
+  // ya traen el vínculo; las que se cargan a mano lo preguntan SOLO si hay UN lead candidato (mismo cliente, ni
+  // perdido ni posterior a la venta). Con 2 o más no se adivina: se deja sin vincular. Cancelar se recuerda
+  // (leadSinVinculo) para no volver a preguntar al editarla. Solo ventas nuevas: las ya guardadas no se tocan.
+  function vincularLeadAntes(v){
+    if(!v || v.leadUid || v.leadSinVinculo) return;
+    if(DB.ventas.some(x=>x._uid===v._uid)) return;
+    if(typeof window.__leadsCandidatos!=='function') return;
+    let cands=[]; try{ cands=window.__leadsCandidatos(v.cliente, v.fecha)||[]; }catch(e){ return; }
+    if(cands.length!==1) return;
+    const l=cands[0];
+    if(confirm('¿Esta venta viene del lead de "'+(l.cliente||'')+'" (origen: '+(l.origen||'sin origen')+', del '+fmtFecha(l.fecha)+')?\n\nAceptar = queda vinculada y se mide de dónde llegó el cliente.\nCancelar = no se vincula.')){ v.leadUid=l._uid; v.origen=l.origen||''; }
+    else v.leadSinVinculo=true;
+  }
+  // ---------- fin vínculo lead→venta ----------
   function saveForm(){
     if(!editing.cliente.trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
     if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
     if(!editing._uid) editing._uid=newUid();
+    vincularLeadAntes(editing);
     const cb=_onSaved; _onSaved=null;
     const v=editing;
     closeForm();
@@ -8885,6 +8903,7 @@ function buildFilterTable(cfg){
   // Crear una venta pre-cargada desde un lead del CRM
   window.__ventaDesdeLead = function(lead, onSaved){
     const v=blankVenta();
+    v.leadUid = lead._uid||''; v.origen = lead.origen||'';   // vínculo lead→venta (07/10): de acá sale cuánto vendió cada origen
     v.cliente=lead.cliente||''; v.cuit=lead.cuit||''; if(lead.condIva)v.condIva=lead.condIva;
     // El tipo de factura sigue a la condición del lead (consumidor final → B, RI → A). Antes la venta
     // nacía SIEMPRE "Factura A" y había que acordarse de cambiarla (06/10).
@@ -8909,6 +8928,8 @@ function buildFilterTable(cfg){
   // Crear una venta pre-cargada desde un PRESUPUESTO (preserva ítems y precios tal cual)
   window.__ventaDesdePresupuesto = function(p, onSaved){
     const v=blankVenta();
+    v.presupuestoUid = p._uid||''; v.leadUid = p.leadUid||'';   // vínculo presupuesto/lead→venta (07/10)
+    { const ld = (v.leadUid && window.__leadPorUid) ? window.__leadPorUid(v.leadUid) : null; v.origen = ld ? (ld.origen||'') : ''; }
     v.cliente=p.cliente||''; v.cuit=p.cuit||''; if(p.condIva)v.condIva=p.condIva;
     { const t=window.__tipoPorCondIva(v.condIva); if(t && t!=='Sin factura') v.tipoComprobante=t; }   // ídem lead (06/10)
     if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
@@ -13012,17 +13033,38 @@ function buildFilterTable(cfg){
     if(est==='nuevo') return hola+'gracias por tu consulta. ¿Me pasás los m² y el lugar de entrega para armarte el presupuesto?';
     return hola+'¿pudiste ver el presupuesto? Si tenés alguna duda con el precio o el envío, decime y lo vemos.';
   }
+  // ---------- Vínculo lead→venta: candidatos y ventas por origen (07/10) ----------
+  const STOP_CLI=new Set(['SA','SRL','SAS','DE','DEL','LA','EL','Y','ML','SH','SOCIEDAD','ANONIMA','ARGENTINA']);
+  const tokCli=s=>normCli(s).replace(/[^A-Z0-9 ]/g,' ').split(' ').filter(t=>t.length>2 && !STOP_CLI.has(t));
+  // Leads que podrían ser el origen de una venta: no perdidos, anteriores o del mismo día que la venta, y con el
+  // mismo nombre (exacto) o con palabras en común en otro orden ("LOPEZ GRASSO MAYCO" = "Mayco Lopez Grasso").
+  // Un lead de UNA sola palabra solo cuenta si el nombre es exactamente igual: demasiado ambiguo si no.
+  function leadsCandidatos(leads, cliente, fechaISO){
+    const n=normCli(cliente), t=tokCli(cliente); if(!n) return [];
+    const f=String(fechaISO||'').slice(0,10);
+    return (leads||[]).filter(l=>l.estado!=='perdido' && (!f || String(l.fecha||'').slice(0,10)<=f)).filter(l=>{
+      if(normCli(l.cliente)===n) return true;
+      const tl=tokCli(l.cliente); if(tl.length<2 || !t.length) return false;
+      const inter=tl.filter(x=>t.includes(x)).length; return inter>=2 || inter===tl.length; })
+      .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+  }
+  window.__leadPorUid=uid=>(uid && (DB.leads||[]).find(l=>l._uid===uid)) || null;
+  window.__leadsCandidatos=(cliente,fecha)=>leadsCandidatos(DB.leads, cliente, fecha);
+  const totalVenta=v=>{ try{ return num(window.__ventaCalc(v).total); }catch(e){ return num(v&&v.total); } };
+  // ---------- fin vínculo ----------
   // De dónde vienen los leads y cuánto rinde cada origen (sobre los ya DECIDIDOS, igual que la tasa de arriba).
-  function rendimientoPorOrigen(leads){
-    const m={}; (leads||[]).forEach(l=>{ const o=String(l.origen||'').trim()||'Sin origen'; const r=m[o]||(m[o]={origen:o,total:0,conf:0,perd:0,monto:0});
+  function rendimientoPorOrigen(leads, ventas){
+    const vl=new Map(); (ventas||[]).forEach(v=>{ if(v && v.leadUid && v.tipoComprobante!=='Nota de Crédito'){ if(!vl.has(v.leadUid)) vl.set(v.leadUid,[]); vl.get(v.leadUid).push(v); } });
+    const m={}; (leads||[]).forEach(l=>{ const o=String(l.origen||'').trim()||'Sin origen'; const r=m[o]||(m[o]={origen:o,total:0,conf:0,perd:0,monto:0,vent:0,facturado:0});
+      (vl.get(l._uid)||[]).forEach(v=>{ r.vent++; r.facturado+=totalVenta(v); });
       r.total++; if(l.estado==='confirmado'){ r.conf++; r.monto+=montoLead(l); } else if(l.estado==='perdido') r.perd++; });
     return Object.keys(m).map(k=>{ const r=m[k]; r.decididos=r.conf+r.perd; r.tasa=r.decididos>0?Math.round(r.conf/r.decididos*100):null; return r; }).sort((a,b)=>b.total-a.total);
   }
   function origenHtml(){
-    const rows=rendimientoPorOrigen(DB.leads); if(!rows.length) return '';
-    return '<h4 style="margin:14px 0 4px">De dónde vienen y cuánto rinden</h4><div class="tbl-wrap"><table><thead><tr><th>Origen</th><th>Leads</th><th>Confirmados</th><th>Perdidos</th><th>Conversión</th><th>Vendido</th></tr></thead><tbody>'+
-      rows.map(r=>'<tr><td><b>'+esc(r.origen)+'</b></td><td>'+r.total+'</td><td>'+r.conf+'</td><td>'+r.perd+'</td><td>'+(r.tasa==null?'—':r.tasa+'%')+'</td><td>'+(r.monto>0?money(r.monto):'—')+'</td></tr>').join('')+'</tbody></table></div>'+
-      '<p class="note" style="margin:4px 0 0">Conversión = confirmados sobre los ya decididos (confirmado o perdido). "Sin origen" son los leads que nadie marcó: cuanto más grande sea esa fila, menos sirve esta tabla.</p>';
+    const rows=rendimientoPorOrigen(DB.leads, window.__ventasTodas?window.__ventasTodas():[]); if(!rows.length) return '';
+    return '<h4 style="margin:14px 0 4px">De dónde vienen y cuánto rinden</h4><div class="tbl-wrap"><table><thead><tr><th>Origen</th><th>Leads</th><th>Confirmados</th><th>Perdidos</th><th>Conversión</th><th>Confirmado (est.)</th><th>Ventas vinculadas</th><th>Facturado</th></tr></thead><tbody>'+
+      rows.map(r=>'<tr><td><b>'+esc(r.origen)+'</b></td><td>'+r.total+'</td><td>'+r.conf+'</td><td>'+r.perd+'</td><td>'+(r.tasa==null?'—':r.tasa+'%')+'</td><td>'+(r.monto>0?money(r.monto):'—')+'</td><td>'+(r.vent||'—')+'</td><td>'+(r.facturado>0?money(r.facturado):'—')+'</td></tr>').join('')+'</tbody></table></div>'+
+      '<p class="note" style="margin:4px 0 0">Conversión = confirmados sobre los ya decididos (confirmado o perdido). "Sin origen" son los leads que nadie marcó. <b>Ventas vinculadas / Facturado</b> cuentan solo las ventas que ya saben de qué lead vienen (las nacidas desde un lead o presupuesto, o aceptadas al cargarlas): las anteriores al 07/10 aparecen recién cuando se vinculen.</p>';
   }
   // Meta semanal de cierre (29/09): lo confirmado de lunes a hoy contra el parámetro crmMetaSemanal.
   // Cuenta los leads que pasaron a Confirmado esta semana (fechaConfirmado) por su monto real
