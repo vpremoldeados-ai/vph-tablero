@@ -410,6 +410,7 @@
     #rmt-tabla td:last-child .cmp-rowbtn{margin:2px 3px 2px 0}
   }
   .pe-pintar{margin-top:5px;background:#000;color:#ffd400;font-size:12px;font-weight:800;letter-spacing:.02em;line-height:1.35;padding:5px 9px;border-radius:6px;white-space:normal}
+  .pe-despacho{margin-top:5px;background:#eef2ff;color:#312e81;border:1px solid #a5b4fc;font-size:12px;font-weight:600;line-height:1.4;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-pallets{margin-top:4px;border-top:1px dashed var(--border);padding-top:4px}
   .pe-pallets .pp-lin{font-size:11px;line-height:1.45;color:#3c4c63}
   .pe-pallets .pp-cod{font-weight:800;color:var(--text)}
@@ -7469,8 +7470,13 @@ function buildFilterTable(cfg){
     // sale con la mitad del valor declarado. `pe.ventaUids` son las ventas absorbidas.
     const uidsVenta = [v._uid].concat((pe&&pe.ventaUids)||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
     const todasV = window.__ventasTodas?window.__ventasTodas():[];
-    const valorDeclarado = Math.max(0, uidsVenta.reduce((a,u)=>{ const vv=(u===v._uid)?v:todasV.find(x=>x._uid===u); return a+(vv?calc(vv).total:0); },0));
-    return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
+    // Un valor cargado a mano en el pedido (despacho en otro transporte) manda sobre el total de las ventas.
+    const valorDeclarado = (pe && num(pe.valorDeclarado)>0) ? num(pe.valorDeclarado)
+      : Math.max(0, uidsVenta.reduce((a,u)=>{ const vv=(u===v._uid)?v:todasV.find(x=>x._uid===u); return a+(vv?calc(vv).total:0); },0));
+    // Con despacho en otro transporte (Matías lo lleva hasta Brío, Biletta…), el remito es del transporte FINAL.
+    const trFinal=pe?String(pe.transporteFinal||'').trim():'';
+    return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||trFinal||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'',
+      pagoEnvio:(pe&&pe.pagoEnvio==='destino')?'destino':'origen', contactoEntrega:pe?String(pe.contactoEntrega||'').trim():'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
       ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
@@ -17760,7 +17766,7 @@ function buildFilterTable(cfg){
   }
   // La foto se saca ANTES de entregar: después `entregarPedido` ya le escribió 'entregado' encima.
   const fotoPedido = pe => ({ uid:pe._uid, estado:pe.estado||'pendiente', fechaEntregado:pe.fechaEntregado||'',
-    transporteEntrega:pe.transporteEntrega||'', viajeEntrega:pe.viajeEntrega||'' });
+    transporteEntrega:pe.transporteEntrega||'', viajeEntrega:pe.viajeEntrega||'', transporteFinalEntrega:pe.transporteFinalEntrega||'' });
   function deshacerUltimaCarga(){
     if(!ultimaCarga){ alert('No hay ninguna carga reciente para deshacer.'); return; }
     const nPed=(ultimaCarga.peds||[]).length;
@@ -17775,7 +17781,7 @@ function buildFilterTable(cfg){
       const pe=(typeof pedidos!=='undefined'&&Array.isArray(pedidos)) ? pedidos.find(x=>x&&x._uid===f.uid) : null;
       if(!pe) return;
       pe.estado=f.estado; pe.fechaEntregado=f.fechaEntregado;
-      pe.transporteEntrega=f.transporteEntrega; pe.viajeEntrega=f.viajeEntrega;
+      pe.transporteEntrega=f.transporteEntrega; pe.viajeEntrega=f.viajeEntrega; pe.transporteFinalEntrega=f.transporteFinalEntrega||'';
       persistPed(pe);
     });
     clearTimeout(ultimaCargaTimeout); ultimaCarga=null; const btn=$('pe-btn-deshacer'); if(btn) btn.style.display='none';
@@ -17943,8 +17949,32 @@ function buildFilterTable(cfg){
     const detTopes = topes.length ? ' · de '+nf(totTopes)+' tope'+(totTopes!==1?'s':'')+' del pedido ('+topes.map(r=>esc(r.codigo||r.nombre)+' '+nf(r.cant)).join(', ')+')' : '';
     return '<div class="pe-pintar">🎨 PINTAR '+nf(pint)+' tope'+(pint!==1?'s':'')+' amarillo'+detTopes+'</div>';
   }
+  // 🔁 DESPACHO EN OTRO TRANSPORTE (07/10, pedido de Marcelo): Matías Sánchez lleva el pedido desde la
+  // fábrica hasta el transporte de carga (Brío, Biletta…) que hace la entrega final, y ese transporte pide
+  // quién paga el flete, con quién coordinar y el valor declarado. `pe.transporte` sigue siendo quien
+  // SALE de la fábrica (así el viaje de Matías ocupa SU camión); `pe.transporteFinal` es el que entrega.
+  // Va en cargaDetalle, o sea en Entregas a coordinar Y en Viajes armados con una sola función.
+  function despachoHtml(pe){
+    const fin=String(pe.transporteFinal||'').trim(); if(!fin) return '';
+    const sale=String(pe.transporte||'').trim(); const quien=(sale&&sale!=='Sin asignar')?sale:'';
+    const partes=['flete en '+(pe.pagoEnvio==='destino'?'DESTINO (lo paga el cliente)':'ORIGEN (factura a VPH)')];
+    const cont=String(pe.contactoEntrega||'').trim();
+    partes.push(cont ? 'coordinar con '+esc(cont) : '<span style="color:var(--amber)">falta con quién coordinar</span>');
+    const val=num(pe.valorDeclarado)||num(pe.valorMercaderia);
+    if(val>0) partes.push('valor declarado $ '+nf(val));
+    return '<div class="pe-despacho">🔁 '+(quien?esc(quien)+' lo lleva y ':'')+'se DESPACHA EN <b>'+esc(fin.toUpperCase())+'</b> · '+partes.join(' · ')+'</div>';
+  }
+  // Al guardar el formulario: sin transporte final (o igual al que sale de la fábrica) es entrega DIRECTA y
+  // se limpian los datos del despacho, así no quedan restos que el remito tomaría por vigentes.
+  function normalizarDespacho(pe){
+    const fin=String(pe.transporteFinal||'').trim();
+    if(!fin || norm(fin)===norm(pe.transporte)){ delete pe.transporteFinal; delete pe.pagoEnvio; delete pe.contactoEntrega; delete pe.valorDeclarado; return pe; }
+    pe.transporteFinal=fin; pe.pagoEnvio=pe.pagoEnvio==='destino'?'destino':'origen';
+    pe.contactoEntrega=String(pe.contactoEntrega||'').trim(); pe.valorDeclarado=Math.max(0,num(pe.valorDeclarado)||0);
+    return pe;
+  }
   function cargaDetalle(pe){
-    const pint=pintadoHtml(pe);
+    const pint=despachoHtml(pe)+pintadoHtml(pe);
     const rows=cargaRows(pe); if(!rows.length) return pint;
     // Las tandas que van en un pallet mixto se marcan con 🧩 en la línea del producto, y cada grupo
     // tiene su propia línea con la composición — es lo que Gustavo necesita para armarlo.
@@ -18078,7 +18108,8 @@ function buildFilterTable(cfg){
       g[k].peds.push(p); g[k].pallets+=t.pallets; g[k].peso+=t.peso;
       if(deducido) g[k].deducido=true; });
     let viajes=Object.values(g).sort((a,b)=> String(b.f).localeCompare(String(a.f)) || String(a.tr).localeCompare(String(b.tr)));
-    if(q) viajes=viajes.map(v=>Object.assign({},v,{peds:v.peds.filter(p=>norm(p.cliente).includes(q)||norm(v.tr).includes(q))})).filter(v=>v.peds.length);
+    const finalDe=p=> String((p.transporteFinalEntrega!=null&&p.transporteFinalEntrega!==''?p.transporteFinalEntrega:(p.viajeEntrega?'':p.transporteFinal))||'').trim();
+    if(q) viajes=viajes.map(v=>Object.assign({},v,{peds:v.peds.filter(p=>norm(p.cliente).includes(q)||norm(v.tr).includes(q)||norm(finalDe(p)).includes(q))})).filter(v=>v.peds.length);
     const asof=$('pe-ent-asof');
     if(asof) asof.textContent = viajes.length
       ? (viajes.length+' viaje'+(viajes.length!==1?'s':'')+' · '+viajes.reduce((a,v)=>a+v.peds.length,0)+' entrega'+(viajes.reduce((a,v)=>a+v.peds.length,0)!==1?'s':'')
@@ -18098,7 +18129,8 @@ function buildFilterTable(cfg){
         '<div style="font-size:12px;color:'+(varios?'var(--accent)':'var(--muted)')+';margin-top:4px">'+(varios?'🧑\u200d🤝\u200d🧑 '+v.peds.length+' clientes en este mismo viaje':'1 cliente')+'</div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p);
           return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border)">'+
-            '<span style="flex:1;min-width:130px">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span>'+
+            '<span style="flex:1;min-width:130px">'+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+
+              (finalDe(p)?' <span class="pe-despacho" style="display:inline-block;margin:0">🔁 despachado en '+esc(finalDe(p))+'</span>':'')+'</span>'+
             '<span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
             '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(p._uid)+'" title="Reimprimir el remito de '+esc(p.cliente||'')+'" style="flex:0 0 auto">🖨️ Remito</button>'+
           '</div>'; }).join('')+'</div>'+
@@ -18387,7 +18419,7 @@ function buildFilterTable(cfg){
     // armados; lo entregado está en 📋 Entregas realizadas. Se sacaron los filtros Todos/Entregados.
     let rows=pedidos.filter(p=>p.estado==='pendiente');
     $('pe-ped-filtros').innerHTML='<span class="asof" style="margin:0">Pendientes de coordinar: '+rows.length+'</span>';
-    if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+resumenPed(p)).toLowerCase().includes(s)); }
+    if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+(p.transporteFinal||'')+' '+resumenPed(p)).toLowerCase().includes(s)); }
     /* ---------- Orden CRONOLÓGICO de la tabla (06/10, pedido de Marcelo) --------------------------
        🔴 `diaEntrega` se comparaba como TEXTO "dd/mm/aa", así que "03/09/26" quedaba ANTES que
        "12/08/26": septiembre arriba de agosto. Es el MISMO bug que se arregló en 🚚 Viajes armados el
@@ -18527,7 +18559,8 @@ function buildFilterTable(cfg){
     Object.keys(grupos).forEach(dia=>{
       let totPal=0; grupos[dia].forEach(p=>{ totPal+=totCarga(p).pallets; });
       out+='\n'+dia.toUpperCase()+(totPal?' ('+totPal+' pallet'+(totPal!==1?'s':'')+')':'')+'\n';
-      grupos[dia].forEach(p=>{ const dir=dirPed(p); out+='• '+(p.cliente||'—')+(dir?' — '+dir:'')+'\n'; });
+      grupos[dia].forEach(p=>{ const dir=dirPed(p); const fin=String(p.transporteFinal||'').trim();
+        out+='• '+(p.cliente||'—')+(dir?' — '+dir:'')+(fin?'  ➜ DESPACHAR EN '+fin.toUpperCase()+' (flete en '+(p.pagoEnvio==='destino'?'destino':'origen')+')':'')+'\n'; });
     });
     window.__wa.modal({ titulo:'Programa del transportista', destino:'Copiá y pegá en el chat del transportista', texto:out.trim() });
   }
@@ -18563,7 +18596,10 @@ function buildFilterTable(cfg){
     const fViaje=fechaDeDia(pe.diaEntrega);   // texto dd/mm/aa → ISO para el <input type="date">
     // Teléfono: la ficha del cliente casi nunca lo tiene; el lead del CRM sí (ver __telefonoLead).
     const tel=cli.telefono || pe.clienteTel || (window.__telefonoLead?window.__telefonoLead(pe.cliente):'') || '';
-    return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:(pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:'',
+    // Con despacho en otro transporte, el remito es del transporte FINAL (es el que pide pago/valor/contacto).
+    const trFinal=String(pe.transporteFinal||'').trim();
+    return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:trFinal||((pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:''),
+      pagoEnvio:pe.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(pe.contactoEntrega||'').trim(),
       // La ficha VIVA manda (es la más fresca); el snapshot del pedido es el que salva la sesión de
       // Gustavo, que no puede leer vph_clientes.
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
@@ -18798,6 +18834,8 @@ function buildFilterTable(cfg){
   // vph_ventas, así que se snapshotea en el pedido con el mismo criterio que snapCliente: solo
   // COMPLETA (nunca borra) y solo cuando el catálogo de ventas está disponible (sesión admin).
   function valorMercaderiaDe(pe){
+    // Un valor cargado a mano en el pedido (despacho en otro transporte, 07/10) manda sobre el total de la venta.
+    if(num(pe.valorDeclarado)>0) return num(pe.valorDeclarado);
     const todas = window.__ventasTodas ? window.__ventasTodas() : [];
     if(todas.length){
       const uids=[pe.ventaUid].concat(pe.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
@@ -18896,6 +18934,7 @@ function buildFilterTable(cfg){
       ids.push.apply(ids, registrarEntrega(c, hoyISO, pe.cliente||'', {producto: pr?pr.nombre:it.producto, codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cantidad)}, pe._uid, r?r.pallets:null, transpEnt, viajeEnt)); } });
     pe.estado='entregado'; pe.fechaEntregado=hoyISO;
     pe.transporteEntrega=transpEnt; pe.viajeEntrega=viajeEnt;
+    pe.transporteFinalEntrega=String(pe.transporteFinal||'').trim();   // 🔁 transporte de carga en que se despachó (congelado, igual que el transporte)
     persistPed(pe);
     return ids;
   }
@@ -18920,7 +18959,20 @@ function buildFilterTable(cfg){
         '<div class="cmp-field"><label>Fecha requerida (cliente)</label><input type="date" id="pp-freq" value="'+esc(pe.fechaRequerida||'')+'"></div>'+
         '<div class="cmp-field"><label>Prioridad</label><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:9px 0;cursor:pointer"><input type="checkbox" id="pp-espera"'+(pe.puedeEsperar?' checked':'')+'> 🕐 El cliente puede esperar</label>'+
           '<label style="display:flex;gap:8px;align-items:center;font-weight:800;padding:4px 0 9px;cursor:pointer;color:var(--red)"><input type="checkbox" id="pp-urgente"'+(pe.urgente?' checked':'')+'> 🔥 URGENTE — fabricar y entregar primero</label></div>'+
-        '<div class="cmp-field"><label>Transporte</label><select id="pp-transp">'+opt(TRANSPORTES,pe.transporte)+'</select></div>'+
+        '<div class="cmp-field"><label>Transporte (el que sale de la fábrica)</label><select id="pp-transp">'+opt(TRANSPORTES,pe.transporte)+'</select></div>'+
+        /* 🔁 DESPACHO EN OTRO TRANSPORTE (07/10, pedido de Marcelo): Matías lleva el pedido hasta el
+           transporte de carga (Brío, Biletta…) que hace la entrega final. Vacío = entrega directa.
+           Ids `pd-*` (los `pp-*` están repartidos entre Pedido y Pago a proveedor). */
+        '<div class="cmp-field" style="grid-column:1/-1;border:1px solid var(--border);border-radius:10px;padding:10px 12px">'+
+          '<label style="font-weight:800">🔁 Se despacha en otro transporte <span style="font-weight:400;color:var(--muted)">(Matías lo lleva hasta ese transporte)</span></label>'+
+          '<input id="pd-final" list="pd-final-dl" value="'+esc(pe.transporteFinal||'')+'" placeholder="Vacío = entrega directa. Ej: Brío, Expreso Biletta…">'+
+          '<datalist id="pd-final-dl"><option value="Brío"><option value="Expreso Biletta"></datalist>'+
+          '<div id="pd-resto" style="margin-top:8px"'+(String(pe.transporteFinal||'').trim()?'':' hidden')+'>'+
+            '<div style="display:flex;flex-wrap:wrap;gap:10px 14px">'+
+              '<div class="cmp-field" style="flex:1 1 220px"><label>¿Quién paga el flete?</label><select id="pd-pago"><option value="origen"'+(pe.pagoEnvio!=='destino'?' selected':'')+'>VPH (en origen, se factura a VPH)</option><option value="destino"'+(pe.pagoEnvio==='destino'?' selected':'')+'>El cliente (en destino)</option></select></div>'+
+              '<div class="cmp-field" style="flex:1 1 220px"><label>Valor declarado ($, para el seguro)</label><input id="pd-valor" inputmode="decimal" value="'+esc(num(pe.valorDeclarado)>0?num(pe.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Vacío = total de la venta"></div>'+
+              '<div class="cmp-field" style="flex:1 1 100%"><label>Coordinar la entrega con (nombre y teléfono)</label><input id="pd-contacto" value="'+esc(pe.contactoEntrega||'')+'" placeholder="Si es distinto del cliente. Ej: Erick Rodríguez — 3571349174"></div>'+
+            '</div></div></div>'+
         '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
         '<div class="cmp-field col2"><label>Dirección de entrega</label><input id="pp-dir" value="'+esc(pe.direccion)+'" placeholder="Dónde hay que descargar"></div>'+
         '<div class="cmp-field"><label>Estado</label><select id="pp-estado">'+EST_PED.map(e=>'<option value="'+e.k+'"'+(pe.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select></div>'+
@@ -18937,6 +18989,10 @@ function buildFilterTable(cfg){
     drawPlanCarga();
     drawDisponibilidadPed();
     [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; if(id==='pp-dia') drawDisponibilidadPed(); }); });
+    { const ef=$('pd-final'); if(ef) ef.addEventListener('input',()=>{ editPed.transporteFinal=ef.value; const r=$('pd-resto'); if(r) r.hidden=!String(ef.value||'').trim(); }); }
+    { const ep=$('pd-pago'); if(ep) ep.addEventListener('change',()=>{ editPed.pagoEnvio=ep.value; }); }
+    { const ec=$('pd-contacto'); if(ec) ec.addEventListener('input',()=>{ editPed.contactoEntrega=ec.value; }); }
+    { const ev=$('pd-valor'); if(ev) ev.addEventListener('input',()=>{ editPed.valorDeclarado=num(ev.value)||0; }); }
     $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; if(editPed.puedeEsperar){ editPed.urgente=false; $('pp-urgente').checked=false; } });
     $('pp-urgente').addEventListener('change',()=>{ editPed.urgente=$('pp-urgente').checked; if(editPed.urgente){ editPed.puedeEsperar=false; $('pp-espera').checked=false; } });
     // "Día de entrega" se guarda como texto dd/mm/aa (así lo carga Sofía, es lo que entiende
@@ -18962,6 +19018,7 @@ function buildFilterTable(cfg){
       // Pallets mixtos: se guardan solo los grupos válidos (2+ tandas que existen en el plan final),
       // normalizados a {m:[{k,i}]}. Un grupo a medio armar no se persiste.
       editPed.mixtos = mixtosDe(editPed, cargaRows(editPed)).map(g=>({ m:g.map(y=>({k:y.k, j:y.j, i:y.i})) }));
+      normalizarDespacho(editPed);
       persistPed(editPed); $('pe-modal-ped').classList.remove('open'); };
   }
   function drawPedItems(){
@@ -20311,8 +20368,11 @@ function buildFilterTable(cfg){
       '<div style="font-weight:800;margin-bottom:3px">ENVÍO POR '+esc(String(obj.transportista).toUpperCase())+'</div>'+
       lineaPagoEnvio(obj)+
       (num(obj.valorDeclarado)>0 ? '<div><b>Valor declarado de la mercadería:</b> '+money(obj.valorDeclarado)+' (para el seguro del transporte).</div>' : '')+
-      '<div><b>Coordinar entrega en destino con:</b> '+esc(obj.clienteNombre||'—')+
-        ' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................')+'</div>'+
+      // Con "contactoEntrega" cargado (nombre y teléfono de quien recibe, puede no ser el cliente) va ese
+      // texto tal cual; si no, el cliente y su teléfono como siempre.
+      '<div><b>Coordinar entrega en destino con:</b> '+(String(obj.contactoEntrega||'').trim()
+        ? esc(String(obj.contactoEntrega).trim())
+        : esc(obj.clienteNombre||'—')+' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................'))+'</div>'+
     '</div>';
   }
   // Cómo se nombra una venta en el remito (pedido de Marcelo, 30/07): una venta sin factura se
@@ -20525,7 +20585,9 @@ function buildFilterTable(cfg){
               (obj.pagoEnvio==='destino'?'border:2px solid #2563eb;background:#eff6ff;color:#1d4ed8':'border:1px solid #cbd5e1;background:#fff;color:#334155')+'">🚚 El cliente en destino</button>'+
           '</div>'+
           '<label style="'+lbl+'">Valor declarado de la mercadería <span style="font-weight:400;color:#888">(para el seguro del transporte)</span></label>'+
-          '<input id="rem-valor" value="'+esc(obj.valorDeclarado?nf(obj.valorDeclarado):'')+'" placeholder="Ej: 1.500.000" style="'+inp+'">'
+          '<input id="rem-valor" value="'+esc(obj.valorDeclarado?num(obj.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Ej: 1.500.000" style="'+inp+'">'+
+          '<label style="'+lbl+'">Coordinar la entrega con <span style="font-weight:400;color:#888">(nombre y teléfono; vacío = el cliente)</span></label>'+
+          '<input id="rem-contacto" value="'+esc(obj.contactoEntrega||'')+'" placeholder="Ej: Erick Rodríguez — 3571349174" style="'+inp+'">'
           :'')+
         '<div style="display:flex;gap:8px;margin-top:16px">'+
           '<button id="rem-cancel" class="cmp-btn" style="flex:0 0 auto">Cancelar</button>'+
@@ -20536,7 +20598,8 @@ function buildFilterTable(cfg){
       const leer=()=>{ obj.fecha=ov.querySelector('#rem-fecha').value||''; obj.domicilioEntrega=ov.querySelector('#rem-dom').value.trim(); obj.clienteTel=ov.querySelector('#rem-tel').value.trim();
         const uid=ov.querySelector('#rem-venta').value; obj.ventaUid=uid;
         obj.comprobanteAsoc = labelVentas(uid);
-        const campoValor=ov.querySelector('#rem-valor'); if(campoValor) obj.valorDeclarado=num(campoValor.value)||0; };
+        const campoValor=ov.querySelector('#rem-valor'); if(campoValor) obj.valorDeclarado=num(campoValor.value)||0;
+        const campoCont=ov.querySelector('#rem-contacto'); if(campoCont) obj.contactoEntrega=campoCont.value.trim(); };
       ov.querySelectorAll('button[data-re]').forEach(b=> b.onclick=()=>{
         const r=yaEmitidos[+b.dataset.re]; ov.remove();
         try{ window.__imprimir.remito(window.__remitoParaImprimir(r)); }catch(e){ alert('Error al reimprimir: '+e.message); }
@@ -20972,6 +21035,8 @@ function buildFilterTable(cfg){
   'use strict';
   const COL='vph_remitos', CONT='_contador', KEY='vph_remitos_v1';
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; const n=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(n)?0:n; };
+  // Importes tipeados a mano en formato AR ("2.340.792,98"): el num() de arriba lee "1.500.000" como 1,5.
+  const numAR = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const fb = ()=> window.__fbctx;
   let DB={remitos:[], ultimo:0}, unsub=null;
 
@@ -21039,7 +21104,7 @@ function buildFilterTable(cfg){
       cliente:o.clienteNombre||'', clienteCuit:o.clienteCuit||'', clienteCondIva:o.clienteCondIva||'',
       clienteTel:o.clienteTel||'', domicilioEntrega:o.domicilioEntrega||'', transportista:o.transportista||'',
       ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'', valorDeclarado:num(o.valorDeclarado)||0,
-      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen',
+      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(o.contactoEntrega||'').trim(),
       items:(o.items||[]).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant), pallets:(it.pallets||null)})),
       usuario:u, ts:new Date().toISOString() };
   }
@@ -21048,7 +21113,7 @@ function buildFilterTable(cfg){
     return { numero:r.numero||'', numeroInt:r.numeroInt, fecha:r.fecha||'', transportista:r.transportista||'',
       clienteNombre:r.cliente||'', clienteCuit:r.clienteCuit||'', clienteCondIva:r.clienteCondIva||'',
       clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'', valorDeclarado:num(r.valorDeclarado)||0,
-      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen',
+      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(r.contactoEntrega||'').trim(),
       comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
   };
 
@@ -21155,7 +21220,8 @@ function buildFilterTable(cfg){
         campo('Teléfono de contacto','<input id="rmt-tel" value="'+esc(r.clienteTel||'')+'">')+
         // Solo se pide con un transporte de carga (Brío, una agencia): con Sánchez/Marcelo no hace
         // falta y no hay que ensuciar el papel con un dato que no le sirve a nadie.
-        campo('Valor declarado (para el seguro del transporte)','<input id="rmt-valor" value="'+esc(r.valorDeclarado?nf(r.valorDeclarado):'')+'" placeholder="Ej: 1.500.000">')+
+        campo('Valor declarado (para el seguro del transporte)','<input id="rmt-valor" value="'+esc(r.valorDeclarado?numAR(r.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Ej: 1.500.000">')+
+        campo('Coordinar la entrega con (nombre y teléfono)','<input id="rmt-contacto" value="'+esc(r.contactoEntrega||'')+'" placeholder="Vacío = el cliente">','col2')+
         campo('Pago del envío','<select id="rmt-pago"><option value="origen"'+(r.pagoEnvio!=='destino'?' selected':'')+'>VPH — pago en origen</option>'+
           '<option value="destino"'+(r.pagoEnvio==='destino'?' selected':'')+'>El cliente en destino</option></select>')+
         campo('Factura / venta asociada','<select id="rmt-venta"><option value="">— Sin asociar —</option>'+
@@ -21171,8 +21237,9 @@ function buildFilterTable(cfg){
     [['rmt-fecha','fecha'],['rmt-transp','transportista'],['rmt-cli','cliente'],['rmt-dom','domicilioEntrega'],['rmt-tel','clienteTel']].forEach(([id,key])=>{
       const el=$(id); if(el) el.addEventListener('input',()=>{ editando[key]=el.value; });
     });
-    { const ev=$('rmt-valor'); if(ev) ev.addEventListener('input',()=>{ editando.valorDeclarado=num(ev.value)||0; }); }
+    { const ev=$('rmt-valor'); if(ev) ev.addEventListener('input',()=>{ editando.valorDeclarado=numAR(ev.value)||0; }); }
     { const ep=$('rmt-pago'); if(ep) ep.addEventListener('change',()=>{ editando.pagoEnvio=ep.value; }); }
+    { const ec=$('rmt-contacto'); if(ec) ec.addEventListener('input',()=>{ editando.contactoEntrega=ec.value; }); }
     $('rmt-venta').addEventListener('change',()=>{
       const uid=$('rmt-venta').value; editando.ventaUid=uid;
       const v=ventas.find(x=>x._uid===uid);
