@@ -20679,6 +20679,7 @@ function buildFilterTable(cfg){
   // el PDF (listaPrecios) y la IMAGEN para WhatsApp (listaPreciosImagen, 02/10): es UNA sola cuenta,
   // así la imagen que se le manda al revendedor no puede decir un precio distinto del PDF.
   // Si la lista no se puede armar devuelve {error} y quien la pidió decide cómo avisar.
+  const FUERA_LISTAS_MAYORISTAS = ['BNV40','KNIV','ANC38','PINTVA'];   // ver el filtro de abajo
   function listaPreciosDatos(o){
     o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
     // El flete "hasta 100 km" (Expreso Biletta) se edita en ⚙️ Parámetros porque el transporte lo
@@ -20693,6 +20694,11 @@ function buildFilterTable(cfg){
       // LC602H es la variante interna de la base reforzada: se vende como parte del pallet de LC60,
       // no suelta — listarla duplicaría la Loseta 60 con el mismo precio.
       .filter(p=>String(p.codigo||'')!=='LC602H')
+      // Base Nivel, kits de nivelación/anclaje y pintado (06/10, pedido de Marcelo): NO van en los
+      // listados que se les mandan a los mayoristas (lista minorista sí). Tienen precio mayorista
+      // cargado a propósito —así un presupuesto mayorista no sale en $0—, por eso se sacan acá y no
+      // poniéndoles el precio en 0.
+      .filter(p=>!(L.may && FUERA_LISTAS_MAYORISTAS.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
       // Con flete incluido, un producto sin udPorPallet no tiene cómo repartir el flete por unidad:
       // mejor afuera de esa lista que con un precio inventado.
       .filter(p=>!L.flete100 || num(p.udPorPallet)>0)
