@@ -19867,6 +19867,7 @@ function buildFilterTable(cfg){
     if(!window.__planesFin || !window.__precioFinanciado) return null;
     const s=String((v&&v.listaPrecios)||'') || String((v&&v.categoria)||'');
     if(/mayorista/i.test(s)) return null;
+    if(/sin factura/i.test(s) || /desc(uento)?\s*10[.,]5/i.test(s)) return null;   // sin factura: solo contado, sin cuotas (Marcelo, 07/10)
     const perfil = (v&&v.finPerfil) || (window.__perfilMasCaro?window.__perfilMasCaro():'');
     if(!perfil) return null;
     // Solo los planes OFRECIDOS (3/6/12): el 9 de la matriz es para liquidar cobros, no se publica.
@@ -19949,7 +19950,8 @@ function buildFilterTable(cfg){
     //    fecha de factura. Solo con condIva 'A' y lista facturada — a quien no lleva factura no
     //    se le puede dar un plazo "de fecha de factura".
     const respInsc = String((v&&v.condIva)||'').trim().toUpperCase()==='A';
-    const pago = mayorista
+    //  · SIN FACTURA, mayorista o MINORISTA (07/10, decisión de Marcelo): contado y nada más.
+    const pago = sinFactura ? 'Pago Contado.' : mayorista
       ? (sinFactura ? 'Pago Contado.' : 'Pago Contado, Débito o Valor a 30 días de fecha de factura.')
       : 'Precios de contado por transferencia. Hasta 12 cuotas sin interés con tarjetas bancarizadas, '+
         'al precio de lista del recuadro "Formas de pago".'+
