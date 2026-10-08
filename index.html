@@ -15164,6 +15164,12 @@ function buildFilterTable(cfg){
   }
   function topesAutoNota(){ try{ return localStorage.getItem('vph_topes_auto_nota_v1')||''; }catch(e){ return ''; } }
   function topesAutoDocId(){ return 'topes_auto_'+topesPcId(); }
+  // 08/10: en la Asus Chrome y Edge muestran el cartel del link vphenviar: pero NO abren ningún programa
+  // (en la Lenovo, con el mismo Chrome 154, sí). En una PC así se marca POR PC (localStorage, sin
+  // pantalla: lo pone Claude o se escribe a mano en la consola) que el link también vaya al portapapeles,
+  // y el ayudante se enciende con doble clic en "Encender ayudante VPH" del escritorio (encender.ps1),
+  // que lo lee y BORRA el portapapeles enseguida: lleva la credencial de la sesión.
+  function topesAutoPortapapeles(){ try{ return localStorage.getItem('vph_topes_auto_portapapeles_v1')==='1'; }catch(e){ return false; } }
   let topesAutoBuzon=null, topesAutoTimer=null, topesAutoOcupado=false;
   // Link que ARRANCA al ayudante en modo escucha (va en el clic de la casilla). Lleva la credencial de
   // la sesión (refreshToken) para que pueda leer y escribir el buzón: no queda guardada en ningún
@@ -15272,7 +15278,9 @@ function buildFilterTable(cfg){
     let estado='';
     if(on){
       if(b.estado==='pedido' || b.estado==='enviando') estado='📤 Mandando a <b>'+esc(b.nombre||'')+'</b>…';
-      else if(topesAutoBuzon && !escuchando) estado='<span style="color:#b45309">⏳ Esperando que el ayudante arranque… si en 2 min no arranca, destildá y volvé a tildar 🔁</span>';
+      else if(topesAutoBuzon && !escuchando) estado='<span style="color:#b45309">'+(topesAutoPortapapeles()
+        ? '⏳ Esperando que el ayudante arranque: hacé doble clic en <b>Encender ayudante VPH</b> del escritorio (si ya lo hiciste y en 2 min no arranca, destildá y volvé a tildar 🔁)'
+        : '⏳ Esperando que el ayudante arranque… si en 2 min no arranca, destildá y volvé a tildar 🔁')+'</span>';
       else if(topesAutoBuzon) estado='🔁 Manda solo cuando termina la espera';
     }
     return '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Manda solo, de a uno, respetando la espera, el horario y el tope del día. Necesita esta pestaña del Tablero abierta, la PC prendida y desbloqueada, y WhatsApp de escritorio abierto. Si algo sale raro se pausa solo.">'+
@@ -15285,6 +15293,7 @@ function buildFilterTable(cfg){
       if(!topesFirma()){ alert('Antes escribí tu nombre en "✍️ Firmo como".'); drawTopes(); return; }
       const link=topesAutoLinkEncender();
       if(!link){ alert('No se pudo leer la sesión del Tablero. Recargá la página e intentá de nuevo.'); drawTopes(); return; }
+      if(topesAutoPortapapeles()){ try{ navigator.clipboard.writeText(link).catch(()=>{}); }catch(e){} }   // dentro del clic y antes de abrir (Chrome exige gesto y foco)
       window.open(link, '_blank');   // dentro del clic: es lo único que Chrome deja abrir
       topesAutoSet(true, '');
       topesAutoBuzon=null;
