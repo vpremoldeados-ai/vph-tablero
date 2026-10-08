@@ -8079,6 +8079,15 @@ function buildFilterTable(cfg){
   function drawCobro(){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
+    // 🔴 `v` es la copia con la que se PINTÓ el formulario, y queda vieja: cada snapshot de Firestore
+    // (incluido el eco del cobro que se acaba de guardar, ~300 ms después) reemplaza los objetos de
+    // DB.ventas. Si los handlers mutaban `v`, el segundo cobro se escribía sobre una copia muerta, el
+    // formulario (que relee DB.ventas) no lo mostraba —"no lo guardó"— y al cargarlo de nuevo, sobre la
+    // copia nueva, el array PISABA al anterior: cobro perdido en la venta y cheque huérfano en Cheques
+    // (Don Pica 01/10, LWK 07/10). Los handlers resuelven la venta VIVA en el momento del click (08/10).
+    const viva=()=>DB.ventas.find(x=>x._uid===cobrandoUid)||v;
+    // Ubica un cobro ya pintado dentro del array vivo: por id, o por posición si el cobro viejo no tiene id.
+    const posViva=(cobros, cob, i)=> cob&&cob.id ? cobros.findIndex(c=>c.id===cob.id) : ((cobros[i]&&!cobros[i].id&&cob&&JSON.stringify(cobros[i])===JSON.stringify(cob)) ? i : -1);
     const lista = v.cobros.length ? v.cobros.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid '+(c.chequeRechazado?'var(--red)':'var(--border)')+';border-radius:8px;margin-bottom:6px;font-size:13px'+(cobroEdit===i?';outline:2px solid var(--blue)':'')+'">'+
         '<span>'+fmtFecha(c.fecha)+' · '+esc(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+
           (esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>'
@@ -8217,7 +8226,10 @@ function buildFilterTable(cfg){
     const ivEl=$('vc-pl-iva'); if(ivEl) ivEl.addEventListener('input',()=>{ ivEl.dataset.tocado='1'; });
     if(platShow) calcNetoPlat();
     $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
-    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return; const cobros=v.cobros.slice(); cobros.splice(i,1); v.cobros=cobros; cobroEdit=null; persistCobros(v._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
+    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return;
+      const lv=viva(); const cobros=(lv.cobros||[]).slice(); const j=posViva(cobros, cob, i);
+      if(j<0){ alert('Ese cobro ya no está en la venta (la cambió otra sesión). Vuelvo a mostrar los cobros actuales.'); cobroEdit=null; drawCobro(); return; }
+      cobros.splice(j,1); lv.cobros=cobros; v.cobros=cobros; cobroEdit=null; persistCobros(lv._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
     // Tarjetas: el medio de cobro es lo que más toca Sofía y bifurca el form (cheque → datos del cheque,
     // sin cuenta, y NO cuenta como plata de hoy). Es donde se rompen los números de caja si se elige mal.
     if(window.__tarjetas){ window.__tarjetas('vc-medio'); window.__tarjetas('vc-cuenta'); }
@@ -8286,14 +8298,16 @@ function buildFilterTable(cfg){
         }
       }
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
-      const cobros=v.cobros.slice(); if(cobroEdit!=null){ cobros[cobroEdit]=rec; cobroEdit=null; } else { cobros.push(rec); } v.cobros=cobros; persistCobros(v._uid, cobros);
+      const lv=viva(); const cobros=(lv.cobros||[]).slice();
+      if(cobroEdit!=null){ const j=posViva(cobros, prev, cobroEdit); if(j>=0) cobros[j]=rec; else cobros.push(rec); cobroEdit=null; } else { cobros.push(rec); }
+      lv.cobros=cobros; v.cobros=cobros; persistCobros(lv._uid, cobros);
       // Sincronizar con el módulo Cheques: crea/actualiza si es cheque, borra el vínculo si dejó de serlo
       if(prev && prev.chqRef) rec.chqRef=prev.chqRef;   // cobro hermano de un cheque que cubrió varias ventas: el papel vive en el cobro maestro
-      if(esCheque(rec.medio) && !rec.chqRef && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:v.nroFactura||'', entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
+      if(esCheque(rec.medio) && !rec.chqRef && window.__upsertChequeCobro){ window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:lv._uid, ventaNro:lv.nroFactura||'', entidad:lv.cliente||'', cuit:lv.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:rec.monto, fechaEmision:rec.fecha, fechaVencimiento:rec.chVenc||rec.fecha, chequeRechazado:rec.chequeRechazado }); }
       else if(!esCheque(rec.medio) && window.__deleteChequeCobro){ window.__deleteChequeCobro(rec.id); }
       // Cobro NUEVO (no edición) abierto desde la Ruta de cobranza → el recibo sale solo, una sola vez.
       if(cobroAutoRecibo && !prev){ cobroAutoRecibo=false;
-        try{ if(window.__imprimir&&window.__imprimir.recibo) window.__imprimir.recibo(v); }catch(e){} }
+        try{ if(window.__imprimir&&window.__imprimir.recibo) window.__imprimir.recibo(lv); }catch(e){} }
       drawCobro(); };
   }
 
