@@ -16924,6 +16924,10 @@ function buildFilterTable(cfg){
       if(!it.producto && !it.codigo) return;
       const pr=resolverProd(it.producto,it.codigo);
       if(pr && (pr.tipo||'')==='Servicio') return;
+      // ⚓ Los anclajes (ANC38) viajan en el MISMO pallet que los topes: no son carga propia. Sin esto
+      // sumaban un pallet fantasma al camión y al remito y descontaban stock de algo que no se lleva
+      // la cuenta (08/10, Marcelo). Siguen en el remito como renglón (sin pallets) y en el cartel ⚓.
+      if(String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase()==='ANC38' || /anclaj/i.test(String((pr&&pr.nombre)||it.producto||''))) return;
       // El Flete puede venir como renglón del pedido SIN estar cargado en el catálogo (pasó: código
       // "FLE"): ahí `pr` es null y el chequeo de arriba no lo agarra. Un servicio no se carga en el
       // camión — si se cuela, suma un pallet fantasma al viaje y al remito.
@@ -17999,7 +18003,7 @@ function buildFilterTable(cfg){
       if(esAnc && cant>0) par+=cant;
     });
     if(!par) return '';
-    const topes=cargaRows(pe).filter(r=>/tope/i.test(r.nombre||'') || /^TE[CT]d/i.test(r.codigo||''));
+    const topes=cargaRows(pe).filter(r=>/tope/i.test(r.nombre||'') || /^TE[CT]\d/i.test(r.codigo||''));
     const totTopes=topes.reduce((a,r)=>a+r.cant,0);
     const detTopes = topes.length ? ' · topes del pedido: '+nf(totTopes)+' ('+topes.map(r=>esc(r.codigo||r.nombre)+' '+nf(r.cant)).join(', ')+')'
       : ' · <span style="color:#ffd400">el pedido no trae topes: revisar</span>';
