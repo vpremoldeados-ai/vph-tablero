@@ -16493,7 +16493,7 @@ function buildFilterTable(cfg){
 
   // 'Marcelo Vassallo' es transporte PROPIO (lo lleva él): el remito sale igual que con Sánchez, sin
   // la leyenda de pago en origen. Quién es propio se define en el parámetro `transportePropio`.
-  const TRANSPORTES=['Sánchez','Marcelo Vassallo','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro'];
+  const TRANSPORTES=['Sánchez','Marcelo Vassallo','Brío','Expreso Biletta','Ignacio Mahl','Retira cliente','Sin asignar','Otro'];
   // Los consume Ventas al imprimir un remito (la venta no guarda transporte: se elige en el momento).
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
@@ -18222,6 +18222,14 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-ventregar]').forEach(btn=> btn.onclick=()=>{
       const v=viajes[+btn.dataset.ventregar]; if(v) marcarViajeEntregado(v);
     });
+    // ✎ Editar camión / 🔀 Mover un cliente (pedido de Marcelo, 08/10): cambiar día y/o transportista
+    // de un camión armado o de uno solo de sus clientes, sin pasar por el formulario del pedido.
+    cont.querySelectorAll('button[data-vedit]').forEach(btn=> btn.onclick=()=>{
+      const v=viajes[+btn.dataset.vedit]; if(v) abrirEditarViaje(v.peds, v.tr);
+    });
+    cont.querySelectorAll('button[data-vmover]').forEach(btn=> btn.onclick=()=>{
+      const p=pedidos.find(x=>x._uid===btn.dataset.vmover); if(p) abrirEditarViaje([p], p.transporte);
+    });
     bindAccionesPedido(cont);   // los 🖨️ Remito de cada cliente del viaje
     // ---------- Arrastrar una entrega para reprogramarla (pedido de Marcelo, 09/09) ----------
     // Soltarla sobre OTRO viaje la mueve ahí (día + transportista + camión); soltarla en la zona
@@ -18307,7 +18315,8 @@ function buildFilterTable(cfg){
              entero, no de a un cliente. Una sola confirmación con todo lo que se descuenta y después
              el mismo `entregarPedido` de siempre para cada uno. El botón por cliente sigue estando
              para cuando se entrega solo a uno. */
-          '<button class="cmp-rowbtn" data-ventregar="'+vi+'" title="Marcar entregados los '+v.peds.length+' pedidos de este camión — descuenta stock" style="margin-left:auto">✓ Entregar camión completo</button>'+
+          '<button class="cmp-rowbtn" data-vedit="'+vi+'" title="Cambiarle el día y/o el transportista a TODOS los clientes de este camión" style="margin-left:auto">✎ Editar camión</button>'+
+          '<button class="cmp-rowbtn" data-ventregar="'+vi+'" title="Marcar entregados los '+v.peds.length+' pedidos de este camión — descuenta stock">✓ Entregar camión completo</button>'+
         '</div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
           // La fila entera se puede ARRASTRAR a otro viaje (el ⠿ es la señal visual; el botón sigue siendo botón).
@@ -18320,6 +18329,7 @@ function buildFilterTable(cfg){
                lo toma `bindAccionesPedido` y termina en `marcarEntregado` (confirma y descuenta
                stock) — nunca un atajo que escriba el estado directo. El viaje solo lista pendientes,
                pero la guarda queda igual: entregar dos veces sería descontar stock dos veces. */
+            (p.estado!=='entregado'?'<button class="cmp-rowbtn" data-vmover="'+esc(p._uid)+'" title="Cambiar el día y/o el transportista SOLO de '+esc(p.cliente||'')+' (sale de este camión)" style="flex:0 0 auto">🔀 Mover</button><button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(p._uid)+'" title="Abrir el pedido completo para editarlo" style="flex:0 0 auto">✎ Editar</button>':'')+
             (p.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(p._uid)+'" title="Marcar entregado el pedido de '+esc(p.cliente||'')+' — descuenta stock" style="flex:0 0 auto">✓ Entregado</button>':'')+
             '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(p._uid)+'" title="Imprimir el remito de '+esc(p.cliente||'')+'" style="flex:0 0 auto">🖨️ Remito</button></div>'+
             (seco?'<div style="color:var(--red);font-size:11px;padding:0 0 3px">⚠️ no va a estar seco para ese día: '+esc(seco.join(' · '))+'</div>':'')+
@@ -18332,6 +18342,57 @@ function buildFilterTable(cfg){
         sugerenciaHtml+
       '</div>';
     }
+  }
+  /* ---------- ✎ EDITAR UN CAMIÓN ARMADO / 🔀 MOVER UN CLIENTE (08/10, pedido de Marcelo) ----------
+     Caso real: lo de Bergese estaba para mañana con Matías y se mandó hoy con el camión de Ignacio
+     Mahl (el proveedor de cemento; Bergese lo retira ahí y se ahorra un flete). Arrastrar no sirve
+     cuando el camión destino todavía no existe. Cambia día y/o transportista de los pedidos dados,
+     todos juntos en UN mismo camión: el n° de viaje se decide UNA vez (si no, persistPed les daría
+     1, 2, 3… a medida que se guardan y terminarían en camiones distintos). Si en el destino ya hay
+     un camión de ese día y transportista, se suman a él. */
+  function aplicarEdicionViaje(peds, diaTxt, tr){
+    peds=(peds||[]).filter(p=>p && p.estado!=='entregado'); if(!peds.length) return false;
+    diaTxt=String(diaTxt||'').trim(); tr=String(tr||'').trim()||'Sin asignar';
+    const ids={}; peds.forEach(p=>{ ids[p._uid]=1; });
+    const cambia=peds.some(p=>String(p.diaEntrega||'').trim()!==diaTxt || String(p.transporte||'').trim()!==tr);
+    if(!cambia) return false;
+    const hermanos=pedidos.filter(x=>!ids[x._uid] && x.estado!=='entregado'
+      && String(x.diaEntrega||'').trim()===diaTxt && String(x.transporte||'').trim()===tr);
+    const nv=hermanos.length ? (hermanos[0].numeroViaje||1) : 1;
+    peds.forEach(p=>{ p.diaEntrega=diaTxt; p.transporte=tr; p.numeroViaje=nv; sellarYGuardar(p); });
+    return true;
+  }
+  function abrirEditarViaje(peds, trActual){
+    peds=(peds||[]).filter(p=>p && p.estado!=='entregado'); if(!peds.length) return;
+    const f0=fechaDeDia(peds[0].diaEntrega);
+    const iso=f0 ? (f0.getFullYear()+'-'+p2(f0.getMonth()+1)+'-'+p2(f0.getDate())) : '';
+    const tr0=String(trActual||peds[0].transporte||'Sin asignar').trim()||'Sin asignar';
+    const lista=TRANSPORTES.indexOf(tr0)>=0?TRANSPORTES:TRANSPORTES.concat([tr0]);
+    let ov=document.getElementById('pe-evj'); if(ov) ov.remove();
+    ov=document.createElement('div'); ov.id='pe-evj';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px';
+    ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+    const quien = peds.length===1 ? esc(peds[0].cliente||'—') : (peds.length+' clientes: '+esc(peds.map(p=>p.cliente||'—').join(', ')));
+    ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:min(380px,100%);box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui;font-size:14px">'+
+      '<div style="font-weight:800;font-size:15px;margin-bottom:4px">'+(peds.length===1?'🔀 Mover entrega':'✎ Editar camión')+'</div>'+
+      '<div style="font-size:12px;color:#555;margin-bottom:12px">'+quien+'</div>'+
+      '<label style="display:block;font-weight:700;font-size:12px;margin-bottom:3px">Día de entrega</label>'+
+      '<input type="date" id="pe-evj-dia" value="'+iso+'" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;margin-bottom:10px">'+
+      '<label style="display:block;font-weight:700;font-size:12px;margin-bottom:3px">Transportista</label>'+
+      '<select id="pe-evj-tr" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;margin-bottom:12px">'+
+        lista.map(t=>'<option'+(t===tr0?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select>'+
+      '<div style="font-size:11.5px;color:#666;margin-bottom:12px">'+(peds.length===1?'El cliente sale de este camión y pasa al del día y transportista elegidos (si no hay uno, se arma uno nuevo).':'Se cambia en TODOS los clientes del camión y siguen viajando juntos.')+'</div>'+
+      '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="cmp-rowbtn" id="pe-evj-no">Cancelar</button><button class="cmp-rowbtn" id="pe-evj-ok" style="font-weight:800">Guardar</button></div></div>';
+    document.body.appendChild(ov);
+    document.getElementById('pe-evj-no').onclick=()=>ov.remove();
+    document.getElementById('pe-evj-ok').onclick=()=>{
+      const v=String(document.getElementById('pe-evj-dia').value||'');
+      const tr=document.getElementById('pe-evj-tr').value;
+      const dia = v ? (v.slice(8,10)+'/'+v.slice(5,7)+'/'+v.slice(2,4)) : '';
+      if(!dia && !confirm('Sin día de entrega, el pedido deja de aparecer en Viajes armados y vuelve a Entregas a coordinar. ¿Seguir?')) return;
+      ov.remove();
+      if(aplicarEdicionViaje(peds, dia, tr)) render();
+    };
   }
   // ---------- Mover una ENTREGA de un viaje a otro (el arrastre de arriba) ----------
   // Un viaje es día + transportista + n° de camión: mover el pedido es cambiarle esos TRES campos,
