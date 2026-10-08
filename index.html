@@ -8055,7 +8055,13 @@ function buildFilterTable(cfg){
   function saveForm(){
     if(!editing.cliente.trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
-    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
+    // Un renglón con precio NEGATIVO es un DESCUENTO (08/10, caso Wall Stone: reponer 45 LC60 prestadas y
+    // descontarlas). Va como texto libre, SIN código de producto: si llevara el código de la loseta sumaría
+    // kilos, costo y carga al pedido como si fuera mercadería. El total del comprobante no puede quedar negativo.
+    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&num(it.cant)<=0)){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0.'); return; }
+    { const dneg=editing.items.find(it=>num(it.precioUnit)<0 && (String(it.codigo||'').trim() || !String(it.desc||'').trim()));
+      if(dneg){ alert('Un renglón con precio negativo es un DESCUENTO: escribile una descripción (ej. "Bonificación reposición 45 losetas") y que NO tenga código de producto'+(dneg.codigo?' (este tiene '+dneg.codigo+')':'')+'.\n\nSi lleva el código de la loseta, el Tablero lo cuenta como mercadería: suma kilos, costo y carga al pedido.'); return; } }
+    if(editing.items.some(it=>num(it.precioUnit)<0) && calc(editing).total<0){ alert('El total no puede quedar negativo: el descuento es mayor que lo cotizado.'); return; }
     if(!editing._uid) editing._uid=newUid();
     vincularLeadAntes(editing);
     const cb=_onSaved; _onSaved=null;
@@ -11796,7 +11802,13 @@ function buildFilterTable(cfg){
   }
   function saveForm(){ if(!String(editing.cliente||'').trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
-    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
+    // Un renglón con precio NEGATIVO es un DESCUENTO (08/10, caso Wall Stone: reponer 45 LC60 prestadas y
+    // descontarlas). Va como texto libre, SIN código de producto: si llevara el código de la loseta sumaría
+    // kilos, costo y carga al pedido como si fuera mercadería. El total del comprobante no puede quedar negativo.
+    if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&num(it.cant)<=0)){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0.'); return; }
+    { const dneg=editing.items.find(it=>num(it.precioUnit)<0 && (String(it.codigo||'').trim() || !String(it.desc||'').trim()));
+      if(dneg){ alert('Un renglón con precio negativo es un DESCUENTO: escribile una descripción (ej. "Bonificación reposición 45 losetas") y que NO tenga código de producto'+(dneg.codigo?' (este tiene '+dneg.codigo+')':'')+'.\n\nSi lleva el código de la loseta, el Tablero lo cuenta como mercadería: suma kilos, costo y carga al pedido.'); return; } }
+    if(editing.items.some(it=>num(it.precioUnit)<0) && calc(editing).total<0){ alert('El total no puede quedar negativo: el descuento es mayor que lo cotizado.'); return; }
     const cerrarYAvisar=pp=>{ const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(pp); }catch(e){ console.error('presupuesto onSaved:',e); } } };
     if(!editing._uid){ asignarNumeroYGuardar(editing, cerrarYAvisar); return; }
     persist(editing); cerrarYAvisar(); }
@@ -19422,7 +19434,7 @@ function buildFilterTable(cfg){
     const ent=String(v.domicilioEntrega||'').trim();
     pe.direccion = ent || cli.direccion || '';
     pe.ciudad    = ent ? '' : (cli.localidad||'');   // con dirección de entrega propia no se inventa la localidad de la ficha
-    pe.items=(v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
+    pe.items=(v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0 && num(it.precioUnit)>=0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
     if(!pe.items.length) pe.items=[{producto:'',codigo:'',cantidad:1}];
     tab='coord'; render(); openPed(pe);
   };
