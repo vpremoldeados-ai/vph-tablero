@@ -14889,9 +14889,15 @@ function buildFilterTable(cfg){
     const t0=TOPES.reduce((m,t)=> t.ultimaAccion===hoyISO && t.accionPc && t.accionPc===topesPcId() && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0);
     return Math.max(t0, typeof bnUltimoEnvioTs==='function' ? bnUltimoEnvioTs() : 0);   // 01/10: Base Nivel sale del mismo número
   }
+  // 08/10 (Marcelo): minutos entre mensajes PROPIOS de esta PC (la Lenovo firma Marcelo y la Asus firma
+  // Sofía, cada una desde su número). Vacío = el parámetro topesMinutosEntre de siempre.
+  function topesMinutosPc(){
+    try{ const s=String(localStorage.getItem('vph_topes_min_v1')||'').trim(); if(s==='') return null; const n=Number(s); return isFinite(n)&&n>=0 ? Math.round(n) : null; }catch(e){ return null; }
+  }
   function topesEspera(ahoraMs){
     const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
-    const minEntre=Math.max(0, Math.round(P('topesMinutosEntre',15)));
+    const minPc=topesMinutosPc();
+    const minEntre=Math.max(0, minPc!=null ? minPc : Math.round(P('topesMinutosEntre',15)));
     const desde=P('topesHoraDesde',8), hasta=P('topesHoraHasta',19);   // 23/09 (Marcelo): de 8 a 19
     if(!minEntre) return {ms:0, intervalo:0, motivo:'', desde, hasta};
     const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
@@ -15250,7 +15256,9 @@ function buildFilterTable(cfg){
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las empresas de más de 50 empleados (industria, salud, universidades, logística...); cuando no queden, sigue con el resto"><input type="checkbox" id="topes-prioridad-grandes-chk"'+(topesPrioridadGrandesOn()?' checked':'')+'> 🏢 Primero grandes ('+topesPendientesPrioridadGrandes()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="▶ Siguiente agarra primero a las constructoras y desarrollistas; cuando no queden, sigue con el resto de la lista"><input type="checkbox" id="topes-prioridad-chk"'+(topesPrioridadOn()?' checked':'')+'> 🏗️ Primero constructoras ('+topesPendientesPrioridad()+')</label>'+
         '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Con qué nombre se firma el mensaje en ESTA PC. El tope y la espera se cuentan por persona, porque cada una manda desde su número.">✍️ Firmo como '+
-          '<input type="text" id="topes-firma-inp" value="'+esc(firmaPc)+'" placeholder="Tu nombre" style="width:90px;padding:4px 6px;border:1px solid '+(firmaPc?'var(--border)':'#c0392b')+';border-radius:7px;font-size:12px"></label>'
+          '<input type="text" id="topes-firma-inp" value="'+esc(firmaPc)+'" placeholder="Tu nombre" style="width:90px;padding:4px 6px;border:1px solid '+(firmaPc?'var(--border)':'#c0392b')+';border-radius:7px;font-size:12px"></label>'+
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Minutos entre mensajes en ESTA PC (cada PC manda desde su número). Vacío = lo de Parámetros.">⏱ cada '+
+          '<input type="number" min="0" step="1" id="topes-min-pc-inp" value="'+(topesMinutosPc()!=null ? topesMinutosPc() : '')+'" placeholder="'+esc(String(Math.round(Number(window.__param ? window.__param('topesMinutosEntre',15) : 15))))+'" style="width:52px;padding:4px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"> min</label>'
       ))+
       '</div>'+
       (()=>{ const pp=topesEnviadosPorPersona(), ks=Object.keys(pp.total).sort((a,b)=>pp.total[b]-pp.total[a]);
@@ -15306,6 +15314,12 @@ function buildFilterTable(cfg){
     if(btnFin) btnFin.onclick=()=>{ const nom=topesUltimoAbierto; topesUltimoAbierto='';
       if(nom) topesActualizar(nom, row=>{ delete row.abiertoPor; delete row.abiertoPc; delete row.abiertoTs; return row; });   // libera la reserva
       drawTopes(); };
+    const inpMinPc=controles.querySelector('#topes-min-pc-inp');
+    if(inpMinPc) inpMinPc.onchange=()=>{
+      const s=String(inpMinPc.value||'').trim();
+      try{ if(s==='' || !(Number(s)>=0)) localStorage.removeItem('vph_topes_min_v1'); else localStorage.setItem('vph_topes_min_v1', String(Math.round(Number(s)))); }catch(e){}
+      drawTopes();
+    };
     const inpFirma=controles.querySelector('#topes-firma-inp');
     if(inpFirma) inpFirma.onchange=()=>{ try{ localStorage.setItem('vph_topes_firma_v1', String(inpFirma.value||'').trim()); }catch(e){} drawTopes(); };
     const chkAy=controles.querySelector('#topes-ayudante-chk');
