@@ -7836,6 +7836,13 @@ function buildFilterTable(cfg){
         field('Tipo comprobante','','<select id="vf-tipo">'+opt(TIPOS_COMPROB,v.tipoComprobante)+'</select>') +
         '<div class="cmp-field col2" id="vf-asoc-wrap"'+(esNotaCD(v.tipoComprobante)?'':' style="display:none"')+
           '><label>Factura que corrige (la pide ARCA)</label><select id="vf-asoc">'+optAsoc(v)+'</select></div>' +
+        // Qué pasó con la mercadería de una Nota de Crédito (08/10): decide cómo se descuenta del
+        // resultado del mes (ver __resumenMes en Finanzas). Solo para NC: una Nota de Débito suma.
+        '<div class="cmp-field col2" id="vf-ncmotivo-wrap"'+(v.tipoComprobante==='Nota de Crédito'?'':' style="display:none"')+
+          '><label>¿Qué pasó con la mercadería?</label><select id="vf-ncmotivo">'+
+          '<option value="anulacion"'+(v.ncMotivo!=='bonificacion'?' selected':'')+'>Se anula o corrige la factura: no se entregó o volvió (resta venta, kilos y costo)</option>'+
+          '<option value="bonificacion"'+(v.ncMotivo==='bonificacion'?' selected':'')+'>Bonificación o garantía: la mercadería quedó en el cliente (resta solo la venta; el costo queda)</option>'+
+          '</select></div>' +
         field('ARCA','','<select id="vf-arca"><option value="">—</option><option value="Aprobado"'+(v.arca==='Aprobado'?' selected':'')+'>Aprobado</option><option value="Pendiente"'+(v.arca==='Pendiente'?' selected':'')+'>Pendiente</option></select>') +
         field('Emisión','','<input type="date" id="vf-fecha" value="'+v.fecha+'">') +
         field('Vto. de cobro','','<input type="date" id="vf-venc" value="'+v.vencimiento+'">') +
@@ -7865,7 +7872,7 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="vf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="vf-save">Guardar venta</button></div>';
     drawItems();
-    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-doment:domicilioEntrega','vf-domfact:domicilioFacturacion','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-nroint:nroInterno','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
+    ['vf-cli:cliente','vf-cuit:cuit','vf-cond:condIva','vf-cat:categoria','vf-vend:vendedor','vf-doment:domicilioEntrega','vf-domfact:domicilioFacturacion','vf-lista:listaPrecios','vf-tipo:tipoComprobante','vf-asoc:compAsoc','vf-ncmotivo:ncMotivo','vf-arca:arca','vf-fecha:fecha','vf-venc:vencimiento','vf-per:periodo','vf-pv:puntoVenta','vf-nro:nroFactura','vf-nroint:nroInterno','vf-notacli:notaCliente','vf-nota:nota','vf-descg:descGeneral','vf-piva:percepIva','vf-piibb:percepIibb','vf-impint:impInternos','vf-int:intereses'].forEach(pair=>{
       const [id,key]=pair.split(':'); const el=$(id); if(!el)return;
       el.addEventListener('input',()=>{ editing[key]=el.value; if(['vf-descg','vf-piva','vf-piibb','vf-impint','vf-int'].includes(id)) drawTotals(); });
     });
@@ -7879,6 +7886,7 @@ function buildFilterTable(cfg){
       const esNota=esNotaCD($('vf-tipo').value);
       w.style.display = esNota?'':'none';
       if(!esNota && editing){ editing.compAsoc=''; const s=$('vf-asoc'); if(s) s.value=''; }
+      const wm=$('vf-ncmotivo-wrap'); if(wm) wm.style.display = ($('vf-tipo').value==='Nota de Crédito')?'':'none';
     });
     // ---- Qué factura corresponde (06/10): el tipo de comprobante SIGUE a la condición de IVA ----
     // Si el comprobante es una factura (A/B/C) o no está definido, se alinea con la condición: RI → A,
@@ -11016,17 +11024,29 @@ function buildFilterTable(cfg){
     // porque eso mostraría una rentabilidad mejor que la real. "cobertura" dice qué % del neto se pudo costear.
     let netoCon=0, costoVar=0, netoTot=0;
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
-      const t=num(calcV(v).total); vTot+=t; vCant++; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
+      const t=num(calcV(v).total); vTot+=t; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
+      // Una NOTA DE CRÉDITO RESTA sus renglones (08/10). Hasta acá se sumaban como si fueran otra
+      // venta: la NC de 750 losetas a Ranco dejaba octubre con 825 + 750 "vendidas" en neto, kilos y
+      // costo, cuando el total de ventas ya la descontaba. Qué se resta depende de QUÉ PASÓ con la
+      // mercadería (v.ncMotivo, se elige en el formulario de la NC):
+      //  · 'anulacion' (default): se anula o corrige la factura, la mercadería no se entregó o volvió →
+      //    se resta TODO (neto, kilos y costo). Es el caso de la Factura B a JCP rehecha como A.
+      //  · 'bonificacion': garantía o descuento, la mercadería QUEDÓ en el cliente → se resta solo el
+      //    neto. Los kilos salieron del galpón y su costo lo pagó VPH igual, así que siguen contando
+      //    con la venta original (Ranco, 08/10: 825 entregadas, 750 repuestas por una partida
+      //    defectuosa de abril, el cliente paga 75). Sin esto el costo de reponer desaparecía del mes.
+      const esNC = v.tipoComprobante==='Nota de Crédito', sg = esNC?-1:1, bonif = esNC && v.ncMotivo==='bonificacion';
+      if(!esNC) vCant++;   // una NC no es una venta más: no entra en la cantidad ni en el ticket promedio
       const fd=1-num(v.descGeneral)/100, _canal=window.__canalVenta(v);
       (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it);
-        if(w>0){ const _k=w*num(it.cant); kgV+=_k;
+        if(w>0 && !bonif){ const _k=w*num(it.cant)*sg; kgV+=_k;
           if(_canal==='Minorista') kgMin+=_k; else if(_canal==='Mayorista') kgMay+=_k; }
         if(!it.desc && !it.codigo) return;
         const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*fd;   // neto del renglón
         if(!(base>0)) return;
-        netoTot+=base;
+        netoTot+=base*sg;
         const cu=costoItem(it);
-        if(cu>0){ netoCon+=base; costoVar+=num(it.cant)*cu*fd; }
+        if(cu>0){ netoCon+=base*sg; if(!bonif) costoVar+=num(it.cant)*cu*fd*sg; }
       }); });
     // Solo las compras OPERATIVAS (categorías marcadas como costo fijo o costo variable) entran en el
     // resultado del mes. Lo que no pertenece a la operación de la fábrica se suma aparte en
