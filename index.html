@@ -409,6 +409,7 @@
     #rmt-tabla td:last-child{white-space:normal;min-width:106px;max-width:130px}
     #rmt-tabla td:last-child .cmp-rowbtn{margin:2px 3px 2px 0}
   }
+  .pe-anclaje{margin-top:5px;background:#0b3d91;color:#fff;font-size:12px;font-weight:800;letter-spacing:.02em;line-height:1.35;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-pintar{margin-top:5px;background:#000;color:#ffd400;font-size:12px;font-weight:800;letter-spacing:.02em;line-height:1.35;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-despacho{margin-top:5px;background:#eef2ff;color:#312e81;border:1px solid #a5b4fc;font-size:12px;font-weight:600;line-height:1.4;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-pallets{margin-top:4px;border-top:1px dashed var(--border);padding-top:4px}
@@ -17983,6 +17984,27 @@ function buildFilterTable(cfg){
     const detTopes = topes.length ? ' · de '+nf(totTopes)+' tope'+(totTopes!==1?'s':'')+' del pedido ('+topes.map(r=>esc(r.codigo||r.nombre)+' '+nf(r.cant)).join(', ')+')' : '';
     return '<div class="pe-pintar">🎨 PINTAR '+nf(pint)+' tope'+(pint!==1?'s':'')+' amarillo'+detTopes+'</div>';
   }
+  // ⚓ ANCLAJES (08/10, pedido de Marcelo): "igual que con la pintura", Gustavo tiene que ver qué topes
+  // de estacionamiento van con anclajes. El par de anclaje (ANC38) es un Reventa que viaja suelto: sin
+  // aviso nadie sabe que hay que mandarlo con los topes. Va en cargaDetalle (Entregas a coordinar Y
+  // Viajes armados), en AZUL con letra blanca para que no se confunda con el 🎨 negro/amarillo.
+  function anclajeHtml(pe){
+    let par=0;
+    (pe.items||[]).filter(Boolean).forEach(it=>{
+      if(!it.producto && !it.codigo) return;
+      const pr=resolverProd(it.producto,it.codigo);
+      const cod=String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase();
+      const esAnc = cod==='ANC38' || /anclaj/i.test(String((pr&&pr.nombre)||it.producto||''));
+      const cant=Math.round(num(it.cantidad));
+      if(esAnc && cant>0) par+=cant;
+    });
+    if(!par) return '';
+    const topes=cargaRows(pe).filter(r=>/tope/i.test(r.nombre||'') || /^TE[CT]d/i.test(r.codigo||''));
+    const totTopes=topes.reduce((a,r)=>a+r.cant,0);
+    const detTopes = topes.length ? ' · topes del pedido: '+nf(totTopes)+' ('+topes.map(r=>esc(r.codigo||r.nombre)+' '+nf(r.cant)).join(', ')+')'
+      : ' · <span style="color:#ffd400">el pedido no trae topes: revisar</span>';
+    return '<div class="pe-anclaje">⚓ ANCLAJES: '+nf(par)+' par'+(par!==1?'es':'')+' de anclaje para los topes'+detTopes+'</div>';
+  }
   // 🔁 DESPACHO EN OTRO TRANSPORTE (07/10, pedido de Marcelo): Matías Sánchez lleva el pedido desde la
   // fábrica hasta el transporte de carga (Brío, Biletta…) que hace la entrega final, y ese transporte pide
   // quién paga el flete, con quién coordinar y el valor declarado. `pe.transporte` sigue siendo quien
@@ -18008,7 +18030,7 @@ function buildFilterTable(cfg){
     return pe;
   }
   function cargaDetalle(pe){
-    const pint=despachoHtml(pe)+pintadoHtml(pe);
+    const pint=despachoHtml(pe)+pintadoHtml(pe)+anclajeHtml(pe);
     const rows=cargaRows(pe); if(!rows.length) return pint;
     // Las tandas que van en un pallet mixto se marcan con 🧩 en la línea del producto, y cada grupo
     // tiene su propia línea con la composición — es lo que Gustavo necesita para armarlo.
