@@ -11276,7 +11276,8 @@ function buildFilterTable(cfg){
   function calc(p){ if(p&&p.esComparativo===true) return calcComparativo(p); if(window.__ventaCalc){ const k=window.__ventaCalc(p); return {neto:k.neto,iva:k.iva,total:k.total}; }
     let neto=0,iva=0; const f=1-num(p.descGeneral)/100; (p.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; }); neto*=f; iva*=f; return {neto:round2(neto),iva:round2(iva),total:round2(neto+iva)}; }
   function venceISO(p){ const f=parseF(p.fecha); if(!f) return p.fecha; f.setDate(f.getDate()+ (num(p.validezDias)||15)); return f.getFullYear()+'-'+p2(f.getMonth()+1)+'-'+p2(f.getDate()); }
-  function estadoEf(p){ const e=p.estado||'borrador'; if(e==='convertido'||e==='aceptado'||e==='rechazado') return e; const vd=parseF(venceISO(p)); if(vd && vd<HOY) return 'vencido'; return e; }
+  function estadoEf(p){ const e=p.estado||'borrador'; if(e==='convertido'||e==='aceptado'||e==='rechazado') return e;
+    if(p.reemplazadoPor) return 'reemplazado';   /* 🔄 Actualizar precios: ya hay uno nuevo con precios de hoy */ const vd=parseF(venceISO(p)); if(vd && vd<HOY) return 'vencido'; return e; }
   // ---------- ⏳ Presupuestos por vencer (29/09, plan de ventas de Marcelo) ----------
   // El presupuesto dice 'válido hasta el X' pero al pasar X no ocurría nada. Urgencia HONESTA: un día o dos antes
   // se le avisa a Sofía para que le escriba al cliente ('vence el jueves, después reviso precios'). Solo los
@@ -11286,7 +11287,7 @@ function buildFilterTable(cfg){
   function diasParaVencer(p){ const vd=parseF(venceISO(p)); return vd ? Math.round((vd.getTime()-HOY.getTime())/86400000) : null; }
   function porVencer(lista){
     const n=diasAvisoVence(); if(!n) return [];
-    return (lista||[]).filter(p=>(p.estado||'borrador')==='enviado').map(p=>({ p, dias:diasParaVencer(p) }))
+    return (lista||[]).filter(p=>(p.estado||'borrador')==='enviado' && !p.reemplazadoPor).map(p=>({ p, dias:diasParaVencer(p) }))
       .filter(x=>x.dias!==null && x.dias>=0 && x.dias<=n).sort((a,b)=>(a.dias-b.dias)||(calc(b.p).total-calc(a.p).total));
   }
   const cuandoVence=d=> d===0?'hoy':(d===1?'mañana':'en '+d+' días');
@@ -11422,8 +11423,8 @@ function buildFilterTable(cfg){
     $('pre-filtros').innerHTML = defs.map(([v,l,n])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+n+')</button>').join('');
     $('pre-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
   }
-  const ESTADO_LBL={borrador:'Borrador',enviado:'Enviado',aceptado:'Aceptado',rechazado:'Rechazado',vencido:'Vencido',convertido:'Convertido'};
-  const badgeEstado=e=>{ const c={borrador:'#95a5b8',enviado:'#2f6fb2',aceptado:'#1e9e5a',rechazado:'#d64541',vencido:'#c98a06',convertido:'#8a5cc0'}[e]||'#95a5b8'; return '<span class="badge" style="background:'+c+'22;color:'+c+';border:1px solid '+c+'55">'+(ESTADO_LBL[e]||e)+'</span>'; };
+  const ESTADO_LBL={borrador:'Borrador',enviado:'Enviado',aceptado:'Aceptado',rechazado:'Rechazado',vencido:'Vencido',convertido:'Convertido',reemplazado:'Reemplazado'};
+  const badgeEstado=e=>{ const c={borrador:'#95a5b8',enviado:'#2f6fb2',aceptado:'#1e9e5a',rechazado:'#d64541',vencido:'#c98a06',convertido:'#8a5cc0',reemplazado:'#64748b'}[e]||'#95a5b8'; return '<span class="badge" style="background:'+c+'22;color:'+c+';border:1px solid '+c+'55">'+(ESTADO_LBL[e]||e)+'</span>'; };
   function renderTabla(rows){
     const th=(col,label,cls)=>'<th class="'+(cls||'')+'" data-sort="'+col+'">'+label+(filtro.sortCol===col?' <span class="arrow">'+(filtro.sortDir<0?'▼':'▲')+'</span>':'')+'</th>';
     let html='<tr><th>Estado</th>'+th('numero','N°')+th('fecha','Fecha')+'<th>Vence</th>'+th('cliente','Cliente')+th('total','Total','num')+'<th></th></tr>';
@@ -11431,10 +11432,11 @@ function buildFilterTable(cfg){
     rows.forEach(({p,k,e})=>{
       const vd=parseF(venceISO(p)); const venceTxt=fmtFecha(venceISO(p))+(e==='vencido'?' <span style="color:var(--red)">(vencido)</span>':'');
       html+='<tr><td>'+badgeEstado(e)+'</td><td style="font-variant-numeric:tabular-nums"><b>'+esc(p.numero||'—')+'</b>'+(p.esComparativo===true?'<div style="font-size:10.5px;color:var(--muted)" title="Comparativo de '+(p.items||[]).length+' modelos: el total es la opción más barata">📋 Comparativo · '+(p.items||[]).length+' modelos</div>':'')+'</td><td>'+fmtFecha(p.fecha)+'</td><td>'+venceTxt+'</td>'+
-        '<td><b>'+esc(p.cliente||'(sin nombre)')+'</b></td><td class="num"><b>'+money(k.total)+'</b></td>'+
+        '<td><b>'+esc(p.cliente||'(sin nombre)')+'</b>'+(p.reemplazadoPor?'<div style="font-size:10.5px;color:var(--muted)">→ reemplazado por '+esc(p.reemplazadoPor)+'</div>':'')+(p.reemplazaA?'<div style="font-size:10.5px;color:var(--muted)">🔄 actualiza el '+esc(p.reemplazaA)+'</div>':'')+'</td><td class="num"><b>'+money(k.total)+'</b></td>'+
         '<td style="white-space:nowrap">'+
           '<button class="cmp-rowbtn" data-act="print" data-id="'+p._uid+'" title="Imprimir PDF">🖨️</button>'+
           '<button class="cmp-rowbtn" data-act="wa" data-id="'+p._uid+'" title="Enviar por WhatsApp">📲</button>'+
+          (e!=='convertido'&&e!=='reemplazado'?'<button class="cmp-rowbtn" data-act="actualizar" data-id="'+p._uid+'" title="Crear un presupuesto NUEVO con los precios y el flete de hoy (este queda como reemplazado)">🔄 Actualizar precios</button>':'')+
           (e!=='convertido'&&p.esComparativo!==true?'<button class="cmp-rowbtn" data-act="venta" data-id="'+p._uid+'" title="Convertir en venta">→ Venta</button>':'')+
           '<select class="cmp-rowbtn" data-estado="'+p._uid+'" title="Cambiar estado">'+ESTADOS.filter(x=>x.k!=='convertido'||p.estado==='convertido').map(x=>'<option value="'+x.k+'"'+((p.estado||'borrador')===x.k?' selected':'')+'>'+x.l+'</option>').join('')+'</select>'+
           (p.esComparativo!==true?'<button class="cmp-rowbtn" data-act="edit" data-id="'+p._uid+'">Editar</button>':'')+
@@ -11448,12 +11450,66 @@ function buildFilterTable(cfg){
       // Un comparativo no se edita ni se pasa a venta: tiene varios modelos alternativos y el formulario
       // normal los sumaría como si se compraran todos. Se arma el presupuesto del modelo elegido.
       if(p.esComparativo===true && (a==='edit'||a==='venta')){ alert('El '+(p.numero||'presupuesto')+' es un comparativo de modelos: no se edita ni se pasa a venta.\n\nCuando el cliente elija el modelo, armá el presupuesto (o la venta) de ese modelo desde el lead.'); return; }
+      if(a==='actualizar'){ actualizarPresupuesto(p); return; }
       if(a==='edit') openForm(p);
       else if(a==='del'){ if(confirm('¿Eliminar el presupuesto '+(p.numero||'')+' de '+(p.cliente||'—')+'?')) remove(p._uid); }
       else if(a==='print'){ if(window.__imprimir&&window.__imprimir.presupuesto) window.__imprimir.presupuesto(paraDoc(p)); else alert('Módulo de Documentos no disponible.'); }
       else if(a==='wa') enviarWa(p);
       else if(a==='venta'){ if(window.__ventaDesdePresupuesto){ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes('Ventas')); if(nav)nav.click(); window.__ventaDesdePresupuesto(p, ()=>{ const cur=DB.presupuestos.find(x=>x._uid===p._uid)||p; if(cur.estado!=='convertido'){ cur.estado='convertido'; persist(cur); } }); } else alert('Módulo de Ventas no disponible.'); } });
   }
+  // ---------- 🔄 Actualizar precios (08/10, pedido de Marcelo: caso José Villarreal) ----------
+  // Un presupuesto del mes pasado se REPRESUPUESTA sin volver a cargarlo: mismo cliente, mismos
+  // productos y cantidades, mismos descuentos y lista — con los precios del catálogo de HOY, el
+  // flete de la zona a la tarifa de hoy, fecha de hoy y validez nueva. Sale con NÚMERO NUEVO
+  // (es otro presupuesto, el cliente tiene el viejo en la mano) y el viejo queda "Reemplazado":
+  // deja de contar como abierto (pipeline, alertas, por vencer) y apunta al nuevo.
+  // Pura: no escribe nada. Devuelve {nuevo, sinPrecio:[desc]} — los renglones que no matchean el
+  // catálogo (texto libre) conservan su precio y se avisan, nunca se ponen en $0.
+  function presupuestoActualizado(p){
+    const n=JSON.parse(JSON.stringify(p));
+    ['_uid','numero','reemplazadoPor','reemplazadoPorUid','reemplazadoFecha','enviarOmitido','fechaConvertido','ventaUid'].forEach(k=>delete n[k]);
+    n.estado='borrador'; n.fecha=hoyISO; n.validezDias=num(window.__param('validezPresup',15))||15;
+    n.listaPrecios=normLista(n.listaPrecios); n.reemplazaA=p.numero||''; n.reemplazaUid=p._uid||'';
+    const sinPrecio=[];
+    const base=(n.items||[]).filter(it=>n.esComparativo===true || !esItemFlete(it));
+    base.forEach(it=>{ if(!(it.desc||it.codigo)) return;
+      const pr=matchProducto(it.codigo)||matchProducto(it.desc);
+      if(pr) aplicarProducto(it,pr,n.listaPrecios); else sinPrecio.push(it.desc||it.codigo); });
+    if(n.esComparativo===true){
+      const perfil=n.finPerfil || (((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.l===n.finPerfilLabel))||{}).k || '';
+      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[]));
+      n.zonaTexto=zonaLabel(n.zona); n.totalRef=calcComparativo(n).total;
+    } else if(n.zona){ n.items=base; aplicarFlete(n); }   // el flete se vuelve a cotizar con la tarifa de hoy
+    return {nuevo:n, sinPrecio};
+  }
+  // El viejo se marca con SOLO estos campos (merge): no pisa nada que otro haya tocado.
+  function marcarReemplazado(viejo, nuevo){
+    const campos={reemplazadoPor:nuevo.numero||'', reemplazadoPorUid:nuevo._uid||'', reemplazadoFecha:hoyISO};
+    if(window.__usaNube){ const c=fb(); if(c&&c.db){ const cur=DB.presupuestos.find(x=>x._uid===viejo._uid); if(cur) Object.assign(cur,campos);
+        c.FS.setDoc(c.FS.doc(c.db,COL,viejo._uid),campos,{merge:true}).catch(e=>alert('El presupuesto nuevo se guardó, pero no se pudo marcar el '+(viejo.numero||'viejo')+' como reemplazado: '+e.message)); } }
+    else { const cur=DB.presupuestos.find(x=>x._uid===viejo._uid); if(cur){ Object.assign(cur,campos); saveLocal(); render(); } }
+  }
+  function actualizarPresupuesto(p){
+    const {nuevo, sinPrecio}=presupuestoActualizado(p);
+    const antes=calc(p).total, ahora=calc(nuevo).total, dif=ahora-antes, pct=antes>0?dif/antes*100:0;
+    const resumen='Presupuesto '+(p.numero||'')+' de '+(p.cliente||'—')+' ('+fmtFecha(p.fecha)+'):\n\n'+
+      'Total anterior: '+money(antes)+'\nCon precios de hoy: '+money(ahora)+'  ('+(dif>=0?'+':'')+pct.toFixed(1).replace('.',',')+'%)\n\n'+
+      (sinPrecio.length?'⚠️ Sin precio en el catálogo (quedan con el precio anterior, revisalos): '+sinPrecio.join(', ')+'\n\n':'')+
+      'Se crea un presupuesto NUEVO con número nuevo y fecha de hoy. El '+(p.numero||'anterior')+' queda como "Reemplazado".';
+    if(p.esComparativo===true){
+      if(!confirm(resumen+'\n\n¿Generarlo?')) return;
+      asignarNumeroYGuardar(nuevo, pp=>{ marcarReemplazado(p, pp);
+        if(window.__imprimir&&window.__imprimir.presupuesto){ try{ window.__imprimir.presupuesto(paraDoc(pp)); }catch(e){ alert('Error al generar el PDF: '+e.message); } } });
+      return;
+    }
+    // Presupuesto normal: se abre el formulario ya actualizado para revisarlo antes de guardar.
+    // El viejo se marca recién si el nuevo se GUARDA (patrón onSaved).
+    if(!confirm(resumen+'\n\nSe abre el formulario para revisarlo: el cambio se hace recién al Guardar.')) return;
+    openForm(nuevo);
+    _onSaved=pp=>{ if(pp&&pp.numero) marcarReemplazado(p, pp); };
+  }
+  window.__presupuestoActualizado = presupuestoActualizado;   // para los tests
+
   // objeto compatible con el generador de PDF (que espera forma de venta)
   function paraDoc(p){ return Object.assign({}, p, {tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISO(p)}); }
   function enviarWa(p){ const kk=calc(p);
@@ -11727,7 +11783,7 @@ function buildFilterTable(cfg){
   function saveForm(){ if(!String(editing.cliente||'').trim()){ alert('Ingresá el cliente.'); return; }
     if(!editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
     if(editing.items.some(it=>(it.desc||num(it.precioUnit))&&(num(it.cant)<=0||num(it.precioUnit)<0))){ alert('Revisá los ítems: la cantidad tiene que ser mayor a 0 y el precio no puede ser negativo.'); return; }
-    const cerrarYAvisar=()=>{ const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(); }catch(e){ console.error('presupuesto onSaved:',e); } } };
+    const cerrarYAvisar=pp=>{ const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(pp); }catch(e){ console.error('presupuesto onSaved:',e); } } };
     if(!editing._uid){ asignarNumeroYGuardar(editing, cerrarYAvisar); return; }
     persist(editing); cerrarYAvisar(); }
 
@@ -11874,6 +11930,30 @@ function buildFilterTable(cfg){
     if(!ok) $('pre-comp-fin').value='';
   }
   function closeComparativoModal(){ $('pre-comp-modal').classList.remove('open'); }
+  // Flete y financiación de UN modelo del comparativo. La usan generarComparativo y
+  // "🔄 Actualizar precios" (un solo cálculo: el comparativo actualizado no puede salir distinto
+  // del que se habría generado hoy de cero).
+  function fleteYFinModelo(it, zona, finPerfil, finPlanes){
+    const f = calcFlete([it], zona);
+    it.fletePallets = f.pallets;
+    it.fleteCosto = f.costo;
+    // Financiado: mismo criterio que escaleraDoc (el flete se financia como un renglón más, VIUMI
+    // retiene sobre el TOTAL facturado) — acá se financia directo el TOTAL contado del modelo
+    // (mercadería + flete, los dos ya con IVA) porque solo se muestra el total por plan, no un
+    // precio unitario que tenga que multiplicar.
+    if(finPerfil){
+      const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
+      const contado = num(it.precioUnit)*(1+al/100)*num(it.cant) + num(it.fleteCosto);
+      // __precioFinanciado cae al MISMO contado (sin recargo) si el perfil no tiene esa cantidad
+      // de cuotas cargada — un plan real nunca "no tiene interés"; mostrar ese fallback como si
+      // fuera un precio financiado confundía (ej. "MiPyME" sin tasa a 12 cuotas salía casi igual
+      // al contado). Se chequea que el plan EXISTA de verdad antes de calcular; si no, queda null
+      // y el PDF lo imprime como "—".
+      const planesReales = (window.__planesFin?window.__planesFin(finPerfil):[]).map(p=>p.cuotas);
+      it.fin = {};
+      (finPlanes||[]).forEach(c=>{ it.fin[c] = planesReales.includes(c) ? Math.round(window.__precioFinanciado(contado, c, finPerfil)) : null; });
+    } else delete it.fin;
+  }
   function generarComparativo(){
     const m2 = num($('pre-comp-m2').value); if(m2<=0){ alert('Ingresá m² positivos.'); return; }
     const zona = $('pre-comp-zona').value; if(!zona){ alert('Elegí una zona de flete.'); return; }
@@ -11904,25 +11984,7 @@ function buildFilterTable(cfg){
       // Cada modelo es una OPCIÓN INDEPENDIENTE (el cliente elige UNA, no las 4 juntas), así que el
       // flete de cada renglón se calcula SOLO — nunca consolidado entre modelos distintos como haría
       // un presupuesto normal (calcFlete junta pallets de varios ítems porque ahí SÍ viajan juntos).
-      const f = calcFlete([it], zona);
-      it.fletePallets = f.pallets;
-      it.fleteCosto = f.costo;
-      // Financiado: mismo criterio que escaleraDoc (el flete se financia como un renglón más, VIUMI
-      // retiene sobre el TOTAL facturado) — acá se financia directo el TOTAL contado del modelo
-      // (mercadería + flete, los dos ya con IVA) porque solo se muestra el total por plan, no un
-      // precio unitario que tenga que multiplicar.
-      if(finPerfil){
-        const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
-        const contado = num(it.precioUnit)*(1+al/100)*num(it.cant) + num(it.fleteCosto);
-        // __precioFinanciado cae al MISMO contado (sin recargo) si el perfil no tiene esa cantidad
-        // de cuotas cargada — un plan real nunca "no tiene interés"; mostrar ese fallback como si
-        // fuera un precio financiado confundía (ej. "MiPyME" sin tasa a 12 cuotas salía casi igual
-        // al contado). Se chequea que el plan EXISTA de verdad antes de calcular; si no, queda null
-        // y el PDF lo imprime como "—".
-        const planesReales = (window.__planesFin?window.__planesFin(finPerfil):[]).map(p=>p.cuotas);
-        it.fin = {};
-        finPlanes.forEach(c=>{ it.fin[c] = planesReales.includes(c) ? Math.round(window.__precioFinanciado(contado, c, finPerfil)) : null; });
-      }
+      fleteYFinModelo(it, zona, finPerfil, finPlanes);
       return it;
     }).filter(Boolean);
     if(items.length===0) return;
@@ -11944,6 +12006,7 @@ function buildFilterTable(cfg){
       palletsFlete: 0,
       items: items,
       finPlanes: finPlanes,
+      finPerfil: finPerfil,
       finPerfilLabel: finPerfil ? ((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.k===finPerfil)||{}).l||finPerfil : '',
       descGeneral: 0,
       notaCliente: '** Opciones: elegí la que mejor se adapta a tu proyecto. Todos incluyen flete. **',
@@ -19444,7 +19507,7 @@ function buildFilterTable(cfg){
     // 1) Presupuestos en borrador → enviar al cliente (mensaje + PDF). Vencido = no se ofrece: mismo
     // criterio que la alerta de la Vista Diaria (estadoEf). Sin este filtro, un presupuesto de hace
     // semanas —o ya vendido a mano sin pasar por "→ Venta"— seguía pidiendo "enviarlo" para siempre.
-    presupuestos.filter(p=>(p.estado||'borrador')==='borrador' && venceISOp(p)>=hoyISO && !th(p).enviarOmitido).forEach(p=>{ const k=calcV(p);
+    presupuestos.filter(p=>(p.estado||'borrador')==='borrador' && !p.reemplazadoPor && venceISOp(p)>=hoyISO && !th(p).enviarOmitido).forEach(p=>{ const k=calcV(p);
       T.push({ ico:'📝', titulo:'Enviar presupuesto '+(p.numero||'')+' a '+(p.cliente||'—'), detalle:money(k.total)+' · válido hasta '+venceP(p),
         prim:{l:'▶ Enviar', run(){ waModal({titulo:'Presupuesto → '+(p.cliente||''), telefono:telDe(p.cliente,p.cuit), adjunto:'Presupuesto '+(p.numero||'')+'.pdf', texto:'Hola '+(primerNombre(p.cliente)||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(k.total)+', válido hasta el '+venceP(p)+'. Cualquier duda me decís 😊', alConfirmar(){ setCampos('vph_presupuestos',p,{estado:'enviado'}); }}); }},
         doc:{l:'🧾 PDF', run(){ if(window.__imprimir) window.__imprimir.presupuesto({...p, tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISOp(p)}); }},
