@@ -18781,7 +18781,13 @@ function buildFilterTable(cfg){
   window.__remitoPedidoObj = function(pe, fecha){
     const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
     const cli=cs.find(c=>norm(c.nombre)===norm(pe.cliente))||{};   // norm(): mismo criterio que snapCliente, tolera tildes y espacios de más
-    const dom=dirPed(pe) || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
+    // ⚠️ El pedido copia la dirección de la venta AL CREARSE: si después se carga o corrige en la venta
+    // (pasó 08/10: la cargaron en la venta con el pedido ya hecho), la copia queda vieja y el remito
+    // salía sin ella. La dirección de entrega de la venta VIVA manda; la copia del pedido es el respaldo
+    // (la sesión de Gustavo no lee vph_ventas: ahí sigue valiendo lo que trae el pedido).
+    const vVenta=(pe.ventaUid && typeof window!=='undefined' && window.__ventasTodas)?window.__ventasTodas().find(x=>x._uid===pe.ventaUid):null;
+    const domVenta=vVenta?String(vVenta.domicilioEntrega||'').trim():'';
+    const dom=domVenta || dirPed(pe) || [cli.direccion, cli.localidad].filter(Boolean).join(' - ') || '';
     const rows=cargaRows(pe);
     // El mismo producto puede venir en DOS renglones: cada renglón se empareja con SU fila (misma
     // clave Y misma aparición `j`), no con la primera que matchee — si no, el segundo ULC60 salía en
