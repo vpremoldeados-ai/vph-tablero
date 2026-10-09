@@ -1592,6 +1592,12 @@
           <div id="pre-comp-modelos" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:6px 0"></div>
         </div>
         <div class="cmp-field">
+          <label>Adicionales (se suman a TODAS las opciones)</label>
+          <div id="pre-comp-adic"></div>
+          <button type="button" class="cmp-btn" id="pre-comp-adic-add" style="margin-top:4px">＋ Agregar adicional</button>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">Ej.: cordón de confinamiento o listón para todo el paño. El cordón y el listón se cargan en metros lineales y se pasan solos a unidades.</div>
+        </div>
+        <div class="cmp-field">
           <label>Cliente (opcional)</label>
           <input type="text" id="pre-comp-cliente" placeholder="Nombre del cliente">
         </div>
@@ -11312,9 +11318,14 @@ function buildFilterTable(cfg){
   // Comparativo de modelos: cada renglón es una OPCIÓN (el cliente elige UNA), con su flete propio
   // (it.fleteCosto). Sumar los renglones daría el total de TODAS las opciones juntas, que nadie va a
   // comprar: el monto que representa al comparativo (listado, CRM, alertas) es la opción MÁS BARATA.
-  function calcComparativo(p){ let best=null;
+  // Los ADICIONALES (09/10, cordón de Freixas) se suman a TODAS las opciones: mismo subtotal en cada
+  // modelo, y su peso/pallets ya van dentro del flete de cada uno (fleteYFinModelo).
+  function adicComparativo(p){ let total=0, iva=0;
+    (p.adicionales||[]).forEach(a=>{ const b=num(a.cant)*num(a.precioUnit)*(1-num(a.descPct)/100); const al=(a.iva==='exento'||a.iva==='nogravado')?0:num(a.iva); total+=b*(1+al/100); iva+=b*al/100; });
+    return {total, iva}; }
+  function calcComparativo(p){ let best=null; const ad=adicComparativo(p);
     (p.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
-      const fl=num(it.fleteCosto), total=b*(1+al/100)+fl, iva=b*al/100+(al>0?fl-fl/1.21:0);
+      const fl=num(it.fleteCosto), total=b*(1+al/100)+ad.total+fl, iva=b*al/100+ad.iva+(al>0?fl-fl/1.21:0);
       if(!best||total<best.total) best={neto:round2(total-iva),iva:round2(iva),total:round2(total)}; });
     return best||{neto:0,iva:0,total:0}; }
   function calc(p){ if(p&&p.esComparativo===true) return calcComparativo(p); if(window.__ventaCalc){ const k=window.__ventaCalc(p); return {neto:k.neto,iva:k.iva,total:k.total}; }
@@ -11521,7 +11532,8 @@ function buildFilterTable(cfg){
       if(pr) aplicarProducto(it,pr,n.listaPrecios); else sinPrecio.push(it.desc||it.codigo); });
     if(n.esComparativo===true){
       const perfil=n.finPerfil || (((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.l===n.finPerfilLabel))||{}).k || '';
-      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[]));
+      (n.adicionales||[]).forEach(a=>{ const pr=matchProducto(a.codigo)||matchProducto(a.desc); if(pr){ const d=a.desc; aplicarProducto(a,pr,n.listaPrecios); a.desc=d; } else sinPrecio.push(a.desc||a.codigo); });
+      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[], n.adicionales||[]));
       n.zonaTexto=zonaLabel(n.zona); n.totalRef=calcComparativo(n).total;
     } else if(n.zona){ n.items=base; aplicarFlete(n); }   // el flete se vuelve a cotizar con la tarifa de hoy
     return {nuevo:n, sinPrecio};
@@ -11967,6 +11979,7 @@ function buildFilterTable(cfg){
     $('pre-comp-zona').value=d.zona||'capital';
     $('pre-comp-fin').innerHTML=finOpts('');
     sincFinComparativo();
+    compAdic=[]; drawCompAdic();
     $('pre-comp-modal').classList.add('open');
   }
   window.__abrirComparativo = openComparativoModal;
@@ -11980,11 +11993,48 @@ function buildFilterTable(cfg){
     if(!ok) $('pre-comp-fin').value='';
   }
   function closeComparativoModal(){ $('pre-comp-modal').classList.remove('open'); }
+  // ---- Adicionales del comparativo (09/10, pedido de Marcelo: 36 ml de cordón para Freixas) ----
+  // Unidades por METRO LINEAL de los productos que se venden por largo: cordón de 40 cm (2,5/m, dato de
+  // Marcelo) y listón de 60 cm. Se redondea hacia arriba: media pieza no se vende.
+  const UD_POR_ML = { UCC10: 2.5, UL60: 1/0.6 };
+  const udPorMl = cod => UD_POR_ML[String(cod||'').toUpperCase()]||0;
+  let compAdic=[];   // [{codigo, ml, cant}]
+  function drawCompAdic(){
+    const cont=$('pre-comp-adic'); if(!cont) return;
+    const prods=catProductos();
+    cont.innerHTML = compAdic.map((a,i)=>{ const f=udPorMl(a.codigo);
+      return '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px">'+
+        '<select data-adic-prod="'+i+'" style="flex:1 1 180px;min-width:0"><option value="">— Elegí el producto —</option>'+prods.map(p=>'<option value="'+esc(p.codigo||'')+'"'+(String(p.codigo||'')===String(a.codigo||'')?' selected':'')+'>'+esc(p.nombre||p.codigo)+'</option>').join('')+'</select>'+
+        (f?'<input type="number" min="0" step="0.5" data-adic-ml="'+i+'" value="'+(a.ml||'')+'" placeholder="metros lin." style="width:96px" title="Metros lineales: se pasan a unidades ('+String(+f.toFixed(3)).replace('.',',')+' por metro)">':'')+
+        '<input type="number" min="0" step="1" data-adic-cant="'+i+'" value="'+(a.cant||'')+'" placeholder="unidades" style="width:86px">'+
+        '<button type="button" class="cmp-rowbtn" data-adic-del="'+i+'" title="Quitar">✕</button></div>'; }).join('');
+    cont.querySelectorAll('[data-adic-prod]').forEach(s=>s.onchange=()=>{ const a=compAdic[+s.dataset.adicProd]; a.codigo=s.value; const f=udPorMl(a.codigo); if(f&&num(a.ml)>0) a.cant=Math.ceil(num(a.ml)*f-1e-9); drawCompAdic(); });
+    cont.querySelectorAll('[data-adic-ml]').forEach(inp=>inp.oninput=()=>{ const i=+inp.dataset.adicMl, a=compAdic[i]; a.ml=num(inp.value); a.cant=a.ml>0?Math.ceil(a.ml*udPorMl(a.codigo)-1e-9):''; const c=cont.querySelector('[data-adic-cant="'+i+'"]'); if(c) c.value=a.cant; });
+    cont.querySelectorAll('[data-adic-cant]').forEach(inp=>inp.oninput=()=>{ const a=compAdic[+inp.dataset.adicCant]; a.cant=num(inp.value); a.ml=''; const m=cont.querySelector('[data-adic-ml="'+inp.dataset.adicCant+'"]'); if(m) m.value=''; });
+    cont.querySelectorAll('[data-adic-del]').forEach(b=>b.onclick=()=>{ compAdic.splice(+b.dataset.adicDel,1); drawCompAdic(); });
+  }
+  // Renglones listos (precio de la lista elegida). null = hay un error y ya se avisó.
+  function armarAdicionales(lista){
+    const prods=catProductos(), out=[];
+    for(const a of compAdic){
+      if(!a.codigo && !num(a.cant)) continue;
+      const prod=prods.find(p=>String(p.codigo||'')===String(a.codigo||''));
+      if(!prod){ alert('Elegí el producto de cada adicional (o quitalo con ✕).'); return null; }
+      if(!(num(a.cant)>0)){ alert('Cargá la cantidad (o los metros lineales) de '+(prod.nombre||prod.codigo)+'.'); return null; }
+      const it={ desc:(prod.nombre||prod.codigo)+(num(a.ml)>0?' ('+String(num(a.ml)).replace('.',',')+' m lineales)':''), codigo:prod.codigo||'', cant:Math.round(num(a.cant)), precioUnit:0, descPct:0, iva:'21', ml:num(a.ml)||0 };
+      aplicarProducto(it, prod, lista);
+      out.push(it);
+    }
+    return out;
+  }
+  window.__compUdPorMl = udPorMl;   // para los tests
   // Flete y financiación de UN modelo del comparativo. La usan generarComparativo y
   // "🔄 Actualizar precios" (un solo cálculo: el comparativo actualizado no puede salir distinto
   // del que se habría generado hoy de cero).
-  function fleteYFinModelo(it, zona, finPerfil, finPlanes){
-    const f = calcFlete([it], zona);
+  function fleteYFinModelo(it, zona, finPerfil, finPlanes, adic){
+    adic = adic||[];
+    // Los adicionales viajan JUNTO con el modelo elegido: el flete de cada opción los incluye.
+    const f = calcFlete([it].concat(adic), zona);
     it.fletePallets = f.pallets;
     it.fleteCosto = f.costo;
     // Financiado: mismo criterio que escaleraDoc (el flete se financia como un renglón más, VIUMI
@@ -11993,7 +12043,7 @@ function buildFilterTable(cfg){
     // precio unitario que tenga que multiplicar.
     if(finPerfil){
       const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
-      const contado = num(it.precioUnit)*(1+al/100)*num(it.cant) + num(it.fleteCosto);
+      const contado = num(it.precioUnit)*(1+al/100)*num(it.cant) + adicComparativo({adicionales:adic}).total + num(it.fleteCosto);
       // __precioFinanciado cae al MISMO contado (sin recargo) si el perfil no tiene esa cantidad
       // de cuotas cargada — un plan real nunca "no tiene interés"; mostrar ese fallback como si
       // fuera un precio financiado confundía (ej. "MiPyME" sin tasa a 12 cuotas salía casi igual
@@ -12022,6 +12072,7 @@ function buildFilterTable(cfg){
     const lista = normLista($('pre-comp-lista').value) || compListaDefecto(categoria);
     // Sin facturar → Cond. IVA X (mismo criterio que armarDesdeLead); si no, la del lead.
     const condIva = esSinFacturarPre(lista, categoria) ? 'X' : (compCtx.condIva||'A');
+    const adic = armarAdicionales(lista); if(adic===null) return;
     const items = modelos.map(idx=>{
       const m = MODELOS_COMP[idx];
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
@@ -12034,7 +12085,7 @@ function buildFilterTable(cfg){
       // Cada modelo es una OPCIÓN INDEPENDIENTE (el cliente elige UNA, no las 4 juntas), así que el
       // flete de cada renglón se calcula SOLO — nunca consolidado entre modelos distintos como haría
       // un presupuesto normal (calcFlete junta pallets de varios ítems porque ahí SÍ viajan juntos).
-      fleteYFinModelo(it, zona, finPerfil, finPlanes);
+      fleteYFinModelo(it, zona, finPerfil, finPlanes, adic);
       return it;
     }).filter(Boolean);
     if(items.length===0) return;
@@ -12051,6 +12102,7 @@ function buildFilterTable(cfg){
       domicilioEntrega: compCtx.domicilioEntrega||'',
       domicilioFacturacion: compCtx.domicilioFacturacion||'',
       leadUid: compCtx.leadUid||'',
+      adicionales: adic,
       zona: zona,
       zonaTexto: zonaLabel(zona),   // el módulo Documentos es OTRA IIFE y no tiene zonaLabel/zonaCosto
       palletsFlete: 0,
@@ -12085,6 +12137,7 @@ function buildFilterTable(cfg){
   $('pre-comp-generar').onclick=generarComparativo;
   $('pre-comp-categoria').addEventListener('change', ()=>{ $('pre-comp-lista').innerHTML=compListasOpts(compListaDefecto($('pre-comp-categoria').value)); sincFinComparativo(); });
   $('pre-comp-lista').addEventListener('change', sincFinComparativo);
+  $('pre-comp-adic-add').onclick=()=>{ compAdic.push({codigo:'',ml:'',cant:''}); drawCompAdic(); };
   $('pre-cerrar').onclick=closeForm;
   $('pre-export').onclick=exportJSON;
   $('pre-import').onclick=()=>$('pre-import-file').click();
@@ -20314,12 +20367,16 @@ function buildFilterTable(cfg){
       // El flete de cada modelo ya viene calculado desde Presupuestos (generarComparativo): cada
       // renglón es una opción INDEPENDIENTE (el cliente elige UNA), con sus propios pallets — no se
       // reparte un flete consolidado entre modelos que en la práctica no viajan juntos.
+      // Adicionales (cordón, listón…): se suman a TODAS las opciones; su flete ya está dentro del de cada modelo.
+      const adics = (Array.isArray(v.adicionales)?v.adicionales:[]).map(a=>{ const al=(a.iva==='exento'||a.iva==='nogravado')?0:num(a.iva);
+        return {desc:a.desc, codigo:a.codigo, cant:num(a.cant), precioUnit:num(a.precioUnit)*(1+al/100), subtotal:num(a.cant)*num(a.precioUnit)*(1-num(a.descPct)/100)*(1+al/100)}; });
+      const adicTotal = adics.reduce((s,a)=>s+a.subtotal,0);
       const itemsNeto = (v.items||[]).map((it,i)=>{
         const base = num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100);
         const al = (it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva);
         const subtotal = base*(1+al/100);
         const fletePorItem = num(it.fleteCosto);
-        return {codigo:it.codigo, desc:it.desc, m2:it.m2total, cant:it.cant, precioUnit:num(it.precioUnit)*(1+(al||0)/100), subtotal:subtotal, flete:fletePorItem, total:subtotal+fletePorItem, fin:it.fin||null};
+        return {codigo:it.codigo, desc:it.desc, m2:it.m2total, cant:it.cant, precioUnit:num(it.precioUnit)*(1+(al||0)/100), subtotal:subtotal, flete:fletePorItem, total:subtotal+adicTotal+fletePorItem, fin:it.fin||null};
       });
       // Columnas de financiación: solo si generarComparativo calculó algo (Minorista + perfil
       // elegido). El mayorista nunca las lleva (mismo criterio que condicionesPresup/finAplica).
@@ -20337,15 +20394,19 @@ function buildFilterTable(cfg){
         '<tr style="background:#f5f5f5;border-bottom:2px solid #333"><th style="text-align:left;'+P+'">Modelo</th>'+
         '<th style="text-align:right;'+P+'">m²</th><th style="text-align:right;'+P+'">Unid.</th>'+
         '<th style="text-align:right;'+P+'">P.Unit.</th><th style="text-align:right;'+P+'">Mercad.</th>'+
+        (adics.length?'<th style="text-align:right;'+P+'">Adicionales</th>':'')+
         '<th style="text-align:right;'+P+'">Flete</th><th style="text-align:right;'+P+'">Contado</th>'+
         thFin+'</tr>'+
         itemsNeto.map(it=>'<tr style="border-bottom:1px solid #ddd">'+celdaModelo(it)+
           '<td style="text-align:right;'+P+'">'+nf(it.m2)+'</td><td style="text-align:right;'+P+'">'+nf(it.cant)+'</td>'+
           '<td style="text-align:right;'+P+'">'+money(it.precioUnit)+'</td><td style="text-align:right;'+P+'">'+money(it.subtotal)+'</td>'+
+          (adics.length?'<td style="text-align:right;'+P+'">'+money(adicTotal)+'</td>':'')+
           '<td style="text-align:right;'+P+'">'+money(it.flete)+'</td>'+
           '<td style="text-align:right;'+P+';font-weight:700;color:#1a7c3f">'+money(it.total)+'</td>'+
           tdFin(it)+'</tr>').join('')+
-        '</table>';
+        '</table>'+
+        (adics.length ? '<div style="font-size:10px;margin:-4px 0 12px;padding:6px 8px;background:#f7faf8;border:1px solid #d8e8dd;border-radius:4px"><b>➕ Adicionales incluidos en cada opción:</b> '+
+          adics.map(a=>esc(nf(a.cant))+' × '+esc(a.desc)+' a '+money(a.precioUnit)+' = <b>'+money(a.subtotal)+'</b>').join(' · ')+'</div>' : '');
       const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
         '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
         // generarComparativo calcula la cantidad con +5% (MERMA_RECORTES del CRM): mismo aviso que el
