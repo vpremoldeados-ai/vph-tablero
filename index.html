@@ -9103,6 +9103,11 @@ function buildFilterTable(cfg){
       if(filtro.estado==='recibido') rows=rows.filter(deTerceros);
       else if(filtro.estado==='emitido') rows=rows.filter(c=>c.tipo==='emitido');
       else if(filtro.estado==='porvencer') rows=rows.filter(porVencer);
+      // "En cartera" son SOLO los de terceros que tenemos en la mano (para endosar o depositar). Un cheque
+      // propio también se guarda con estado 'cartera' ("En poder del proveedor"), pero no es cartera nuestra:
+      // Marcelo lo pidió explícito el 09/10 — "actualmente no tengo ningún cheque en ese estado".
+      else if(filtro.estado==='cartera') rows=rows.filter(disponible);
+      else if(filtro.estado==='apagar') rows=rows.filter(c=>c.tipo==='emitido'&&!RESUELTO.includes(c.estado));
       else rows=rows.filter(c=>c.estado===filtro.estado);
     }
     if(filtro.q){ const q=filtro.q.toLowerCase(); rows=rows.filter(c=>((c.numero||'')+' '+(c.banco||'')+' '+(c.entidad||'')).toLowerCase().includes(q)); }
@@ -9141,7 +9146,7 @@ function buildFilterTable(cfg){
   }
   function renderFiltros(){
     const cnt=e=>DB.cheques.filter(c=>c.estado===e).length;
-    const defs=[['todos','Todos',DB.cheques.length],['recibido','De terceros',DB.cheques.filter(deTerceros).length],['emitido','Propios',DB.cheques.filter(c=>c.tipo==='emitido').length],['porvencer','Por vencer',DB.cheques.filter(porVencer).length],['cartera','En cartera',cnt('cartera')],['endosado','Endosados',cnt('endosado')],['depositado','Depositados',cnt('depositado')],['cobrado','Cobrados',cnt('cobrado')],['rechazado','Rechazados',cnt('rechazado')]];
+    const defs=[['todos','Todos',DB.cheques.length],['recibido','De terceros',DB.cheques.filter(deTerceros).length],['emitido','Propios',DB.cheques.filter(c=>c.tipo==='emitido').length],['porvencer','Por vencer',DB.cheques.filter(porVencer).length],['cartera','En cartera (en mano)',DB.cheques.filter(disponible).length],['apagar','Propios a pagar',DB.cheques.filter(c=>c.tipo==='emitido'&&!RESUELTO.includes(c.estado)).length],['endosado','Endosados',cnt('endosado')],['depositado','Depositados',cnt('depositado')],['cobrado','Cobrados / pagados',cnt('cobrado')],['rechazado','Rechazados',cnt('rechazado')]];
     $('chq-filtros').innerHTML = defs.map(([v,l,n])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+'" data-est="'+v+'">'+l+' ('+n+')</button>').join('');
     $('chq-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est; render(); });
   }
@@ -9568,8 +9573,23 @@ function buildFilterTable(cfg){
 
   function startSync(){ if(window.__rol!=='admin') return;   // datos financieros: solo admin
     const c=fb(); if(!c||!c.db) return; if(unsub)unsub();
-    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.cheques=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); }, err=>console.error('cheques:',err)); }
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL), snap=>{ DB.cheques=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); autoPagarPropios(); }, err=>console.error('cheques:',err)); }
   function stopSync(){ if(unsub){unsub();unsub=null;} }
+  // 🔁 Un cheque PROPIO se debita solo el día de su vencimiento: el banco le paga al tenedor sin que
+  // nosotros hagamos nada. Llegado ese día pasa SOLO a Pagado (estado guardado 'cobrado', ver
+  // LBL_PROPIO) con fechaMov = el vencimiento, que es el día en que salió la plata (lo mira la Caja) —
+  // no el día en que alguien abrió el Tablero. Si no tenía cuenta, toma la chequera por defecto para
+  // que el movimiento no caiga en "Sin asignar". Si el banco lo rebotó, se marca Rechazado a mano
+  // (Editar). Pedido de Marcelo (09/10): "una vez cobrados por el tenedor, que pasen a pagados".
+  function propiosVencidos(cheques, hoy){
+    return cheques.filter(c=> c.tipo==='emitido' && (c.estado==='cartera'||c.estado==='depositado') && c.fechaVencimiento && String(c.fechaVencimiento).slice(0,10)<=hoy); }
+  const autoPagadoIntentado=new Set();   // un intento por cheque y sesión: si la escritura falla no se reintenta en cada snapshot
+  function autoPagarPropios(){
+    if(window.__rol!=='admin') return 0;
+    const lista=propiosVencidos(DB.cheques, hoyISO).filter(c=>!autoPagadoIntentado.has(c._uid));
+    lista.forEach(c=>{ autoPagadoIntentado.add(c._uid);
+      persist({...c, estado:'cobrado', fechaMov:String(c.fechaVencimiento).slice(0,10), cuenta:(c.cuenta||chequeraCuenta()), pagadoAuto:true}); });
+    return lista.length; }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
       window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); DB.cheques=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
