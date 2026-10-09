@@ -6590,14 +6590,18 @@ function buildFilterTable(cfg){
       if(esTj && tjCuotas>36){ alert('¿'+tjCuotas+' cuotas? El máximo es 36 — revisá el número.'); return; }
       const tjPrim = esTj ? (($('pp-tj-fecha')&&$('pp-tj-fecha').value) || proxDebitoISO(pagoProv.fecha||hoyISO)) : '';
 
-      // ---- VARIOS E-CHEQS: un cheque por grupo de facturas ----
+      // ---- E-CHEQS: un cheque por grupo de facturas ----
       // Cada e-cheq cancela facturas ENTERAS, así que genera un pago por factura (todos con los datos
       // del mismo cheque) y UN solo cheque emitido, por el total del grupo, colgado del primer pago.
       // Los pagos del grupo quedan marcados con echeqGrupo para que se vea que comparten el papel.
+      // 🔴 Vale TAMBIÉN con UN solo e-cheq (09/10, Marcelo: los dos e-cheqs a Mahl del 31/08 aparecían
+      // partidos en Cheques, un registro por factura — "quiero ver los datos del cheque tal cual fue
+      // emitido"). Antes el caso de un cheque caía al camino genérico de abajo, que crea un cheque POR
+      // PAGO. Con un grupo, gruposEcheq devuelve un solo grupo con todas las facturas.
       if(esChequepay){
         const nPed=Math.max(1, Math.round(num($('pp-ch-n')?$('pp-ch-n').value:1))||1);
         const gs=gruposEcheq(pagoProv.distribucion, Math.min(nPed, pagoProv.distribucion.length), ppCortes);
-        if(gs.length>1){
+        if(gs.length>=1){
           const fechas=fechasEcheqs(gs.length, ($('pp-ch-venc')&&$('pp-ch-venc').value)||hoyISO, num($('pp-ch-cada')?$('pp-ch-cada').value:30));
           const n0=String($('pp-ch-num')?$('pp-ch-num').value:'').trim(), corr=/^\d+$/.test(n0);
           const bco0=String($('pp-ch-banco')?$('pp-ch-banco').value:'').trim();
@@ -6625,7 +6629,7 @@ function buildFilterTable(cfg){
               detalle:detalleMedioPago({medio, chNumero:numCh, chBanco:bcoCh, chVenc:fvenc}) });
           });
           Object.keys(porCompra).forEach(uid=>{ const x=porCompra[uid]; x.comp.pagos=x.pagos; persistPagos(uid, x.pagos); });
-          alert('Pago registrado con '+gs.length+' e-cheqs en '+Object.keys(porCompra).length+' factura(s).\n\nAcordate de emitirlos en el home banking: acá solo quedan registrados.');
+          alert('Pago registrado con '+gs.length+' e-cheq'+(gs.length!==1?'s':'')+' en '+Object.keys(porCompra).length+' factura(s).\n\nAcordate de emitirlo'+(gs.length!==1?'s':'')+' en el home banking: acá solo queda'+(gs.length!==1?'n':'')+' registrado'+(gs.length!==1?'s':'')+'.');
           $('cmp-modal-pago-prov').classList.remove('open');
           render();
           if(window.__imprimir && window.__imprimir.ordenPago) window.__imprimir.ordenPago({
