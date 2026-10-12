@@ -15778,7 +15778,24 @@ function buildFilterTable(cfg){
   // Textos de los dos mensajes. La firma sale de "✍️ Firmo como" (la MISMA de Topes, por PC), con
   // "Sofía" de respaldo: los mayoristas son su cartera. La compra mínima cambia por zona (1 pallet
   // en Capital, 4 afuera — condiciones definidas el 11/08, las mismas del PDF).
+  // 12/10 (pedido de Marcelo: los precios suben TODOS los meses): aviso de aumento a los revendedores.
+  // El % y las fechas los carga quien lo manda (📣 Configurar aviso); viven en el mismo documento de
+  // Mayoristas (campo `aviso`), así valen desde cualquier PC. Sin porcentaje, no lo dice; sin fecha
+  // límite, no promete mantener el precio actual (eso es un compromiso comercial).
+  let MAYAVISO={};
+  const MAY_AVISO_KEY='vph_crm_may_aviso_v1';
+  function mayTextoAviso(row, av){
+    const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
+    const nombre=String((row&&row.nombre)||'').trim();
+    av=av||{};
+    const pct=String(av.pct||'').replace('%','').trim();
+    return 'Hola'+(nombre?' '+nombre:'')+', ¿cómo andás? Te aviso que desde el *'+String(av.desde||'').trim()+'* actualizamos la lista de precios mayorista de losetas y green blocks, por aumento en los costos de cemento, hierro y transporte.'+
+      (pct?(' El ajuste es de aproximadamente *'+pct+'%*.'):'')+
+      (String(av.hasta||'').trim()?('\n\nHasta el '+String(av.hasta).trim()+' los pedidos se facturan al precio actual. Si tenés alguna obra o reposición para estas semanas, es buen momento para dejarla confirmada.'):'')+
+      '\n\nTe mando la lista nueva apenas esté lista. Cualquier duda me escribís.\n\nUn abrazo, '+firma;
+  }
   function mayTexto(row, accion, seg){
+    if(accion==='aviso') return mayTextoAviso(row, MAYAVISO);
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     const interior=String((row&&row.tipo)||'').indexOf('int')===0;
     const nombre=String((row&&row.nombre)||'').trim();
@@ -15870,14 +15887,19 @@ function buildFilterTable(cfg){
   let MAYW=[], mayUnsub=null, mayConfirm=null;   // mayConfirm = {mi, accion} tras abrir un chat
   function mayLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function maySaveLocal(){ try{ localStorage.setItem(MAY_KEY, JSON.stringify(MAYW)); }catch(e){} }
+  function mayAvisoLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_AVISO_KEY)); if(d && typeof d==='object') return d; }catch(e){} return {}; }
+  function mayAvisoSave(av){ MAYAVISO=av||{};
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{aviso:MAYAVISO},{merge:true}).catch(e=>alert('Error al guardar el aviso: '+e.message)); else alert('Iniciá sesión.'); }
+    else { try{ localStorage.setItem(MAY_AVISO_KEY, JSON.stringify(MAYAVISO)); }catch(e){} }
+  }
   function maySave(list){ MAYW=list.slice();
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{filas:MAYW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
     else maySaveLocal();
   }
   function mayBtnLabel(){ const per=mayPeriodo(); const env=MAYW.filter(r=>r.listaPeriodo===per).length;
     return '🧱 Mayoristas'+(MAYW.length?(' ('+env+'/'+MAYW.length+')'):''); }
-  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
-    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[];
+  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); MAYAVISO=mayAvisoLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
+    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[]; MAYAVISO=(d&&d.aviso&&typeof d.aviso==='object')?d.aviso:{};
       const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
       const panel=$('crm-may-panel'); if(panel && panel.style.display!=='none') drawMayoristas(); }, err=>console.error('mayoristas:',err)); }
   // Cambia UNA fila por su índice en MAYW (las vistas siempre guardan data-mi = índice maestro).
@@ -15891,7 +15913,8 @@ function buildFilterTable(cfg){
     if(p && !ok && p.accion==='lista' && MAYW[p.mi]) maySaltados[mayClave(MAYW[p.mi])]=1;
     if(!p || !ok){ drawMayoristas(); return; }
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
-    if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
+    if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
+    else if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
     else mayUpd(p.mi, r=>({...r, listaPeriodo:mayPeriodo(), listaFecha:hoyISO, accionPor:firma}));
     const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
     drawMayoristas();
@@ -15999,6 +16022,18 @@ function buildFilterTable(cfg){
     r.png.then(b=>{ const u=URL.createObjectURL(b); if(w) w.location.href=u; else window.open(u,'_blank'); })
       .catch(()=>{ if(w) w.close(); alert('No se pudo armar la imagen de la lista.'); });
   }
+  function mayConfigurarAviso(){
+    const a=MAYAVISO||{};
+    const desde=prompt('¿Desde cuándo rige la lista nueva?\nEj: 1° de noviembre\n\n(Dejalo vacío para BORRAR el aviso.)', a.desde||'');
+    if(desde===null) return;
+    if(!String(desde).trim()){ if(confirm('¿Borrar el aviso de aumento?')){ mayAvisoSave({}); drawMayoristas(); } return; }
+    const pct=prompt('Porcentaje aproximado del aumento. Ej: 4,5\n\n(Vacío = el mensaje no dice el porcentaje.)', a.pct||'');
+    if(pct===null) return;
+    const hasta=prompt('¿Hasta qué fecha mantenés el precio actual para pedidos? Ej: 31/10\n\n(Vacío = NO se ofrece mantener el precio: es un compromiso comercial.)', a.hasta||'');
+    if(hasta===null) return;
+    mayAvisoSave({desde:String(desde).trim(), pct:String(pct).replace('%','').trim(), hasta:String(hasta).trim()});
+    drawMayoristas();
+  }
   function drawMayoristas(){
     const cont=$('crm-may-controles'), tabla=$('crm-may-tabla'); if(!cont||!tabla) return;
     const per=mayPeriodo(), mes=mayMesLabel(per);
@@ -16015,7 +16050,7 @@ function buildFilterTable(cfg){
         mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
         '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
       return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
-        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista de '+esc(mes)) : 'consulta de stock')+'. '+img+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista de '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
         '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
@@ -16037,18 +16072,21 @@ function buildFilterTable(cfg){
         '</span>'+
       '</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
+        '<button class="cmp-btn" data-may-aviso-cfg title="Prepara el aviso de aumento de precios para los revendedores: desde cuándo rige, el % y hasta cuándo se mantiene el precio actual">📣 '+(MAYAVISO.desde?'Editar aviso de aumento':'Aviso de aumento')+'</button>'+
+        (MAYAVISO.desde?('<span style="font-size:12px;color:#334155">vigente desde <b>'+esc(MAYAVISO.desde)+'</b>'+(MAYAVISO.pct?(' · '+esc(MAYAVISO.pct)+'%'):'')+' · enviados: <b>'+MAYW.filter(r=>r.avisoClave===String(MAYAVISO.desde)).length+'</b> de '+MAYW.length+'</span>'):'')+
         '<button class="cmp-btn" data-may-actualizar-act title="Cruza esta lista contra vph_ventas: última compra, cuántas y por cuánto en total — clasifica a cada uno en Activo / En atención / Dormido / Nunca compró">🔄 Actualizar actividad</button>'+
         (mayActTs ? ('<span style="font-size:11px;color:#94a3b8">actualizado '+mayActTsLabel()+'</span>') : '<span style="font-size:11px;color:#94a3b8">todavía no se actualizó — tocá 🔄 para ver a quién priorizar</span>')+
       '</div>'+
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th><th>Notas</th><th></th></tr></thead><tbody>';
+    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
+    const nCol=MAYAVISO.desde?10:9;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
       if(t.k!==tipoPrev){ tipoPrev=t.k;
-        html+='<tr><td colspan="9" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— Lista: '+esc(t.pdf)+'</span> '+
+        html+='<tr><td colspan="'+nCol+'" style="background:#eef2f7;font-weight:800;font-size:11.5px">'+esc(t.l)+' <span style="color:#64748b;font-weight:600">— Lista: '+esc(t.pdf)+'</span> '+
           (errTipo[t.k] ? '<span style="color:#b45309;font-weight:700" title="'+esc(errTipo[t.k])+'">⚠️ todavía no se puede generar (falta el flete hasta 100 km en ⚙️ Parámetros)</span>'
             : '<button class="cmp-btn" data-may-ver="'+t.lp+'" style="padding:1px 8px;font-size:11px" title="Abre en otra pestaña la imagen de esta lista, tal cual se le manda al cliente">🖼️ Ver lista</button>')+
           '</td></tr>'; }
@@ -16078,17 +16116,19 @@ function buildFilterTable(cfg){
         '<td><input data-may-tel="'+mi+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
         '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
         '<td>'+celda('stock', '', stockDet)+'</td>'+
+        (MAYAVISO.desde?('<td>'+celda('aviso', r.avisoClave===String(MAYAVISO.desde)?'✓ enviado':'', '')+'</td>'):'')+
         '<td><input data-may-nota="'+mi+'" value="'+esc(r.notas||'')+'" style="width:100%;min-width:120px;border:0;background:transparent;color:#475569"></td>'+
         '<td><button class="cmp-x" data-may-borrar="'+mi+'" title="Sacar de esta lista (no toca la ficha del cliente ni sus ventas)">✕</button></td>'+
       '</tr>';
     });
-    if(!vista.length) html+='<tr><td colspan="9" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
+    if(!vista.length) html+='<tr><td colspan="'+nCol+'" style="color:#94a3b8">Todavía no hay mayoristas cargados — usá "↺ Traer de Clientes y Ventas".</td></tr>';
     tabla.innerHTML=html+'</tbody>';
     // Cableado por querySelectorAll sobre elementos (§ patrón de viajes: testeable con stubs).
     cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
     cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
     cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
     cont.querySelectorAll('[data-may-siguiente]').forEach(b=>b.onclick=()=>maySiguiente());
+    cont.querySelectorAll('[data-may-aviso-cfg]').forEach(b=>b.onclick=()=>mayConfigurarAviso());
     cont.querySelectorAll('[data-may-resaltar]').forEach(b=>b.onclick=()=>{ maySaltados={}; drawMayoristas(); });
     tabla.querySelectorAll('[data-may-ver]').forEach(b=>b.onclick=()=>mayVerLista(b.dataset.mayVer));
     tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>mayAbrirChat(+b.dataset.mayAbrirChat, b.dataset.mayAccion));
