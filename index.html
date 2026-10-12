@@ -1456,6 +1456,7 @@
           <button class="cmp-btn" id="bd-params" title="Editar las variables que usan los cálculos (objetivo de kg/día, días de secado, validez de presupuestos, etc.)">⚙️ Parámetros</button>
           <button class="cmp-btn" id="bd-financiacion" title="Comisiones de VIUMI por cuotas y banco. El catálogo guarda el precio de contado: los precios en cuotas salen de acá.">💳 Financiación</button>
           <button class="cmp-btn" id="bd-import">Importar desde ventas/compras</button>
+          <button class="cmp-btn" id="bd-aumento" title="Sube un % las listas de precios del catálogo (minorista, mayorista, mayorista sin factura) con vista previa y deshacer">💲 Aumentar precios</button>
           <button class="cmp-btn" id="bd-recostear" title="Recalcula el costo de TODOS los productos con receta cargada, usando los precios actuales del master Materia Prima/Insumos, y guarda el resultado">🔄 Recostear todos</button>
           <button class="cmp-btn" id="bd-export">Exportar JSON</button>
           <button class="cmp-btn" id="bd-lista-pdf" title="Genera el PDF de la lista de precios elegida (Mayorista / Mayorista Contado / las dos de hasta 100 km / Minorista) con los precios EN VIVO del catálogo — para compartir con los corralones.">📄 Lista de precios (PDF)</button>
@@ -12551,6 +12552,97 @@ function buildFilterTable(cfg){
     finally{ if(btn){ btn.disabled=false; btn.textContent='Guardar '+lista.length+' costo(s)'; } }
   }
 
+  // ---------- Aumentar precios: un % a las listas del catálogo, con vista previa y deshacer ----------
+  // Los precios del catálogo los cambia Marcelo todos los meses (acordado el 12/10). Antes había que abrir
+  // cada ficha y tipear 3 precios a mano por producto: lento y fácil de equivocar. Acá se elige el % y
+  // las listas, se destildan los productos que no se tocan (topes, servicios…) y se ve el antes/después.
+  // Redondea al PESO (como el aumento del 01/10). Escribe SOLO los campos de precio que cambian
+  // (updateDoc), nunca el producto entero. El cotizador web es OTRO catálogo: hay que tocarlo aparte.
+  const LISTAS_AUM=[ {k:'precioMinorista',l:'Minorista'}, {k:'precioMayorista',l:'Mayorista'}, {k:'precioMayoristaSF',l:'Mayorista sin factura'} ];
+  const AUM_UNDO_KEY='vph_aumento_precios_ultimo_v1';
+  function aumentoPreciosPlan(prods, pct, listas, excluidos){
+    const f=1+num(pct)/100, filas=[];
+    (prods||[]).forEach(p=>{
+      if(ES_INSUMO(p) || (excluidos&&excluidos.has(p._uid))) return;
+      const cambios={};
+      (listas||[]).forEach(k=>{ const v=num(p[k]); if(v>0){ const n=Math.round(v*f); if(n!==v) cambios[k]={viejo:v,nuevo:n}; } });
+      if(Object.keys(cambios).length) filas.push({p,cambios});
+    });
+    return filas;
+  }
+  function aumentoUndoGuardado(){ try{ return JSON.parse(localStorage.getItem(AUM_UNDO_KEY)||'null'); }catch(e){ return null; } }
+  function aumentarPrecios(){
+    if(window.__rol && window.__rol!=='admin'){ alert('Cambiar precios del catálogo es solo para el rol admin.'); return; }
+    const prods=(store.vph_productos||[]).filter(p=>!ES_INSUMO(p) && LISTAS_AUM.some(l=>num(p[l.k])>0));
+    if(!prods.length){ alert('No hay productos con precio cargado.'); return; }
+    const excl=new Set(prods.filter(p=>String(p.tipo||'Producto terminado')!=='Producto terminado').map(p=>p._uid));
+    const sel=new Set(LISTAS_AUM.map(l=>l.k));
+    let pct='';
+    const undo=aumentoUndoGuardado();
+    $('bd-costeo-title').textContent='Aumentar precios — vista previa';
+    function pinta(){
+      const filas=aumentoPreciosPlan(prods, pct, [...sel], excl);
+      const ok=num(pct)>0 && num(pct)<=50;
+      const peso=n=>money(n).replace(/,00$/,'');
+      const fila=x=>'<tr><td><input type="checkbox" data-au-p="'+esc(x.p._uid)+'" checked> <b>'+esc(x.p.codigo||'')+'</b> '+esc(x.p.nombre||'')+'</td>'+
+        LISTAS_AUM.map(l=>{ const c=x.cambios[l.k]; return '<td class="num">'+(c?(peso(c.viejo)+' → <b>'+peso(c.nuevo)+'</b>'):'—')+'</td>'; }).join('')+'</tr>';
+      const apagados=prods.filter(p=>excl.has(p._uid));
+      $('bd-costeo-body').innerHTML=
+        '<p class="note" style="margin-top:0">Sube el precio de las listas elegidas en el % que pongas, redondeado al peso. <b>Todavía no se guardó nada.</b> El cotizador web es otro catálogo: hay que cambiarlo aparte.</p>'+
+        '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:8px 0">'+
+          '<label><b>Aumento %</b> <input id="au-pct" type="text" inputmode="decimal" value="'+esc(pct)+'" style="width:70px" placeholder="ej: 4,5"></label>'+
+          LISTAS_AUM.map(l=>'<label style="font-size:13px"><input type="checkbox" data-au-l="'+l.k+'"'+(sel.has(l.k)?' checked':'')+'> '+l.l+'</label>').join('')+'</div>'+
+        (!ok&&String(pct).trim()!==''?'<p class="note" style="color:var(--red)">Poné un porcentaje mayor que 0 y hasta 50.</p>':'')+
+        (ok&&filas.length
+          ? '<div class="tbl-wrap"><table><tr><th>Producto (destildá los que no se tocan)</th>'+LISTAS_AUM.map(l=>'<th class="num">'+l.l+'</th>').join('')+'</tr>'+filas.map(fila).join('')+'</table></div>'
+          : (ok?'<p class="note">Ningún producto cambia con esas listas.</p>':'<p class="note">Escribí el porcentaje para ver cómo queda cada precio.</p>'))+
+        (apagados.length?'<p class="note" style="margin-top:8px">Sin tocar: '+apagados.map(p=>'<label style="margin-right:8px"><input type="checkbox" data-au-p="'+esc(p._uid)+'"> '+esc(p.codigo||p.nombre||'')+'</label>').join('')+'</p>':'')+
+        (undo?'<p class="note" style="margin-top:10px">Último aumento: <b>'+esc(undo.pct)+'%</b> el '+esc(undo.fecha)+' ('+undo.items.length+' producto(s)). <button class="cmp-btn" id="au-undo">↩ Deshacer ese aumento</button></p>':'')+
+        '<div class="cmp-form-foot"><button class="cmp-btn" id="au-cancel">Cancelar</button>'+
+          (ok&&filas.length?'<button class="cmp-btn cmp-btn-primary" id="au-confirm">Aplicar +'+esc(String(pct))+'% a '+filas.length+' producto(s)</button>':'')+'</div>';
+      const inp=$('au-pct'); inp.focus(); try{ inp.setSelectionRange(inp.value.length,inp.value.length); }catch(e){}
+      inp.oninput=()=>{ pct=inp.value; pinta(); };
+      $('bd-costeo-body').querySelectorAll('[data-au-l]').forEach(c=>c.onchange=()=>{ c.checked?sel.add(c.dataset.auL):sel.delete(c.dataset.auL); pinta(); });
+      $('bd-costeo-body').querySelectorAll('[data-au-p]').forEach(c=>c.onchange=()=>{ c.checked?excl.delete(c.dataset.auP):excl.add(c.dataset.auP); pinta(); });
+      $('au-cancel').onclick=closeCosteo;
+      if($('au-confirm')) $('au-confirm').onclick=()=>{ if(confirm('Vas a subir '+filas.length+' producto(s) un '+pct+'% en las listas elegidas.\n\n¿Confirmás?')) aplicarAumento(filas,pct); };
+      if($('au-undo')) $('au-undo').onclick=()=>{ if(confirm('¿Volver los '+undo.items.length+' producto(s) a los precios anteriores al aumento del '+undo.fecha+'?\n\nSi después de ese aumento cambiaste algún precio a mano, también se pisa.')) deshacerAumento(undo); };
+    }
+    pinta(); $('bd-costeo-modal').classList.add('open');
+  }
+  async function escribirPrecios(items){   // items: [{uid, campos:{precioX:valor}}] → {n, fallidas}
+    const fallidas=[]; let n=0;
+    for(const it of items){
+      try{
+        if(window.__usaNube){
+          const c=fb(); if(!c||!c.db) throw new Error('sesión cerrada');
+          await c.FS.updateDoc(c.FS.doc(c.db,'vph_productos',it.uid), it.campos);
+        } else { const t=store.vph_productos.find(p=>p._uid===it.uid); if(t) Object.assign(t,it.campos); }
+        n++;
+      }catch(e){ fallidas.push(it.uid+': '+(e.code||e.message||'error')); }
+    }
+    if(!window.__usaNube) saveLocal();
+    return {n,fallidas};
+  }
+  async function aplicarAumento(filas,pct){
+    const btn=$('au-confirm'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+    const items=filas.map(x=>({uid:x.p._uid, campos:Object.fromEntries(Object.entries(x.cambios).map(([k,c])=>[k,c.nuevo])),
+      antes:Object.fromEntries(Object.entries(x.cambios).map(([k,c])=>[k,c.viejo])), codigo:x.p.codigo||x.p.nombre||''}));
+    const r=await escribirPrecios(items);
+    const hechos=items.filter(it=>!r.fallidas.some(f=>f.indexOf(it.uid+':')===0));
+    try{ localStorage.setItem(AUM_UNDO_KEY, JSON.stringify({pct:String(pct), fecha:hoyISO, items:hechos.map(it=>({uid:it.uid,codigo:it.codigo,antes:it.antes,despues:it.campos}))})); }catch(e){}
+    closeCosteo(); render();
+    alert(r.fallidas.length
+      ? ('Se actualizaron '+r.n+' producto(s), pero '+r.fallidas.length+' fallaron:\n\n'+r.fallidas.join('\n'))
+      : ('✅ '+r.n+' producto(s) subieron '+pct+'%.\n\nRecordá cambiar también el cotizador web y avisar a los clientes.'));
+  }
+  async function deshacerAumento(u){
+    const r=await escribirPrecios(u.items.map(it=>({uid:it.uid,campos:it.antes})));
+    if(!r.fallidas.length){ try{ localStorage.removeItem(AUM_UNDO_KEY); }catch(e){} }
+    closeCosteo(); render();
+    alert(r.fallidas.length?('Volvieron '+r.n+', fallaron:\n\n'+r.fallidas.join('\n')):('↩ '+r.n+' producto(s) volvieron a los precios anteriores.'));
+  }
+
   // ---------- Importar desde ventas/compras ----------
   async function importar(){
     const c=fb(); if(!c||!c.db){ alert('Iniciá sesión primero.'); return; }
@@ -12705,6 +12797,7 @@ function buildFilterTable(cfg){
   $('bd-costeo-cerrar').onclick=closeCosteo;
   $('bd-import').onclick=importar;
   $('bd-recostear').onclick=recostearTodos;
+  $('bd-aumento').onclick=aumentarPrecios;
   $('bd-export').onclick=exportJSON;
   $('bd-lista-pdf').onclick=elegirListaPdf;
   $('bd-backup').onclick=backupCompleto;
