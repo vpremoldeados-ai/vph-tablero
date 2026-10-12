@@ -12842,6 +12842,9 @@ function buildFilterTable(cfg){
     // 15/09: el Tablero marca el ritmo. Reparte lo que queda del tope en lo que queda del horario, con este piso.
     {g:'Comercial', k:'topesMinutosEntre', l:'Topes: minutos entre WhatsApp en frío', def:15, t:'num', hint:'Después de cada ✅ Lo mandé, ▶ Siguiente espera estos minutos. Cada PC tiene su propio reloj. En 0 no espera.'},
     {g:'Comercial', k:'topesHoraDesde', l:'Topes: hora de inicio de los WhatsApp en frío', def:8, t:'num', hint:'Antes de esta hora ▶ Siguiente no abre chats. Admite medias horas (9.5 = 9:30).'},
+    // 12/10: 📸 Instagram automático (Topes), con su propio tope y su propia espera por PC.
+    {g:'Comercial', k:'igTopeDiario', l:'Instagram: máximo de mensajes directos automáticos por día (por PC)', def:10, t:'num', hint:'Al llegar, 📸 Instagram automático espera al día siguiente. Instagram bloquea las cuentas que mandan muchos mensajes a desconocidos: subirlo de a poco. En 0 no hay tope.'},
+    {g:'Comercial', k:'igMinutosEntre', l:'Instagram: minutos entre mensajes directos automáticos', def:20, t:'num', hint:'Espera mínima entre dos mensajes de Instagram de la misma PC. Usa el mismo horario que Topes.'},
     {g:'Comercial', k:'topesHoraHasta', l:'Topes: hora de fin de los WhatsApp en frío', def:19, t:'num', hint:'Desde esta hora ▶ Siguiente no abre más chats hasta mañana.'},
     {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:28000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
@@ -15495,6 +15498,141 @@ function buildFilterTable(cfg){
     }
     drawTopes();
   }
+  // ---------- 📸 INSTAGRAM AUTOMÁTICO (12/10, pedido de Marcelo; riesgo de bloqueo de la cuenta avisado y ACEPTADO por él) ----------
+  // Mismo ciclo que 🔁 Automático de WhatsApp, pero por mensaje directo de Instagram. El Tablero elige el
+  // próximo prospecto con usuario de Instagram cargado (`instagram`) y se lo pasa por window.postMessage a
+  // la extensión "Ayudante Instagram VPH" (carpeta ayudante-instagram en Drive, instalada en el Chrome de
+  // ESA PC, con Instagram abierto y logueado). La extensión abre el perfil, toca "Mensaje", comprueba que
+  // NO haya ya una conversación con VPH, escribe, manda y verifica; contesta el resultado y acá se sella en
+  // la ficha (igEstado/igFecha/igTs/igPor/igPc). Va APARTE del estado de WhatsApp (como LinkedIn y el mail):
+  // no toca `estado` ni `ultimaAccion` ni suma al tope de WhatsApp. Tope propio (igTopeDiario, 10) y espera
+  // propia (igMinutosEntre, 20) por PC; mismo horario que Topes.
+  // 🔴 Ante un error, un aviso de Instagram (restricción, "intentalo más tarde", sesión cerrada) o 4 min
+  // sin respuesta se PAUSA sola y lo dice en la barra: nunca sigue mandando a ciegas.
+  const IG_ESPERA_MAX=4*60000, IG_FINALES=['enviado','ya-contactado','no-existe','sin-boton'];
+  // Acepta "@usuario", "usuario" o la URL del perfil; devuelve el usuario en minúsculas o '' si no sirve.
+  function igUsuario(s){
+    let v=String(s||'').trim();
+    const m=v.match(/instagram\.com\/([A-Za-z0-9._]+)/i); if(m) v=m[1];
+    v=v.replace(/^@/,'').replace(/[/?#].*$/,'').trim();
+    if(!/^[A-Za-z0-9._]{1,30}$/.test(v) || /^(p|reel|reels|explore|direct|stories|accounts)$/i.test(v)) return '';
+    return v.toLowerCase();
+  }
+  function igAutoOn(){ try{ return localStorage.getItem('vph_ig_auto_v1')==='1'; }catch(e){ return false; } }
+  function igAutoSet(on, nota){ try{ localStorage.setItem('vph_ig_auto_v1', on?'1':'0'); if(nota!=null) localStorage.setItem('vph_ig_auto_nota_v1', nota); }catch(e){} }
+  function igAutoNota(){ try{ return localStorage.getItem('vph_ig_auto_nota_v1')||''; }catch(e){ return ''; } }
+  function igP(k,d){ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; }
+  function igTope(){ const n=Math.round(igP('igTopeDiario',10)); return n>0 ? n : 0; }
+  function igEnviadosHoy(){ return TOPES.filter(t=>t.igEstado==='enviado' && t.igFecha===hoyISO && t.igPc===topesPcId()).length; }
+  function igUltimoTs(){ return TOPES.reduce((m,t)=> t.igEstado==='enviado' && t.igPc===topesPcId() && Number(t.igTs)>m ? Number(t.igTs) : m, 0); }
+  function igEspera(ahoraMs){
+    const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
+    const desde=igP('topesHoraDesde',8), hasta=igP('topesHoraHasta',19), min=Math.max(0, Math.round(igP('igMinutosEntre',20)));
+    const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
+    if(ahora<aHora(desde)) return {ms:aHora(desde)-ahora, motivo:'antes', min, desde, hasta};
+    if(ahora>=aHora(hasta)) return {ms:Infinity, motivo:'despues', min, desde, hasta};
+    const ult=igUltimoTs(); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
+    const ms=Math.min(min*60000, Math.max(0, ult+min*60000-ahora));
+    return {ms, motivo:ms>0?'espacio':'', min, desde, hasta};
+  }
+  // Sin interés / Interesado no reciben nada más; un prospecto que la OTRA PC está mandando, tampoco.
+  function igElegible(t, ahoraMs){
+    if(!igUsuario(t.instagram) || t.igEstado || ['interesado','sin-interes'].includes(t.estado||'')) return false;
+    const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
+    return !(t.igReservaPc && t.igReservaPc!==topesPcId() && ahora-(Number(t.igReservaTs)||0) < 10*60000);
+  }
+  // Mismo orden que la cola de WhatsApp: tanda marcada con prioridad → grandes → constructoras → el resto.
+  function igProxIndice(ahoraMs){
+    const el=TOPES.map((t,i)=>({t,i})).filter(x=>igElegible(x.t, ahoraMs)); if(!el.length) return -1;
+    const a=el.find(x=>x.t.prioridad===true) || el.find(x=>x.t.grande===true) || el.find(x=>topesTipo(x.t.rubro)===TOPES_TIPO_PRIORIDAD);
+    return (a||el[0]).i;
+  }
+  function igPendientes(){ return TOPES.filter(t=>igElegible(t)).length; }
+  // El texto es el que VPH ya venía mandando a mano por Instagram (12/10); a obras se le suma "para sus obras".
+  function igTexto(t){
+    const obras=['Topes — constructoras','Topes — estudios de arquitectura','Topes — paisajistas y viveros'].includes(topesTipo(t.rubro));
+    return '¡Hola! 👋 Somos VASSALLO Premoldeados, de Toledo, Córdoba. Fabricamos la Loseta Cribada, un piso de hormigón armado con diseño que drena el agua de lluvia, ideal para el ingreso a cocheras 🚗, y los Topes de Estacionamiento 🅿️. Hacemos envíos a todo el país 🚚 En www.vpremoldeados.com pueden ver los productos, fotos, características y precios, y pedir presupuesto. ¡Nos encantaría que nos tengan en cuenta'+(obras?' para sus obras':'')+'! 🙌';
+  }
+  let igExtTs=0, igPend=null, igTimer=null;
+  function igOnMensaje(ev){
+    const d=ev && ev.data; if(!d || d.vphIg!==1 || ev.source!==window) return;
+    if(d.tipo==='hola'){ const antes=Date.now()-igExtTs>60000; igExtTs=Date.now(); if(antes) drawTopes(); return; }
+    if(d.tipo==='resultado' && igPend && d.id===igPend.id){ const p=igPend; igPend=null; igRegistrar(p, d); }
+  }
+  // Sella el resultado en la ficha (solo los finales) y libera la reserva; cualquier otra cosa PAUSA.
+  function igRegistrar(p, d){
+    const fin=IG_FINALES.includes(d.estado);
+    topesActualizar(p.nombre, row=>{
+      const r={...row}; delete r.igReservaPc; delete r.igReservaTs;
+      if(fin) Object.assign(r, {igEstado:d.estado, igFecha:hoyISO, igTs:Date.now(), igPor:topesFirma(), igPc:topesPcId(), igDetalle:String(d.detalle||'')});
+      return r;
+    });
+    if(!fin) igPausar((d.detalle||d.estado||'error de la extensión')+' (con '+p.nombre+')');
+    drawTopes();
+  }
+  function igPausar(motivo){
+    const h=new Date(), p=n=>String(n).padStart(2,'0');
+    igAutoSet(false, '⚠️ Instagram en pausa ('+p(h.getHours())+':'+p(h.getMinutes())+'): '+motivo);
+    drawTopes();
+  }
+  function igTick(){
+    if(!igAutoOn()) return;
+    if(window.__usaNube && !topesCargado) return;
+    const ahora=Date.now();
+    if(igPend){
+      if(ahora-igPend.ts > IG_ESPERA_MAX){
+        const x=igPend; igPend=null;
+        topesActualizar(x.nombre, row=>{ const r={...row}; delete r.igReservaPc; delete r.igReservaTs; return r; });
+        igPausar('la extensión no contestó el envío a '+x.nombre+'. Mirá Instagram: si salió, anotalo a mano.');
+      }
+      return;
+    }
+    try{ window.postMessage({vphIg:1, tipo:'ping'}, '*'); }catch(e){}
+    if(ahora-igExtTs > 60000){ drawTopes(); return; }   // la extensión no está en este Chrome
+    const tope=igTope();
+    if(tope && igEnviadosHoy()>=tope){ drawTopes(); return; }
+    if(igEspera(ahora).ms>0){ drawTopes(); return; }
+    const idx=igProxIndice(ahora); if(idx<0){ drawTopes(); return; }
+    const t=TOPES[idx];
+    igPend={id:'ig'+ahora.toString(36), nombre:t.nombre||'', ts:ahora};
+    topesActualizar(t.nombre, row=>({...row, igReservaPc:topesPcId(), igReservaTs:ahora}));
+    window.postMessage({vphIg:1, tipo:'enviar', id:igPend.id, usuario:igUsuario(t.instagram), texto:igTexto(t)}, '*');
+    drawTopes();
+  }
+  function igArrancarReloj(){
+    if(igTimer) return;
+    igTimer=setInterval(igTick, 30000);
+    setTimeout(igTick, 3000);
+  }
+  try{ window.addEventListener('message', igOnMensaje); }catch(e){}
+  function igCambiar(on){
+    if(on){
+      if(!confirm('📸 Instagram automático\n\nManda solo, de a uno, el mensaje de VPH a los prospectos que tienen usuario de Instagram cargado: hasta '+igTope()+' por día, uno cada '+Math.round(igP('igMinutosEntre',20))+' minutos, en el horario de Topes.\n\n⚠️ Instagram puede bloquear los mensajes o la cuenta si detecta envíos automáticos. Si muestra cualquier aviso, se pausa solo.\n\nNecesita la extensión "Ayudante Instagram VPH" y Instagram abierto y logueado en este Chrome. ¿Lo prendo?')){ drawTopes(); return; }
+      igAutoSet(true, ''); igArrancarReloj();
+      try{ window.postMessage({vphIg:1, tipo:'ping'}, '*'); }catch(e){}
+    } else igAutoSet(false, '');
+    drawTopes();
+  }
+  function igHtml(){
+    const on=igAutoOn(), ext=(Date.now()-igExtTs)<=60000, nota=igAutoNota(), tope=igTope(), env=igEnviadosHoy();
+    let st='';
+    if(on){
+      const esp=igEspera();
+      if(igPend) st='📤 Mandando por Instagram a <b>'+esc(igPend.nombre)+'</b>…';
+      else if(!ext) st='<span style="color:#b45309">⏳ No encuentro la extensión <b>Ayudante Instagram VPH</b> en este Chrome (o recargá esta página)</span>';
+      else if(tope && env>=tope) st='Tope de Instagram de hoy alcanzado, sigue mañana';
+      else if(esp.motivo==='antes') st='Arranca a las '+topesFmtHora(esp.desde);
+      else if(esp.motivo==='despues') st='Terminó el horario de hoy';
+      else if(esp.ms>0) st='Próximo en '+Math.ceil(esp.ms/60000)+' min';
+      else if(igProxIndice()<0) st='No queda nadie con Instagram cargado sin mensaje';
+      else st='Listo para el próximo';
+    }
+    return '<label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600" title="Manda solo por mensaje directo de Instagram a los prospectos con usuario cargado. Necesita la extensión Ayudante Instagram VPH y Instagram abierto y logueado en este Chrome. Si Instagram muestra un aviso, se pausa solo.">'+
+      '<input type="checkbox" id="topes-ig-chk"'+(on?' checked':'')+'> 📸 Instagram automático</label>'+
+      '<span style="font-size:12px;color:var(--muted)">IG hoy: '+env+(tope?' de '+tope:'')+' · con usuario sin mensaje: '+igPendientes()+'</span>'+
+      (st ? '<span style="font-size:12px">'+st+'</span>' : '')+
+      (!on && nota ? '<span style="font-size:12px;color:#b45309;font-weight:600">'+esc(nota)+'</span>' : '');
+  }
   function drawTopes(){
     // 08/09: la tabla (#topes-tabla) es un elemento FIJO — nunca se recrea — para que
     // window.__ordenable pueda guardar el orden elegido entre un render y el siguiente (el mismo
@@ -15506,7 +15644,7 @@ function buildFilterTable(cfg){
     const filas = TOPES
       .map((t,i)=>({t,i}))
       .filter(({t})=> (!topesFiltroEstado || (t.estado||'pendiente')===topesFiltroEstado) && (!topesFiltroRubro || t.rubro===topesFiltroRubro))
-      .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota].some(v=>topesNorm(v).includes(qTexto)));
+      .filter(({t})=> !qTexto || [t.nombre,t.rubro,t.zona,t.telefono,t.email,t.nota,t.instagram].some(v=>topesNorm(v).includes(qTexto)));
     const n=k=>TOPES.filter(t=>(t.estado||'pendiente')===k).length;
     const pendConTel=TOPES.filter(t=>(t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t)).length;
     const firmaPc=topesFirma();
@@ -15558,6 +15696,8 @@ function buildFilterTable(cfg){
           '<input type="number" min="0" step="1" id="topes-min-pc-inp" value="'+(topesMinutosPc()!=null ? topesMinutosPc() : '')+'" placeholder="'+esc(String(Math.round(Number(window.__param ? window.__param('topesMinutosEntre',15) : 15))))+'" style="width:52px;padding:4px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px"> min</label>'
       ))+
       '</div>'+
+      // 12/10: fila propia de Instagram (va siempre, también con un chat de WhatsApp abierto).
+      (typeof igHtml==='function' ? '<div style="margin:-2px 0 10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+igHtml()+'</div>' : '')+
       (()=>{ const pp=topesEnviadosPorPersona(), ks=Object.keys(pp.total).sort((a,b)=>pp.total[b]-pp.total[a]);
         if(!ks.length && !pp.sinFirmaTotal) return '';
         return '<div style="margin:-2px 0 10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px" title="Prospectos que quedaron Contactado, Interesado o Sin interés, según quién marcó la última acción (✍️ Firmo como de cada PC)">'+
@@ -15626,6 +15766,9 @@ function buildFilterTable(cfg){
     const chkAuto=controles.querySelector('#topes-auto-chk');
     if(chkAuto) chkAuto.onchange=()=>topesAutoCambiar(chkAuto.checked);
     if(topesAutoOn()) topesAutoArrancarReloj();
+    const chkIg=controles.querySelector('#topes-ig-chk');
+    if(chkIg) chkIg.onchange=()=>igCambiar(chkIg.checked);
+    if(typeof igAutoOn==='function' && igAutoOn()) igArrancarReloj();
     const chkPriG=controles.querySelector('#topes-prioridad-grandes-chk');
     if(chkPriG) chkPriG.onchange=()=>{ try{ localStorage.setItem('vph_topes_prioridad_grandes_v1', chkPriG.checked?'1':'0'); }catch(e){} drawTopes(); };
     const chkPri=controles.querySelector('#topes-prioridad-chk');
@@ -15662,7 +15805,7 @@ function buildFilterTable(cfg){
     // resto del Tablero) envuelven el texto largo en vez de estirar la columna, e inputs/select más
     // angostos que antes. data-sortval en teléfono/email/nota porque son <input> — __ordenable lee
     // el texto de la celda, y un <input> no tiene textContent (quedaría sin ordenar sin esto).
-    let ht='<tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email</th><th style="text-align:center">Estado</th><th>Última acción</th><th>Enviar</th><th>Foto</th><th>Nota</th><th></th></tr>';
+    let ht='<tr><th>Lugar</th><th>Rubro</th><th>Zona / referencia</th><th>Teléfono</th><th>Email / Instagram</th><th style="text-align:center">Estado</th><th>Última acción</th><th>Enviar</th><th>Foto</th><th>Nota</th><th></th></tr>';
     if(!filas.length) ht+='<tr><td colspan="11" style="text-align:center;color:var(--muted)">Ninguno con ese filtro.</td></tr>';
     const topesTotalFilas=filas.length, filasVista=filas.slice(0,topesLimite);
     filasVista.forEach(({t,i})=>{
@@ -15677,7 +15820,11 @@ function buildFilterTable(cfg){
         // editable: el botón de mandar mail se sacó el 11/09 y no vuelve.
         '<td data-sortval="'+esc(t.email||'')+'"><input type="email" data-topes-email="'+i+'" value="'+esc(t.email||'')+'" placeholder="—" style="width:150px;padding:5px 6px;border:1px solid var(--border);border-radius:7px;font-size:12px">'+
           (t.mailEstado==='enviado' ? '<div style="font-size:10.5px;color:#157a1d;font-weight:600" title="Mail de la propuesta ya enviado'+(t.mailPor?' por '+esc(t.mailPor):'')+'">✉️ enviado '+esc(fmtFecha(t.mailFecha))+'</div>'
-           : t.mailEstado==='rebote' ? '<div style="font-size:10.5px;color:#c0392b;font-weight:600" title="El mail rebotó: la casilla no existe o rechazó el mensaje. Corregí la dirección y se vuelve a ofrecer.">✉️ rebotó '+esc(fmtFecha(t.mailFecha))+'</div>' : '')+'</td>'+
+           : t.mailEstado==='rebote' ? '<div style="font-size:10.5px;color:#c0392b;font-weight:600" title="El mail rebotó: la casilla no existe o rechazó el mensaje. Corregí la dirección y se vuelve a ofrecer.">✉️ rebotó '+esc(fmtFecha(t.mailFecha))+'</div>' : '')+
+          // 12/10: usuario de Instagram (lo usa 📸 Instagram automático). Acepta @usuario o el link del perfil.
+          '<input type="text" data-topes-ig="'+i+'" value="'+esc(t.instagram||'')+'" placeholder="📸 @instagram" style="width:150px;margin-top:3px;padding:4px 6px;border:1px solid var(--border);border-radius:7px;font-size:11.5px">'+
+          (t.igEstado ? '<div style="font-size:10.5px;font-weight:600;color:'+(t.igEstado==='enviado'?'#157a1d':t.igEstado==='ya-contactado'?'#2563eb':'#b45309')+'" title="'+esc(t.igDetalle||'')+'">📸 '+
+            esc(({'enviado':'enviado','ya-contactado':'ya tenía chat con VPH','no-existe':'el usuario no existe','sin-boton':'no acepta mensajes'})[t.igEstado]||t.igEstado)+' '+esc(fmtFecha(t.igFecha))+'</div>' : '')+'</td>'+
         '<td style="text-align:center" data-sortval="'+esc(e.l)+'"><button class="cmp-btn" data-topes-est="'+i+'" style="padding:4px 8px;font-size:11.5px;border-color:'+e.c+';color:'+e.c+'">'+esc(e.l)+'</button></td>'+
         '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+esc(fmtFecha(t.ultimaAccion))+'</td>'+
         '<td style="white-space:nowrap">'+
@@ -15716,6 +15863,14 @@ function buildFilterTable(cfg){
       list[i]={...list[i], email:nuevo};
       if(cambio && list[i].mailEstado==='rebote'){ list[i]={...list[i], mailEstado:'', mailFecha:''}; }
       topesSave(list); if(cambio) drawTopes(); }));
+    // 12/10: al cambiar el usuario de Instagram se limpia un resultado de "no existe / no acepta mensajes" (el usuario nuevo merece su intento).
+    tabla.querySelectorAll('input[data-topes-ig]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesIg; const list=TOPES.slice();
+      const crudo=inp.value.trim(), u=igUsuario(crudo);
+      if(crudo && !u){ alert('No reconozco ese usuario de Instagram. Pegá el @usuario o el link del perfil (instagram.com/usuario).'); drawTopes(); return; }
+      const cambio=u!==igUsuario(list[i].instagram);
+      list[i]={...list[i], instagram:u};
+      if(cambio && ['no-existe','sin-boton'].includes(list[i].igEstado)) list[i]={...list[i], igEstado:'', igFecha:'', igDetalle:''};
+      topesSave(list); drawTopes(); }));
     tabla.querySelectorAll('select[data-topes-foto]').forEach(sel=>sel.addEventListener('change',()=>{ const i=+sel.dataset.topesFoto; const list=TOPES.slice();
       list[i]={...list[i], foto:sel.value}; topesSave(list); }));
     tabla.querySelectorAll('input[data-topes-nota]').forEach(inp=>inp.addEventListener('change',()=>{ const i=+inp.dataset.topesNota; const list=TOPES.slice();
@@ -16431,7 +16586,7 @@ function buildFilterTable(cfg){
   // si no, se espera a que alguien abra Topes (setCrmTab). En modo local no hay costo: se carga siempre.
   // 01/10: el reloj del automático arranca también sin abrir la pestaña Topes (antes solo lo prendía
   // drawTopes): si Marcelo deja el Tablero en Base Nivel, igual tiene que seguir mandando.
-  function topesSubscribeSiCorresponde(){ if(crmTab==='topes' || topesAutoOn()) topesSubscribe(); if(topesAutoOn()) topesAutoArrancarReloj(); }
+  function topesSubscribeSiCorresponde(){ const ig=(typeof igAutoOn==='function' && igAutoOn()); if(crmTab==='topes' || topesAutoOn() || ig) topesSubscribe(); if(topesAutoOn()) topesAutoArrancarReloj(); if(ig) igArrancarReloj(); }
   if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>topesSubscribeSiCorresponde()); }
   else topesSubscribe();
   // El buscador vive FUERA de #crm-topes-controles (que drawTopes reescribe entero) para no perder
