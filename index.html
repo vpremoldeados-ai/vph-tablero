@@ -160,6 +160,13 @@
   .circ i.ok{background:rgba(22,163,74,.13);color:var(--green)}
   .circ i.falta{background:rgba(245,158,11,.18);color:var(--amber)}
   .circ i.na{background:var(--border);color:var(--muted)}
+  /* Condición de cobro de una venta (Ventas → columna Estado, cuenta corriente, ruta de cobranza) */
+  .cond-cobro{display:inline-block;margin-top:4px;font-size:10px;font-weight:800;border-radius:6px;padding:1px 6px;line-height:1.5;white-space:nowrap;cursor:default}
+  .cond-cobro.cobrar{background:var(--green-bg);color:var(--green)}
+  .cond-cobro.reclamar{background:var(--red-bg);color:var(--red)}
+  .cond-cobro.parcial{background:var(--amber-bg);color:var(--amber)}
+  .cond-cobro.espera{background:var(--blue-bg);color:var(--blue)}
+  .cond-cobro.esperar{background:var(--border);color:var(--muted)}
   th{background:#f7f9fc;color:#54637a;font-size:11px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none;position:sticky;top:0}
   th:hover{background:#eef2f8}
   th .arrow{font-size:9px;opacity:.6}
@@ -1651,7 +1658,7 @@
       </section>
       <section>
         <h2><span class="dot"></span>Cuenta corriente clientes — a cobrar</h2>
-        <div class="asof">Saldo pendiente por cliente (todas las ventas cargadas)</div>
+        <div class="asof">Saldo pendiente por cliente (todas las ventas cargadas) · <b>💰 Cobrable hoy</b> = lo que ya se entregó y tiene el plazo cumplido; el resto espera la entrega o el plazo</div>
         <div class="tbl-wrap"><table id="vnt-tabla-cli"></table></div>
       </section>
     </div>
@@ -7209,6 +7216,106 @@ function buildFilterTable(cfg){
   // Producción avisa por acá cuando se crea o se borra un pedido, para que la lista no quede vieja.
   window.__ventasRefrescar = function(){ try{ if($('vnt-tabla')) render(); }catch(e){} };
 
+  // ---- ¿Esta venta está EN CONDICIÓN DE COBRAR? (13/10, pedido de Marcelo) --------------------
+  // Cruza el SALDO con la ENTREGA (los pedidos de Producción) y con el PLAZO que se le dio al cliente:
+  //  · se entregó → se puede cobrar; si además pasó el plazo (mayorista facturado: "valor a 30 días
+  //    de fecha de factura", el texto del presupuesto) y encima la tolerancia, hay que RECLAMAR.
+  //  · no se entregó → en general todavía no se reclama. El mayorista paga después de recibir
+  //    (⏳ esperar la entrega); el minorista paga contado, así que el cobro se coordina para el día
+  //    de la entrega (🚚 cobrar al entregar), que el pedido ya dice cuál es.
+  //  · un cheque RECHAZADO manda sobre todo: esa plata se reclama ya, se haya entregado o no.
+  //  · una Nota de Débito (sin mercadería) se cobra por el plazo desde su fecha: no hay nada que entregar.
+  // ⚠️ El "Vto. de cobro" de la venta nace IGUAL a la fecha de emisión (blankVenta), por eso el estado
+  // 'vencido' de calc() se prende al día siguiente de casi toda venta y no sirve para esto. Acá un
+  // vencimiento cuenta como plazo pactado SOLO si es posterior a la fecha; si no, rige el plazo por
+  // tipo de cliente (Parámetros → Comercial). Van como `function` (no const) para poder testearlas.
+  function diaISO(s){ const m=String(s||'').trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if(!m) return '';
+    let a=+m[3]; if(a<100) a+=2000; const d=new Date(a,+m[2]-1,+m[1]); if(d.getMonth()!==+m[2]-1) return '';
+    return a+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); }
+  function sumarDiasISO(iso,n){ const d=parseF(String(iso||'').slice(0,10)); if(!d||isNaN(d)) return ''; d.setDate(d.getDate()+Math.round(num(n))); return isoDe(d); }
+  function diasDesde(iso){ const d=parseF(String(iso||'').slice(0,10)); if(!d||isNaN(d)) return null; return Math.round((HOY-d)/864e5); }
+  function paramNum(k,def){ const n=num(window.__param?window.__param(k,def):def); return isNaN(n)?def:n; }
+  // Plazo de cobro, en días desde la fecha de la venta/factura.
+  function plazoCobroDe(v){
+    const f=String(v.fecha||'').slice(0,10), vto=String(v.vencimiento||'').slice(0,10), esISO=s=>/^\d{4}-\d{2}-\d{2}$/.test(s);
+    // Un vencimiento cargado A MANO (posterior a la emisión) es el plazo pactado con ESE cliente: manda.
+    if(esISO(vto) && esISO(f) && vto>f){ const d=Math.round((parseF(vto)-parseF(f))/864e5); if(d>0) return d; }
+    // Sin factura = contado: no se le da plazo a quien no lleva factura (condición del presupuesto).
+    if(v.tipoComprobante==='Sin factura' || esSinFacturar(v.listaPrecios, v.categoria)) return 0;
+    const may = (window.__canalVenta?window.__canalVenta(v):'')==='Mayorista';
+    return Math.max(0, Math.round(paramNum(may?'plazoCobroMayorista':'plazoCobroMinorista', may?30:0)));
+  }
+  // Qué pasó con la ENTREGA, mirando TODOS los pedidos de la venta (un pedido partido en dos viajes
+  // ✂️ son dos pedidos de la misma venta). Devuelve {estado, fecha, programada, omitida}:
+  //   'nocorresponde' → NC / presupuesto / remito: no es deuda a cobrar por acá
+  //   'noaplica'      → no hay nada que entregar (Nota de Débito, venta sin renglones con cantidad)
+  //   'cargando'      → los pedidos todavía no llegaron: no se opina (misma guarda que estadoEntrega)
+  //   'entregada'     → todo entregado (fecha = la ÚLTIMA entrega; si se marcó "ya entregada" sin
+  //                     pedido no hay fecha de entrega y se toma la de la venta, omitida:true)
+  //   'parcial'       → se entregó una parte (fecha = la primera; programada = la que falta)
+  //   'pendiente'     → hay pedido y no salió (programada = el día del viaje o la fecha requerida)
+  //   'sinpedido'     → no se pasó a Producción todavía (el chip 🏭 ya avisa de eso)
+  function entregaDeVenta(v){
+    const t=String(v.tipoComprobante||''), fv=String(v.fecha||'').slice(0,10);
+    if(['Presupuesto','Nota de Crédito','Remito'].includes(t)) return {estado:'nocorresponde'};
+    const conMercaderia=(v.items||[]).some(it=>it&&it.desc&&num(it.cant)>0);
+    if(!conMercaderia || t==='Nota de Débito') return {estado:'noaplica'};
+    if(!window.__pedidosDeVenta) return {estado:'cargando'};
+    const pes=window.__pedidosDeVenta(v._uid);
+    if(pes===undefined) return {estado:'cargando'};
+    if(!pes.length) return (v.tareasHechas||{}).entregaOmitida ? {estado:'entregada', fecha:fv, omitida:true} : {estado:'sinpedido'};
+    const okISO=f=>/^\d{4}-\d{2}-\d{2}$/.test(f);
+    const ent=pes.filter(p=>p.estado==='entregado'), pend=pes.filter(p=>p.estado!=='entregado');
+    const fEnt=ent.map(p=>String(p.fechaEntregado||'').slice(0,10)).filter(okISO).sort();
+    const prog=pend.map(p=>diaISO(p.diaEntrega)||String(p.fechaRequerida||'').slice(0,10)).filter(okISO).sort()[0]||'';
+    if(!ent.length) return {estado:'pendiente', programada:prog};
+    if(!pend.length) return {estado:'entregada', fecha:fEnt[fEnt.length-1]||fv};
+    return {estado:'parcial', fecha:fEnt[0]||fv, programada:prog};
+  }
+  // La condición de cobro de una venta: {cod, cls, ico, txt, det, cobrable, urg, exigible, dias}.
+  // `cobrable` = ya se le puede pedir la plata (cobrar / reclamar / cheque rechazado).
+  function condicionCobro(v,k){
+    k=k||calc(v);
+    if(k.anulada || k.signo<0 || k.saldo<=0.5) return {cod:'nada', cobrable:false};
+    // Cheque rebotado: el cliente debe esa plata HOY, se haya entregado o no.
+    if((v.cobros||[]).some(c=>c&&c.chequeRechazado)) return {cod:'rechazado', cls:'reclamar', ico:'🔴', txt:'Cheque rechazado', det:'Un cheque de esta venta fue rechazado: el saldo se reclama ya, sin esperar plazo ni entrega.', cobrable:true, urg:4};
+    const e=entregaDeVenta(v);
+    if(e.estado==='nocorresponde'||e.estado==='cargando') return {cod:'nada', cobrable:false};
+    const plazo=plazoCobroDe(v), vtoPlazo=sumarDiasISO(v.fecha, plazo);
+    const rec=(v.tareasHechas||{}).cobro, recTxt=rec?' Último recordatorio enviado: '+fmtFecha(rec)+'.':'';
+    if(e.estado==='pendiente'||e.estado==='sinpedido'){
+      const sinPed=e.estado==='sinpedido'?' Todavía no se pasó a Producción.':'';
+      const atras=!!(e.programada&&e.programada<=hoyISO);
+      const progTxt=e.programada?(' Entrega programada: '+fmtFecha(e.programada)+(atras?' (ya debería haber salido: ver en Producción).':'.')):' Sin fecha de entrega.';
+      if(plazo>0) return {cod:'esperar', cls:'esperar', ico:'⏳', txt:'Esperar la entrega', det:'Todavía no se entregó. El plazo de '+plazo+' días corre desde la factura, pero no se reclama antes de entregar.'+progTxt+sinPed, cobrable:false, urg:0, programada:e.programada};
+      return {cod:'alentregar', cls:'espera', ico:'🚚', txt:atras?'Cobrar al entregar · hoy':(e.programada?'Cobrar al entregar '+fmtFecha(e.programada):'Cobrar al entregar'), det:'Cliente de contado: el pago se coordina para el día de la entrega.'+progTxt+sinPed, cobrable:false, urg:atras?1:0, programada:e.programada};
+    }
+    // Entregada (toda o parte) o sin nada que entregar: exigible = lo más tarde entre la entrega y el plazo.
+    const exigible = e.estado==='noaplica' ? vtoPlazo : ((e.fecha && e.fecha>vtoPlazo) ? e.fecha : vtoPlazo);
+    const dias=diasDesde(exigible); if(dias==null) return {cod:'nada', cobrable:false};
+    const parcial=e.estado==='parcial';
+    const entTxt = e.estado==='noaplica' ? 'Sin mercadería que entregar: se cobra por plazo desde la fecha.'
+      : parcial ? 'Entrega PARCIAL: la primera salió el '+fmtFecha(e.fecha)+(e.programada?', el resto está programado para el '+fmtFecha(e.programada):', el resto sin fecha')+'.'
+      : 'Entregada el '+fmtFecha(e.fecha)+(e.omitida?' (fecha de la venta: se marcó "ya entregada" sin pedido)':'')+'.';
+    const plazoTxt = plazo>0 ? ' Plazo: '+plazo+' días de la fecha de factura (vence el '+fmtFecha(vtoPlazo)+').' : ' Pago contado.';
+    const pre=parcial?'Parcial · ':'';
+    if(dias<0) return {cod:'plazo', cls:'espera', ico:'📅', txt:pre+'Cobrar desde '+fmtFecha(exigible), det:entTxt+plazoTxt+' Todavía dentro del plazo: no se reclama.'+recTxt, cobrable:false, urg:0, exigible, dias, parcial};
+    const tol=Math.max(0,Math.round(paramNum('cobroReclamoDias',7)));
+    if(dias>tol) return {cod:'reclamar', cls:'reclamar', ico:'🔴', txt:pre+'Reclamar · '+dias+' d', det:entTxt+plazoTxt+' Exigible desde el '+fmtFecha(exigible)+': hace '+dias+' días.'+recTxt, cobrable:true, urg:3, exigible, dias, parcial};
+    return {cod:'cobrar', cls:parcial?'parcial':'cobrar', ico:'💰', txt:pre+'Cobrar'+(dias>0?' · '+dias+' d':''), det:entTxt+plazoTxt+' En condición de cobrar desde el '+fmtFecha(exigible)+'.'+recTxt, cobrable:true, urg:2, exigible, dias, parcial};
+  }
+  function condCobroHtml(v,k){ const c=condicionCobro(v,k); if(c.cod==='nada') return '';
+    return '<div class="cond-cobro '+c.cls+'" title="'+esc(c.det||'')+'">'+c.ico+' '+esc(c.txt)+'</div>'; }
+  // El filtro de la lista por estado de cobro (lo usa render). Aparte para poder testearlo sin el DOM.
+  function pasaFiltroEstado(v,k){
+    if(filtro.estado==='acobrar') return k.estado==='acobrar'||k.estado==='parcial'||k.estado==='vencido';
+    if(filtro.estado==='vencido') return k.estado==='vencido';
+    if(filtro.estado==='cobrado') return k.estado==='cobrado';
+    if(filtro.estado==='sinprod') return estadoEntrega(v)==='falta';
+    if(filtro.estado==='cobrar') return !!condicionCobro(v,k).cobrable;
+    return true;
+  }
+
   // ¿Está facturada? Una venta "Sin factura" no lleva comprobante a propósito, así que no falta nada.
   // Se cuenta como facturada tanto la electrónica (con CAE) como la cargada a mano con su número.
   function estadoFactura(v){
@@ -7250,12 +7357,7 @@ function buildFilterTable(cfg){
     let rows = ventas.filter(({v,k})=>{
       if(filtro.periodo && v.periodo!==filtro.periodo) return false;
       if(filtro.cat && v.categoria!==filtro.cat) return false;
-      if(filtro.estado!=='todos'){
-        if(filtro.estado==='acobrar' && !(k.estado==='acobrar'||k.estado==='parcial'||k.estado==='vencido')) return false;
-        if(filtro.estado==='vencido' && k.estado!=='vencido') return false;
-        if(filtro.estado==='cobrado' && k.estado!=='cobrado') return false;
-        if(filtro.estado==='sinprod' && estadoEntrega(v)!=='falta') return false;
-      }
+      if(filtro.estado!=='todos' && !pasaFiltroEstado(v,k)) return false;
       if(filtro.q){ const q=filtro.q.toLowerCase(); const hay=(v.cliente+' '+v.nroFactura+' '+v.categoria+' '+(v.items||[]).map(i=>i.desc).join(' ')).toLowerCase(); if(!hay.includes(q)) return false; }
       return true;
     });
@@ -7302,10 +7404,18 @@ function buildFilterTable(cfg){
     const ivaSub = hayCred
       ? ('Déb. '+money(ivaDeb)+' − Créd. '+money(ivaCred)+' · '+labelPeriodo(mesAct))
       : ('IVA facturado a clientes · '+labelPeriodo(mesAct));
+    // 💰 En condición de cobrar: entregadas y con el plazo cumplido (o con cheque rechazado). Va por
+    // TODOS los períodos a propósito: una venta vieja que ya se puede cobrar no deja de serlo porque
+    // el filtro esté en otro mes. Es una vista del mismo saldo, no un número nuevo.
+    const condList=all.map(x=>({x, c:condicionCobro(x.v,x.k)})).filter(y=>y.c.cobrable);
+    const condSaldo=condList.reduce((a,y)=>a+y.x.k.saldo,0), nRec=condList.filter(y=>y.c.cod!=='cobrar').length;
     $('vnt-kpis').innerHTML =
       k('Total ventas','good', money(totalMes), delMes.length+' ventas · '+labelPeriodo(mesAct)) +
       k('A cobrar','warn', money(aCobrar), 'Saldo pendiente (no vencido)'+(filtro.periodo?' · '+labelPeriodo(filtro.periodo):'')) +
       k('Vencido','bad', money(vencido), 'Saldo con vencimiento pasado'+(filtro.periodo?' · '+labelPeriodo(filtro.periodo):'')) +
+      k('💰 En condición de cobrar', condList.length?(nRec?'bad':'good'):'info', money(condSaldo),
+        condList.length ? (condList.length+' venta'+(condList.length!==1?'s':'')+' entregada'+(condList.length!==1?'s':'')+' con el plazo cumplido'+(nRec?' · '+nRec+' para reclamar':'')+' · todos los períodos')
+                        : 'Nada entregado con el plazo cumplido') +
       (hayCred
         ? k('IVA — débito vs. crédito', saldoIva>0?'warn':'good',
             money(Math.abs(saldoIva)), (saldoIva>0?'A pagar':'A favor')+' · '+ivaSub)
@@ -7326,17 +7436,21 @@ function buildFilterTable(cfg){
 
   function renderFiltros(all){
     const sinProd=all.filter(x=>estadoEntrega(x.v)==='falta').length;
-    const counts={ todos:all.length, acobrar:all.filter(x=>x.k.estado!=='cobrado').length, vencido:all.filter(x=>x.k.estado==='vencido').length, cobrado:all.filter(x=>x.k.estado==='cobrado').length, sinprod:sinProd };
-    const defs=[['todos','Todas'],['acobrar','A cobrar'],['vencido','Vencidas'],['cobrado','Cobradas'],['sinprod','⚠ Sin pasar a producción']];
+    const cobrar=all.filter(x=>condicionCobro(x.v,x.k).cobrable).length;
+    const counts={ todos:all.length, acobrar:all.filter(x=>x.k.estado!=='cobrado').length, cobrar, vencido:all.filter(x=>x.k.estado==='vencido').length, cobrado:all.filter(x=>x.k.estado==='cobrado').length, sinprod:sinProd };
+    const defs=[['todos','Todas'],['acobrar','A cobrar'],['cobrar','💰 En condición de cobrar'],['vencido','Vencidas'],['cobrado','Cobradas'],['sinprod','⚠ Sin pasar a producción']];
     $('vnt-filtros').innerHTML = defs.map(([v,l])=>'<button class="filter-btn'+(filtro.estado===v?' active':'')+
       // El filtro de las que faltan pasar se pinta en ámbar cuando hay alguna, para que se vea sin buscarlo.
       (v==='sinprod'&&sinProd?'" style="border-color:var(--amber);color:var(--amber);font-weight:800':'')+
+      // Y el de las que ya se pueden cobrar, en verde: es la lista de a quién llamar hoy.
+      (v==='cobrar'&&cobrar?'" style="border-color:var(--green);color:var(--green);font-weight:800':'')+
       '" data-est="'+v+'">'+l+' ('+counts[v]+')</button>').join('');
     $('vnt-filtros').querySelectorAll('button').forEach(b=> b.onclick=()=>{ filtro.estado=b.dataset.est;
-      // "Sin pasar a producción" ignora período, categoría y búsqueda A PROPÓSITO: lo que se busca
-      // con ese filtro es justamente la venta que se escapó, que puede ser de un mes anterior. Si
-      // quedara acotada al período elegido, el contador diría 3 y la lista aparecería vacía.
-      if(filtro.estado==='sinprod'){ filtro.periodo=''; filtro.cat=''; filtro.q='';
+      // "Sin pasar a producción" y "En condición de cobrar" ignoran período, categoría y búsqueda A
+      // PROPÓSITO: lo que se busca con esos filtros es justamente la venta que se escapó o la que ya
+      // se puede cobrar, que puede ser de un mes anterior. Si quedaran acotados al período elegido,
+      // el contador diría 3 y la lista aparecería vacía.
+      if(filtro.estado==='sinprod'||filtro.estado==='cobrar'){ filtro.periodo=''; filtro.cat=''; filtro.q='';
         const bq=$('vnt-buscar'); if(bq) bq.value=''; }
       render(); });
   }
@@ -7370,7 +7484,8 @@ function buildFilterTable(cfg){
     // El estado de cobro va arriba (es el que más se mira) y debajo los 3 pasos del circuito.
     // Van en esta misma columna y no en una nueva: la tabla recién entra en pantalla sin scroll
     // horizontal y una columna más la volvía a desbordar.
-    {k:'estado', h:'Estado', opt:true, cell:r=>(r.k.anulada ? '<span class="cmp-estado pagado" title="Anulada por Nota de Crédito: no es deuda a cobrar">Anulada (NC)</span>' : (badgeEstado[r.k.estado]||''))+chipsCircuito(r)},
+    // Y debajo de los chips, la CONDICIÓN DE COBRO (13/10): si ya se puede cobrar, reclamar, o esperar.
+    {k:'estado', h:'Estado', opt:true, cell:r=>(r.k.anulada ? '<span class="cmp-estado pagado" title="Anulada por Nota de Crédito: no es deuda a cobrar">Anulada (NC)</span>' : (badgeEstado[r.k.estado]||''))+chipsCircuito(r)+condCobroHtml(r.v,r.k)},
     {k:'arca', h:'ARCA', opt:true, off:true, cell:r=>arcaBadge(r.v.arca)},
     {k:'fecha', h:'Emisión', sort:'fecha', opt:true, cell:r=>fmtFecha(r.v.fecha)},
     {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<div class="cel-nombre" title="'+esc(r.v.cliente||'')+'"><b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')+'</div>'},
@@ -7525,14 +7640,22 @@ function buildFilterTable(cfg){
   }
 
   function renderClientes(all){
-    const by={}; all.forEach(({v,k})=>{ if(k.saldo>0.5){ by[v.cliente]=by[v.cliente]||{saldo:0,venc:0}; by[v.cliente].saldo+=k.saldo; if(k.estado==='vencido') by[v.cliente].venc+=k.saldo; } });
-    const arr=Object.entries(by).map(([c,x])=>({c,...x})).sort((a,b)=>b.saldo-a.saldo);
-    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num">Vencido</th><th>Acciones</th></tr>';
-    if(!arr.length) html+='<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
-    arr.forEach(r=> html+='<tr><td>'+esc(r.c)+'</td><td class="num"><b>'+money(r.saldo)+'</b></td><td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td>'+
-      '<td><button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button></td></tr>');
-    const tot=arr.reduce((a,r)=>a+r.saldo,0), totV=arr.reduce((a,r)=>a+r.venc,0);
-    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totV)+'</td><td></td></tr>';
+    // Por cliente: el saldo total, cuánto de eso YA se le puede cobrar (entregado y con el plazo
+    // cumplido, o cheque rechazado) y cuántas ventas todavía esperan la entrega o el plazo.
+    const by={}; all.forEach(({v,k})=>{ if(k.saldo>0.5){ const r=by[v.cliente]=by[v.cliente]||{saldo:0,venc:0,cobrable:0,nCob:0,nEsp:0,urg:0}; r.saldo+=k.saldo; if(k.estado==='vencido') r.venc+=k.saldo;
+      const c=condicionCobro(v,k); if(c.cobrable){ r.cobrable+=k.saldo; r.nCob++; r.urg=Math.max(r.urg,c.urg||0); } else if(c.cod!=='nada') r.nEsp++; } });
+    // Primero a quién YA se le puede cobrar (lo más urgente arriba), después por saldo.
+    const arr=Object.entries(by).map(([c,x])=>({c,...x})).sort((a,b)=>(b.urg-a.urg)||(b.cobrable-a.cobrable)||(b.saldo-a.saldo));
+    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num" title="Ventas entregadas y con el plazo cumplido, o con cheque rechazado">💰 Cobrable hoy</th><th class="num">Vencido</th><th>Acciones</th></tr>';
+    if(!arr.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
+    arr.forEach(r=>{ const det=(r.nCob?r.nCob+' p/ cobrar':'')+(r.nCob&&r.nEsp?' · ':'')+(r.nEsp?r.nEsp+' espera'+(r.nEsp!==1?'n':'')+' entrega/plazo':'');
+      html+='<tr><td>'+esc(r.c)+'</td><td class="num"><b>'+money(r.saldo)+'</b></td>'+
+      // data-sortval: la celda lleva texto debajo del importe y __ordenable tiene que ordenar por el número.
+      '<td class="num" data-sortval="'+Math.round(r.cobrable)+'" style="color:'+(r.cobrable>0?(r.urg>=3?'var(--red)':'var(--green)'):'var(--muted)')+'"><b>'+(r.cobrable>0?money(r.cobrable):'—')+'</b>'+(det?'<div style="font-size:10.5px;font-weight:400;color:var(--muted)">'+det+'</div>':'')+'</td>'+
+      '<td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td>'+
+      '<td><button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button></td></tr>'; });
+    const tot=arr.reduce((a,r)=>a+r.saldo,0), totC=arr.reduce((a,r)=>a+r.cobrable,0), totV=arr.reduce((a,r)=>a+r.venc,0);
+    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totC)+'</td><td class="num">'+money(totV)+'</td><td></td></tr>';
     $('vnt-tabla-cli').innerHTML=html; window.__ordenable('vnt-tabla-cli');
     $('vnt-tabla-cli').querySelectorAll('button[data-imputar]').forEach(b=> b.onclick=()=> openImputar(b.dataset.imputar));
   }
@@ -8472,6 +8595,7 @@ function buildFilterTable(cfg){
               '<span style="color:var(--muted)">⠿</span>'+
               '<span style="font-size:12.5px;flex:1">'+esc(v.cliente||'—')+' <span style="color:var(--muted)">· '+money(k.saldo)+'</span>'+
               (yaProgramado?' <b style="color:var(--amber)">· ya programado: '+fmtFecha(v.cobranzaFecha)+'</b>':'')+
+              ' '+condCobroHtml(v,k)+   // ¿ya se le puede cobrar, o todavía espera la entrega / el plazo?
               '</span>'+
               '<button class="cmp-rowbtn" data-excluir="'+esc(v._uid)+'" title="Sacar de esta lista (no toca la venta)">✕</button>'+
               '</div>'+
@@ -12837,6 +12961,11 @@ function buildFilterTable(cfg){
     {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
     {g:'Comercial', k:'peKgObjetivo', l:'Punto de equilibrio en KILOS equivalentes (objetivo del mes para el equipo)', def:0, t:'num', hint:'Es el objetivo que sale en el 📲 Mensaje para el equipo de la Vista Diaria. En 0 lo calcula solo el Tablero con los costos fijos y el mix de los últimos meses cerrados; con un número, queda fijo en ese valor.'},
     {g:'Comercial', k:'peKgDesafioPct', l:'Meta del equipo: % por encima del punto de equilibrio en kilos', def:10, t:'num', hint:'El punto de equilibrio solo cubre los costos: es el piso. La meta que ve el equipo en el 📲 Mensaje diario es ese piso más este porcentaje (redondeada al millar). En 0 no hay meta aparte.'},
+    // 13/10: ¿cuándo se le puede cobrar a un cliente? La venta se vuelve cobrable cuando se ENTREGÓ y
+    // pasó el plazo, que corre desde la fecha de la factura (ver condicionCobro en Ventas).
+    {g:'Comercial', k:'plazoCobroMayorista', l:'Cobranza: plazo del MAYORISTA facturado (días desde la fecha de factura)', def:30, t:'num', hint:'Es el "Valor a 30 días de fecha de factura" del presupuesto mayorista. La venta se marca 💰 Cobrar cuando se entregó Y pasaron estos días; antes dice "Cobrar desde". Un Vto. de cobro cargado a mano en la venta (posterior a su fecha) manda sobre este plazo. En 0 se cobra al entregar.'},
+    {g:'Comercial', k:'plazoCobroMinorista', l:'Cobranza: plazo del MINORISTA (días desde la fecha de la venta)', def:0, t:'num', hint:'El minorista paga contado: en 0 la venta se cobra al entregar (hasta entonces dice 🚚 Cobrar al entregar). Si a un cliente puntual se le da plazo (ej. E-cheq a 30 días a un Responsable Inscripto), cargarle el Vto. de cobro en esa venta en vez de cambiar esto.'},
+    {g:'Comercial', k:'cobroReclamoDias', l:'Cobranza: días de tolerancia antes de marcar RECLAMAR', def:7, t:'num', hint:'Entregada y con el plazo cumplido, la venta dice 💰 Cobrar; pasados estos días sin cobrar pasa a 🔴 Reclamar. En 0 reclama desde el primer día.'},
     // 14/09: WhatsApp restringió el número tras 54 mensajes en frío en una mañana. El tope frena ▶ Siguiente.
     {g:'Comercial', k:'topesTopeDiario', l:'Topes: máximo de WhatsApp en frío por día',   def:25, t:'num', hint:'Cuenta los prospectos marcados como contactados HOY (en todas las PC). Al llegar, ▶ Siguiente se frena y avisa. El 14/09 se mandaron 54 y WhatsApp restringió el número; el 22/09 se subió de 15 a 25. En 0 no hay tope.'},
     // 15/09: el Tablero marca el ritmo. Reparte lo que queda del tope en lo que queda del horario, con este piso.
@@ -19790,6 +19919,15 @@ function buildFilterTable(cfg){
     // ⚠️ También las ventas ABSORBIDAS al unir dos pedidos (ventaUids): si no, la venta del
     // agregado se vería 'sin pasar a producción' y crearía un pedido duplicado del que se unió.
     return (pedidos||[]).find(pe=>pe && (pe.ventaUid===ventaUid || (pe.ventaUids||[]).indexOf(ventaUid)>=0)) || null;
+  };
+  // API: TODOS los pedidos de una venta (un pedido partido en dos viajes ✂️ son dos pedidos con la
+  // misma venta). Ventas lo usa para saber si se entregó TODO, PARTE o nada antes de decir que la
+  // venta ya está en condición de cobrar. Misma tercera respuesta que arriba: `undefined` = "todavía
+  // no sé" (los pedidos no cargaron), para no marcar cobrable/esperando de gusto en el primer pintado.
+  window.__pedidosDeVenta = function(ventaUid){
+    if(!pedidosCargados) return undefined;
+    if(!ventaUid) return [];
+    return (pedidos||[]).filter(pe=>pe && (pe.ventaUid===ventaUid || (pe.ventaUids||[]).indexOf(ventaUid)>=0));
   };
 
   // API: crear un pedido a partir de una venta (botón "→ Entrega" en Ventas)
