@@ -11431,6 +11431,8 @@ function buildFilterTable(cfg){
 
   let DB={presupuestos:[]}, unsub=null, uidSeq=Date.now();
   function newUid(){ return 'p'+(uidSeq++).toString(36); }
+  // Número correlativo del presupuesto como entero (P-0208 → 208); sin número, 0 (queda como el más viejo de su día).
+  function numPresup(p){ const m=/(d+)s*$/.exec(String(p&&p.numero||'')); return m?parseInt(m[1],10):0; }
   function loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(KEY)); if(d&&Array.isArray(d.presupuestos)) return d; }catch(e){} return {presupuestos:[]}; }
   function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
   function persist(p){ if(!p._uid)p._uid=newUid();
@@ -11571,7 +11573,12 @@ function buildFilterTable(cfg){
       if(filtro.estado!=='todos'){ if(filtro.estado==='abiertos'){ if(!(e==='borrador'||e==='enviado')) return false; } else if(filtro.estado==='aceptado'){ if(!(e==='aceptado'||e==='convertido')) return false; } else if(e!==filtro.estado) return false; }
       if(filtro.q){ const q=filtro.q.toLowerCase(); const hay=((p.cliente||'')+' '+(p.numero||'')+' '+(p.items||[]).map(i=>i.desc).join(' ')).toLowerCase(); if(!hay.includes(q)) return false; }
       return true; });
-    rows.sort((a,b)=>{ let va,vb; if(filtro.sortCol==='total'){va=a.k.total;vb=b.k.total;} else if(filtro.sortCol==='cliente'){va=a.p.cliente||'';vb=b.p.cliente||'';} else if(filtro.sortCol==='numero'){va=a.p.numero||'';vb=b.p.numero||'';} else {va=a.p.fecha||'';vb=b.p.fecha||'';} return (typeof va==='string'?va.localeCompare(vb):(va-vb))*filtro.sortDir; });
+    rows.sort((a,b)=>{ let va,vb; if(filtro.sortCol==='total'){va=a.k.total;vb=b.k.total;} else if(filtro.sortCol==='cliente'){va=a.p.cliente||'';vb=b.p.cliente||'';} else if(filtro.sortCol==='numero'){va=a.p.numero||'';vb=b.p.numero||'';} else {va=a.p.fecha||'';vb=b.p.fecha||'';}
+      const r=(typeof va==='string'?va.localeCompare(vb):(va-vb))*filtro.sortDir; if(r) return r;
+      // Empate (varios presupuestos el MISMO día): desempata el número correlativo, así la lista queda cronológica de verdad.
+      const nA=numPresup(a.p), nB=numPresup(b.p);
+      if(filtro.sortCol==='fecha') return (nA-nB)*filtro.sortDir;
+      return String(b.p.fecha||'').localeCompare(String(a.p.fecha||'')) || (nB-nA); });
     renderKpis(list); renderSummary(rows); renderFiltros(list); renderTabla(rows);
     $('pre-periodo-lbl').textContent = filtro.periodo ? '· '+labelPeriodo(filtro.periodo) : '· todos los períodos';
     $('pre-count').textContent = rows.length+' de '+list.length+' presupuestos';
@@ -21894,7 +21901,11 @@ function buildFilterTable(cfg){
 
   function render(){
     if(!$('rmt-tabla')) return;
-    const todos=DB.remitos.slice().sort((a,b)=>num(b.numeroInt)-num(a.numeroInt));
+    // Por número (= orden de emisión), para el KPI "Último número".
+    const porNumero=DB.remitos.slice().sort((a,b)=>num(b.numeroInt)-num(a.numeroInt));
+    // La tabla va por la FECHA DE ENTREGA (la columna que se ve), la más reciente arriba: un remito emitido después
+    // para una entrega anterior no tiene que quedar arriba. Mismo día → el número más alto primero.
+    const todos=porNumero.slice().sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')) || (num(b.numeroInt)-num(a.numeroInt)));
     // Filtro por mes (los períodos salen de los remitos que hay) + búsqueda libre.
     const periodos=[...new Set(todos.map(r=>String(r.fecha||'').slice(0,7)).filter(Boolean))].sort().reverse();
     const sel=$('rmt-periodo');
@@ -21913,7 +21924,7 @@ function buildFilterTable(cfg){
     if($('rmt-kpis')) $('rmt-kpis').innerHTML =
       k('Remitos emitidos', nf(todos.length), 'En total') +
       k('Este mes', nf(delMes), labelPeriodo(hoyMes)) +
-      k('Último número', todos.length?esc(todos[0].numero):'—', 'El próximo será el '+esc(window.__remitoProximo()));
+      k('Último número', porNumero.length?esc(porNumero[0].numero):'—', 'El próximo será el '+esc(window.__remitoProximo()));
     const bultos=r=>(r.items||[]).reduce((a,it)=>a+((it.pallets&&it.pallets.length)?it.pallets.length:0),0);
     $('rmt-tabla').innerHTML =
       '<thead><tr><th>N° Remito</th><th>Fecha entrega</th><th>Cliente</th><th>Corresponde a</th><th>Transporte</th><th>Entrega</th><th></th></tr></thead><tbody>'+
