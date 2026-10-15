@@ -16115,17 +16115,29 @@ function buildFilterTable(cfg){
       (String(av.hasta||'').trim()?('\n\nHasta el '+String(av.hasta).trim()+' los pedidos se facturan al precio actual. Si tenés alguna obra o reposición para estas semanas, es buen momento para dejarla confirmada.'):'')+
       '\n\nTe mando la lista nueva apenas esté lista. Cualquier duda me escribís.\n\nUn abrazo, '+firma;
   }
+  // 15/10 (pedido de Marcelo: "más personal"): la consulta de stock saluda por el NOMBRE DE PILA del
+  // contacto del corralón (campo `contacto` de la fila; si está vacío, el nombre de la empresa) y SIN
+  // la presentación "Soy X de VPH" — es un cliente que ya nos conoce. La lista y el aviso siguen igual.
+  function mayNombrePila(row){
+    const c=String((row&&row.contacto)||'').trim();
+    // Las altas del 02/10 llevaban el contacto en la nota ("Contacto: Daniela · …"): se usa de respaldo.
+    const m=!c && /contacto\s*:\s*([^\s·,\/()]+)/i.exec(String((row&&row.notas)||''));
+    const pila=(c || (m&&m[1]) || '').split(/\s+/)[0];
+    return pila || String((row&&row.nombre)||'').trim();
+  }
   function mayTexto(row, accion, seg){
     if(accion==='aviso') return mayTextoAviso(row, MAYAVISO);
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     const interior=String((row&&row.tipo)||'').indexOf('int')===0;
     const nombre=String((row&&row.nombre)||'').trim();
     const hola='Hola'+(nombre?' '+nombre:'')+'! Soy '+firma+' de VPH Premoldeados.';
+    const pila=mayNombrePila(row);
+    const holaP='Hola'+(pila?' '+pila:'')+'! ¿Cómo venís?';   // el saludo personal de la consulta de stock
     if(accion==='stock' && row && row.obra){
       // 29/09 (plan de ventas de Marcelo): el revendedor compra cuando tiene una OBRA concreta de su cliente.
       // Si Sofía marcó que tiene una en marcha, la pregunta pasa a ser por ESA obra, sea cual sea su segmento.
       const que=String(row.obraNota||'').trim();
-      return hola+' ¿Cómo va la obra'+(que?' ('+que+')':'')+'? Si necesitás losetas, green blocks o topes, pasame las cantidades y te armo el precio por pallets. Fabricamos y entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Te reservo producción cuando me digas 👌';
+      return holaP+' ¿Cómo va la obra'+(que?' ('+que+')':'')+'? Si necesitás losetas, green blocks o topes, pasame las cantidades y te armo el precio por pallets. Fabricamos y entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Te reservo producción cuando me digas 👌';
     }
     if(accion==='stock'){
       // 22/09 (pedido de Marcelo): salvo casos puntuales, los revendedores NO acumulan stock propio —
@@ -16134,8 +16146,8 @@ function buildFilterTable(cfg){
       // A esos se les pregunta por obras/pedidos en danza — habla de sus clientes, no de su depósito —
       // y se les recuerda que no hace falta stock propio porque VPH entrega rápido. Al activo/en
       // atención se lo sigue tratando como reposición: para ellos sí es la pregunta que corresponde.
-      if(seg==='dormido' || seg==='nunca') return hola+' ¿Cómo venís? Te escribo para saber si tenés alguna obra o pedido en danza donde te pueda servir con losetas, green blocks o topes — fabricamos a pedido y entregamos en 7 días hábiles, así no te hace falta tener stock parado. Cualquier consulta estoy acá 👌';
-      return hola+' ¿Cómo venís de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
+      if(seg==='dormido' || seg==='nunca') return holaP+' Te escribo para saber si tenés alguna obra o pedido donde te pueda servir con losetas, green blocks o topes — fabricamos a pedido y entregamos en 7 días hábiles, así no te hace falta tener stock parado. Cualquier consulta estoy acá 👌';
+      return holaP+' ¿Cómo andás de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
     }
     // 02/10 (decisión del pedido de envío con la lista adjunta): avisa que la lista CAMBIÓ — el +3% del
     // 01/10 se mandaba con un texto que no decía que los precios eran otros.
@@ -16401,8 +16413,8 @@ function buildFilterTable(cfg){
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
-    const nCol=MAYAVISO.desde?10:9;
+    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
+    const nCol=MAYAVISO.desde?11:10;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
@@ -16431,6 +16443,7 @@ function buildFilterTable(cfg){
         (act && act.ultima ? ('<div style="font-size:10.5px;color:#94a3b8">'+(act.dias===0?'hoy':'hace '+act.dias+' d')+' · '+act.cant+' compra'+(act.cant===1?'':'s')+'</div>') : '');
       html+='<tr>'+
         '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700"></td>'+
+        '<td><input data-may-contacto="'+mi+'" value="'+esc(r.contacto||'')+'" placeholder="nombre de pila" title="Con quién se habla: el mensaje de Stock saluda por este nombre" style="width:100px"></td>'+
         '<td>'+selTipo(r,mi)+'</td>'+
         '<td>'+actCel+'</td>'+
         '<td style="white-space:nowrap"><label title="Tiene una obra en marcha: sube al principio de su grupo y el mensaje de la columna Stock pregunta por la obra"><input type="checkbox" data-may-obra="'+mi+'"'+(r.obra?' checked':'')+'></label> <input data-may-obranota="'+mi+'" value="'+esc(r.obraNota||'')+'" placeholder="¿qué obra?" style="width:110px'+(r.obra?'':';opacity:.5')+'"></td>'+
@@ -16446,7 +16459,7 @@ function buildFilterTable(cfg){
     tabla.innerHTML=html+'</tbody>';
     // Cableado por querySelectorAll sobre elementos (§ patrón de viajes: testeable con stubs).
     cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
-    cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
+    cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', contacto:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
     cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
     cont.querySelectorAll('[data-may-siguiente]').forEach(b=>b.onclick=()=>maySiguiente());
     cont.querySelectorAll('[data-may-aviso-cfg]').forEach(b=>b.onclick=()=>mayConfigurarAviso());
@@ -16464,6 +16477,7 @@ function buildFilterTable(cfg){
     }catch(e){}
     tabla.querySelectorAll('[data-may-tipo]').forEach(s=>s.onchange=()=>{ mayUpd(+s.dataset.mayTipo, r=>({...r, tipo:s.value})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
+    tabla.querySelectorAll('[data-may-contacto]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayContacto, r=>({...r, contacto:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obra]').forEach(c=>c.onchange=()=>{ mayUpd(+c.dataset.mayObra, r=>({...r, obra:c.checked, obraFecha:c.checked?hoyISO:''})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obranota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayObranota, r=>({...r, obraNota:i.value.trim()})));
