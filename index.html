@@ -23518,11 +23518,17 @@ function buildFilterTable(cfg){
   // efectivo, pero el TOTAL repartido da EXACTO el disponible.
   // Función PURA (no toca DOM ni Firestore) y expuesta en window.__sueProrrateoAdelanto para
   // testearla en node — misma razón que __sueValores y compañía (§5 del CLAUDE.md).
-  function prorrateoAdelanto(disponible, filas, redondeo){
+  // 15/10 (pedido de Marcelo: pagar en efectivo con billetes de $20.000): con `soloMultiplos` TODOS los
+  // montos son múltiplos exactos de `redondeo`, incluso el de quien llega a su tope — se le adelanta lo
+  // que le falta REDONDEADO HACIA ABAJO (nunca más de lo que se le debe) y lo suelto queda para después.
+  // Lo que no se puede dar en billetes se devuelve en `sobra` (nunca se reparte en monedas).
+  function prorrateoAdelanto(disponible, filas, redondeo, soloMultiplos){
     const R=redondeo==null?1000:Math.max(1,num(redondeo)||1);
+    const SM=!!soloMultiplos && R>1;
     const disp=Math.max(0,num(disponible));
     const fs=(filas||[]).map(f=>({ empUid:f.empUid, nombre:f.nombre||'',
       devengado:Math.max(0,num(f.devengado)), falta:Math.max(0,num(f.falta)), monto:0, tope:false }));
+    if(SM) fs.forEach(f=>{ f.faltaReal=f.falta; f.falta=Math.floor(round2(f.falta)/R)*R; });
     const totDev=round2(fs.reduce((a,f)=>a+f.devengado,0));
     const totFalta=round2(fs.reduce((a,f)=>a+f.falta,0));
     const listo=(pctLibre)=>{ fs.forEach(f=>{ delete f._crudo; f.monto=round2(f.monto); });
@@ -23555,10 +23561,10 @@ function buildFilterTable(cfg){
       let resto=round2(disp-fs.reduce((a,f)=>a+f.monto,0));
       const orden=abiertos.slice().sort((a,b)=>(b._crudo-b.monto)-(a._crudo-a.monto));
       let k=0, sinLugar=0;
-      while(resto>0.005&&sinLugar<orden.length){
+      while(resto>(SM?R-0.005:0.005)&&sinLugar<orden.length){
         const f=orden[k%orden.length]; k++;
-        const paso=Math.min(R, resto, round2(f.falta-f.monto));
-        if(paso>0.005){ f.monto=round2(f.monto+paso); resto=round2(resto-paso); sinLugar=0; }
+        const paso=SM ? Math.min(R, Math.floor(resto/R)*R, round2(f.falta-f.monto)) : Math.min(R, resto, round2(f.falta-f.monto));
+        if(paso>(SM?R-0.005:0.005)){ f.monto=round2(f.monto+paso); resto=round2(resto-paso); sinLugar=0; }
         else sinLugar++;
       }
     }
@@ -23581,6 +23587,9 @@ function buildFilterTable(cfg){
     const cuentas=(window.__cajaCuentas?window.__cajaCuentas():[]);
     const medios=['Efectivo','Transferencia'];
     let plan=null;   // el último prorrateo calculado — es LO QUE SE REGISTRA al confirmar
+    const MULT_OPC=[ {v:1000,l:'$1.000 (cualquier monto redondo)'}, {v:10000,l:'$10.000 (billetes de 10 mil)'}, {v:20000,l:'$20.000 (billetes de 20 mil)'} ];
+    let multSel=1000;
+    try{ const g=+localStorage.getItem('vph_sue_adel_mult_v1'); if(MULT_OPC.some(o=>o.v===g)) multSel=g; }catch(e){}
     $('sue-adel-title').textContent='Repartir un monto en adelantos';
     $('sue-adel-form').innerHTML=
       '<p style="margin:0 0 12px;font-size:13px;color:var(--muted)">Cargá la plata disponible y se reparte como adelanto de la <b>'+esc(etiquetaQ(sel))+'</b> en proporción al sueldo: a todos les toca el <b>mismo porcentaje</b> de su quincena. A nadie se le adelanta más de lo que le falta cobrar (en total falta pagar '+money0(totFalta)+').</p>'+
@@ -23588,6 +23597,9 @@ function buildFilterTable(cfg){
         '<div class="cmp-field"><label>Monto disponible ($)</label><input type="number" id="sue-pr-monto" step="1000" min="0" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px">'+
           '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--muted)">o un % de la quincena:</span>'+
           [10,20,30,40,50].map(p=>'<button type="button" class="cmp-rowbtn" data-pct="'+p+'">'+p+'%</button>').join('')+'</div></div>'+
+        '<div class="cmp-field"><label>Los montos son múltiplos de</label><select id="sue-pr-mult" class="cmp-select" style="width:100%">'+
+          MULT_OPC.map(o=>'<option value="'+o.v+'"'+(o.v===multSel?' selected':'')+'>'+esc(o.l)+'</option>').join('')+'</select>'+
+          '<div style="margin-top:4px;font-size:11px;color:var(--muted)">Con billetes de $20.000 cada adelanto sale en billetes enteros; lo que no alcanza a un billete queda sin repartir.</div></div>'+
         '<div class="cmp-field"><label>Fecha en que se los das</label><input type="date" id="sue-pr-fecha" value="'+esc(hoyISO)+'" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px"></div>'+
         '<div class="cmp-field"><label>Medio</label><select id="sue-pr-medio" class="cmp-select" style="width:100%">'+medios.map(m=>'<option>'+esc(m)+'</option>').join('')+'</select></div>'+
         '<div class="cmp-field"><label>¿De qué cuenta sale?</label><select id="sue-pr-cuenta" class="cmp-select" style="width:100%">'+
@@ -23599,25 +23611,27 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="sue-pr-cancel">Cancelar</button>'+
       '<button class="cmp-btn cmp-btn-primary" id="sue-pr-save" disabled>Registrar los adelantos</button></div>';
     const recalc=()=>{
-      plan=prorrateoAdelanto(num($('sue-pr-monto').value), filas);
+      plan=prorrateoAdelanto(num($('sue-pr-monto').value), filas, multSel, multSel>1000);
       const conMonto=plan.filas.filter(f=>f.monto>0);
       let html='<tr><th>Empleado</th><th class="n">Le falta</th><th class="n">Adelanto</th></tr>';
       plan.filas.forEach(f=>{ html+='<tr><td>'+esc(f.nombre)+'</td><td class="n">'+money0(f.falta)+'</td>'+
-        '<td class="n"><b>'+money0(f.monto)+'</b>'+(f.tope&&f.monto>0?' <span style="font-size:10.5px;color:var(--amber)">le saldás todo</span>':'')+'</td></tr>'; });
+        '<td class="n"><b>'+money0(f.monto)+'</b>'+(f.tope&&f.monto>0?(multSel>1000&&f.faltaReal-f.monto>0.5 ? ' <span style="font-size:10.5px;color:var(--amber)">le saldás todo en billetes · quedan '+money0(f.faltaReal-f.monto)+' sueltos</span>' : ' <span style="font-size:10.5px;color:var(--amber)">le saldás todo</span>'):'')+'</td></tr>'; });
       html+='<tr class="total"><td><b>TOTAL</b></td><td class="n">'+money0(plan.totFalta)+'</td><td class="n"><b>'+money0(plan.repartido)+'</b></td></tr>';
       $('sue-pr-tabla').innerHTML=html;
       const pctTxt=plan.pctLibre!=null?plan.pctLibre:plan.pct;
       $('sue-pr-resumen').innerHTML = plan.repartido>0
         ? ('Cada uno recibe el <b>'+(Math.round(pctTxt*10)/10)+'%</b> de su quincena'+
            (plan.filas.some(f=>f.tope&&f.monto>0)?' (los marcados quedan saldados y su parte se repartió entre los demás)':'')+'.'+
-           (plan.sobra>0.5?' ⚠️ Sobran <b>'+money0(plan.sobra)+'</b>: con eso ya les pagás todo lo que falta.':''))
+           (plan.sobra>0.5?(multSel>1000?' ⚠️ Sobran <b>'+money0(plan.sobra)+'</b> que no se pueden dar en billetes de '+money0(multSel)+'.':' ⚠️ Sobran <b>'+money0(plan.sobra)+'</b>: con eso ya les pagás todo lo que falta.'):''))
         : 'Cargá el monto disponible arriba.';
       $('sue-pr-save').disabled=!(plan.repartido>0);
       $('sue-pr-save').textContent = plan.repartido>0 ? ('Registrar '+conMonto.length+' adelantos ('+money0(plan.repartido)+')') : 'Registrar los adelantos';
     };
     $('sue-pr-monto').oninput=recalc;
+    $('sue-pr-mult').onchange=()=>{ multSel=+$('sue-pr-mult').value||1000; $('sue-pr-monto').step=String(multSel); try{ localStorage.setItem('vph_sue_adel_mult_v1', String(multSel)); }catch(e){} recalc(); };
+    $('sue-pr-monto').step=String(multSel);
     $('sue-adel-form').querySelectorAll('button[data-pct]').forEach(b=> b.onclick=()=>{
-      $('sue-pr-monto').value=Math.round(totDev*num(b.dataset.pct)/100/1000)*1000; recalc(); });
+      $('sue-pr-monto').value=Math.round(totDev*num(b.dataset.pct)/100/multSel)*multSel; recalc(); });
     if(window.__tarjetas){ window.__tarjetas('sue-pr-medio'); window.__tarjetas('sue-pr-cuenta'); }
     $('sue-pr-cancel').onclick=()=>{ $('sue-modal-adel').classList.remove('open'); $('sue-adel-title').textContent='Registrar adelanto'; };
     $('sue-pr-save').onclick=()=>{
