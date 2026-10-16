@@ -7784,19 +7784,30 @@ function buildFilterTable(cfg){
         '<datalist id="ec-cliente-list">'+clientesConVentas().map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>')+
       field('Desde','','<input type="date" id="ec-desde" value="'+esc(ecDesde)+'" '+inp+'>')+
       field('Hasta','','<input type="date" id="ec-hasta" value="'+esc(ecHasta)+'" '+inp+'>')+'</div>'+
-      '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">"Desde" arranca solo en la venta pendiente más vieja (o 90 días atrás). Lo anterior entra como saldo anterior.</div>';
+      '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span>"Desde" arranca solo en la venta pendiente más vieja (o 90 días atrás). Lo anterior entra como saldo anterior.</span>'+
+      '<button type="button" class="cmp-rowbtn" id="ec-todo" title="Mostrar TODOS los movimientos del cliente, sin saldo anterior">Ver desde el inicio</button></div>';
     if(!o) h+='<p style="color:var(--muted);font-size:13px">Elegí un cliente.</p>';
     else if(!o.movimientos.length && !o.pendientes.length && !o.hayAnteriores) h+='<p style="color:var(--muted);font-size:13px">'+esc(o.cliente)+' no tiene movimientos cargados.</p>';
     else {
       const n=o.pendientes.length;
       h+='<div class="cmp-summary" style="margin:0 0 10px">'+cell('Saldo anterior',money(o.saldoAnterior),'var(--muted)')+cell('Debe',money(o.totalDebe),'var(--text)')+
         cell('Haber',money(o.totalHaber),'var(--green)')+cell('Saldo al '+fmtFecha(o.hasta),money(o.saldoFinal), o.saldoFinal>0.5?'var(--amber)':'var(--green)')+'</div>';
+      // TODOS los movimientos (facturas, notas, cobros), igual que el PDF — Marcelo (16/10): "no me salen
+      // todos los documentos": la vista previa listaba solo los pendientes y una NC o un cobro no aparecían.
+      const mv=o.movimientos;
+      h+='<div style="font-size:12.5px;font-weight:800;margin:6px 0">Movimientos del período ('+mv.length+')</div>';
+      h+='<div class="tbl-wrap" id="ec-movs" style="max-height:280px;overflow:auto;margin-bottom:10px"><table><tr><th>Fecha</th><th>Comprobante</th><th>Detalle</th><th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo</th></tr>'+
+        (o.hayAnteriores?'<tr><td>'+fmtFecha(o.desde)+'</td><td colspan="2" class="cel-envuelve"><i>Saldo anterior</i></td><td class="num"></td><td class="num"></td><td class="num"><b>'+money(o.saldoAnterior)+'</b></td></tr>':'')+
+        mv.map(m=>'<tr><td>'+fmtFecha(m.fecha)+'</td><td class="cel-envuelve">'+esc(m.comprobante||'')+'</td><td class="cel-envuelve" style="font-size:11.5px;color:var(--muted)">'+esc(m.detalle||'')+'</td>'+
+          '<td class="num">'+(m.debe>0.005?money(m.debe):'')+'</td><td class="num" style="color:var(--green)">'+(m.haber>0.005?money(m.haber):'')+'</td><td class="num"><b>'+money(m.saldo)+'</b></td></tr>').join('')+
+        (mv.length?'':'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px">Sin movimientos en el período.</td></tr>')+
+        '<tr class="total"><td colspan="3">Totales del período</td><td class="num">'+money(o.totalDebe)+'</td><td class="num">'+money(o.totalHaber)+'</td><td class="num">'+money(o.saldoFinal)+'</td></tr></table></div>';
       h+='<div style="font-size:12.5px;font-weight:800;margin:6px 0">Comprobantes pendientes ('+n+')'+(o.aFavor>0.5?' · <span style="color:var(--green)">'+money(o.aFavor)+' a favor del cliente sin aplicar</span>':'')+'</div>';
       h+= n ? '<div class="tbl-wrap"><table><tr><th>Comprobante</th><th>Fecha</th><th class="num">Saldo</th><th>Condición</th></tr>'+
         o.pendientes.map(p=>'<tr><td>'+esc(p.ref)+'</td><td>'+fmtFecha(p.fecha)+'</td><td class="num"><b>'+money(p.saldo)+'</b></td><td>'+
           (p.cond&&p.cond.cod!=='nada'?'<div class="cond-cobro '+p.cond.cls+'" title="'+esc(p.cond.det||'')+'" style="margin:0">'+p.cond.ico+' '+esc(p.cond.txt)+'</div>':'—')+'</td></tr>').join('')+'</table></div>'
         : '<p style="color:var(--green);font-size:13px">✅ Sin saldo pendiente al '+fmtFecha(o.hasta)+'.</p>';
-      h+='<div style="font-size:11px;color:var(--muted);margin:6px 0 0">'+o.movimientos.length+' movimiento'+(o.movimientos.length!==1?'s':'')+' en el período. El PDF lleva el detalle completo (debe / haber / saldo acumulado).</div>';
+      h+='<div style="font-size:11px;color:var(--muted);margin:6px 0 0">El PDF lleva estas mismas dos tablas, con la condición de cada comprobante en lenguaje del cliente.</div>';
     }
     h+='<div class="cmp-form-foot"><button class="cmp-btn" id="ec-cerrar">Cerrar</button>'+
       (o?'<button class="cmp-btn" id="ec-wa" title="Mensaje con el saldo y los comprobantes pendientes; el PDF se adjunta a mano en el chat">📲 WhatsApp</button>'+
@@ -7805,6 +7816,7 @@ function buildFilterTable(cfg){
     const ci=$('ec-cliente'); ci.addEventListener('change',()=>{ ecCliente=ci.value.trim(); ecDesde=desdeSugeridoEC(ecCliente); pintarEstadoCuenta(); });
     $('ec-desde').addEventListener('change',e=>{ ecDesde=e.target.value; pintarEstadoCuenta(); });
     $('ec-hasta').addEventListener('change',e=>{ ecHasta=e.target.value||hoyISO; pintarEstadoCuenta(); });
+    $('ec-todo').onclick=()=>{ ecDesde=''; pintarEstadoCuenta(); };
     $('ec-cerrar').onclick=()=>$('vnt-modal-estcta').classList.remove('open');
     if(o){
       $('ec-print').onclick=()=>{ if(!(window.__imprimir&&window.__imprimir.estadoCuenta)){ alert('Módulo de Documentos no disponible.'); return; } window.__imprimir.estadoCuenta(estadoCuentaDe(ecCliente, ecDesde, ecHasta)); };
