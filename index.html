@@ -23271,7 +23271,13 @@ function buildFilterTable(cfg){
     });
     return html;
   }
-  const ropaOpts={ incl:{talleZapato:true, tallePantalon:true, talleRemera:true}, cant:{talleZapato:1, tallePantalon:1, talleRemera:1}, fuera:{} };
+  const ropaOpts={ incl:{talleZapato:true, tallePantalon:true, talleRemera:true}, cant:{talleZapato:1, tallePantalon:1, talleRemera:1}, sel:{} };
+  // ¿Esta persona pide esta prenda en este pedido? Lo elige la tilde de cada casillero (sel[uid][k]).
+  // Sin tocar la tilde: pide si tiene el talle cargado (Sofía o Marcelo sin talle no entran solos).
+  function pideRopa(e, k, o){
+    const s=o&&o.sel&&o.sel[e._uid]; const v=s?s[k]:undefined;
+    return v===undefined ? !!normTalle(e[k]) : !!v;
+  }
   // "42,00" → "42" · "42,5" → "42,5" · "xxl" → "XXL". Lo demás se deja como viene, en mayúscula.
   function normTalle(v){
     const s=String(v==null?'':v).trim(); if(!s) return '';
@@ -23288,8 +23294,8 @@ function buildFilterTable(cfg){
     if(ia>=0&&ib>=0) return ia-ib; if(ia>=0) return -1; if(ib>=0) return 1;
     return String(a).localeCompare(String(b));
   }
-  // Pura: qué hay que pedir. emps = los que entran al pedido. Quien no tiene el talle cargado
-  // NO entra en esa prenda (no se inventa un talle) y queda en faltan[].
+  // Pura: qué hay que pedir. Cada persona entra en cada prenda según su tilde (pideRopa). Si está
+  // tildada y no tiene el talle cargado NO entra (no se inventa un talle) y queda en faltan[].
   function pedidoRopa(emps, opts){
     const o=opts||ropaOpts, out={ prendas:[], faltan:[], texto:'' };
     PRENDAS_ROPA.forEach(p=>{
@@ -23297,6 +23303,7 @@ function buildFilterTable(cfg){
       const cant=Math.max(1, Math.round(num(o.cant[p.k])||1));
       const map={};
       emps.forEach(e=>{
+        if(!pideRopa(e, p.k, o)) return;
         const t=normTalle(e[p.k]);
         if(!t){ out.faltan.push({nombre:e.nombre||'', prenda:p.l}); return; }
         (map[t]=map[t]||{talle:t, cant:0, nombres:[]}).cant+=cant;
@@ -23328,6 +23335,7 @@ function buildFilterTable(cfg){
       if(!o.incl[p.k]) return;
       const cant=Math.max(1, Math.round(num(o.cant[p.k])||1));
       emps.forEach(e=>{
+        if(!pideRopa(e, p.k, o)) return;
         const t=normTalle(e[p.k]); if(!t) return;
         (out[e._uid]=out[e._uid]||[]).push({ id:pedidoId+'_'+p.k, pedido:pedidoId, fecha, prenda:p.k, talle:t, cant,
           proveedor:proveedor||'', estado:'pedido', fechaEntrega:'' });
@@ -23397,37 +23405,47 @@ function buildFilterTable(cfg){
     if($('sue-btn-ropa')) $('sue-btn-ropa').classList.toggle('cmp-btn-primary', ropaAbierta);
     if(!ropaAbierta) return;
     const activos=EMP.filter(e=>e.activo!==false).sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
-    const ped=pedidoRopa(activos.filter(e=>!ropaOpts.fuera[e._uid]));
+    const ped=pedidoRopa(activos);
     const ult=(e,k)=>{ const u=ultimaRopa(e,k); if(!u) return '';
       return '<div style="font-size:10.5px;color:var(--muted);margin-top:2px" title="Último pedido de esta prenda">'+
         (u.estado==='entregado'?'✓ ':'⏳ ')+fmtFecha(u.estado==='entregado'&&u.fechaEntrega?u.fechaEntrega:u.fecha)+'</div>'; };
-    const inp=(e,k)=>'<input data-ropa-uid="'+esc(e._uid)+'" data-ropa-k="'+k+'" value="'+esc(normTalle(e[k]))+'" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;text-align:center">'+ult(e,k);
-    let t='<tr><th>Pide</th><th>Empleado</th>'+PRENDAS_ROPA.map(p=>'<th style="text-align:center">'+esc(p.l)+'</th>').join('')+'</tr>';
-    if(!activos.length) t+='<tr><td colspan="5" style="padding:10px;color:var(--muted)">No hay empleados activos.</td></tr>';
+    // Cada casillero lleva SU tilde: se elige prenda por prenda quién pide (ej. "zapatos para todos menos
+    // Ariel y Gustavo, pantalón para todos menos Antonio"). El encabezado tilda o destilda la columna entera.
+    const inp=(e,k)=>{ const pide=pideRopa(e,k,ropaOpts), falta=pide&&!normTalle(e[k]);
+      return '<div style="display:flex;align-items:center;justify-content:center;gap:6px">'+
+        '<input type="checkbox" data-ropa-sel-uid="'+esc(e._uid)+'" data-ropa-sel-k="'+k+'"'+(pide?' checked':'')+' title="Pide esta prenda">'+
+        '<input data-ropa-uid="'+esc(e._uid)+'" data-ropa-k="'+k+'" value="'+esc(normTalle(e[k]))+'" style="width:70px;padding:4px 6px;border:1px solid '+(falta?'var(--amber)':'var(--border)')+';border-radius:6px;text-align:center'+(pide?'':';opacity:.45')+'"'+(falta?' placeholder="¿talle?"':'')+'></div>'+ult(e,k); };
+    // El "todos" de la columna actúa sobre los que tienen el talle de esa prenda (Sofía o Marcelo sin talle
+    // no se suman solos y no llenan el pedido de avisos); a ellos se los tilda a mano si corresponde.
+    const conTalle=k=>activos.filter(e=>normTalle(e[k]));
+    const colTodos=k=>conTalle(k).length>0 && conTalle(k).every(e=>pideRopa(e,k,ropaOpts));
+    let t='<tr><th>Empleado</th>'+PRENDAS_ROPA.map(p=>'<th style="text-align:center"><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" title="Tildar o destildar a todos">'+
+      '<input type="checkbox" data-ropa-col="'+p.k+'"'+(colTodos(p.k)?' checked':'')+'> '+esc(p.l)+'</label></th>').join('')+'</tr>';
+    if(!activos.length) t+='<tr><td colspan="4" style="padding:10px;color:var(--muted)">No hay empleados activos.</td></tr>';
     activos.forEach(e=>{
-      t+='<tr><td style="text-align:center"><input type="checkbox" data-ropa-pide="'+esc(e._uid)+'"'+(ropaOpts.fuera[e._uid]?'':' checked')+'></td>'+
-        '<td class="cel-nombre"><b>'+esc(e.nombre||'—')+'</b></td>'+PRENDAS_ROPA.map(p=>'<td style="text-align:center">'+inp(e,p.k)+'</td>').join('')+'</tr>';
+      t+='<tr><td class="cel-nombre"><b>'+esc(e.nombre||'—')+'</b></td>'+PRENDAS_ROPA.map(p=>'<td style="text-align:center">'+inp(e,p.k)+'</td>').join('')+'</tr>';
     });
-    const opc=PRENDAS_ROPA.map(p=>'<label style="display:flex;align-items:center;gap:6px;font-size:13px">'+
-      '<input type="checkbox" data-ropa-incl="'+p.k+'"'+(ropaOpts.incl[p.k]?' checked':'')+'> '+esc(p.l)+
+    const opc=PRENDAS_ROPA.map(p=>'<label style="display:flex;align-items:center;gap:6px;font-size:13px">'+esc(p.l)+
       ' <input type="number" min="1" step="1" data-ropa-cant="'+p.k+'" value="'+esc(ropaOpts.cant[p.k])+'" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;text-align:right"> por persona</label>').join('');
     const res=ped.prendas.map(p=>'<div style="flex:1 1 180px;min-width:160px"><div style="font-weight:600;margin-bottom:4px">'+esc(p.l)+' · '+p.total+' '+esc(p.total===1?p.u:p.up)+'</div>'+
-      (p.filas.length?p.filas.map(f=>'<div style="font-size:13px;white-space:normal">'+esc(p.pre+f.talle)+': <b>'+f.cant+'</b> <span style="color:var(--muted);font-size:11.5px">('+esc(f.nombres.join(', '))+')</span></div>').join(''):'<div style="font-size:13px;color:var(--muted)">Sin talles cargados.</div>')+'</div>').join('');
+      (p.filas.length?p.filas.map(f=>'<div style="font-size:13px;white-space:normal">'+esc(p.pre+f.talle)+': <b>'+f.cant+'</b> <span style="color:var(--muted);font-size:11.5px">('+esc(f.nombres.join(', '))+')</span></div>').join(''):'<div style="font-size:13px;color:var(--muted)">No va en este pedido.</div>')+'</div>').join('');
     const faltan=ped.faltan.length?'<div style="margin-top:10px;font-size:12.5px;color:var(--amber)">⚠ Falta el talle: '+
       ped.faltan.map(f=>esc(f.prenda)+' de '+esc(f.nombre)).join(' · ')+'. No entran en el pedido hasta que lo cargues.</div>':'';
     box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
         '<h3 style="margin:0;font-size:15px">👕 Ropa de trabajo</h3>'+
         '<button class="cmp-btn cmp-btn-primary" id="sue-ropa-pedido">📋 Armar el pedido</button></div>'+
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Los talles se guardan en el legajo de cada uno apenas los cambiás. Destildá "Pide" a quien no le toca esta vez.</div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Tildá en cada prenda a quién le toca esta vez (el encabezado tilda o destilda la columna entera). Los talles se guardan en el legajo de cada uno apenas los cambiás.</div>'+
       '<div class="tbl-wrap"><table id="sue-ropa-tabla" style="font-size:13px">'+t+'</table></div>'+
       '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 8px">'+opc+'</div>'+
       '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:8px">'+res+'</div>'+faltan+
       histRopaHtml();
     box.querySelectorAll('input[data-ropa-k]').forEach(el=> el.addEventListener('change',()=>{
       const v=normTalle(el.value); el.value=v; guardarTalle(el.dataset.ropaUid, el.dataset.ropaK, v); renderRopa(); }));
-    box.querySelectorAll('input[data-ropa-pide]').forEach(el=> el.addEventListener('change',()=>{
-      if(el.checked) delete ropaOpts.fuera[el.dataset.ropaPide]; else ropaOpts.fuera[el.dataset.ropaPide]=true; renderRopa(); }));
-    box.querySelectorAll('input[data-ropa-incl]').forEach(el=> el.addEventListener('change',()=>{ ropaOpts.incl[el.dataset.ropaIncl]=el.checked; renderRopa(); }));
+    const marcar=(uid,k,v)=>{ (ropaOpts.sel[uid]=ropaOpts.sel[uid]||{})[k]=v; };
+    box.querySelectorAll('input[data-ropa-sel-uid]').forEach(el=> el.addEventListener('change',()=>{
+      marcar(el.dataset.ropaSelUid, el.dataset.ropaSelK, el.checked); renderRopa(); }));
+    box.querySelectorAll('input[data-ropa-col]').forEach(el=> el.addEventListener('change',()=>{
+      conTalle(el.dataset.ropaCol).forEach(e=>marcar(e._uid, el.dataset.ropaCol, el.checked)); renderRopa(); }));
     box.querySelectorAll('input[data-ropa-cant]').forEach(el=> el.addEventListener('change',()=>{ ropaOpts.cant[el.dataset.ropaCant]=Math.max(1,Math.round(num(el.value)||1)); renderRopa(); }));
     box.querySelectorAll('button[data-ropa-ped]').forEach(b=> b.onclick=()=>{
       const id=b.dataset.ropaPed, acc=b.dataset.ropaAcc;
@@ -23438,10 +23456,10 @@ function buildFilterTable(cfg){
       else if(acc==='ver'){ ropaVer[id]=!ropaVer[id]; renderRopa(); }
     });
     $('sue-ropa-pedido').onclick=()=>{
-      const p=pedidoRopa(activos.filter(e=>!ropaOpts.fuera[e._uid]));
+      const p=pedidoRopa(activos);
       if(!p.prendas.some(x=>x.filas.length)){ alert('No hay talles cargados para armar el pedido.'); return; }
       if(p.faltan.length && !confirm('Faltan '+p.faltan.length+' talles ('+p.faltan.map(f=>f.prenda+' de '+f.nombre).join(', ')+') y esos no van en el pedido. ¿Seguimos igual?')) return;
-      const quienes=activos.filter(e=>!ropaOpts.fuera[e._uid]);
+      const quienes=activos;
       // El registro se ofrece recién cuando el pedido se COPIA o se abre en WhatsApp (patrón alConfirmar):
       // abrir el modal y cerrarlo no deja nada anotado.
       const registrar=()=>{
