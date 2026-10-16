@@ -5914,6 +5914,7 @@ function buildFilterTable(cfg){
   function saveForm(){
     if(!editing.proveedor.trim()){ alert('Ingresá el proveedor.'); return; }
     if(!editing.items.length || !editing.items.some(it=>num(it.precioUnit)!==0)){ alert('Cargá al menos un ítem con importe.'); return; }
+    const esAlta = !editing._uid;   // la linea de abajo le asigna uid: hay que mirarlo ANTES
     if(!editing._uid){ editing._uid = newUid(); if(!editing.id) editing.id = editing._uid; }
     // ⚠️ El form se abrió con una COPIA de la compra y guarda con setDoc del documento ENTERO. Si
     // mientras estuvo abierto alguien marcó un débito de la tarjeta en Caja (escribe solo `pagos`),
@@ -5930,10 +5931,31 @@ function buildFilterTable(cfg){
           return (dv && dv.debitado && !dd.debitado) ? {...dd, debitado:true, fechaDebitado:dv.fechaDebitado||dv.fecha} : dd; })};
       });
     }
+    const uidGuardado = editing._uid;   // closeForm() pone editing=null: hay que guardarlo antes
     persistCompra(editing); closeForm();
+    // Terminar de cargar una compra y tener que buscarla en la lista para tocar 💵 Pagar era el paso
+    // que mas se saltea: la MITAD de las compras se pagan el mismo dia de la factura (medido sobre
+    // las 142 cargadas a mano al 02/10). Se PREGUNTA en vez de abrir el modal directo porque la otra
+    // mitad se paga despues y habria que cerrarlo una de cada dos veces.
+    // ⚠️ Solo en el ALTA: al editar (corregir un CUIT, agregar un renglon) preguntar por el pago seria
+    // ruido, y para eso ya esta el 💵 Pagar de la fila.
+    if(esAlta) ofrecerPago(uidGuardado);
   }
 
   // ---------- Pagos ----------
+  // Recien guardada el alta: si quedo con saldo, se ofrece cargar el pago sin salir del formulario.
+  // 🔴 La compra se busca VIVA en DB.compras por uid: `persistCompra` hace `guardarLocal` ANTES del
+  // setDoc, asi que ya esta. Pasarle el objeto del formulario abriria el pago sobre una copia que el
+  // snapshot va a reemplazar (la trampa de §3). Si no esta, NO se inventa nada: no se ofrece y la
+  // compra quedo guardada igual.
+  function ofrecerPago(uid){
+    const c = DB.compras.find(x=>x._uid===uid);
+    if(!c) return;
+    const k = calc(c);
+    if(!(k.saldo > 0)) return;   // ya vino saldada, o es una Nota de Credito (saldo negativo)
+    if(!confirm('Compra guardada.'+"\n\n"+(c.proveedor||'')+' — queda un saldo de '+money(k.saldo)+'.'+"\n\n"+'¿Registrás el pago ahora?')) return;
+    openPago(c);
+  }
   let payingUid=null;
   // CUIT lindo de leer: 30-71784004-2. Si no son 11 dígitos se muestra tal cual se cargó.
   function fmtCuit(v){ const d=String(v||'').replace(/\D/g,''); return d.length===11 ? d.slice(0,2)+'-'+d.slice(2,10)+'-'+d.slice(10) : String(v||''); }
