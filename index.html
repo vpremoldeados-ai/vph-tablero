@@ -20761,7 +20761,7 @@ function buildFilterTable(cfg){
     '</div>';
   }
 
-  function condicionesPresup(v){
+  function condicionesPresup(v, opt){
     // Qué trato comercial es. Manda la LISTA DE PRECIOS (la regex toma también los nombres viejos:
     // "1 Mayorista Responsable Inscripto", "2 Mayorista Sin Facturar"); si el documento es viejo y no
     // la tiene cargada, se cae a la categoría del cliente, que dice lo mismo con otras palabras.
@@ -20801,8 +20801,12 @@ function buildFilterTable(cfg){
     //  · SIN FACTURA, mayorista o MINORISTA (07/10, decisión de Marcelo): contado y nada más.
     const pago = sinFactura ? 'Pago Contado.' : mayorista
       ? (sinFactura ? 'Pago Contado.' : 'Pago Contado, Débito o Valor a 30 días de fecha de factura.')
-      : 'Precios de contado por transferencia. Hasta 12 cuotas sin interés con tarjetas bancarizadas, '+
-        'al precio de lista del recuadro "Formas de pago".'+
+      // El COMPARATIVO no lleva el recuadro "Formas de pago" (16/10, pedido de Marcelo): ahí la
+      // leyenda de las 12 cuotas remitía a algo que no está en el papel. Si se eligieron cuotas,
+      // ya van en sus columnas y en la línea "💳 Financiado" de las instrucciones.
+      : ((opt&&opt.comparativo) ? 'Precios de contado por transferencia.'
+        : 'Precios de contado por transferencia. Hasta 12 cuotas sin interés con tarjetas bancarizadas, '+
+        'al precio de lista del recuadro "Formas de pago".')+
         (respInsc && !sinFactura ? ' Clientes Responsables Inscriptos: también E-cheq a 30 días de fecha de factura.' : '');
     return '<div class="doc-obs" style="font-size:10px;margin-top:6px">'+
       '<div><b>Formas de Pago:</b> '+pago+'</div>'+
@@ -20898,7 +20902,7 @@ function buildFilterTable(cfg){
         // Mismas condiciones de venta que un presupuesto normal (formas de pago, envío/retiro): la
         // función ya resuelve el texto según listaPrecios/categoria/zona, que compDoc arma igual que
         // un presupuesto real, así que no hace falta duplicar nada acá.
-        condicionesPresup(v) +
+        condicionesPresup(v, {comparativo:true}) +
         '</div>';
       return headerHTML + tablaHTML + footerHTML;
     }
