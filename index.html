@@ -23243,7 +23243,34 @@ function buildFilterTable(cfg){
   const PRENDAS_ROPA=[ {k:'talleZapato', l:'Calzado', u:'par', up:'pares', pre:'N° '},
                        {k:'tallePantalon', l:'Pantalón', u:'pantalón', up:'pantalones', pre:'N° '},
                        {k:'talleRemera', l:'Remera', u:'remera', up:'remeras', pre:''} ];
-  let ropaAbierta=false;
+  let ropaAbierta=false, ropaUltProv='';
+  const ropaVer={};
+  function histRopaHtml(){
+    const peds=pedidosRopaDe(EMP);
+    const etq={talleZapato:'Calzado', tallePantalon:'Pantalón', talleRemera:'Remera'};
+    let html='<h4 style="margin:18px 0 8px;font-size:14px">🗂️ Pedidos registrados</h4>';
+    if(!peds.length) return html+'<div style="font-size:12.5px;color:var(--muted)">Todavía no hay pedidos registrados. Al copiar o mandar un pedido con "📋 Armar el pedido", el Tablero ofrece anotarlo acá.</div>';
+    peds.forEach(P=>{
+      const badge = P.estado==='entregado' ? '<span style="color:var(--green);font-weight:600">✓ Entregado '+fmtFecha(P.fechaEntrega)+'</span>'
+                  : P.estado==='parcial' ? '<span style="color:var(--amber);font-weight:600">Entregado en parte</span>'
+                  : '<span style="color:var(--amber);font-weight:600">⏳ Pedido, falta que llegue</span>';
+      const tot=Object.keys(etq).filter(k=>P.totales[k]).map(k=>etq[k]+' '+P.totales[k]).join(' · ');
+      html+='<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">'+
+        '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+          '<b>'+fmtFecha(P.fecha)+'</b>'+(P.proveedor?'<span>· '+esc(P.proveedor)+'</span>':'')+
+          '<span style="color:var(--muted);font-size:12.5px">'+esc(tot)+'</span>'+badge+
+          '<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">'+
+            '<button class="cmp-rowbtn" data-ropa-ped="'+esc(P.pedido)+'" data-ropa-acc="ver">'+(ropaVer[P.pedido]?'▲ Ocultar':'▼ Detalle')+'</button>'+
+            (P.estado!=='entregado'?'<button class="cmp-rowbtn" data-ropa-ped="'+esc(P.pedido)+'" data-ropa-acc="llego">✓ Llegó y se entregó</button>'
+                                   :'<button class="cmp-rowbtn" data-ropa-ped="'+esc(P.pedido)+'" data-ropa-acc="pend">↩ Volver a pendiente</button>')+
+            '<button class="cmp-rowbtn" data-ropa-ped="'+esc(P.pedido)+'" data-ropa-acc="borrar" style="color:var(--red)">🗑</button>'+
+          '</span></div>'+
+        (ropaVer[P.pedido]?'<div style="margin-top:6px;font-size:12.5px;white-space:normal">'+
+          P.items.slice().sort((a,b)=>a.nombre.localeCompare(b.nombre)).map(i=>esc(i.nombre)+': '+esc(etq[i.prenda]||i.prenda)+' '+esc(i.talle)+(i.cant>1?' ×'+i.cant:'')).join('<br>')+'</div>':'')+
+      '</div>';
+    });
+    return html;
+  }
   const ropaOpts={ incl:{talleZapato:true, tallePantalon:true, talleRemera:true}, cant:{talleZapato:1, tallePantalon:1, talleRemera:1}, fuera:{} };
   // "42,00" → "42" · "42,5" → "42,5" · "xxl" → "XXL". Lo demás se deja como viene, en mayúscula.
   function normTalle(v){
@@ -23289,13 +23316,80 @@ function buildFilterTable(cfg){
     out.texto=L.join('\n');
     return out;
   }
+  // ---- Historial de pedidos de ropa ----
+  // Vive en el legajo de cada empleado (campo ropaHist): una entrada por prenda pedida, con el id del
+  // pedido para poder agruparlas. Sin colección nueva ni cambio de reglas, y entra en el backup.
+  // Entrada: {id, pedido, fecha, prenda, talle, cant, proveedor, estado:'pedido'|'entregado', fechaEntrega}
+  // Pura: qué entradas le tocan a cada empleado en un pedido nuevo (mismo criterio que pedidoRopa:
+  // sin talle cargado no se pide esa prenda).
+  function entradasPedidoRopa(emps, opts, pedidoId, fecha, proveedor){
+    const o=opts||ropaOpts, out={};
+    PRENDAS_ROPA.forEach(p=>{
+      if(!o.incl[p.k]) return;
+      const cant=Math.max(1, Math.round(num(o.cant[p.k])||1));
+      emps.forEach(e=>{
+        const t=normTalle(e[p.k]); if(!t) return;
+        (out[e._uid]=out[e._uid]||[]).push({ id:pedidoId+'_'+p.k, pedido:pedidoId, fecha, prenda:p.k, talle:t, cant,
+          proveedor:proveedor||'', estado:'pedido', fechaEntrega:'' });
+      });
+    });
+    return out;
+  }
+  // Pura: los pedidos agrupados (el más nuevo primero), armados desde los legajos.
+  function pedidosRopaDe(emps){
+    const map={};
+    (emps||[]).forEach(e=> (Array.isArray(e.ropaHist)?e.ropaHist:[]).forEach(r=>{
+      const P=map[r.pedido]=map[r.pedido]||{ pedido:r.pedido, fecha:r.fecha, proveedor:r.proveedor||'', items:[], totales:{} };
+      P.items.push({ empUid:e._uid, nombre:e.nombre||'', prenda:r.prenda, talle:r.talle, cant:num(r.cant), estado:r.estado, fechaEntrega:r.fechaEntrega||'' });
+      P.totales[r.prenda]=(P.totales[r.prenda]||0)+num(r.cant);
+    }));
+    return Object.values(map).map(P=>{
+      const ent=P.items.filter(i=>i.estado==='entregado').length;
+      P.estado = ent===0 ? 'pedido' : (ent===P.items.length ? 'entregado' : 'parcial');
+      P.fechaEntrega = P.items.map(i=>i.fechaEntrega).filter(Boolean).sort().pop()||'';
+      return P;
+    }).sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha)) || String(b.pedido).localeCompare(String(a.pedido)));
+  }
+  // Pura: la última vez que a esa persona se le pidió esa prenda (o null).
+  function ultimaRopa(e, k){
+    const arr=(Array.isArray(e&&e.ropaHist)?e.ropaHist:[]).filter(r=>r.prenda===k);
+    if(!arr.length) return null;
+    return arr.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).pop();
+  }
   window.__suePedidoRopa=pedidoRopa; window.__sueNormTalle=normTalle;
+  window.__suePedidosRopa=pedidosRopaDe; window.__sueEntradasPedidoRopa=entradasPedidoRopa;
   // Guarda SOLO el talle tocado (merge): no pisa lo que otro esté editando en el legajo.
   function guardarTalle(uid, campo, valor){
     const e=EMP.find(x=>x._uid===uid); if(!e) return;
     e[campo]=valor;
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL_E,uid), {[campo]:valor}, {merge:true}).catch(er=>alert('Error al guardar el talle: '+er.message)); }
     else saveLocal();
+  }
+  function guardarHist(uid, arr){
+    const e=EMP.find(x=>x._uid===uid); if(!e) return Promise.resolve(false);
+    e.ropaHist=arr;
+    if(window.__usaNube){ const c=fb(); if(!(c&&c.db)) return Promise.resolve(false);
+      return c.FS.setDoc(c.FS.doc(c.db,COL_E,uid), {ropaHist:arr}, {merge:true}).then(()=>true).catch(er=>{ alert('Error al guardar el historial de ropa de '+(e.nombre||'')+': '+er.message); return false; }); }
+    saveLocal(); return Promise.resolve(true);
+  }
+  function registrarPedidoRopa(emps, proveedor){
+    const id='rop'+Date.now().toString(36), porEmp=entradasPedidoRopa(emps, ropaOpts, id, hoyISO, proveedor);
+    const uids=Object.keys(porEmp); if(!uids.length) return Promise.resolve(0);
+    return Promise.all(uids.map(uid=>{ const e=EMP.find(x=>x._uid===uid); if(!e) return false;
+      const prev=Array.isArray(e.ropaHist)?e.ropaHist:[]; return guardarHist(uid, prev.concat(porEmp[uid])); }))
+      .then(r=>{ const mal=r.filter(x=>!x).length; if(mal) alert('Ojo: el pedido no quedó registrado en '+mal+' legajo(s). Revisá el historial.'); return uids.length-mal; });
+  }
+  // Cambia el estado de TODAS las entradas de un pedido (en cada legajo vivo, resuelto al click).
+  function marcarPedidoRopa(pedidoId, estado){
+    const f = estado==='entregado' ? hoyISO : '';
+    EMP.filter(e=>(e.ropaHist||[]).some(r=>r.pedido===pedidoId)).forEach(e=>{
+      guardarHist(e._uid, e.ropaHist.map(r=> r.pedido===pedidoId ? {...r, estado, fechaEntrega:f} : r));
+    });
+  }
+  function borrarPedidoRopa(pedidoId){
+    EMP.filter(e=>(e.ropaHist||[]).some(r=>r.pedido===pedidoId)).forEach(e=>{
+      guardarHist(e._uid, e.ropaHist.filter(r=>r.pedido!==pedidoId));
+    });
   }
   function renderRopa(){
     const box=$('sue-ropa'); if(!box) return;
@@ -23304,7 +23398,10 @@ function buildFilterTable(cfg){
     if(!ropaAbierta) return;
     const activos=EMP.filter(e=>e.activo!==false).sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
     const ped=pedidoRopa(activos.filter(e=>!ropaOpts.fuera[e._uid]));
-    const inp=(e,k)=>'<input data-ropa-uid="'+esc(e._uid)+'" data-ropa-k="'+k+'" value="'+esc(normTalle(e[k]))+'" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;text-align:center">';
+    const ult=(e,k)=>{ const u=ultimaRopa(e,k); if(!u) return '';
+      return '<div style="font-size:10.5px;color:var(--muted);margin-top:2px" title="Último pedido de esta prenda">'+
+        (u.estado==='entregado'?'✓ ':'⏳ ')+fmtFecha(u.estado==='entregado'&&u.fechaEntrega?u.fechaEntrega:u.fecha)+'</div>'; };
+    const inp=(e,k)=>'<input data-ropa-uid="'+esc(e._uid)+'" data-ropa-k="'+k+'" value="'+esc(normTalle(e[k]))+'" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;text-align:center">'+ult(e,k);
     let t='<tr><th>Pide</th><th>Empleado</th>'+PRENDAS_ROPA.map(p=>'<th style="text-align:center">'+esc(p.l)+'</th>').join('')+'</tr>';
     if(!activos.length) t+='<tr><td colspan="5" style="padding:10px;color:var(--muted)">No hay empleados activos.</td></tr>';
     activos.forEach(e=>{
@@ -23324,19 +23421,37 @@ function buildFilterTable(cfg){
       '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Los talles se guardan en el legajo de cada uno apenas los cambiás. Destildá "Pide" a quien no le toca esta vez.</div>'+
       '<div class="tbl-wrap"><table id="sue-ropa-tabla" style="font-size:13px">'+t+'</table></div>'+
       '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 8px">'+opc+'</div>'+
-      '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:8px">'+res+'</div>'+faltan;
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:8px">'+res+'</div>'+faltan+
+      histRopaHtml();
     box.querySelectorAll('input[data-ropa-k]').forEach(el=> el.addEventListener('change',()=>{
       const v=normTalle(el.value); el.value=v; guardarTalle(el.dataset.ropaUid, el.dataset.ropaK, v); renderRopa(); }));
     box.querySelectorAll('input[data-ropa-pide]').forEach(el=> el.addEventListener('change',()=>{
       if(el.checked) delete ropaOpts.fuera[el.dataset.ropaPide]; else ropaOpts.fuera[el.dataset.ropaPide]=true; renderRopa(); }));
     box.querySelectorAll('input[data-ropa-incl]').forEach(el=> el.addEventListener('change',()=>{ ropaOpts.incl[el.dataset.ropaIncl]=el.checked; renderRopa(); }));
     box.querySelectorAll('input[data-ropa-cant]').forEach(el=> el.addEventListener('change',()=>{ ropaOpts.cant[el.dataset.ropaCant]=Math.max(1,Math.round(num(el.value)||1)); renderRopa(); }));
+    box.querySelectorAll('button[data-ropa-ped]').forEach(b=> b.onclick=()=>{
+      const id=b.dataset.ropaPed, acc=b.dataset.ropaAcc;
+      const P=pedidosRopaDe(EMP).find(x=>x.pedido===id); if(!P) return;
+      if(acc==='llego'){ marcarPedidoRopa(id,'entregado'); renderRopa(); }
+      else if(acc==='pend'){ marcarPedidoRopa(id,'pedido'); renderRopa(); }
+      else if(acc==='borrar'){ if(!confirm('¿Borrar del historial el pedido del '+fmtFecha(P.fecha)+'? Solo se borra el registro; no cambia nada más.')) return; borrarPedidoRopa(id); renderRopa(); }
+      else if(acc==='ver'){ ropaVer[id]=!ropaVer[id]; renderRopa(); }
+    });
     $('sue-ropa-pedido').onclick=()=>{
       const p=pedidoRopa(activos.filter(e=>!ropaOpts.fuera[e._uid]));
       if(!p.prendas.some(x=>x.filas.length)){ alert('No hay talles cargados para armar el pedido.'); return; }
       if(p.faltan.length && !confirm('Faltan '+p.faltan.length+' talles ('+p.faltan.map(f=>f.prenda+' de '+f.nombre).join(', ')+') y esos no van en el pedido. ¿Seguimos igual?')) return;
-      if(window.__wa && window.__wa.modal) window.__wa.modal({ titulo:'Pedido de ropa de trabajo', destino:'Copialo y mandáselo al proveedor', texto:p.texto });
-      else if(navigator.clipboard) navigator.clipboard.writeText(p.texto).then(()=>alert('Pedido copiado.'));
+      const quienes=activos.filter(e=>!ropaOpts.fuera[e._uid]);
+      // El registro se ofrece recién cuando el pedido se COPIA o se abre en WhatsApp (patrón alConfirmar):
+      // abrir el modal y cerrarlo no deja nada anotado.
+      const registrar=()=>{
+        const prov=prompt('Para el historial: ¿a qué proveedor se lo pediste? (podés dejarlo vacío)\n\nCancelar = no registrarlo.', ropaUltProv||'');
+        if(prov===null) return;
+        ropaUltProv=prov.trim();
+        registrarPedidoRopa(quienes, ropaUltProv).then(n=>{ if(n) renderRopa(); });
+      };
+      if(window.__wa && window.__wa.modal) window.__wa.modal({ titulo:'Pedido de ropa de trabajo', destino:'Copialo y mandáselo al proveedor', texto:p.texto, alConfirmar:registrar });
+      else if(navigator.clipboard) navigator.clipboard.writeText(p.texto).then(registrar);
     };
   }
 
@@ -23435,6 +23550,8 @@ function buildFilterTable(cfg){
     e.cobraPresentismo=$('sue-f-cobraPresentismo').checked;
     e.activo=$('sue-f-activo').checked;
     if(!e.nombre){ alert('El legajo necesita el nombre y apellido.'); return; }
+    // El historial de ropa se escribe aparte (Ropa de trabajo): tomar el VIVO, no la copia de cuando se abrió el legajo.
+    const vivo=e._uid&&EMP.find(x=>x._uid===e._uid); if(vivo&&Array.isArray(vivo.ropaHist)) e.ropaHist=vivo.ropaHist;
     if(!e.activo && !e.fechaEgreso){ alert('Si el empleado ya no trabaja, cargá la fecha de egreso: es la que decide desde qué quincena deja de liquidarse.'); return; }
     persistEmp(e).then(()=>{ cerrarLegajo(); render(); }).catch(()=>{});
   }
