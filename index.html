@@ -1630,6 +1630,7 @@
           <button class="cmp-btn cmp-btn-primary" id="vnt-nueva">+ Nueva Venta</button>
           <button class="cmp-btn cmp-btn-primary" id="vnt-imputar-btn" style="background:var(--amber)" title="Un pago que cubre varias facturas de un cliente: se reparte solo entre sus ventas pendientes, la más vieja primero">💰 Cobro en cuenta corriente</button>
           <button class="cmp-btn" id="vnt-ruta-cobranza" title="Armar la hoja de ruta para pasar a cobrar en efectivo o cheque: cliente, dirección, teléfono y monto">🚶 Ruta de cobranza</button>
+          <button class="cmp-btn" id="vnt-estcta-btn" title="Estado de cuenta de un cliente: movimientos del período (debe / haber / saldo) y los comprobantes pendientes, en PDF o por WhatsApp">📄 Estado de cuenta</button>
           <button class="cmp-btn" id="vnt-retenciones" title="Retenciones que nos hicieron los clientes — para pasarle al contador">🧾 Retenciones sufridas</button>
           <button class="cmp-btn" id="vnt-export">Exportar JSON</button>
           <button class="cmp-btn" id="vnt-import">Importar JSON</button>
@@ -1708,6 +1709,17 @@
         <button class="cmp-x" id="vnt-imputar-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="vnt-form-imputar"></div>
+    </div>
+  </div>
+
+  <!-- ================= ESTADO DE CUENTA DEL CLIENTE (overlay, prefijo ec-) ================= -->
+  <div class="cmp-overlay" id="vnt-modal-estcta">
+    <div class="cmp-dialog" style="max-width:720px">
+      <div class="cmp-dialog-head">
+        <h3>📄 Estado de cuenta</h3>
+        <button class="cmp-x" id="vnt-estcta-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="vnt-form-estcta"></div>
     </div>
   </div>
 
@@ -6930,6 +6942,9 @@ function buildFilterTable(cfg){
   const hoyISO = (()=>{ const p=n=>String(n).padStart(2,'0'); return HOY.getFullYear()+'-'+p(HOY.getMonth()+1)+'-'+p(HOY.getDate()); })();
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   const round2 = n => Math.round(n*100)/100;
+  // ⚠️ Cada módulo tiene SUS helpers (§3): `nf` no existía acá y `resumenVenta` (el "📣 Aviso al grupo"
+  // del WhatsApp de la venta, y desde el 16/10 el detalle del estado de cuenta) tiraba "nf is not defined".
+  const nf = n => Math.round(num(n)).toLocaleString('es-AR');
 
   const CATEGORIAS = ['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC','VASSALLO Bienes de Uso'];
   const LISTAS = window.__listasPrecio();   // fuente única (script 1) — no duplicar el array acá
@@ -7348,6 +7363,7 @@ function buildFilterTable(cfg){
     // ("Todavía no armaste la ruta" + "No quedan ventas pendiente") para siempre: nada lo
     // repintaba después. `render()` es lo que se dispara con cada snapshot nuevo.
     if($('vnt-modal-cobranza') && $('vnt-modal-cobranza').classList.contains('open')) pintarRutaCobranza();
+    if($('vnt-modal-estcta') && $('vnt-modal-estcta').classList.contains('open')) pintarEstadoCuenta();
     const ventas = DB.ventas.map(v=>({ v, k:calc(v) }));
     const periodos=[...new Set(DB.ventas.map(v=>v.periodo))].filter(Boolean).sort().reverse();
     fillSelect($('vnt-filtro-periodo'), [{v:'',l:'Todos los períodos'}].concat(periodos.map(p=>({v:p,l:labelPeriodo(p)}))), filtro.periodo);
@@ -7654,11 +7670,147 @@ function buildFilterTable(cfg){
       // data-sortval: la celda lleva texto debajo del importe y __ordenable tiene que ordenar por el número.
       '<td class="num" data-sortval="'+Math.round(r.cobrable)+'" style="color:'+(r.cobrable>0?(r.urg>=3?'var(--red)':'var(--green)'):'var(--muted)')+'"><b>'+(r.cobrable>0?money(r.cobrable):'—')+'</b>'+(det?'<div style="font-size:10.5px;font-weight:400;color:var(--muted)">'+det+'</div>':'')+'</td>'+
       '<td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td>'+
-      '<td><button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button></td></tr>'; });
+      '<td class="cel-acciones"><button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button>'+
+      '<button class="cmp-rowbtn" data-estcta="'+esc(r.c)+'" title="Estado de cuenta: movimientos del período y comprobantes pendientes, para mandarle al cliente">📄 Estado</button></td></tr>'; });
     const tot=arr.reduce((a,r)=>a+r.saldo,0), totC=arr.reduce((a,r)=>a+r.cobrable,0), totV=arr.reduce((a,r)=>a+r.venc,0);
     if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totC)+'</td><td class="num">'+money(totV)+'</td><td></td></tr>';
     $('vnt-tabla-cli').innerHTML=html; window.__ordenable('vnt-tabla-cli');
     $('vnt-tabla-cli').querySelectorAll('button[data-imputar]').forEach(b=> b.onclick=()=> openImputar(b.dataset.imputar));
+    $('vnt-tabla-cli').querySelectorAll('button[data-estcta]').forEach(b=> b.onclick=()=> openEstadoCuenta(b.dataset.estcta));
+  }
+
+  // ---------- 📄 Estado de cuenta del cliente (16/10, pedido de Marcelo: "más que todo de los
+  // mayoristas que nos compran periódicamente") ----------
+  // Es un RESUMEN de la cuenta corriente, no un comprobante: se arma en el momento desde las ventas
+  // y sus cobros, no se numera ni se guarda. Dos partes: (1) los MOVIMIENTOS del período en orden
+  // cronológico — Debe (facturas, ventas sin factura, notas de débito) y Haber (cobros, notas de
+  // crédito) con el saldo acumulado, y un "Saldo anterior" si el período no arranca de cero; y (2)
+  // la COMPOSICIÓN del saldo: los comprobantes que todavía tienen saldo, cada uno con la MISMA
+  // condición de cobro que muestra la lista de Ventas. El saldo del estado de cuenta es el del libro
+  // (debe − haber); si hay una Nota de Crédito sin aplicar o un pago de más, lo dice como "a favor".
+  // ⚠️ Un cheque RECHAZADO se lista pero NO computa en el haber (mismo criterio que calc()), y los
+  // cobros/NC posteriores a "Hasta" quedan afuera: el saldo es AL día elegido, no el de hoy.
+  // El cliente se empareja por nombre normalizado (sin tildes/mayúsculas/espacios de más).
+  function normCli(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); }
+  function detalleCobroEC(c){
+    const m=String(c.medio||'—'); let d=m;
+    if(esCheque(m)) d+=(c.chNumero?' N° '+c.chNumero:'')+(c.chBanco?' '+c.chBanco:'')+(c.chVenc?' (vence '+fmtFecha(String(c.chVenc).slice(0,10))+')':'');
+    else if(esRetencion(m)) d='Retención'+(c.retImpuesto?' '+c.retImpuesto:'')+(c.retCertificado?' cert. '+c.retCertificado:'');
+    if(c.chequeRechazado) d+=' — RECHAZADO (no computa)';
+    return d.replace(/\s+/g,' ').trim();
+  }
+  // Lo que el CLIENTE lee de cada comprobante pendiente (no los textos internos del chip).
+  function condClienteEC(c){
+    if(!c || c.cod==='nada') return '';
+    if(c.cod==='rechazado') return 'Cheque rechazado';
+    if(c.cod==='plazo') return 'Vence el '+fmtFecha(c.exigible);
+    if(c.cod==='cobrar' || c.cod==='reclamar') return 'Vencido el '+fmtFecha(c.exigible);
+    if(c.cod==='esperar') return 'Pendiente de entrega';
+    if(c.cod==='alentregar') return 'A pagar contra entrega'+(c.programada?' ('+fmtFecha(c.programada)+')':'');
+    return '';
+  }
+  function estadoCuentaDe(cliente, desde, hasta){
+    const key=normCli(cliente); if(!key) return null;
+    hasta=String(hasta||hoyISO).slice(0,10); desde=String(desde||'').slice(0,10);
+    const vs=DB.ventas.filter(v=> v && normCli(v.cliente)===key && !['Presupuesto','Remito'].includes(String(v.tipoComprobante||'')));
+    const ref=v=> window.__refComprobante ? window.__refComprobante(v) : (v.nroFactura||v.nroInterno||'');
+    const fISO=v=>String(v.fecha||'').slice(0,10);
+    const movs=[];
+    vs.forEach(v=>{ const k=calc(v), f=fISO(v);
+      if(k.signo<0){ const asoc=v.compAsoc?DB.ventas.find(x=>x&&x._uid===v.compAsoc):null;
+        movs.push({fecha:f, orden:1, tipo:'nc', uid:v._uid, comprobante:ref(v), detalle:'Nota de Crédito'+(asoc?' sobre '+ref(asoc):'')+(v.ncMotivo==='bonificacion'?' (bonificación)':''), debe:0, haber:Math.abs(k.total)}); return; }
+      const esND=v.tipoComprobante==='Nota de Débito';
+      movs.push({fecha:f, orden:0, tipo:esND?'nd':'venta', uid:v._uid, comprobante:ref(v), detalle:esND?'Nota de Débito':resumenVenta(v), debe:k.total, haber:0});
+      (v.cobros||[]).forEach(c=>{ if(!c) return;
+        movs.push({fecha:String(c.fecha||f).slice(0,10), orden:2, tipo:'cobro', uid:v._uid, cobroId:c.id||'', comprobante:'Cobro', detalle:detalleCobroEC(c)+' · a cta. '+ref(v), debe:0, haber:c.chequeRechazado?0:num(c.monto)}); });
+    });
+    // Cronológico; el mismo día va primero la venta, después su NC y al final los cobros.
+    movs.sort((a,b)=> a.fecha.localeCompare(b.fecha) || a.orden-b.orden || String(a.uid).localeCompare(String(b.uid)));
+    let saldoAnterior=0, hayAnteriores=false;
+    movs.forEach(m=>{ if(desde && m.fecha<desde){ saldoAnterior+=m.debe-m.haber; hayAnteriores=true; } });
+    saldoAnterior=round2(saldoAnterior);
+    let saldo=saldoAnterior; const periodo=[];
+    movs.forEach(m=>{ if((desde && m.fecha<desde) || m.fecha>hasta) return; saldo=round2(saldo+m.debe-m.haber); periodo.push(Object.assign({},m,{saldo})); });
+    const totalDebe=round2(periodo.reduce((a,m)=>a+m.debe,0)), totalHaber=round2(periodo.reduce((a,m)=>a+m.haber,0));
+    const saldoFinal=round2(saldoAnterior+totalDebe-totalHaber);
+    // Composición del saldo AL "hasta": cada comprobante con lo cobrado y las NC aplicadas hasta ese día.
+    const pend=[];
+    vs.forEach(v=>{ const k=calc(v); if(k.signo<0) return; const f=fISO(v); if(f>hasta) return;
+      const cob=(v.cobros||[]).reduce((a,c)=> a + ((c && !c.chequeRechazado && String(c.fecha||f).slice(0,10)<=hasta) ? num(c.monto) : 0), 0);
+      const nc=DB.ventas.reduce((a,n)=> a + ((n && n.tipoComprobante==='Nota de Crédito' && n.compAsoc===v._uid && fISO(n)<=hasta) ? Math.abs(calc(n).total) : 0), 0);
+      const s=round2(k.total-cob-nc);
+      if(s>0.5){ const c=(hasta>=hoyISO)?condicionCobro(v,k):null;
+        pend.push({uid:v._uid, ref:ref(v), fecha:f, total:k.total, cobrado:round2(cob+nc), saldo:s, cond:c, condCliente:condClienteEC(c)}); } });
+    pend.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    const totalPendiente=round2(pend.reduce((a,p)=>a+p.saldo,0));
+    // Lo que el libro debe MENOS la suma de los pendientes = plata a favor sin aplicar (NC suelta, pago de más).
+    const aFavor=round2(Math.max(0, totalPendiente-saldoFinal));
+    // Datos fiscales: la ficha del cliente manda; si no hay ficha, lo que trae la última venta.
+    const cs=(window.__catalogoClientes?window.__catalogoClientes():[]);
+    const conCuit=vs.find(v=>String(v.cuit||'').replace(/\D/g,'')), cu=conCuit?String(conCuit.cuit).replace(/\D/g,''):'';
+    const cli=cs.find(c=>normCli(c.nombre)===key) || (cu?cs.find(c=>String(c.cuit||'').replace(/\D/g,'')===cu):null) || {};
+    const ult=vs.slice().sort((a,b)=>fISO(b).localeCompare(fISO(a)))[0]||{};
+    return { cliente:String(cliente).trim(), cuit:cli.cuit||ult.cuit||'', condIva:cli.condIva||ult.condIva||'',
+      domicilio:[cli.direccion,cli.localidad].filter(Boolean).join(' - ')||String(ult.domicilioFacturacion||'').trim(),
+      telefono:cli.telefono||'', desde, hasta, fecha:hoyISO, saldoAnterior, hayAnteriores, movimientos:periodo,
+      totalDebe, totalHaber, saldoFinal, pendientes:pend, totalPendiente, aFavor, primerMov:movs.length?movs[0].fecha:'' };
+  }
+  // Mensaje de WhatsApp: el saldo y los comprobantes pendientes; el PDF se adjunta a mano.
+  function textoEstadoCuentaWa(o){
+    const nombre=(window.__wa&&window.__wa.primerNombre)?window.__wa.primerNombre(o.cliente):'';
+    const m=n=>'$'+(Math.round(num(n)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    let t='Hola'+(nombre?' '+nombre:'')+'! Te paso el estado de cuenta al '+fmtFecha(o.hasta)+'.\n';
+    if(o.pendientes.length){
+      t+='Saldo pendiente: '+m(o.saldoFinal)+(o.aFavor>0.5?' (comprobantes por '+m(o.totalPendiente)+' menos '+m(o.aFavor)+' a tu favor)':'')+'\n';
+      t+=o.pendientes.map(p=>'• '+p.ref+' del '+fmtFecha(p.fecha)+': '+m(p.saldo)+(p.cond&&p.cond.cod==='plazo'?' (vence '+fmtFecha(p.cond.exigible)+')':'')).join('\n')+'\n';
+    } else t+='No tenés saldo pendiente'+(o.saldoFinal<-0.5?' y te queda un saldo a favor de '+m(-o.saldoFinal):'')+'. ¡Gracias!\n';
+    t+='Te adjunto el detalle en PDF. Cualquier duda me decís 😊';
+    return t;
+  }
+  function clientesConVentas(){ const by={}; DB.ventas.forEach(v=>{ if(v && v.cliente && !['Presupuesto','Remito'].includes(String(v.tipoComprobante||''))) by[String(v.cliente).trim()]=true; }); return Object.keys(by).sort(); }
+  // "Desde" sugerido: la venta pendiente más vieja del cliente, o 90 días atrás si está más cerca.
+  function desdeSugeridoEC(cliente){ const key=normCli(cliente); const d=new Date(HOY); d.setDate(d.getDate()-90); let desde=isoDe(d);
+    DB.ventas.forEach(v=>{ if(v && normCli(v.cliente)===key && calc(v).saldo>0.5){ const f=String(v.fecha||'').slice(0,10); if(f && f<desde) desde=f; } });
+    return desde; }
+  let ecCliente='', ecDesde='', ecHasta='';
+  function openEstadoCuenta(cliente){ ecCliente=String(cliente||'').trim(); ecHasta=hoyISO; ecDesde=desdeSugeridoEC(ecCliente); pintarEstadoCuenta(); $('vnt-modal-estcta').classList.add('open'); }
+  window.__abrirEstadoCuenta = openEstadoCuenta;   // para abrirlo desde otro módulo (CRM Mayoristas), en tiempo de click
+  function pintarEstadoCuenta(){
+    const box=$('vnt-form-estcta'); if(!box) return;
+    const o = ecCliente ? estadoCuentaDe(ecCliente, ecDesde, ecHasta) : null;
+    const inp='style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px"';
+    let h='<div class="cmp-form-grid" style="grid-template-columns:2fr 1fr 1fr">'+
+      field('Cliente','','<input id="ec-cliente" list="ec-cliente-list" placeholder="Buscar cliente..." value="'+esc(ecCliente)+'" '+inp+'>'+
+        '<datalist id="ec-cliente-list">'+clientesConVentas().map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>')+
+      field('Desde','','<input type="date" id="ec-desde" value="'+esc(ecDesde)+'" '+inp+'>')+
+      field('Hasta','','<input type="date" id="ec-hasta" value="'+esc(ecHasta)+'" '+inp+'>')+'</div>'+
+      '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">"Desde" arranca solo en la venta pendiente más vieja (o 90 días atrás). Lo anterior entra como saldo anterior.</div>';
+    if(!o) h+='<p style="color:var(--muted);font-size:13px">Elegí un cliente.</p>';
+    else if(!o.movimientos.length && !o.pendientes.length && !o.hayAnteriores) h+='<p style="color:var(--muted);font-size:13px">'+esc(o.cliente)+' no tiene movimientos cargados.</p>';
+    else {
+      const n=o.pendientes.length;
+      h+='<div class="cmp-summary" style="margin:0 0 10px">'+cell('Saldo anterior',money(o.saldoAnterior),'var(--muted)')+cell('Debe',money(o.totalDebe),'var(--text)')+
+        cell('Haber',money(o.totalHaber),'var(--green)')+cell('Saldo al '+fmtFecha(o.hasta),money(o.saldoFinal), o.saldoFinal>0.5?'var(--amber)':'var(--green)')+'</div>';
+      h+='<div style="font-size:12.5px;font-weight:800;margin:6px 0">Comprobantes pendientes ('+n+')'+(o.aFavor>0.5?' · <span style="color:var(--green)">'+money(o.aFavor)+' a favor del cliente sin aplicar</span>':'')+'</div>';
+      h+= n ? '<div class="tbl-wrap"><table><tr><th>Comprobante</th><th>Fecha</th><th class="num">Saldo</th><th>Condición</th></tr>'+
+        o.pendientes.map(p=>'<tr><td>'+esc(p.ref)+'</td><td>'+fmtFecha(p.fecha)+'</td><td class="num"><b>'+money(p.saldo)+'</b></td><td>'+
+          (p.cond&&p.cond.cod!=='nada'?'<div class="cond-cobro '+p.cond.cls+'" title="'+esc(p.cond.det||'')+'" style="margin:0">'+p.cond.ico+' '+esc(p.cond.txt)+'</div>':'—')+'</td></tr>').join('')+'</table></div>'
+        : '<p style="color:var(--green);font-size:13px">✅ Sin saldo pendiente al '+fmtFecha(o.hasta)+'.</p>';
+      h+='<div style="font-size:11px;color:var(--muted);margin:6px 0 0">'+o.movimientos.length+' movimiento'+(o.movimientos.length!==1?'s':'')+' en el período. El PDF lleva el detalle completo (debe / haber / saldo acumulado).</div>';
+    }
+    h+='<div class="cmp-form-foot"><button class="cmp-btn" id="ec-cerrar">Cerrar</button>'+
+      (o?'<button class="cmp-btn" id="ec-wa" title="Mensaje con el saldo y los comprobantes pendientes; el PDF se adjunta a mano en el chat">📲 WhatsApp</button>'+
+         '<button class="cmp-btn cmp-btn-primary" id="ec-print">🖨️ Imprimir / PDF</button>':'')+'</div>';
+    box.innerHTML=h;
+    const ci=$('ec-cliente'); ci.addEventListener('change',()=>{ ecCliente=ci.value.trim(); ecDesde=desdeSugeridoEC(ecCliente); pintarEstadoCuenta(); });
+    $('ec-desde').addEventListener('change',e=>{ ecDesde=e.target.value; pintarEstadoCuenta(); });
+    $('ec-hasta').addEventListener('change',e=>{ ecHasta=e.target.value||hoyISO; pintarEstadoCuenta(); });
+    $('ec-cerrar').onclick=()=>$('vnt-modal-estcta').classList.remove('open');
+    if(o){
+      $('ec-print').onclick=()=>{ if(!(window.__imprimir&&window.__imprimir.estadoCuenta)){ alert('Módulo de Documentos no disponible.'); return; } window.__imprimir.estadoCuenta(estadoCuentaDe(ecCliente, ecDesde, ecHasta)); };
+      $('ec-wa').onclick=()=>{ if(!window.__wa){ alert('Módulo de WhatsApp no disponible.'); return; } const oo=estadoCuentaDe(ecCliente, ecDesde, ecHasta);
+        window.__wa.modal({ titulo:'Estado de cuenta → '+(oo.cliente||''), telefono:window.__wa.telWa(oo.cliente, oo.cuit), adjunto:'Estado de cuenta '+(oo.cliente||'')+'.pdf', texto:textoEstadoCuentaWa(oo) }); };
+    }
   }
 
   // ---------- 💰 Imputar cobro en cuenta corriente (18/09, pedido de Marcelo/Sofía): cuando un
@@ -8954,6 +9106,8 @@ function buildFilterTable(cfg){
   $('vnt-imputar-btn').onclick=()=>openImputar('');
   $('vnt-cobranza-cerrar').onclick=()=>$('vnt-modal-cobranza').classList.remove('open');
   $('vnt-imputar-cerrar').onclick=()=>$('vnt-modal-imputar').classList.remove('open');
+  $('vnt-estcta-btn').onclick=()=>openEstadoCuenta('');
+  $('vnt-estcta-cerrar').onclick=()=>$('vnt-modal-estcta').classList.remove('open');
   $('vnt-retenciones').onclick=mostrarRetenciones;
   $('vnt-export').onclick=exportJSON;
   $('vnt-import').onclick=()=>$('vnt-import-file').click();
@@ -21800,6 +21954,44 @@ function buildFilterTable(cfg){
       firma()+pie();
   }
 
+  // ---------- Estado de cuenta del cliente (16/10) ----------
+  // o = lo que arma estadoCuentaDe() en Ventas: {cliente, cuit, condIva, domicilio, desde, hasta, fecha,
+  //   saldoAnterior, hayAnteriores, movimientos:[{fecha,comprobante,detalle,debe,haber,saldo}], totalDebe,
+  //   totalHaber, saldoFinal, pendientes:[{ref,fecha,total,cobrado,saldo,condCliente}], totalPendiente, aFavor}.
+  // Es un resumen de cuenta corriente, NO un comprobante fiscal: lleva la leyenda del pie y no lleva firma.
+  // Tabla con colgroup fijo + wrap inline, por la misma razón que la hoja de ruta (el nowrap global).
+  function estadoCuenta(o){
+    o=o||{}; const movs=o.movimientos||[], pend=o.pendientes||[];
+    const izq='<b>'+esc(o.cliente||'—')+'</b>'+(o.domicilio?'<br>'+esc(o.domicilio):'');
+    const der='CUIT: '+esc(o.cuit||'—')+'<br>Cond. IVA: '+esc(o.condIva||'—');
+    // "del 10/09/2026 al 16/10/2026", o "hasta el 16/10/2026" cuando se pidió desde el inicio.
+    const periodo=o.desde ? (dmy(o.desde)+' al '+dmy(o.hasta)) : ('hasta el '+dmy(o.hasta));
+    const wrap='style="white-space:normal;word-break:break-word"';
+    const mon=n=> num(n)>0.005 ? money(n) : '';
+    let filas='';
+    if(o.hayAnteriores) filas+='<tr><td>'+dmy(o.desde)+'</td><td colspan="2" '+wrap+'><i>Saldo anterior</i></td><td class="n"></td><td class="n"></td><td class="n"><b>'+money(o.saldoAnterior)+'</b></td></tr>';
+    filas+=movs.map(m=>'<tr><td>'+dmy(m.fecha)+'</td><td '+wrap+'>'+esc(m.comprobante||'')+'</td><td '+wrap+'>'+esc(m.detalle||'')+'</td>'+
+      '<td class="n">'+mon(m.debe)+'</td><td class="n">'+mon(m.haber)+'</td><td class="n">'+money(m.saldo)+'</td></tr>').join('');
+    if(!movs.length) filas+='<tr><td colspan="6" style="text-align:center;color:#888">Sin movimientos en el período.</td></tr>';
+    const tabla='<h4 style="margin:6px 0 4px;font-size:12px">Movimientos '+(o.desde?'del ':'')+esc(periodo)+'</h4>'+
+      '<table class="doc-tab" style="table-layout:fixed"><colgroup><col style="width:10%"><col style="width:22%"><col style="width:32%"><col style="width:12%"><col style="width:12%"><col style="width:12%"></colgroup>'+
+      '<tr><th>Fecha</th><th>Comprobante</th><th>Detalle</th><th class="n">Debe</th><th class="n">Haber</th><th class="n">Saldo</th></tr>'+filas+
+      '<tr><td colspan="3" class="n"><b>Totales del período</b></td><td class="n"><b>'+money(o.totalDebe)+'</b></td><td class="n"><b>'+money(o.totalHaber)+'</b></td><td class="n"><b>'+money(o.saldoFinal)+'</b></td></tr></table>';
+    let comp='<h4 style="margin:10px 0 4px;font-size:12px">Composición del saldo al '+dmy(o.hasta)+'</h4>';
+    if(pend.length){
+      comp+='<table class="doc-tab" style="table-layout:fixed"><colgroup><col style="width:28%"><col style="width:12%"><col style="width:15%"><col style="width:15%"><col style="width:15%"><col style="width:15%"></colgroup>'+
+        '<tr><th>Comprobante</th><th>Fecha</th><th class="n">Importe</th><th class="n">Cobrado / NC</th><th class="n">Saldo</th><th>Condición</th></tr>'+
+        pend.map(p=>'<tr><td '+wrap+'>'+esc(p.ref||'—')+'</td><td>'+dmy(p.fecha)+'</td><td class="n">'+money(p.total)+'</td><td class="n">'+(num(p.cobrado)>0.005?money(p.cobrado):'—')+'</td><td class="n"><b>'+money(p.saldo)+'</b></td><td '+wrap+'>'+esc(p.condCliente||'')+'</td></tr>').join('')+
+        '<tr><td colspan="4" class="n"><b>Saldo pendiente</b></td><td class="n"><b>'+money(o.totalPendiente)+'</b></td><td></td></tr>'+
+        (num(o.aFavor)>0.5?'<tr><td colspan="4" class="n">A favor del cliente, sin aplicar</td><td class="n">−'+money(o.aFavor)+'</td><td></td></tr>'+
+          '<tr><td colspan="4" class="n"><b>Saldo neto</b></td><td class="n"><b>'+money(o.saldoFinal)+'</b></td><td></td></tr>':'')+
+        '</table>';
+    } else comp+='<div style="font-size:11px;margin:0 0 8px">Sin comprobantes pendientes'+(num(o.saldoFinal)<-0.5?' — saldo a favor del cliente: <b>'+money(-o.saldoFinal)+'</b>':'')+'.</div>';
+    const obs='<div class="doc-obs">Los cheques y e-cheqs recibidos se toman como cobrados a su recepción; si un cheque es rechazado, ese importe vuelve a quedar pendiente. '+
+      'Este estado de cuenta es un resumen de la cuenta corriente al '+dmy(o.hasta)+' y no es un comprobante fiscal: los comprobantes que lo componen son los indicados en cada renglón.</div>';
+    return encabezado('X','ESTADO DE CUENTA','', dmy(o.fecha), '<div><b>Período:</b> '+esc(periodo)+'</div>')+bloqueCliente(izq,der)+tabla+comp+obs+pie();
+  }
+
   window.__imprimir = {
     listaPrecios: listaPrecios,   // {lista:'may'|'maySF'|'may100'|'maySF100'|'min'} — la usa Base de Datos (📄 Lista de precios)
     // La misma lista como IMAGEN para pegar en WhatsApp (la usa el panel Mayoristas del CRM), y por qué
@@ -21812,6 +22004,7 @@ function buildFilterTable(cfg){
     ordenPago:    o => mostrar(ordenPago(o), nombreArchivo('Orden de Pago', '', o.proveedor, o.fecha)),
     reciboCtaCte: o => mostrar(reciboCtaCte(o), nombreArchivo('Recibo Cta Cte', '', o.proveedor, o.fecha)),
     rutaCobranza: o => mostrar(rutaCobranza(o), nombreArchivo('Ruta de Cobranza', '', '', o.fecha)),
+    estadoCuenta: o => mostrar(estadoCuenta(o), nombreArchivo('Estado de cuenta', '', o.cliente, o.fecha)),
     remito:       o => mostrar(remito(o), nombreArchivo('Remito', o.numero, o.clienteNombre, o.fecha)),
     // Recibo INTERNO de sueldo (sin aportes) — lo arma el módulo Sueldos con la quincena liquidada.
     // Acepta un recibo suelto o {lote:[...]} con todos los de la quincena (uno por hoja).
