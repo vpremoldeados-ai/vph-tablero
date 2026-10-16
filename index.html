@@ -2055,7 +2055,9 @@
           <button class="cmp-btn cmp-btn-primary" id="sue-btn-nuevo">+ Nuevo empleado</button>
           <input id="sue-emp-buscar" placeholder="Buscar por nombre, DNI o legajo…" style="flex:1 1 220px;min-width:200px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px">
           <label style="font-size:13px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="sue-emp-bajas"> Ver también las bajas</label>
+          <button class="cmp-btn" id="sue-btn-ropa">👕 Ropa de trabajo</button>
         </div>
+        <div id="sue-ropa" style="display:none;margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px"></div>
         <div class="tbl-wrap"><table id="sue-tabla-emp"></table></div>
       </div>
 
@@ -23232,6 +23234,110 @@ function buildFilterTable(cfg){
     $('sue-tabla-emp').innerHTML=html;
     $('sue-tabla-emp').querySelectorAll('button[data-eedit]').forEach(b=> b.onclick=()=>abrirLegajo(EMP.find(x=>x._uid===b.dataset.eedit)));
     if(window.__ordenable) window.__ordenable('sue-tabla-emp');
+    renderRopa();
+  }
+
+  // ---------- ROPA DE TRABAJO (talles de todos juntos, para armar el pedido) ----------
+  // Los talles viven en el legajo (talleZapato / tallePantalon / talleRemera). Esta vista solo los
+  // junta: tabla editable, conteo por talle y el texto del pedido para mandarle al proveedor.
+  const PRENDAS_ROPA=[ {k:'talleZapato', l:'Calzado', u:'par', up:'pares', pre:'N° '},
+                       {k:'tallePantalon', l:'Pantalón', u:'pantalón', up:'pantalones', pre:'N° '},
+                       {k:'talleRemera', l:'Remera', u:'remera', up:'remeras', pre:''} ];
+  let ropaAbierta=false;
+  const ropaOpts={ incl:{talleZapato:true, tallePantalon:true, talleRemera:true}, cant:{talleZapato:1, tallePantalon:1, talleRemera:1}, fuera:{} };
+  // "42,00" → "42" · "42,5" → "42,5" · "xxl" → "XXL". Lo demás se deja como viene, en mayúscula.
+  function normTalle(v){
+    const s=String(v==null?'':v).trim(); if(!s) return '';
+    const n=s.replace(',','.');
+    if(/^\d+(\.\d+)?$/.test(n)) return String(Number(n)).replace('.',',');
+    return s.toUpperCase().replace(/\s+/g,'');
+  }
+  const ORDEN_LETRA=['XXS','XS','S','M','L','XL','XXL','2XL','XXXL','3XL','XXXXL','4XL','5XL'];
+  function cmpTalle(a,b){
+    const na=Number(String(a).replace(',','.')), nb=Number(String(b).replace(',','.'));
+    const ea=!isNaN(na), eb=!isNaN(nb);
+    if(ea&&eb) return na-nb; if(ea) return -1; if(eb) return 1;
+    const ia=ORDEN_LETRA.indexOf(a), ib=ORDEN_LETRA.indexOf(b);
+    if(ia>=0&&ib>=0) return ia-ib; if(ia>=0) return -1; if(ib>=0) return 1;
+    return String(a).localeCompare(String(b));
+  }
+  // Pura: qué hay que pedir. emps = los que entran al pedido. Quien no tiene el talle cargado
+  // NO entra en esa prenda (no se inventa un talle) y queda en faltan[].
+  function pedidoRopa(emps, opts){
+    const o=opts||ropaOpts, out={ prendas:[], faltan:[], texto:'' };
+    PRENDAS_ROPA.forEach(p=>{
+      if(!o.incl[p.k]) return;
+      const cant=Math.max(1, Math.round(num(o.cant[p.k])||1));
+      const map={};
+      emps.forEach(e=>{
+        const t=normTalle(e[p.k]);
+        if(!t){ out.faltan.push({nombre:e.nombre||'', prenda:p.l}); return; }
+        (map[t]=map[t]||{talle:t, cant:0, nombres:[]}).cant+=cant;
+        map[t].nombres.push(e.nombre||'');
+      });
+      const filas=Object.values(map).sort((a,b)=>cmpTalle(a.talle,b.talle));
+      out.prendas.push({ k:p.k, l:p.l, u:p.u, up:p.up, pre:p.pre, cantPorPersona:cant, filas, total:filas.reduce((a,f)=>a+f.cant,0) });
+    });
+    const L=['Hola! Te paso el pedido de ropa de trabajo de VPH Premoldeados:',''];
+    out.prendas.forEach(p=>{
+      if(!p.filas.length) return;
+      L.push('*'+p.l+'* ('+p.total+' '+(p.total===1?p.u:p.up)+')');
+      p.filas.forEach(f=>L.push('• '+p.pre+f.talle+': '+f.cant));
+      L.push('');
+    });
+    L.push('Gracias!');
+    out.texto=L.join('\n');
+    return out;
+  }
+  window.__suePedidoRopa=pedidoRopa; window.__sueNormTalle=normTalle;
+  // Guarda SOLO el talle tocado (merge): no pisa lo que otro esté editando en el legajo.
+  function guardarTalle(uid, campo, valor){
+    const e=EMP.find(x=>x._uid===uid); if(!e) return;
+    e[campo]=valor;
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL_E,uid), {[campo]:valor}, {merge:true}).catch(er=>alert('Error al guardar el talle: '+er.message)); }
+    else saveLocal();
+  }
+  function renderRopa(){
+    const box=$('sue-ropa'); if(!box) return;
+    box.style.display=ropaAbierta?'':'none';
+    if($('sue-btn-ropa')) $('sue-btn-ropa').classList.toggle('cmp-btn-primary', ropaAbierta);
+    if(!ropaAbierta) return;
+    const activos=EMP.filter(e=>e.activo!==false).sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+    const ped=pedidoRopa(activos.filter(e=>!ropaOpts.fuera[e._uid]));
+    const inp=(e,k)=>'<input data-ropa-uid="'+esc(e._uid)+'" data-ropa-k="'+k+'" value="'+esc(normTalle(e[k]))+'" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;text-align:center">';
+    let t='<tr><th>Pide</th><th>Empleado</th>'+PRENDAS_ROPA.map(p=>'<th style="text-align:center">'+esc(p.l)+'</th>').join('')+'</tr>';
+    if(!activos.length) t+='<tr><td colspan="5" style="padding:10px;color:var(--muted)">No hay empleados activos.</td></tr>';
+    activos.forEach(e=>{
+      t+='<tr><td style="text-align:center"><input type="checkbox" data-ropa-pide="'+esc(e._uid)+'"'+(ropaOpts.fuera[e._uid]?'':' checked')+'></td>'+
+        '<td class="cel-nombre"><b>'+esc(e.nombre||'—')+'</b></td>'+PRENDAS_ROPA.map(p=>'<td style="text-align:center">'+inp(e,p.k)+'</td>').join('')+'</tr>';
+    });
+    const opc=PRENDAS_ROPA.map(p=>'<label style="display:flex;align-items:center;gap:6px;font-size:13px">'+
+      '<input type="checkbox" data-ropa-incl="'+p.k+'"'+(ropaOpts.incl[p.k]?' checked':'')+'> '+esc(p.l)+
+      ' <input type="number" min="1" step="1" data-ropa-cant="'+p.k+'" value="'+esc(ropaOpts.cant[p.k])+'" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;text-align:right"> por persona</label>').join('');
+    const res=ped.prendas.map(p=>'<div style="flex:1 1 180px;min-width:160px"><div style="font-weight:600;margin-bottom:4px">'+esc(p.l)+' · '+p.total+' '+esc(p.total===1?p.u:p.up)+'</div>'+
+      (p.filas.length?p.filas.map(f=>'<div style="font-size:13px;white-space:normal">'+esc(p.pre+f.talle)+': <b>'+f.cant+'</b> <span style="color:var(--muted);font-size:11.5px">('+esc(f.nombres.join(', '))+')</span></div>').join(''):'<div style="font-size:13px;color:var(--muted)">Sin talles cargados.</div>')+'</div>').join('');
+    const faltan=ped.faltan.length?'<div style="margin-top:10px;font-size:12.5px;color:var(--amber)">⚠ Falta el talle: '+
+      ped.faltan.map(f=>esc(f.prenda)+' de '+esc(f.nombre)).join(' · ')+'. No entran en el pedido hasta que lo cargues.</div>':'';
+    box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+        '<h3 style="margin:0;font-size:15px">👕 Ropa de trabajo</h3>'+
+        '<button class="cmp-btn cmp-btn-primary" id="sue-ropa-pedido">📋 Armar el pedido</button></div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Los talles se guardan en el legajo de cada uno apenas los cambiás. Destildá "Pide" a quien no le toca esta vez.</div>'+
+      '<div class="tbl-wrap"><table id="sue-ropa-tabla" style="font-size:13px">'+t+'</table></div>'+
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 8px">'+opc+'</div>'+
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:8px">'+res+'</div>'+faltan;
+    box.querySelectorAll('input[data-ropa-k]').forEach(el=> el.addEventListener('change',()=>{
+      const v=normTalle(el.value); el.value=v; guardarTalle(el.dataset.ropaUid, el.dataset.ropaK, v); renderRopa(); }));
+    box.querySelectorAll('input[data-ropa-pide]').forEach(el=> el.addEventListener('change',()=>{
+      if(el.checked) delete ropaOpts.fuera[el.dataset.ropaPide]; else ropaOpts.fuera[el.dataset.ropaPide]=true; renderRopa(); }));
+    box.querySelectorAll('input[data-ropa-incl]').forEach(el=> el.addEventListener('change',()=>{ ropaOpts.incl[el.dataset.ropaIncl]=el.checked; renderRopa(); }));
+    box.querySelectorAll('input[data-ropa-cant]').forEach(el=> el.addEventListener('change',()=>{ ropaOpts.cant[el.dataset.ropaCant]=Math.max(1,Math.round(num(el.value)||1)); renderRopa(); }));
+    $('sue-ropa-pedido').onclick=()=>{
+      const p=pedidoRopa(activos.filter(e=>!ropaOpts.fuera[e._uid]));
+      if(!p.prendas.some(x=>x.filas.length)){ alert('No hay talles cargados para armar el pedido.'); return; }
+      if(p.faltan.length && !confirm('Faltan '+p.faltan.length+' talles ('+p.faltan.map(f=>f.prenda+' de '+f.nombre).join(', ')+') y esos no van en el pedido. ¿Seguimos igual?')) return;
+      if(window.__wa && window.__wa.modal) window.__wa.modal({ titulo:'Pedido de ropa de trabajo', destino:'Copialo y mandáselo al proveedor', texto:p.texto });
+      else if(navigator.clipboard) navigator.clipboard.writeText(p.texto).then(()=>alert('Pedido copiado.'));
+    };
   }
 
   function blankEmp(){ return { legajo:'', nombre:'', dni:'', cuil:'', fechaIngreso:hoyISO, fechaEgreso:'', activo:true,
@@ -24089,6 +24195,7 @@ function buildFilterTable(cfg){
     if($('sue-btn-pagoq')) $('sue-btn-pagoq').onclick=abrirPagoQuincena;
     if($('sue-emp-buscar')) $('sue-emp-buscar').addEventListener('input',()=>{ filtroEmp.q=$('sue-emp-buscar').value; renderEmp(); });
     if($('sue-emp-bajas')) $('sue-emp-bajas').addEventListener('change',()=>{ filtroEmp.bajas=$('sue-emp-bajas').checked; renderEmp(); });
+    if($('sue-btn-ropa')) $('sue-btn-ropa').onclick=()=>{ ropaAbierta=!ropaAbierta; renderRopa(); };
     const ov=$('sue-modal'); if(ov) ov.addEventListener('click',e=>{ if(e.target===ov) cerrarLegajo(); });
     const ov2=$('sue-modal-adel'); if(ov2) ov2.addEventListener('click',e=>{ if(e.target===ov2) ov2.classList.remove('open'); });
     const ov3=$('sue-modal-pago'); if(ov3) ov3.addEventListener('click',e=>{ if(e.target===ov3) ov3.classList.remove('open'); });
