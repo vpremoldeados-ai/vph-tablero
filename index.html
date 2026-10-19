@@ -1594,7 +1594,7 @@
         <div class="cmp-field" id="pre-comp-fin-wrap">
           <label>Financiación con tarjeta (solo Minorista)</label>
           <select id="pre-comp-fin"></select>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">El PDF suma una columna por cada modelo con el precio a 3, 6 y 12 cuotas. Sin elegir perfil, no se muestra financiación (Mayorista nunca la lleva).</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">El PDF suma una columna por cada modelo con el precio total en 3, 6, 9 y 12 cuotas. Sin elegir perfil, no se muestra financiación (Mayorista nunca la lleva).</div>
         </div>
         <div class="cmp-field">
           <label>Modelos a comparar (marca los que quieras)</label>
@@ -11716,8 +11716,8 @@ function buildFilterTable(cfg){
   const finAplica = p => !/mayorista/i.test(String((p&&p.listaPrecios)||''))
                       && !/mayorista/i.test(String((p&&p.categoria)||''));
   function finOpts(sel){ const pf=(window.__financiacionPerfiles?window.__financiacionPerfiles():[]).filter(x=>x.planes>0);
-    return '<option value="">Tarjeta a confirmar — se cotiza con el perfil más caro</option>'+
-      pf.map(x=>'<option value="'+esc(x.k)+'"'+(String(sel||'')===x.k?' selected':'')+'>'+esc(x.l)+' · hasta '+finCuotas(x.k)+' cuotas</option>').join(''); }
+    return '<option value="">Cualquier tarjeta — 3 y 6 Cuotas MiPyME, 9 y 12 VIUMI</option>'+
+      pf.filter(x=>x.k!=='vph').map(x=>'<option value="'+esc(x.k)+'"'+(String(sel||'')===x.k?' selected':'')+'>'+esc(x.l)+' · hasta '+finCuotas(x.k)+' cuotas</option>').join(''); }
   // La escalera del TOTAL, para que Sofía vea antes de mandar qué le va a ofrecer al cliente.
   // Se arma re-preciando cada renglón en cada plan y sumando, así los números del PDF cierran:
   // si se calculara como total × (1−off), los precios unitarios no multiplicarían.
@@ -12321,7 +12321,7 @@ function buildFilterTable(cfg){
     // La lista del lead manda (ej. "2 Minorista Sin Facturar"); sin lista, la de la categoría.
     $('pre-comp-lista').innerHTML=compListasOpts(d.listaPrecios ? normLista(d.listaPrecios) : compListaDefecto($('pre-comp-categoria').value));
     $('pre-comp-zona').value=d.zona||'capital';
-    $('pre-comp-fin').innerHTML=finOpts('');
+    $('pre-comp-fin').innerHTML=compFinOpts();
     sincFinComparativo();
     compAdic=[]; drawCompAdic();
     $('pre-comp-modal').classList.add('open');
@@ -12333,9 +12333,16 @@ function buildFilterTable(cfg){
   function sincFinComparativo(){
     const w=$('pre-comp-fin-wrap'); if(!w) return;
     const ok=$('pre-comp-categoria').value==='MINORISTA' && !esSinFacturarPre($('pre-comp-lista').value);   // sin factura = pago contado, sin tarjeta
+    const estabaOculto = w.style.display==='none';
     w.style.display = ok?'':'none';
     if(!ok) $('pre-comp-fin').value='';
+    else if(estabaOculto) $('pre-comp-fin').value='vph';   // vuelve a minorista facturado: cuotas por defecto
   }
+  // El comparativo SÍ necesita poder ir sin cuotas: ahí "" = solo contado. Arranca con el perfil
+  // "Cualquier tarjeta" elegido (19/10, Marcelo: las cuotas van en el presupuesto del minorista).
+  function compFinOpts(){ const pf=(window.__financiacionPerfiles?window.__financiacionPerfiles():[]).filter(x=>x.planes>0);
+    return '<option value="">Sin cuotas (solo contado)</option>'+
+      pf.map(x=>'<option value="'+esc(x.k)+'"'+(x.k==='vph'?' selected':'')+'>'+esc(x.l)+'</option>').join(''); }
   function closeComparativoModal(){ $('pre-comp-modal').classList.remove('open'); }
   // ---- Adicionales del comparativo (09/10, pedido de Marcelo: 36 ml de cordón para Freixas) ----
   // Unidades por METRO LINEAL de los productos que se venden por largo: cordón de 40 cm (2,5/m, dato de
@@ -13365,9 +13372,20 @@ function buildFilterTable(cfg){
   // ---------- API ----------
   // Retención efectiva: (arancel + costo financiero) más su IVA. Es lo que VIUMI se queda del bruto.
   const retencion = t => num(t)*(1+num(CFG.ivaCom)/100)/100;
-  const perfilDe = k => CFG.perfiles.find(p=>p.k===String(k||'')) || null;
+  // Perfil "Cualquier tarjeta" (19/10, decisión de Marcelo): lo que VPH OFRECE sin importar el banco
+  // de la tarjeta — 3 y 6 cuotas por el Programa Cuotas MiPyME y 9 y 12 con el costo financiero
+  // común de VIUMI. NO se guarda: se arma en cada llamada con las tasas vivas de 'mipyme' y 'otros',
+  // así cambiar la tabla del mes en el editor lo actualiza solo. Es el perfil por defecto.
+  const PERFIL_VPH='vph';
+  function perfilVph(){
+    const de=(k,cs)=>{ const p=CFG.perfiles.find(x=>x.k===k); return p ? p.tasas.filter(t=>cs.includes(num(t.c))) : []; };
+    return { k:PERFIL_VPH, l:'Cualquier tarjeta (3 y 6 Cuotas MiPyME · 9 y 12 VIUMI)',
+      nota:'3 y 6 cuotas por el Programa Cuotas MiPyME; 9 y 12 con el costo financiero de VIUMI',
+      tasas:de('mipyme',[3,6]).concat(de('otros',[9,12])).sort((x,y)=>x.c-y.c) };
+  }
+  const perfilDe = k => String(k||'')===PERFIL_VPH ? perfilVph() : (CFG.perfiles.find(p=>p.k===String(k||'')) || null);
   window.__financiacion = ()=>JSON.parse(JSON.stringify(CFG));
-  window.__financiacionPerfiles = ()=>CFG.perfiles.map(p=>({k:p.k, l:p.l, nota:p.nota, planes:p.tasas.length}));
+  window.__financiacionPerfiles = ()=>[perfilVph()].concat(CFG.perfiles).map(p=>({k:p.k, l:p.l, nota:p.nota, planes:p.tasas.length}));
   // Planes con tasa cargada. Sin tasa no hay plan: mejor no ofrecerlo que cotizarlo mal.
   window.__planesFin = perfil => { const p=perfilDe(perfil); if(!p) return [];
     return p.tasas.filter(t=>t.ar+t.cf>0).map(t=>({cuotas:t.c, arancel:t.ar, costoFin:t.cf, tasa:t.ar+t.cf})); };
@@ -13375,13 +13393,18 @@ function buildFilterTable(cfg){
   // Decisión de Marcelo (11/08): mantener los planes clásicos aunque con tarjeta de otro banco el
   // de 9 salga más barato que el de 6. El 9 SIGUE cargado en la matriz — hace falta para liquidar
   // un cobro VIUMI que venga en 9 cuotas — pero no se publica en ninguna escalera.
-  const PLANES_OFRECIDOS=[3,6,12];
+  // 19/10: se suma el 9 — con el perfil "Cualquier tarjeta" (MiPyME 3/6 + VIUMI 9/12) las tasas
+  // suben con las cuotas y el 9 ya no queda más barato que el 6.
+  const PLANES_OFRECIDOS=[3,6,9,12];
   window.__planesOfrecidos = ()=>PLANES_OFRECIDOS.slice();
   // El perfil MÁS CARO: el que se usa cuando no se sabe con qué tarjeta va a pagar el cliente
   // (regla de Marcelo, 28/07 — así nunca se cotiza a pérdida; si paga con una tarjeta más barata,
   // la diferencia queda a favor de VPH). Entre perfiles se compara el plan MÁS LARGO de cada uno:
   // gana el que llega a más cuotas y, a igual cantidad, el de tasa más alta (hoy: "otro banco").
+  // 19/10: el perfil por defecto pasa a ser "Cualquier tarjeta" (lo que VPH ofrece a todos). La regla
+  // vieja del más caro queda solo de respaldo, si faltaran las tasas de MiPyME y de otros bancos.
   window.__perfilMasCaro = ()=>{
+    if(perfilVph().tasas.some(t=>num(t.ar)+num(t.cf)>0)) return PERFIL_VPH;
     let best=null, bestCuotas=0, bestTasa=-1;
     CFG.perfiles.forEach(p=>{
       const planes=(p.tasas||[]).filter(t=>num(t.ar)+num(t.cf)>0); if(!planes.length) return;
@@ -21055,7 +21078,7 @@ function buildFilterTable(cfg){
       const finPlanes = Array.isArray(v.finPlanes) ? v.finPlanes : [];
       const P='padding:4px 3px'; // tabla compacta: con financiación son 10 columnas en ~703px
       const thFin = finPlanes.map(c=>'<th style="text-align:right;'+P+'">'+c+'c</th>').join('');
-      const tdFin = it => finPlanes.map(c=>'<td style="text-align:right;'+P+'">'+(it.fin&&it.fin[c]!=null?money(it.fin[c]):'—')+'</td>').join('');
+      const tdFin = it => finPlanes.map(c=>'<td style="text-align:right;'+P+'">'+(it.fin&&it.fin[c]!=null?'$'+Math.round(it.fin[c]).toLocaleString('es-AR'):'—')+'</td>').join('');
       // Foto + nombre, con el código chico ABAJO (no pegado al nombre): celdaCodigo() imprime el
       // código como texto al lado de la imagen — pensada para una columna Código aparte, no para
       // compartir celda con la descripción (salía "ULC60Loseta Cribada 60x40" sin espacio).
@@ -21085,7 +21108,7 @@ function buildFilterTable(cfg){
         // presupuesto normal, para que el cliente entienda por qué no es m² × unidades por m² "justo".
         '<br><b>📐 Cantidad:</b> las unidades incluyen un 5% adicional por recortes.'+
         '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
-        (finPlanes.length ? '<br><b>💳 Financiado:</b> precios a '+finPlanes.join('/')+' cuotas con tarjeta '+esc(v.finPerfilLabel||'')+' (Contado es el que compite; "—" es un plan sin tasa cargada para esa tarjeta).' : '')+
+        (finPlanes.length ? '<br><b>💳 Financiado:</b> precio total con tarjeta de crédito en '+finPlanes.join('/')+' cuotas — '+esc(v.finPerfilLabel||'')+' (Contado es el que compite; "—" es un plan sin tasa cargada para esa tarjeta).' : '')+
         '</div>'+
         // Mismas condiciones de venta que un presupuesto normal (formas de pago, envío/retiro): la
         // función ya resuelve el texto según listaPrecios/categoria/zona, que compDoc arma igual que
