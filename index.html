@@ -11820,7 +11820,7 @@ function buildFilterTable(cfg){
           (e!=='convertido'&&e!=='reemplazado'?'<button class="cmp-rowbtn" data-act="actualizar" data-id="'+p._uid+'" title="Actualizar precios: crea un presupuesto NUEVO con los precios y el flete de hoy (este queda como reemplazado)">🔄 Actualizar</button>':'')+
           (e!=='convertido'&&p.esComparativo!==true?'<button class="cmp-rowbtn" data-act="venta" data-id="'+p._uid+'" title="Convertir en venta">→ Venta</button>':'')+
           '<select class="cmp-rowbtn" data-estado="'+p._uid+'" title="Cambiar estado">'+ESTADOS.filter(x=>x.k!=='convertido'||p.estado==='convertido').map(x=>'<option value="'+x.k+'"'+((p.estado||'borrador')===x.k?' selected':'')+'>'+x.l+'</option>').join('')+'</select>'+
-          (p.esComparativo!==true?'<button class="cmp-rowbtn" data-act="edit" data-id="'+p._uid+'">Editar</button>':'')+
+          '<button class="cmp-rowbtn" data-act="edit" data-id="'+p._uid+'"'+(p.esComparativo===true?' title="Editar el comparativo: se guarda sobre el MISMO número"':'')+'>Editar</button>'+
           '<button class="cmp-rowbtn" data-act="del" data-id="'+p._uid+'">✕</button>'+
         '</td></tr>';
     });
@@ -11830,7 +11830,8 @@ function buildFilterTable(cfg){
     t.querySelectorAll('button[data-act]').forEach(b=> b.onclick=()=>{ const p=DB.presupuestos.find(x=>x._uid==b.dataset.id); if(!p)return; const a=b.dataset.act;
       // Un comparativo no se edita ni se pasa a venta: tiene varios modelos alternativos y el formulario
       // normal los sumaría como si se compraran todos. Se arma el presupuesto del modelo elegido.
-      if(p.esComparativo===true && (a==='edit'||a==='venta')){ alert('El '+(p.numero||'presupuesto')+' es un comparativo de modelos: no se edita ni se pasa a venta.\n\nCuando el cliente elija el modelo, armá el presupuesto (o la venta) de ese modelo desde el lead.'); return; }
+      if(p.esComparativo===true && a==='edit'){ openComparativoModal(defaultsDeComparativo(p)); return; }
+      if(p.esComparativo===true && a==='venta'){ alert('El '+(p.numero||'presupuesto')+' es un comparativo de modelos: no se pasa a venta.\n\nCuando el cliente elija el modelo, armá el presupuesto (o la venta) de ese modelo desde el lead.'); return; }
       if(a==='actualizar'){ actualizarPresupuesto(p); return; }
       if(a==='edit') openForm(p);
       else if(a==='del'){ if(confirm('¿Eliminar el presupuesto '+(p.numero||'')+' de '+(p.cliente||'—')+'?')) remove(p._uid); }
@@ -12312,7 +12313,7 @@ function buildFilterTable(cfg){
   function compListaDefecto(cat){ return listaDeCategoria(cat) || (cat==='MINORISTA' ? window.__listaDefecto.minorista : window.__listaDefecto.mayorista); }
   function openComparativoModal(defaults){
     const d=defaults||{};
-    compCtx={ leadUid:d.leadUid||'', cuit:d.cuit||'', condIva:d.condIva||'', domicilioFacturacion:d.domicilioFacturacion||'', domicilioEntrega:d.domicilioEntrega||'', onSaved:(typeof d.onSaved==='function')?d.onSaved:null };
+    compCtx={ leadUid:d.leadUid||'', cuit:d.cuit||'', condIva:d.condIva||'', domicilioFacturacion:d.domicilioFacturacion||'', domicilioEntrega:d.domicilioEntrega||'', onSaved:(typeof d.onSaved==='function')?d.onSaved:null, editUid:d.editUid||'' };
     const cont=$('pre-comp-modelos'); if(!cont)return;
     cont.innerHTML = MODELOS_COMP.map((m,i)=>'<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-comp-mod="'+i+'" value="'+esc(m.codigo)+'"> '+esc(m.nombre)+'</label>').join('');
     $('pre-comp-cliente').value=d.cliente||'';
@@ -12324,9 +12325,29 @@ function buildFilterTable(cfg){
     $('pre-comp-fin').innerHTML=compFinOpts();
     sincFinComparativo();
     compAdic=[]; drawCompAdic();
+    // Modo EDICIÓN (19/10, pedido de Marcelo: editar sin generar uno nuevo): se precargan los modelos
+    // marcados, las cuotas y los adicionales del comparativo, y al guardar se escribe sobre el MISMO
+    // documento (mismo número).
+    if(Array.isArray(d.codigos)) cont.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked=d.codigos.includes(String(cb.value).toUpperCase()); });
+    if(d.finPerfil!=null && $('pre-comp-fin-wrap').style.display!=='none') $('pre-comp-fin').value=d.finPerfil;
+    if(Array.isArray(d.adicionales)){ compAdic=d.adicionales.map(a=>({codigo:a.codigo||'', ml:num(a.ml)||'', cant:num(a.cant)||''})); drawCompAdic(); }
+    const tit=$('pre-comp-modal').querySelector('.cmp-dialog-head h3'); if(tit) tit.textContent = d.editUid ? '✏️ Editar comparativo '+(d.numero||'') : '📋 Comparativo de modelos';
+    $('pre-comp-generar').textContent = d.editUid ? 'Guardar cambios y generar PDF' : 'Generar PDF';
     $('pre-comp-modal').classList.add('open');
   }
   window.__abrirComparativo = openComparativoModal;
+  // Datos para reabrir un comparativo guardado en el modal (modo edición). Pura.
+  function defaultsDeComparativo(p){
+    const its=Array.isArray(p.items)?p.items:[];
+    return { editUid:p._uid, numero:p.numero||'', cliente:p.cliente||'', m2:num((its[0]||{}).m2total)||'', categoria:p.categoria||'',
+      listaPrecios:p.listaPrecios||'', zona:p.zona||'', leadUid:p.leadUid||'', cuit:p.cuit||'',
+      // condIva X la pone la lista sin facturar: si la cambian a facturada no tiene que quedar pegada
+      condIva:String(p.condIva||'').toUpperCase()==='X'?'':(p.condIva||''),
+      domicilioFacturacion:p.domicilioFacturacion||'', domicilioEntrega:p.domicilioEntrega||'',
+      codigos:its.map(it=>String(it.codigo||'').toUpperCase()).filter(Boolean),
+      finPerfil:p.finPerfil||'', adicionales:Array.isArray(p.adicionales)?p.adicionales:[] };
+  }
+  window.__defaultsDeComparativo = defaultsDeComparativo;   // para los tests
   // El mayorista no lleva escalera de tarjeta (mismo criterio que finAplica en el form normal):
   // se esconde el selector y, si venía elegido, se vuelve a "a confirmar" para no arrastrar un
   // perfil que ya no corresponde si el usuario cambia de categoría sin cerrar el modal.
@@ -12472,6 +12493,19 @@ function buildFilterTable(cfg){
     // Se GUARDA con número correlativo (misma transacción que cualquier presupuesto) y recién ahí se
     // imprime con ese número y se avisa al lead. Si la numeración falla, no se marca nada.
     const ctx=compCtx;
+    if(ctx.editUid){
+      const orig=DB.presupuestos.find(x=>x._uid===ctx.editUid);
+      if(!orig){ alert('No encontré el comparativo original (¿lo borraron?). No se guardó nada.'); return; }
+      // Mismo número, misma fecha y validez, mismo estado y textos: solo cambia lo que se editó en el modal.
+      const pp={...orig, ...compDoc, _uid:orig._uid, numero:orig.numero, fecha:orig.fecha, validezDias:orig.validezDias,
+        estado:orig.estado, notaCliente:orig.notaCliente, nota:orig.nota, editadoEn:hoyISO};
+      persist(pp);
+      closeComparativoModal();
+      if(window.__imprimir&&window.__imprimir.presupuesto){
+        try{ window.__imprimir.presupuesto(paraDoc(pp)); }catch(e){ alert('Error al generar el PDF: '+e.message); }
+      }
+      return;
+    }
     asignarNumeroYGuardar(compDoc, pp=>{
       closeComparativoModal();
       if(ctx.onSaved){ try{ ctx.onSaved(pp); }catch(e){ console.error('comparativo onSaved:',e); } }
