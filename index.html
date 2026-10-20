@@ -314,7 +314,7 @@
   /* ---------- PRODUCCIÓN / ENTREGAS (mobile-first) ---------- */
   .pe-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
   .pe-bigbtn{flex:1;min-width:200px;border:none;border-radius:14px;padding:20px 18px;font-size:18px;font-weight:800;cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;justify-content:center;box-shadow:var(--shadow)}
-  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)}
+  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)} .pe-bigbtn.rot{background:var(--red)}
   .pe-bigbtn:active{transform:scale(.98)}
   .pe-qty{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--card)}
   .pe-qty .nm{font-weight:700;font-size:14px;flex:1}
@@ -1128,6 +1128,7 @@
       <div class="pe-actions">
         <button class="pe-bigbtn prod" id="pe-btn-prod">🏭 Cargar producción</button>
         <button class="pe-bigbtn ent" id="pe-btn-ent">🚚 Cargar entrega directa</button>
+        <button class="pe-bigbtn rot" id="pe-btn-rotura" title="Unidades que se rompieron o salieron defectuosas en la fábrica: descuentan del stock el día que pasa">💥 Rotura o descarte</button>
         <button class="cmp-btn" id="pe-btn-deshacer" style="display:none;border-color:var(--red);color:var(--red)" title="Deshace la última carga (disponible por 5 minutos)">↩️ Deshacer última carga</button>
       </div>
       <section>
@@ -1172,10 +1173,11 @@
         <p class="note">Agrupado por <b>proveedor</b>, que es como se pide. El stock es el del <b>último conteo</b> más lo que llegó con 📦. Estados: <b style="color:var(--red)">🔴 PEDIR YA</b> = el stock que queda no cubre la <b>demora de entrega</b> del proveedor (o ya está en cero) — pedirlo hoy; <b style="color:var(--amber)">PEDIR</b> = bajo el mínimo; <b style="color:var(--blue)">📦 PEDIDO</b> = ya se pidió y está en camino (se cierra registrando la llegada). <b style="color:var(--blue)">🧭 EN LA RUTA</b> = está en la lista de proveedores a visitar; <b style="color:#6d28d9">🛻 COMPRADO</b> = Marcelo ya lo compró y lo trae, <b>todavía no está en el stock</b>. El ✎ de cada fila edita nombre, proveedor, mínimo, demora y consumo por día. Dos caminos, el mismo final: <b>contar → 🚚 ruta de compra (lo va a buscar Marcelo) o 🛒 pedir por WhatsApp (lo entrega el proveedor) → 📦 ingreso a fábrica</b>. El stock sube <b>solo</b> con el ingreso a fábrica: hasta que Gustavo no lo tiene en planta, no se puede usar.</p>
       </section>
       <section>
-        <h2><span class="dot" style="background:var(--blue)"></span>Ajustes por conteo (productos)</h2>
+        <h2><span class="dot" style="background:var(--blue)"></span>Ajustes de stock (productos)</h2>
         <div class="asof" id="pe-aju-asof"></div>
+        <div id="pe-merma" style="margin-bottom:10px"></div>
         <div class="tbl-wrap"><table id="pe-tabla-ajustes"></table></div>
-        <p class="note">Cada conteo compara el stock <b>teórico secado</b> (producto listo para entregar) contra lo <b>contado</b> en planta. La diferencia queda registrada como <b>ajuste</b> (corrige el stock disponible) y sirve para detectar errores de carga. El producto todavía en secado se rastrea por su fecha de fabricación.</p>
+        <p class="note">Dos motivos distintos corrigen el stock por acá. <b style="color:var(--amber)">Conteo</b>: compara el stock <b>teórico secado</b> (producto listo para entregar) contra lo <b>contado</b> en planta; la diferencia sirve para detectar errores de carga. <b style="color:var(--red)">💥 Rotura</b>: unidades que se rompieron o salieron defectuosas <b>en la fábrica</b>, con la etapa en la que pasó — se cargan con el botón 💥 del stock, el día que pasa, y por eso el conteo semanal ya no se las traga como si fueran un error administrativo. El producto todavía en secado se rastrea por su fecha de fabricación.<br>🔴 Lo que se rompió <b>después de entregado</b> no va acá (el stock ya salió): eso se corrige con una <b>Nota de Crédito</b> en Ventas, con motivo «Bonificación o garantía».</p>
       </section>
     </div>
 
@@ -1256,6 +1258,13 @@
     <div class="cmp-dialog" style="max-width:560px">
       <div class="cmp-dialog-head"><h3>🚚 Registrar entrega</h3><button class="cmp-x" id="pe-ent-cerrar">✕</button></div>
       <div class="cmp-dialog-body" id="pe-form-ent"></div>
+    </div>
+  </div>
+  <!-- Overlay: rotura o descarte en la fábrica (merma) -->
+  <div class="cmp-overlay" id="pe-modal-rot">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head"><h3>💥 Rotura o descarte</h3><button class="cmp-x" id="pe-rot-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-rot"></div>
     </div>
   </div>
   <!-- Overlay: conteo de productos (teórico vs real) -->
@@ -17591,6 +17600,37 @@ function buildFilterTable(cfg){
   const fmtF=d=> p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+String(d.getFullYear()).slice(2);
   const diasCuradoDe=p=>{ const d=num(p&&p.diasCurado); return d>0?d:num(window.__param('diasCurado',10)); };
   const pesoDe=k=>{ const p=prods.find(pp=>keyDe(pp.codigo,pp.nombre)===k); return p?num(p.pesoUnit):0; };
+
+  // ---------- MERMA: roturas y descartes de la fábrica ----------
+  // Un ajuste de `vph_ajustes` puede venir de DOS lados y hay que poder distinguirlos:
+  //   motivo 'Conteo semanal' → diferencia entre lo contado y lo teórico (puede ser error de carga)
+  //   motivo 'Rotura'         → unidades que se rompieron o salieron defectuosas, con su ETAPA
+  // Los dos corrigen el stock por el MISMO camino (`ajustadoDe`), así que no hay una segunda cuenta de
+  // stock; lo que agrega la rotura es el MOTIVO y la etapa, que el conteo se tragaba en silencio.
+  // ⚠️ La cantidad de una rotura se guarda NEGATIVA (resta), igual que un conteo que cuenta de menos.
+  const ETAPAS_ROTURA=['Desmolde','Defectuoso (mal terminado)','Movimiento en planta','Secado','Carga del camión','Otro'];
+  function esRotura(a){ return String((a&&a.motivo)||'')==='Rotura'; }
+  // Merma de un período (AAAA-MM; vacío = todo). PURA: solo lee. El costo sale del catálogo (igual que
+  // __resumenMes), así que un recosteo recalcula la merma de meses viejos — mismo criterio que el resto.
+  function mermaMes(ajs, cat, periodo){
+    const sal={ periodo:periodo||'', unidades:0, kg:0, pesos:0, porEtapa:[], porProducto:[] };
+    const et={}, pp={};
+    (ajs||[]).filter(esRotura).forEach(a=>{
+      if(periodo && String(a.fecha||'').slice(0,7)!==periodo) return;
+      const u=Math.abs(num(a.cantidad)); if(!(u>0)) return;
+      const k=keyDe(a.codigo,a.producto);
+      const p=(cat||[]).find(x=>keyDe(x.codigo,x.nombre)===k);
+      const kg=u*(p?num(p.pesoUnit):0), $$=u*(p?num(p.costo):0);
+      sal.unidades+=u; sal.kg+=kg; sal.pesos+=$$;
+      const e=String(a.etapa||'Otro');
+      (et[e]=et[e]||{etapa:e,unidades:0,kg:0,pesos:0}); et[e].unidades+=u; et[e].kg+=kg; et[e].pesos+=$$;
+      (pp[k]=pp[k]||{codigo:String(a.codigo||''),nombre:String(a.producto||a.codigo||''),unidades:0,kg:0,pesos:0});
+      pp[k].unidades+=u; pp[k].kg+=kg; pp[k].pesos+=$$;
+    });
+    sal.porEtapa=Object.values(et).sort((a,b)=>b.pesos-a.pesos||b.unidades-a.unidades);
+    sal.porProducto=Object.values(pp).sort((a,b)=>b.pesos-a.pesos||b.unidades-a.unidades);
+    return sal;
+  }
   function lunesDe(d){ const x=new Date(d); const dw=(x.getDay()+6)%7; x.setDate(x.getDate()-dw); x.setHours(0,0,0,0); return x; }
 
   function producidoDe(k){ return prod.filter(x=>keyDe(x.codigo,x.producto)===k).reduce((a,x)=>a+num(x.cantidad),0); }
@@ -18015,7 +18055,7 @@ function buildFilterTable(cfg){
     const movs=prod.map(x=>({...x,tipo:'Producción'})).concat(ent.map(x=>({...x,tipo:'Entrega'}))).concat(ajustes.map(x=>({...x,tipo:'Ajuste'}))).sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,40);
     let mh='<tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th class="num">Cant.</th><th>Cliente / Usuario</th></tr>';
     if(!movs.length) mh+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin movimientos aún.</td></tr>';
-    movs.forEach(m=>{ const tb=m.tipo==='Producción'?'<span class="badge blue">Producción</span>':m.tipo==='Entrega'?'<span class="badge green">Entrega</span>':'<span class="badge amber">Ajuste conteo</span>';
+    movs.forEach(m=>{ const tb=m.tipo==='Producción'?'<span class="badge blue">Producción</span>':m.tipo==='Entrega'?'<span class="badge green">Entrega</span>':esRotura(m)?('<span class="badge red">💥 Rotura</span>'+(m.etapa?(' <span style="font-size:10px;color:var(--muted)">'+esc(m.etapa)+'</span>'):'')):'<span class="badge amber">Ajuste conteo</span>';
       const cant=m.tipo==='Entrega'?('-'+nf(num(m.cantidad))):m.tipo==='Ajuste'?((num(m.cantidad)>=0?'+':'')+nf(num(m.cantidad))):('+'+nf(num(m.cantidad)));
       mh+='<tr><td data-label="Fecha">'+fmtFecha(m.fecha)+'</td><td data-label="Tipo">'+tb+'</td><td data-label="Producto">'+esc(m.producto||m.codigo||'')+'</td><td class="num" data-label="Cant."><b>'+cant+'</b></td><td data-label="Cliente/Usuario">'+esc(m.cliente||m.usuario||'')+'</td></tr>'; });
     $('pe-tabla-mov').innerHTML=mh; window.__ordenable('pe-tabla-mov');
@@ -18276,19 +18316,83 @@ function buildFilterTable(cfg){
       +(nUrg?(' · 🔴 '+nUrg+' URGENTE'+(nUrg!==1?'S':'')):'')+(nPed?(' · '+nPed+' para pedir → 🛒'):'')
       +(nRuta?(' · 🧭 '+nRuta+' en la ruta'):'')+(nComp?(' · 🛻 '+nComp+' comprado'+(nComp!==1?'s':'')+' SIN ENTREGAR'):'')
       +(nEnCamino?(' · 📦 '+nEnCamino+' en camino'):'');
-    // Ajustes por conteo de productos (últimos 25)
+    // Ajustes de stock de productos (últimos 25): conteo semanal + roturas, con su motivo
     const ajs=ajustes.slice().sort((a,b)=>String(b.ts||b.fecha||'').localeCompare(String(a.ts||a.fecha||''))).slice(0,25);
-    let ah='<tr><th>Fecha</th><th>Producto</th><th class="num">Teórico</th><th class="num">Contado</th><th class="num">Ajuste</th><th>Usuario</th></tr>';
-    if(!ajs.length) ah+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px">Todavía no hay conteos de productos. Empezá con "📋 Contar productos".</td></tr>';
-    ajs.forEach(a=>{ const d=num(a.cantidad);
-      ah+='<tr><td data-label="Fecha">'+fmtFecha(a.fecha)+'</td><td data-label="Producto"><b>'+esc(a.producto||a.codigo||'')+'</b></td>'+
+    let ah='<tr><th>Fecha</th><th>Producto</th><th>Motivo</th><th class="num">Teórico</th><th class="num">Contado</th><th class="num">Ajuste</th><th>Usuario</th></tr>';
+    if(!ajs.length) ah+='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px">Todavía no hay ajustes de stock. Se cargan con "📋 Contar productos" o con "💥 Rotura o descarte".</td></tr>';
+    ajs.forEach(a=>{ const d=num(a.cantidad), rot=esRotura(a);
+      const mot=rot ? ('<span class="badge red">💥 Rotura</span> <span style="font-size:11px;color:var(--muted)">'+esc(a.etapa||'Otro')+'</span>'+(a.nota?('<div style="font-size:11px;color:var(--muted)">'+esc(a.nota)+'</div>'):''))
+        : '<span class="badge amber">Conteo</span>';
+      ah+='<tr><td data-label="Fecha">'+fmtFecha(a.fecha)+'</td><td data-label="Producto" class="cel-nombre"><b>'+esc(a.producto||a.codigo||'')+'</b></td>'+
+        '<td data-label="Motivo" class="cel-envuelve" data-sortval="'+(rot?'1':'2')+'">'+mot+'</td>'+
         '<td class="num" data-label="Teórico">'+(a.teorico!=null?nf(num(a.teorico)):'—')+'</td><td class="num" data-label="Contado">'+(a.real!=null?nf(num(a.real)):'—')+'</td>'+
         '<td class="num" data-label="Ajuste" style="font-weight:800;color:'+(d<0?'var(--red)':'var(--green)')+'">'+(d>=0?'+':'')+nf(d)+'</td>'+
         '<td data-label="Usuario" style="font-size:11px;color:var(--muted)">'+esc(a.usuario||'')+'</td></tr>'; });
     $('pe-tabla-ajustes').innerHTML=ah; window.__ordenable('pe-tabla-ajustes');
+    renderMerma();
     const ultAju=ajustes.map(a=>a.fecha||'').sort().reverse()[0]||'';
-    $('pe-aju-asof').textContent = ultAju ? ('Último conteo de productos: '+fmtFecha(ultAju)) : 'Sin conteos registrados aún';
+    $('pe-aju-asof').textContent = ultAju ? ('Último ajuste de stock: '+fmtFecha(ultAju)) : 'Sin ajustes registrados aún';
   }
+  // ---------- Rotura o descarte: unidades que se perdieron EN LA FÁBRICA ----------
+  // 🔴 Lo que se rompió y ya se había ENTREGADO no va acá (el stock ya salió): eso se corrige con una
+  // Nota de Crédito en Ventas, con motivo 'Bonificación o garantía'. Acá va solo lo que se perdió en planta.
+  function openRotura(){
+    const act=activos();
+    $('pe-form-rot').innerHTML =
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+        '<div class="cmp-field" style="margin:0"><label>¿Qué día pasó?</label><input type="date" id="pe-rot-fecha" value="'+hoyISO+'" style="max-width:190px"></div>'+
+        '<div class="cmp-field" style="margin:0;flex:1;min-width:220px"><label>¿Dónde se rompió?</label><select id="pe-rot-etapa">'+ETAPAS_ROTURA.map(e=>'<option>'+esc(e)+'</option>').join('')+'</select></div>'+
+      '</div>'+
+      '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Cargá las <b>unidades perdidas</b> de cada producto: <b>descuentan del stock</b> ahora, no hay que esperar al conteo semanal. Si ya se le entregó al cliente y se queja, <b>no va acá</b>: eso se corrige con una Nota de Crédito en Ventas.</p>'+
+      act.map((p,i)=>{ const s=stockDe(p); return '<div class="pe-qty"><div><div class="nm">'+esc(p.nombre)+'</div><div class="cd">'+esc(p.codigo||'')+' · en planta '+nf(s.fisico)+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:8px"><input data-roti="'+i+'" inputmode="numeric" placeholder="0" style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700">'+
+        '<span data-rotkg="'+i+'" style="min-width:62px;font-size:11px;color:var(--muted);text-align:right"></span></div></div>'; }).join('')+
+      '<div class="cmp-field"><label>Qué pasó (opcional)</label><input type="text" id="pe-rot-nota" placeholder="ej: se cayó el pallet al mover con el autoelevador"></div>'+
+      '<div id="pe-rot-tot" class="note" style="margin:0 0 10px"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-rot-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-rot-save">Registrar la pérdida</button></div>';
+    if(window.__tarjetas) window.__tarjetas('pe-rot-etapa',{mini:1});
+    function updTot(){
+      let u=0, kg=0;
+      act.forEach((p,i)=>{ const el=$('pe-form-rot').querySelector('input[data-roti="'+i+'"]'); const c=num(el&&el.value);
+        const out=$('pe-form-rot').querySelector('[data-rotkg="'+i+'"]'); if(out) out.textContent=c>0?('−'+nf(Math.round(c*num(p.pesoUnit)))+' kg'):'';
+        if(c>0){ u+=c; kg+=c*num(p.pesoUnit); } });
+      $('pe-rot-tot').innerHTML = u>0 ? ('Se van a descontar <b>'+nf(u)+' unidad'+(u!==1?'es':'')+'</b> (≈ '+nf(Math.round(kg))+' kg) del stock.') : '';
+    }
+    $('pe-form-rot').querySelectorAll('input[data-roti]').forEach(el=> el.addEventListener('input',updTot));
+    updTot();
+    $('pe-rot-cancel').onclick=()=>$('pe-modal-rot').classList.remove('open');
+    $('pe-rot-save').onclick=()=>{
+      const fecha=$('pe-rot-fecha').value||hoyISO; const c=fb(); if(!c||!c.db){alert('Iniciá sesión.');return;}
+      const etapa=$('pe-rot-etapa').value||'Otro', nota=String($('pe-rot-nota').value||'').trim();
+      const cargas=[]; act.forEach((p,i)=>{ const cant=num(($('pe-form-rot').querySelector('input[data-roti="'+i+'"]')||{}).value); if(cant>0) cargas.push({p,cant}); });
+      if(!cargas.length){ alert('No cargaste ninguna cantidad.'); return; }
+      const u=cargas.reduce((a,x)=>a+x.cant,0);
+      const resumen='Rotura o descarte del '+fmtFecha(fecha)+' ('+etapa+'):\n'+cargas.map(x=>'• '+x.p.nombre+': '+nf(x.cant)).join('\n');
+      if(!confirm(resumen+'\n\nSe descuentan '+nf(u)+' unidad'+(u!==1?'es':'')+' del stock. ¿Confirmás?')) return;
+      // Mismo documento y mismo camino de stock que el conteo semanal; lo que cambia es el MOTIVO.
+      // La cantidad va NEGATIVA: `ajustadoDe` la suma tal cual y resta del físico y del disponible.
+      const ids=[]; cargas.forEach(({p,cant})=>{ const id='aju_'+uniq(); ids.push(id);
+        c.FS.setDoc(c.FS.doc(c.db,'vph_ajustes',id), {fecha, codigo:p.codigo||'', producto:p.nombre||'', cantidad:-cant,
+          motivo:'Rotura', etapa, nota, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)}); });
+      registrarUltimaCarga('vph_ajustes', ids, resumen.replace(/\n/g,' · '));
+      $('pe-modal-rot').classList.remove('open');
+    };
+    $('pe-modal-rot').classList.add('open');
+  }
+
+  // Merma del mes en curso: unidades, kilos y plata, y en qué etapa se pierde
+  function renderMerma(){
+    const cont=$('pe-merma'); if(!cont) return;
+    const per=hoyISO.slice(0,7);
+    const m=mermaMes(ajustes, prods, per), tot=mermaMes(ajustes, prods, '');
+    if(!tot.unidades){ cont.innerHTML=''; return; }
+    const et=m.porEtapa.map(e=>esc(e.etapa)+': <b>'+nf(e.unidades)+'</b>').join(' · ');
+    const pr=m.porProducto.slice(0,3).map(p=>esc(p.nombre)+' '+nf(p.unidades)).join(' · ');
+    cont.innerHTML='<div class="alert '+(m.unidades?'warn':'ok')+'"><span class="aico">💥</span><div><b>Merma de '+esc(per)+': '+nf(m.unidades)+' unidad'+(m.unidades!==1?'es':'')+' · '+nf(Math.round(m.kg))+' kg · '+money(m.pesos)+' de costo</b>'+
+      (et?('<div>'+et+'</div>'):'')+(pr?('<div style="font-size:11.5px;color:var(--muted)">Lo que más se rompe: '+pr+'</div>'):'')+
+      (m.unidades===0?'<div>Este mes todavía no se cargó ninguna rotura.</div>':'')+'</div></div>';
+  }
+
   // Conteo de PRODUCTOS: teórico (físico) vs contado → ajuste por la diferencia
   function openConteoProd(){
     const act=activos();
@@ -20281,6 +20385,7 @@ function buildFilterTable(cfg){
     const sem=semanaKg(); if(sem.kg>0 && sem.prom<OBJ()) A.push({sev:'warn', area:'Producción', t:'Producción por debajo del objetivo: '+nf(sem.prom)+' kg/día vs '+nf(OBJ())+' objetivo (semana en curso)', act:'Revisar con Gustavo cuellos de botella: mesas, moldes, cuadrilla.', go:{page:'Producción y Logística'}});
     return A; });
   $('pe-btn-prod').onclick=openProd;
+  $('pe-btn-rotura').onclick=openRotura;
   $('pe-btn-ent').onclick=openEnt;
   $('pe-btn-deshacer').onclick=deshacerUltimaCarga;
   $('pe-btn-conteo-prod').onclick=openConteoProd;
@@ -20292,6 +20397,7 @@ function buildFilterTable(cfg){
   { const fb2=$('pe-btn-feriados'); if(fb2) fb2.onclick=openFeriados; }
   { const fc=$('pe-fer-cerrar'); if(fc) fc.onclick=()=>$('pe-modal-fer').classList.remove('open'); }
   $('pe-prod-cerrar').onclick=()=>$('pe-modal-prod').classList.remove('open');
+  $('pe-rot-cerrar').onclick=()=>$('pe-modal-rot').classList.remove('open');
   $('pe-ent-cerrar').onclick=()=>$('pe-modal-ent').classList.remove('open');
   $('pe-conteo-cerrar').onclick=()=>$('pe-modal-conteo').classList.remove('open');
   $('pe-ins-cerrar').onclick=()=>$('pe-modal-ins').classList.remove('open');
@@ -20300,7 +20406,7 @@ function buildFilterTable(cfg){
   { const pb=$('pe-programa'); if(pb) pb.onclick=programaTransportista; }
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
-  [$('pe-modal-prod'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+  [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
 })();
 </script>
