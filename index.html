@@ -15543,7 +15543,7 @@ function buildFilterTable(cfg){
   function drawTopesLi(){
     let m=document.getElementById('topes-li-modal');
     if(!topesLiNombre){ if(m) m.style.display='none'; return; }
-    const t=TOPES.find(x=>(x.nombre||'')===topesLiNombre); if(!t){ topesLiCerrar(); return; }
+    const t=TOPES[topesIndice(topesLiNombre)]; if(!t){ topesLiCerrar(); return; }
     if(!m){ m=document.createElement('div'); m.id='topes-li-modal'; document.body.appendChild(m);
       m.addEventListener('click', e=>{ if(e.target===m) topesLiCerrar(); }); }
     const tx=topesLiTextos(t), nom=topesLiNombre;
@@ -15598,18 +15598,45 @@ function buildFilterTable(cfg){
   // Cambia UN prospecto sin pisar lo que la otra PC acaba de guardar: en la nube lo hace dentro de una
   // transacción que relee ESA ficha del servidor y le aplica `fn` (`fn` se puede reintentar).
   // La copia local se actualiza antes, para que el render inmediato ya lo muestre.
-  function topesActualizar(nombre, fn){
-    const i=TOPES.findIndex(t=>(t.nombre||'')===nombre); if(i<0) return;
+  // 20/10: un prospecto se identifica por su _uid, NUNCA solo por el nombre. Hay ~45 nombres repetidos
+  // (dos "Estructuras Vega" con teléfonos distintos) y el automático le mandó SEIS veces el mismo mensaje
+  // al mismo número: lo pedía para una ficha y el resultado se anotaba en la otra del mismo nombre, que
+  // seguía "pendiente". El nombre queda solo de respaldo para una ficha sin _uid, y solo si es ÚNICO.
+  function topesIdFicha(t){ return (t && (t._uid || t.nombre)) || ''; }
+  function topesIndice(clave){
+    if(!clave) return -1;
+    const i=TOPES.findIndex(t=>t._uid && t._uid===clave); if(i>=0) return i;
+    const js=[]; TOPES.forEach((t,j)=>{ if((t.nombre||'')===clave) js.push(j); });
+    return js.length===1 ? js[0] : -1;
+  }
+  // Devuelve false si no encontró la ficha (o el nombre está repetido): no se anotó nada.
+  function topesActualizar(clave, fn){
+    const i=topesIndice(clave); if(i<0){ console.warn('[topes] no encontré la ficha', clave); return false; }
     const list=TOPES.slice(); list[i]=fn({...list[i]});
     const c=(window.__usaNube && typeof fb==='function') ? fb() : null;
     const uid=list[i]._uid;
-    if(!(c && c.db && c.FS && c.FS.runTransaction && uid)){ topesSave(list); return; }
+    if(!(c && c.db && c.FS && c.FS.runTransaction && uid)){ topesSave(list); return true; }
     TOPES=list;
     const ref=c.FS.doc(c.db,TOPES_FICHAS,uid);
     c.FS.runTransaction(c.db, async tx=>{
       const snap=await tx.get(ref); if(!snap.exists()) return;
       tx.set(ref, topesSinUid(fn({...snap.data(), _uid:uid})));
     }).catch(e=>alert('Error al guardar: '+e.message));
+    return true;
+  }
+  // 20/10: el mismo número cargado en dos fichas (dos sucursales, un duplicado) recibe UN solo mensaje:
+  // si otra ficha con ese teléfono ya salió de "pendiente", esta no se ofrece. Se compara por los últimos
+  // 10 dígitos del número de WhatsApp (con o sin el 9). El mapa se rearma solo cuando cambia la lista.
+  function topesTelClave(tel){ const w=topesWaLink(tel); return w ? w.replace(/\D/g,'').slice(-10) : ''; }
+  function topesTelYaUsado(t){
+    const f=topesTelYaUsado;   // el mapa vive en la propia función: se rearma cuando TOPES es otro array
+    if(f.ref!==TOPES){
+      f.map=new Map();
+      TOPES.forEach(x=>{ if((x.estado||'pendiente')!=='pendiente'){ const k=topesTelClave(x.telefono); if(k) f.map.set(k,x); } });
+      f.ref=TOPES;
+    }
+    const k=topesTelClave(t.telefono), o=k && f.map.get(k);
+    return !!(o && o!==t && topesIdFicha(o)!==topesIdFicha(t));
   }
   function topesTope(){
     const n=Math.round(Number(window.__param ? window.__param('topesTopeDiario',25) : 25));
@@ -15702,7 +15729,7 @@ function buildFilterTable(cfg){
   // es un campo propio `grande:true` en el prospecto (cargado a mano en los ~55 que salieron de la
   // investigación de empresas de 50+ empleados del 21-22/09), no una regex sobre el rubro.
   function topesPrioridadGrandesOn(){ try{ return localStorage.getItem('vph_topes_prioridad_grandes_v1')!=='0'; }catch(e){ return true; } }
-  function topesElegible(t){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t); }
+  function topesElegible(t){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t) && !topesTelYaUsado(t); }
   // Próximo a abrir: primero empresas grandes (si está prendido); si no queda ninguna, constructoras
   // y desarrollistas (mismo criterio de rubro que usa el mensaje); cuando no quedan, el orden de
   // siempre. Las dos prioridades conviven: si las dos están prendidas, grandes gana.
@@ -15750,7 +15777,7 @@ function buildFilterTable(cfg){
       topesCopiarImagen(topesImagen(t.rubro));   // ANTES de abrir: al abrir WhatsApp la página pierde el foco
       window.open(tel+'&text='+encodeURIComponent(texto), '_blank');
     }
-    topesUltimoAbierto=t.nombre||'';
+    topesUltimoAbierto=topesIdFicha(t);   // 20/10: el _uid, no el nombre (hay nombres repetidos)
     // Reserva (después de abrir: el clic tiene que llegar entero a window.open). No cambia el estado.
     topesActualizar(topesUltimoAbierto, row=>({...row, abiertoPor:firma, abiertoPc:topesPcId(), abiertoTs:Date.now()}));
     drawTopes();
@@ -15760,7 +15787,7 @@ function buildFilterTable(cfg){
   // el resultado lo sigue diciendo Marcelo con los botones de siempre.
   function topesReabrirSinNueve(){
     const nom=topesUltimoAbierto; if(!nom) return;
-    const t=TOPES.find(x=>(x.nombre||'')===nom); if(!t) return;
+    const t=TOPES[topesIndice(nom)]; if(!t) return;
     const tel=topesWaLink(t.telefono, true);
     if(!tel){ alert('Ese prospecto no tiene teléfono cargado.'); return; }
     if(topesAyudanteOn()){ topesImgEstado='ayudante'; window.open(topesAyudanteLink(t, true), '_blank'); drawTopes(); return; }
@@ -15840,18 +15867,23 @@ function buildFilterTable(cfg){
   const topesAutoEsBN=b=>b.origen==='basenivel' && typeof bnAutoRegistrar==='function';
   function topesAutoLiberar(b){
     if(topesAutoEsBN(b)) bnAutoRegistrar({...b, estado:'liberar'});
-    else if(b.nombre) topesActualizar(b.nombre, topesSinReserva);
+    else if(b.uid||b.nombre) topesActualizar(b.uid||b.nombre, topesSinReserva);
   }
   // Registra en la ficha lo que contestó el ayudante y deja el buzón en 'registrado'.
   function topesAutoRegistrar(b){
     if(topesAutoEsBN(b)) bnAutoRegistrar(b);
-    else if(b.nombre){
-      topesActualizar(b.nombre, row=>{
+    else if(b.uid||b.nombre){
+      const ok=topesActualizar(b.uid||b.nombre, row=>{
         let r=row;
         if(b.estado==='enviado') r={...topesAlEnviar(row), ultimaAccionTs:Number(b.enviadoTs)||Date.now()};
+        // 20/10: el ayudante NO mandó porque ese número ya había recibido el mensaje: queda Contactado
+        // (ya lo recibió), sin sellar la hora ni sumar al tope del día.
+        else if(b.estado==='repetido') r={...row, estado:(row.estado||'pendiente')==='pendiente' ? 'contactado' : row.estado, repetidoBloqueado:hoyISO};
         else if(b.estado==='sinwa') r={...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:topesFirma(), accionPc:topesPcId()};
         return topesSinReserva(r);
       });
+      // 20/10: si no se pudo anotar en la ficha, PAUSA: seguir sería volver a pedir el mismo prospecto.
+      if(!ok) topesAutoPausar('no pude anotar el envío en la ficha de '+(b.nombre||'?')+'. Revisá esa ficha antes de volver a tildar.');
     }
     return topesAutoEscribirBuzon({estado:'registrado', registradoTs:Date.now()});
   }
@@ -15876,7 +15908,7 @@ function buildFilterTable(cfg){
         } else drawTopes();
         return;
       }
-      if(b.estado==='enviado' || b.estado==='sinwa'){ await topesAutoRegistrar(b); drawTopes(); return; }
+      if(b.estado==='enviado' || b.estado==='sinwa' || b.estado==='repetido'){ await topesAutoRegistrar(b); drawTopes(); return; }
       if(b.estado==='error'){
         topesAutoLiberar(b);
         await topesAutoEscribirBuzon({estado:'registrado', registradoTs:ahora});
@@ -15902,8 +15934,8 @@ function buildFilterTable(cfg){
       const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
       const wa=nro(topesWaLink(t.telefono)), wa2=nro(topesWaLink(t.telefono, true));
       if(!wa){ drawTopes(); return; }
-      topesActualizar(t.nombre, row=>({...row, abiertoPor:topesFirma(), abiertoPc:topesPcId(), abiertoTs:ahora}));
-      await topesAutoEscribirBuzon({estado:'pedido', pedidoTs:ahora, nombre:t.nombre||'', tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
+      if(!topesActualizar(topesIdFicha(t), row=>({...row, abiertoPor:topesFirma(), abiertoPc:topesPcId(), abiertoTs:ahora}))){ topesAutoPausar('no encontré la ficha de '+(t.nombre||'?')); return; }
+      await topesAutoEscribirBuzon({estado:'pedido', pedidoTs:ahora, nombre:t.nombre||'', uid:t._uid||'', tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
         tipo:topesImagen(t.rubro).replace(/^Topes\//,'').replace(/\.jpg$/,''), texto:topesTexto(t.nombre, t.rubro), detalle:'', enviadoTs:0,
         origen:'topes', accion:'', bnTel:''});   // el buzón se escribe con merge: hay que limpiar lo de un pedido de Base Nivel anterior
       topesAutoBuzon={...b, estado:'pedido', nombre:t.nombre||'', origen:'topes'};
@@ -16014,7 +16046,7 @@ function buildFilterTable(cfg){
   // Sella el resultado en la ficha (solo los finales) y libera la reserva; cualquier otra cosa PAUSA.
   function igRegistrar(p, d){
     const fin=IG_FINALES.includes(d.estado);
-    topesActualizar(p.nombre, row=>{
+    topesActualizar(p.uid||p.nombre, row=>{
       const r={...row}; delete r.igReservaPc; delete r.igReservaTs;
       if(fin) Object.assign(r, {igEstado:d.estado, igFecha:hoyISO, igTs:Date.now(), igPor:topesFirma(), igPc:topesPcId(), igDetalle:String(d.detalle||'')});
       return r;
@@ -16034,7 +16066,7 @@ function buildFilterTable(cfg){
     if(igPend){
       if(ahora-igPend.ts > IG_ESPERA_MAX){
         const x=igPend; igPend=null;
-        topesActualizar(x.nombre, row=>{ const r={...row}; delete r.igReservaPc; delete r.igReservaTs; return r; });
+        topesActualizar(x.uid||x.nombre, row=>{ const r={...row}; delete r.igReservaPc; delete r.igReservaTs; return r; });
         igPausar('la extensión no contestó el envío a '+x.nombre+'. Mirá Instagram: si salió, anotalo a mano.');
       }
       return;
@@ -16046,8 +16078,8 @@ function buildFilterTable(cfg){
     if(igEspera(ahora).ms>0){ drawTopes(); return; }
     const idx=igProxIndice(ahora); if(idx<0){ drawTopes(); return; }
     const t=TOPES[idx];
-    igPend={id:'ig'+ahora.toString(36), nombre:t.nombre||'', ts:ahora};
-    topesActualizar(t.nombre, row=>({...row, igReservaPc:topesPcId(), igReservaTs:ahora}));
+    igPend={id:'ig'+ahora.toString(36), nombre:t.nombre||'', uid:t._uid||'', ts:ahora};
+    topesActualizar(topesIdFicha(t), row=>({...row, igReservaPc:topesPcId(), igReservaTs:ahora}));
     window.postMessage({vphIg:1, tipo:'enviar', id:igPend.id, usuario:igUsuario(t.instagram), texto:igTexto(t)}, '*');
     drawTopes();
   }
@@ -16107,7 +16139,7 @@ function buildFilterTable(cfg){
       (topesUltimoAbierto ? (
         // Mientras hay uno abierto, las respuestas REEMPLAZAN al botón de avanzar: cada una registra
         // qué pasó Y abre el siguiente, así confirmar no agrega ningún clic al recorrido.
-        '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc(topesUltimoAbierto)+'</b>. ¿Qué pasó?</span>'+
+        '<span style="font-size:12.5px">Abriste el WhatsApp de <b>'+esc((TOPES[topesIndice(topesUltimoAbierto)]||{}).nombre||'')+'</b>. ¿Qué pasó?</span>'+
         // 23/09 (Marcelo: "cuando toco 📵 la cuenta regresiva empieza de nuevo, pero no mandé
         // ningún mensaje"): NO reinicia nada — 📵 nunca tocó `ultimaAccionTs` (solo lo hace
         // "✅ Lo mandé"). Lo que pasaba es que, mientras el chat está abierto, el reloj queda
@@ -16336,7 +16368,7 @@ function buildFilterTable(cfg){
       const done=()=>{ b.textContent='Copiado ✓'; setTimeout(()=>{ b.textContent='📋 Copiar'; },1200); };
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(()=>{ fallbackCopy(txt); done(); }); else { fallbackCopy(txt); done(); }
       const list=TOPES.slice(); list[i]=topesAlEnviar(list[i]); topesSave(list); drawTopes(); });
-    tabla.querySelectorAll('button[data-topes-li]').forEach(b=>b.onclick=()=>topesLiAbrir(TOPES[+b.dataset.topesLi].nombre||''));
+    tabla.querySelectorAll('button[data-topes-li]').forEach(b=>b.onclick=()=>topesLiAbrir(topesIdFicha(TOPES[+b.dataset.topesLi])));
     tabla.querySelectorAll('button[data-topes-lead]').forEach(b=>b.onclick=()=>{ const t=TOPES[+b.dataset.topesLead];
       setCrmTab('leads');
       openForm(); editing.cliente=t.nombre||''; editing.telefono=t.telefono||''; editing.email=t.email||'';
