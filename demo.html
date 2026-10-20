@@ -882,6 +882,38 @@ window.__demoSeed = function () {
   }
   function bloqueado() { avisar(); return Promise.resolve(); }
 
+
+   
+   
+  (function () {
+    function memoria() {
+      var m = {};
+      return {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },
+        setItem: function (k, v) { m[k] = String(v); },
+        removeItem: function (k) { delete m[k]; },
+        clear: function () { m = {}; },
+        key: function (i) { return Object.keys(m)[i] || null; },
+        get length() { return Object.keys(m).length; }
+      };
+    }
+    ["localStorage", "sessionStorage"].forEach(function (n) {
+      try { Object.defineProperty(window, n, { value: memoria(), configurable: true, writable: true }); } catch (e) { }
+    });
+    var _open = window.open;
+    window.open = function (u) {
+      var s = String(u || "");
+      if (s && !/^(https?:|about:blank|blob:)/i.test(s)) { avisar("🎬 Demostración: no se abren programas locales."); return null; }
+      return _open.apply(window, arguments);
+    };
+    document.addEventListener("click", function (ev) {
+      var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+      if (a && /^(whatsapp|vphenviar|tel|mailto):/i.test(a.getAttribute("href") || "")) { ev.preventDefault(); ev.stopPropagation(); avisar("🎬 Demostración: no se abren programas locales."); }
+    }, true);
+    var _post = window.postMessage;
+    window.postMessage = function (d) { if (d && d.vphIg && d.tipo === "enviar") { avisar("🎬 Demostración: no se envían mensajes."); return; } return _post.apply(window, arguments); };
+  })();
+
    
   function doc(db) {
     var seg = Array.prototype.slice.call(arguments, 1).join('/').split('/').filter(Boolean);
@@ -7230,7 +7262,7 @@ function buildFilterTable(cfg){
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
-      if(u){ hideLogin(); updateUserBar();
+      if(u){ hideLogin(); updateUserBar(); vigilarInactividad();
         leerRol(u).then(()=>{
           window.__construirNav && window.__construirNav();
           if(window.__rol==='admin'){ startSync(); loadReportes(); }
@@ -7240,6 +7272,31 @@ function buildFilterTable(cfg){
       else { window.__rol=null; window.__navBuilt=false; window.__reportesRendered=false; stopSync(); DB.compras=[]; render(); showLogin();
         (window.__afterLogout||[]).forEach(fn=>{ try{ fn(); }catch(e){} }); }
     });
+  }
+   
+   
+   
+   
+   
+  const INACTIVIDAD_HORAS = 12, CLAVE_ACTIVIDAD = 'vph_ultima_actividad_v1';
+  let vigiaInactividad = null, ultimaMarca = 0;
+  function marcarActividad(){ const t=Date.now(); if(t-ultimaMarca<15000) return; ultimaMarca=t; try{ localStorage.setItem(CLAVE_ACTIVIDAD, String(t)); }catch(e){} }
+  function vigilarInactividad(){
+     
+     
+    let previa=0; try{ previa=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
+    if(previa && Date.now()-previa > INACTIVIDAD_HORAS*3600*1000){ try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){} AUTH.signOut(fbAuth).catch(()=>{}); return; }
+    ultimaMarca=0; marcarActividad();
+    if(vigiaInactividad) return;
+    ['click','keydown','touchstart','scroll','mousemove'].forEach(ev=>window.addEventListener(ev, marcarActividad, {passive:true, capture:true}));
+    const revisar=()=>{
+      let ult=0; try{ ult=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
+      if(ult && Date.now()-ult > INACTIVIDAD_HORAS*3600*1000 && usuario){
+        try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){}
+        AUTH.signOut(fbAuth).then(()=>{ const e=$('cmp-log-err'); if(e) e.textContent='La sesión se cerró por inactividad. Volvé a ingresar.'; }).catch(()=>{});
+      }
+    };
+    revisar(); vigiaInactividad=setInterval(revisar, 60000);
   }
    
   async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; } else { window.__rol='sinacceso'; window.__rolNombre=''; } }catch(e){ window.__rol='sinacceso'; window.__rolNombre=''; } }

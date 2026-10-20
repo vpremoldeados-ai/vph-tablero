@@ -25,6 +25,38 @@
   }
   function bloqueado() { avisar(); return Promise.resolve(); }
 
+
+  // ---- AISLAMIENTO: la demo comparte dominio con el Tablero real, así que NO puede tocar su localStorage
+  // (ahí quedan guardados catálogo, parámetros y tasas REALES) ni abrir los programas locales de envío.
+  (function () {
+    function memoria() {
+      var m = {};
+      return {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },
+        setItem: function (k, v) { m[k] = String(v); },
+        removeItem: function (k) { delete m[k]; },
+        clear: function () { m = {}; },
+        key: function (i) { return Object.keys(m)[i] || null; },
+        get length() { return Object.keys(m).length; }
+      };
+    }
+    ["localStorage", "sessionStorage"].forEach(function (n) {
+      try { Object.defineProperty(window, n, { value: memoria(), configurable: true, writable: true }); } catch (e) { }
+    });
+    var _open = window.open;
+    window.open = function (u) {
+      var s = String(u || "");
+      if (s && !/^(https?:|about:blank|blob:)/i.test(s)) { avisar("🎬 Demostración: no se abren programas locales."); return null; }
+      return _open.apply(window, arguments);
+    };
+    document.addEventListener("click", function (ev) {
+      var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+      if (a && /^(whatsapp|vphenviar|tel|mailto):/i.test(a.getAttribute("href") || "")) { ev.preventDefault(); ev.stopPropagation(); avisar("🎬 Demostración: no se abren programas locales."); }
+    }, true);
+    var _post = window.postMessage;
+    window.postMessage = function (d) { if (d && d.vphIg && d.tipo === "enviar") { avisar("🎬 Demostración: no se envían mensajes."); return; } return _post.apply(window, arguments); };
+  })();
+
   // ---- referencias
   function doc(db) {
     var seg = Array.prototype.slice.call(arguments, 1).join('/').split('/').filter(Boolean);

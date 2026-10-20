@@ -6848,7 +6848,7 @@ function buildFilterTable(cfg){
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
-      if(u){ hideLogin(); updateUserBar();
+      if(u){ hideLogin(); updateUserBar(); vigilarInactividad();
         leerRol(u).then(()=>{
           window.__construirNav && window.__construirNav();
           if(window.__rol==='admin'){ startSync(); loadReportes(); }
@@ -6858,6 +6858,31 @@ function buildFilterTable(cfg){
       else { window.__rol=null; window.__navBuilt=false; window.__reportesRendered=false; stopSync(); DB.compras=[]; render(); showLogin();
         (window.__afterLogout||[]).forEach(fn=>{ try{ fn(); }catch(e){} }); }
     });
+  }
+  // Cierre de sesión por INACTIVIDAD (20/10, auditoría de seguridad): Firebase mantiene la sesión abierta
+  // indefinidamente en ese navegador, así que una PC olvidada o prestada seguía dentro del Tablero (sueldos,
+  // cuentas, CBU). Pasadas INACTIVIDAD_HORAS sin tocar nada, se cierra sola. Cualquier clic, tecla, toque o
+  // scroll cuenta como actividad; la marca se comparte entre pestañas (localStorage) y se revisa cada minuto,
+  // así que una PC suspendida cierra la sesión apenas se despierta. No toca datos: solo AUTH.signOut.
+  const INACTIVIDAD_HORAS = 12, CLAVE_ACTIVIDAD = 'vph_ultima_actividad_v1';
+  let vigiaInactividad = null, ultimaMarca = 0;
+  function marcarActividad(){ const t=Date.now(); if(t-ultimaMarca<15000) return; ultimaMarca=t; try{ localStorage.setItem(CLAVE_ACTIVIDAD, String(t)); }catch(e){} }
+  function vigilarInactividad(){
+    // Si la sesión quedó abierta de antes (la pestaña se cerró y se volvió a abrir), la marca vieja manda:
+    // se mira ANTES de marcar actividad, si no abrir el Tablero "renovaría" una sesión vencida.
+    let previa=0; try{ previa=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
+    if(previa && Date.now()-previa > INACTIVIDAD_HORAS*3600*1000){ try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){} AUTH.signOut(fbAuth).catch(()=>{}); return; }
+    ultimaMarca=0; marcarActividad();
+    if(vigiaInactividad) return;
+    ['click','keydown','touchstart','scroll','mousemove'].forEach(ev=>window.addEventListener(ev, marcarActividad, {passive:true, capture:true}));
+    const revisar=()=>{
+      let ult=0; try{ ult=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
+      if(ult && Date.now()-ult > INACTIVIDAD_HORAS*3600*1000 && usuario){
+        try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){}
+        AUTH.signOut(fbAuth).then(()=>{ const e=$('cmp-log-err'); if(e) e.textContent='La sesión se cerró por inactividad. Volvé a ingresar.'; }).catch(()=>{});
+      }
+    };
+    revisar(); vigiaInactividad=setInterval(revisar, 60000);
   }
   // fail-closed: sin ficha en vph_roles => sin acceso (no admin). Solo roles asignados explícitamente tienen permisos.
   async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; } else { window.__rol='sinacceso'; window.__rolNombre=''; } }catch(e){ window.__rol='sinacceso'; window.__rolNombre=''; } }
