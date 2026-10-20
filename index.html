@@ -9428,6 +9428,12 @@ function buildFilterTable(cfg){
   function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
   const diasAviso=()=> num(window.__param?window.__param('diasAvisoCheque',5):5)||5;
   function porVencer(c){ return !RESUELTO.includes(c.estado) && c.fechaVencimiento && c.fechaVencimiento<=addDias(hoyISO,diasAviso()); }
+  // 💸 Propios "a cubrir HOY" (Marcelo, 20/10: "necesito que se me indique en algún lado que los cheques
+  // propios a cubrir hoy suman $2.972.868,32"): los e-cheqs NUESTROS sin pagar cuyo vencimiento ya pasó
+  // o es hoy. El banco los debita cuando el tenedor los presenta, y puede ser cualquier día desde el
+  // vencimiento (LOGINCOR venció el 07/10 y el 20/10 seguía sin cobrarse): esa plata tiene que ESTAR en
+  // la cuenta. No se pasan solos a Pagado (ver más abajo); se marcan a mano cuando se ve el débito.
+  function propioACubrirHoy(c){ return c.tipo==='emitido' && !RESUELTO.includes(c.estado) && c.fechaVencimiento && String(c.fechaVencimiento).slice(0,10)<=hoyISO; }
   function addDias(iso,n){ const a=String(iso).slice(0,10).split('-').map(Number); const d=new Date(a[0],a[1]-1,a[2]); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()); }
 
   function render(){
@@ -9460,7 +9466,9 @@ function buildFilterTable(cfg){
     const rechazados=DB.cheques.filter(c=>c.estado==='rechazado');
     // Los que están EN LA MANO son los únicos que se pueden endosar o depositar.
     const enMano=DB.cheques.filter(disponible), pap=enMano.filter(esPapel).length;
+    const cubrir=DB.cheques.filter(propioACubrirHoy);
     $('chq-kpis').innerHTML =
+      k('💸 Propios a cubrir HOY', cubrir.length?'bad':'good', money(sum(cubrir)), cubrir.length?cubrir.length+' e-cheq'+(cubrir.length!==1?'s':'')+' vencido'+(cubrir.length!==1?'s':'')+' o que vence'+(cubrir.length!==1?'n':'')+' hoy sin pagar · la plata tiene que estar en la cuenta':'ningún cheque propio vencido sin pagar') +
       k('Cartera de terceros','info', money(sum(cart)), cart.length+' cheque'+(cart.length!==1?'s':'')+' de clientes, incluidos los depositados sin acreditar') +
       k('Disponibles para operar','info', money(sum(enMano)), enMano.length+' en la mano para endosar o depositar'+(pap?' · '+pap+' de papel':'')) +
       k('Endosados a proveedores','info', money(sum(endo)), endo.length+' cheque'+(endo.length!==1?'s':'')+' entregados · no pasan por nuestra cuenta') +
@@ -9982,6 +9990,9 @@ function buildFilterTable(cfg){
   // Fuente de alertas EN VIVO: cheques por vencer sin resolver
   window.__alertSources = window.__alertSources || [];
   window.__alertSources.push(()=>{ const A=[];
+    const cubrir=DB.cheques.filter(propioACubrirHoy);
+    if(cubrir.length) A.push({sev:'bad', area:'Finanzas', t:'Cheques propios a cubrir HOY: '+money(cubrir.reduce((a,c)=>a+num(c.monto),0))+' ('+cubrir.length+' e-cheq'+(cubrir.length>1?'s':'')+')',
+      act:'Vencidos o vencen hoy y todavía no se debitaron: tener la plata en la cuenta de la chequera. Cuando el banco los debite, marcarlos ✓ Pagado en Cheques.', go:{page:'Cheques'}});
     const vencer=DB.cheques.filter(porVencer);
     if(vencer.length){ const rec=vencer.filter(c=>c.tipo==='recibido'), emi=vencer.filter(c=>c.tipo==='emitido');
       let t=vencer.length+' cheque'+(vencer.length>1?'s':'')+' por vencer en los próximos '+diasAviso()+' días ('+money(vencer.reduce((a,c)=>a+num(c.monto),0))+')';
