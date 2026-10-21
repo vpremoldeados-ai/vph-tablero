@@ -7095,7 +7095,15 @@ function buildFilterTable(cfg){
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
   // Una sola opción de cheque: en VPH el de papel casi no se usa y se opera igual que el electrónico.
   const MEDIO_CHEQUE = 'Cheque / E-Cheq';
-  const MEDIOS_COBRO = ['Transferencia','Efectivo',MEDIO_CHEQUE,'Tarjeta','Mercado Pago','Viumi','Retención'];
+  // COMPENSACIÓN / AJUSTE (21/10, caso Ranco): la venta queda cobrada en esa parte, pero NO entró plata a
+  // ninguna cuenta. Es el espejo de "Cancelado administrativamente" de Compras. Casos: un saldo a favor
+  // que el cliente tenía de ANTES del Tablero (venía de Contagram), una compensación con algo que VPH le
+  // debe a ese mismo cliente, o un ajuste de centavos. Caja y la conciliación bancaria lo excluyen igual
+  // que la retención (window.__esCompensacionCobro), y el motivo va en `obs` —el campo que el Recibo de
+  // Cobranza imprime como "Observación"— y es OBLIGATORIO: es lo único que después explica por qué una
+  // factura figura cobrada sin que haya entrado un peso.
+  const MEDIO_COMP = 'Compensación / ajuste (sin plata)';
+  const MEDIOS_COBRO = ['Transferencia','Efectivo',MEDIO_CHEQUE,'Tarjeta','Mercado Pago','Viumi','Retención',MEDIO_COMP];
   // VIUMI retiene su costo (arancel + IVA + costo financiero de las cuotas) y acredita el resto en la
   // cuenta a los ~10 días. O sea: el cliente ya pagó TODO —la venta queda saldada por el bruto— pero a
   // la caja entra MENOS y MÁS TARDE. Contarlo como plata de hoy infla el disponible y hace que el
@@ -7138,6 +7146,8 @@ function buildFilterTable(cfg){
   // contara mostraría plata que no existe — el mismo error que ya pasó con los cheques. Se excluye igual.
   const esRetencion = m => /retenci/i.test(String(m||''));
   window.__esRetencion = esRetencion;   // lo consume Caja en movimientosReales()
+  const esCompensacion = m => /compensaci/i.test(String(m||''));
+  window.__esCompensacionCobro = esCompensacion;   // lo consumen Caja (movimientosReales) y la conciliación bancaria
   // Los cuatro que un cliente puede retenerle a VPH. Ganancias primero: es el habitual.
   const IMPUESTOS_RET = ['Ganancias','IVA','Ingresos Brutos','SUSS'];
   // ⚠️ El <select> tiene que incluir el medio que el cobro YA tiene aunque no esté en la lista (los
@@ -7829,6 +7839,7 @@ function buildFilterTable(cfg){
     const m=String(c.medio||'—'); let d=m;
     if(esCheque(m)) d+=(c.chNumero?' N° '+c.chNumero:'')+(c.chBanco?' '+c.chBanco:'')+(c.chVenc?' (vence '+fmtFecha(String(c.chVenc).slice(0,10))+')':'');
     else if(esRetencion(m)) d='Retención'+(c.retImpuesto?' '+c.retImpuesto:'')+(c.retCertificado?' cert. '+c.retCertificado:'');
+    else if(esCompensacion(m)) d='Compensación / ajuste'+(c.obs?' · '+c.obs:'');
     if(c.chequeRechazado) d+=' — RECHAZADO (no computa)';
     return d.replace(/\s+/g,' ').trim();
   }
@@ -8007,7 +8018,7 @@ function buildFilterTable(cfg){
     const by={}; DB.ventas.forEach(v=>{ if(v.cliente && calc(v).saldo>0.5) by[v.cliente]=true; });
     return Object.keys(by).sort();
   }
-  const blankValorImp = (medio,monto)=>({ medio:medio||MEDIOS_IMPUTAR[0], monto:monto||0, chNumero:'', chBanco:'', chVenc:'', cuenta:'', retImpuesto:IMPUESTOS_RET[0], retCertificado:'' });
+  const blankValorImp = (medio,monto)=>({ medio:medio||MEDIOS_IMPUTAR[0], monto:monto||0, chNumero:'', chBanco:'', chVenc:'', cuenta:'', retImpuesto:IMPUESTOS_RET[0], retCertificado:'', obs:'' });
   const totalValoresImp = ()=> round2(imputValores.reduce((a,x)=>a+num(x.monto),0));
   // Vuelve a proponer el reparto FIFO con el total de los valores cargados.
   function recalcSplitsImp(){ imputSplits=window.__repartirFIFO(totalValoresImp(), imputPend); imputManual=false; }
@@ -8029,7 +8040,7 @@ function buildFilterTable(cfg){
     $('vnt-modal-imputar').classList.add('open');
   }
   function valorImpHtml(x,i){
-    const ch=esCheque(x.medio), ret=esRetencion(x.medio);
+    const ch=esCheque(x.medio), ret=esRetencion(x.medio), comp=esCompensacion(x.medio);
     const inp='style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px"';
     let extra='';
     if(ch) extra='<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr;margin:8px 0 0">'+
@@ -8040,6 +8051,8 @@ function buildFilterTable(cfg){
       field('¿Qué impuesto?','','<select '+inp+' data-vi="'+i+'" data-vf="retImpuesto">'+IMPUESTOS_RET.map(t=>'<option'+(t===x.retImpuesto?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select>')+
       field('N° de certificado','','<input '+inp+' data-vi="'+i+'" data-vf="retCertificado" value="'+esc(x.retCertificado)+'" placeholder="el que figura en el comprobante">')+'</div>'+
       '<div style="font-size:11px;color:var(--muted);margin-top:6px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH. Para subir el PDF del certificado, usá el ✅ de cada venta.</div>';
+    else if(comp) extra='<div style="margin-top:8px">'+field('Motivo (obligatorio)','','<input '+inp+' data-vi="'+i+'" data-vf="obs" value="'+esc(x.obs)+'" placeholder="ej.: saldo a favor anterior al Tablero (Contagram, comprobante N° y fecha)">')+'</div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px">No entra plata a ninguna cuenta: un saldo a favor que el cliente tenía de antes del Tablero, una compensación con algo que VPH le debe, o un ajuste de centavos. La venta queda cobrada en esa parte y el motivo sale en el recibo.</div>';
     else extra='<div style="margin-top:8px">'+field('¿En qué cuenta entró?','','<select '+inp+' data-vi="'+i+'" data-vf="cuenta">'+cuentasOpt(x.cuenta)+'</select>')+'</div>';
     return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
       '<div style="display:flex;gap:8px;align-items:flex-end">'+
@@ -8060,7 +8073,7 @@ function buildFilterTable(cfg){
       '<p style="margin:-6px 0 10px;font-size:12.5px;color:var(--muted)">'+(imputCliente?'Saldo total pendiente: <b style="color:var(--text)">'+money(totalSaldo)+'</b>':'Elegí un cliente para ver sus facturas pendientes.')+'</p>'+
       '<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">Cómo pagó</div>'+
       imputValores.map(valorImpHtml).join('')+
-      '<button class="cmp-btn" type="button" id="ic-addval" style="margin-bottom:6px">＋ Agregar valor (otro e-cheq, una retención, efectivo…)</button>'+
+      '<button class="cmp-btn" type="button" id="ic-addval" style="margin-bottom:6px">＋ Agregar valor (otro e-cheq, una retención, una compensación, efectivo…)</button>'+
       '<div id="ic-totval" style="font-size:12.5px;margin:0 0 12px"></div>'+
       '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0">'+
         '<div style="font-size:12.5px;font-weight:800">Reparto por venta (la más vieja primero)</div>'+
@@ -8123,6 +8136,8 @@ function buildFilterTable(cfg){
     if(Math.abs(tv-ts)>=0.01){ alert('El total de los valores ('+money(tv)+') no coincide con lo repartido en las ventas ('+money(ts)+'). Ajustalo antes de registrar.'); return; }
     const sinCert=valores.filter(x=>esRetencion(x.medio) && !String(x.retCertificado||'').trim());
     if(sinCert.length && !confirm('Hay una retención sin N° de certificado: sin ese número el contador no puede computar el crédito.\n¿Registrar igual?')) return;
+    const sinMotivo=valores.filter(x=>esCompensacion(x.medio) && !String(x.obs||'').trim());
+    if(sinMotivo.length){ alert('Hay una compensación / ajuste sin motivo. Escribí de dónde sale ese saldo a favor (o qué ajusta): es lo único que después explica por qué la factura figura cobrada sin plata.'); return; }
     const piezas=window.__cascadaValores(valores, activos);
     const cobrosPorVenta={}, cheques=[], aplicados={}, maestroCh={}, nrosCh={};
     piezas.forEach(p=>{
@@ -8130,6 +8145,7 @@ function buildFilterTable(cfg){
       const rec={ id:'cob_'+newUid(), fecha, monto:p.monto, medio:val.medio, chequeRechazado:false };
       if(esCheque(val.medio)){ rec.chNumero=String(val.chNumero||'').trim(); rec.chBanco=String(val.chBanco||'').trim(); rec.chVenc=val.chVenc||fecha; }
       else if(esRetencion(val.medio)){ rec.retImpuesto=val.retImpuesto||IMPUESTOS_RET[0]; rec.retCertificado=String(val.retCertificado||'').trim(); }   // sin cuenta A PROPÓSITO (no entró a ningún banco)
+      else if(esCompensacion(val.medio)){ rec.obs=String(val.obs||'').trim(); }   // sin cuenta A PROPÓSITO (no entró plata): el motivo es la única pista
       else rec.cuenta=val.cuenta||'';
       (cobrosPorVenta[v._uid]=cobrosPorVenta[v._uid]||[]).push(rec);
       // UN solo cheque por valor en el módulo Cheques, por su monto COMPLETO (el papel es uno solo aunque
@@ -8147,7 +8163,7 @@ function buildFilterTable(cfg){
     cheques.forEach(({v,rec,vi,total})=>{ if(window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:(nrosCh[vi]||[]).join(' + '), entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:total, fechaEmision:fecha, fechaVencimiento:rec.chVenc||fecha, chequeRechazado:false }); });
     const facturas=Object.values(aplicados).map(a=>({ comprobante:a.comprobante, fecha:a.fecha, monto:a.monto, saldo:round2(a.saldoAntes-a.monto) }));
     const cliRef=DB.ventas.find(v=>v.cliente===imputCliente)||{};
-    const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):'');
+    const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):esCompensacion(x.medio)?(x.obs?' · '+x.obs:''):'');
     const recibo={ proveedor:imputCliente, cuit:cliRef.cuit||'', condIva:cliRef.condIva||'', fecha,
       valores:valores.map(x=>({ fecha, detalle:detalleValor(x), monto:num(x.monto) })), facturas };
     $('vnt-modal-imputar').classList.remove('open');
@@ -8530,6 +8546,7 @@ function buildFilterTable(cfg){
         '<span>'+fmtFecha(c.fecha)+' · '+esc(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+
           (esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>'
            : esPlataforma(c.medio)?'<span style="font-size:11px;color:'+(c.acreditado?'var(--green)':'#2f6fb2')+'"> · '+(c.acreditado?'✓ acreditado':'⏳ se acredita el '+fmtFecha(c.fechaAcreditacion))+' · neto '+money(netoPlataforma(c))+(c.cuenta?' → '+esc(c.cuenta):'')+'</span>'
+           : esCompensacion(c.medio)?(c.obs?' <span style="color:var(--muted);font-size:11px">· '+esc(c.obs)+'</span>':'')
            : (c.cuenta?' <span style="color:var(--muted);font-size:11px">→ '+esc(c.cuenta)+'</span>':''))+
           (c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
         '<span style="display:flex;gap:8px;align-items:center"><b>'+money(num(c.monto))+'</b>'+
@@ -8542,7 +8559,7 @@ function buildFilterTable(cfg){
     const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO,
           medioDef = ed ? ed.medio : (cobroMedioSugerido || (num(v.finCuotas) ? medioViumi : MEDIOS_COBRO[0]));
     if(!ed) cobroMedioSugerido='';   // se aplica una sola vez, no en cada re-render del formulario
-    const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef);
+    const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef), retShow = esRetencion(medioDef), compShow = esCompensacion(medioDef);
     // Tasas para la propuesta de liquidación: las del PERFIL con el que se cerró la venta (si la
     // venta no tiene plan, Macro — el comportamiento de siempre). Arancel y costo financiero por
     // separado, como los publica VIUMI. Fallback a los parámetros viejos si Financiación no cargó.
@@ -8557,7 +8574,7 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="vc-monto" value="'+montoDef+'">') + field('Fecha','','<input type="date" id="vc-fecha" value="'+fechaDef+'">') +
         field('Medio','','<select id="vc-medio">'+medioOpts(MEDIOS_COBRO, medioDef)+'</select>') +
-        '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+(chShow?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
+        '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+((chShow||platShow||retShow||compShow)?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
       // Retención: el cliente actúa de agente de retención. Estos dos datos son los que pide el
       // contador para computar el crédito — sin el certificado, la retención no se puede usar.
@@ -8573,6 +8590,13 @@ function buildFilterTable(cfg){
           '<span id="vc-ret-msg" style="font-size:12px"></span>'+
         '</div>'+
         '<div style="font-size:11px;color:var(--muted);margin-top:8px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH y se descuenta del impuesto. Subí el PDF que te manda el cliente y se completa solo.</div>'+
+      '</div>'+
+      // Compensación / ajuste: no entra plata. El motivo es OBLIGATORIO — después es lo único que explica
+      // por qué la factura figura cobrada sin un ingreso en ninguna cuenta (y sale en el recibo).
+      '<div id="vc-comp-extra" style="display:'+(compShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Compensación / ajuste — no entra plata a ninguna cuenta</div>'+
+        field('Motivo (obligatorio)','','<input id="vc-comp-obs" value="'+esc((ed&&ed.obs)||'')+'" placeholder="ej.: saldo a favor anterior al Tablero (Contagram, comprobante N° y fecha)">')+
+        '<div style="font-size:11px;color:var(--muted);margin-top:6px">Para un saldo a favor que el cliente tenía de antes del Tablero, una compensación con algo que VPH le debe, o un ajuste de centavos. La venta queda cobrada en esa parte, pero Caja no cuenta ningún ingreso. El motivo sale en el recibo y en el estado de cuenta.</div>'+
       '</div>'+
       '<div id="vc-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea/actualiza en el módulo Cheques)</div>'+
@@ -8608,13 +8632,14 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
     // Si es cheque, la plata no entra a ninguna cuenta todavía (entra al cobrarse, desde el módulo Cheques).
-    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2), ret=esRetencion(v2);
+    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2), ret=esRetencion(v2), comp=esCompensacion(v2);
       $('vc-cheque-extra').style.display = ch?'block':'none';
       $('vc-plat-extra').style.display = pl?'block':'none';
       if($('vc-ret-extra')) $('vc-ret-extra').style.display = ret?'block':'none';
+      if($('vc-comp-extra')) $('vc-comp-extra').style.display = comp?'block':'none';
       // Con plataforma la cuenta se elige adentro del bloque (es la de acreditación, no la de hoy).
       // Con retención NO se pregunta: esa plata no entró a ninguna cuenta.
-      $('vc-cuenta-wrap').style.display = (ch||pl||ret)?'none':'';
+      $('vc-cuenta-wrap').style.display = (ch||pl||ret||comp)?'none':'';
       if(pl) sugerirLiquidacion(); });
 
     // Al elegir VIUMI por primera vez se propone la fecha a 10 días; el IVA se completa al 21% del
@@ -8735,6 +8760,10 @@ function buildFilterTable(cfg){
           retArchivoPend=null;
         }
       }
+      else if(esCompensacion(rec.medio)){
+        // Sin cuenta A PROPÓSITO (no entró plata) y con el motivo escrito: después es la única pista que queda.
+        rec.obs=$('vc-comp-obs')?$('vc-comp-obs').value.trim():'';
+        if(!rec.obs){ alert('Escribí el motivo de la compensación: de dónde sale ese saldo a favor, o qué ajusta.'); return; } }
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }   // en qué cuenta entró la plata
       const lv=viva(); const cobros=(lv.cobros||[]).slice();
       if(cobroEdit!=null){ const j=posViva(cobros, prev, cobroEdit); if(j>=0) cobros[j]=rec; else cobros.push(rec); cobroEdit=null; } else { cobros.push(rec); }
@@ -10420,8 +10449,9 @@ function buildFilterTable(cfg){
   function movimientosReales(desde){
     const M=[];
     // Se excluyen los cobros que NO mueven plata: con cheque (entra el día que se cobra), cancelados
-    // administrativamente, y las RETENCIONES (esa parte se la quedó ARCA, nunca entró a una cuenta).
-    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio))) return;
+    // administrativamente, las RETENCIONES (esa parte se la quedó ARCA, nunca entró a una cuenta) y las
+    // COMPENSACIONES / ajustes de Ventas (un saldo a favor viejo, un ajuste: la factura se salda sin plata).
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio)) || (window.__esCompensacionCobro && window.__esCompensacionCobro(c.medio))) return;
       // Cobro por plataforma (VIUMI): el cliente pagó el bruto, pero a la cuenta entra el NETO y recién
       // el día que acredita. Antes de eso no es plata disponible; contarlo hoy y por el bruto infla la
       // caja dos veces (por fecha y por monto).
@@ -11201,7 +11231,7 @@ function buildFilterTable(cfg){
   function candidatosConciliacion(cuenta) {
     const C = []; const deCuenta = c => !c || c === cuenta;
     ventas.forEach(v => (v.cobros || []).forEach(c => {
-      if (esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio))) return;
+      if (esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio)) || (window.__esCompensacionCobro && window.__esCompensacionCobro(c.medio))) return;
       if (!deCuenta(c.cuenta)) return;
       if (esPlataformaCobro(c.medio)) {
         const neto = netoPlat(c); if (neto <= 0.5) return;
