@@ -4236,7 +4236,10 @@ function buildFilterTable(cfg){
   }
 
   // ---------- Cálculos ----------
-  function calc(c){
+  // Totales CRUDOS de un comprobante: neto, IVA, total con signo (una Nota de Crédito va en negativo)
+  // y lo pagado. No mira al resto del proveedor — es lo que usa aplicacionNC() para armar la cuenta
+  // corriente sin recursión. Lo que se muestra y se cobra sale de calc(), que suma la NC.
+  function calcBase(c){
     const factor = 1 - (num(c.descGeneral)/100);
     let neto=0, iva=0;
     (c.items||[]).forEach(it=>{
@@ -4250,12 +4253,65 @@ function buildFilterTable(cfg){
     const signo = c.tipoComprobante==='Nota de Crédito' ? -1 : 1;
     const total = (neto+iva+extras)*signo;
     const pagado = (c.pagos||[]).reduce((a,p)=>a+num(p.monto),0);
-    const saldo = round2(total - pagado);
+    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaCredito:round2((iva+num(c.percepIva))*signo), total:round2(total), pagado:round2(pagado), signo };
+  }
+
+  // ---------- Notas de Crédito en CUENTA CORRIENTE (21/10) ----------
+  // Una NC que nos hace un proveedor es plata a favor en SU cuenta corriente: baja lo que le debemos.
+  // Hasta el 21/10 el Tablero la guardaba con el total en negativo pero NUNCA la cruzaba contra las
+  // facturas: MANSO tenía dos facturas vencidas por $253.881 y una NC por $106.829, y "Vencido"
+  // seguía diciendo $253.881 — la NC quedaba en una fila aparte, "a favor", sin descontar de nada.
+  // Pedido de Marcelo: "en las compras a proveedores en CTA CTE, tomá en el resumen las notas de crédito".
+  // Regla: cada NC se aplica a las facturas PENDIENTES del mismo proveedor, la más vieja primero (como
+  // se salda una cuenta corriente real, igual que __repartirFIFO en Ventas), hasta agotarse. Lo que
+  // sobra queda como saldo a favor en la fila de la NC. No hay un campo "esta NC corrige tal factura":
+  // el saldo del PROVEEDOR es el mismo con cualquier reparto, y ese es el que miran el resumen,
+  // Finanzas y Caja. Una factura ya pagada no recibe nada (no hay a qué aplicarle).
+  // Devuelve lo que a ESTE comprobante le toca: a una factura, cuánto le descuentan las NC; a una NC,
+  // cuánto de ella ya se aplicó. `lista` es contra qué compras se arma la cuenta (default DB.compras;
+  // Finanzas, Caja y Costos Fijos pasan la suya). Es pura: no escribe nada ni toca los objetos.
+  function provClave(c){ return String((c&&c.proveedor)||'').trim().toLowerCase(); }
+  function ordenCC(a,b){ return String(a.fecha||'').localeCompare(String(b.fecha||'')) || String(a._uid||'').localeCompare(String(b._uid||'')); }
+  function aplicacionNC(c, lista){
+    const L = lista || ((typeof DB!=='undefined' && DB && Array.isArray(DB.compras)) ? DB.compras : []);
+    const prov = provClave(c); if(!prov || !c._uid) return 0;
+    const facts=[], ncs=[];
+    L.forEach(x=>{ if(!x || provClave(x)!==prov) return; const b=calcBase(x);
+      if(b.signo<0){ const cred=round2(-b.total-b.pagado); if(cred>0.005) ncs.push({_uid:x._uid, fecha:x.fecha, resto:cred}); }
+      else { const pend=round2(b.total-b.pagado); if(pend>0.005) facts.push({_uid:x._uid, fecha:x.fecha, pend}); } });
+    if(!ncs.length || !facts.length) return 0;
+    facts.sort(ordenCC); ncs.sort(ordenCC);
+    const ap={}; let i=0;
+    ncs.forEach(n=>{ while(n.resto>0.005 && i<facts.length){ const f=facts[i]; const usa=round2(Math.min(n.resto, f.pend));
+      f.pend=round2(f.pend-usa); n.resto=round2(n.resto-usa);
+      ap[f._uid]=round2((ap[f._uid]||0)+usa); ap[n._uid]=round2((ap[n._uid]||0)+usa);
+      if(f.pend<=0.005) i++; } });
+    return ap[c._uid]||0;
+  }
+
+  function calc(c, lista){
+    const b = calcBase(c);
+    const ncAplicado = aplicacionNC(c, lista);
+    // Factura: total − pagos − lo que le descuentan las NC del proveedor.
+    // NC (en negativo, como siempre): lo que queda a favor = crédito − lo que el proveedor devolvió en
+    // plata (un "pago" cargado en la NC) − lo ya aplicado a facturas.
+    const saldo = round2(b.signo<0 ? (b.total + b.pagado + ncAplicado) : (b.total - b.pagado - ncAplicado));
     let estado;
-    if (signo < 0) estado='pagado';   // Nota de Crédito: se considera aplicada, no queda pendiente/vencida
+    if (b.signo < 0) estado='pagado';   // Nota de Crédito: no queda pendiente/vencida (si sobra, es saldo a favor)
     else if (Math.abs(saldo) <= 0.5) estado='pagado';
-    else { const venc=parseF(c.vencimiento); estado = (venc && venc<HOY) ? 'vencido' : (pagado>0?'parcial':'apagar'); }
-    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaCredito:round2((iva+num(c.percepIva))*signo), total:round2(total), pagado:round2(pagado), saldo, estado, signo };
+    else { const venc=parseF(c.vencimiento); estado = (venc && venc<HOY) ? 'vencido' : ((b.pagado>0||ncAplicado>0)?'parcial':'apagar'); }
+    return { ...b, saldo, estado, ncAplicado };
+  }
+  // Para Finanzas, Caja y Costos Fijos, que tenían cada uno su copia de "total − pagos" y por eso
+  // seguían contando la factura entera aunque hubiera una NC. Pasan SU lista de compras.
+  window.__compraCalc = (c, lista)=>calc(c, lista);
+  // Leyenda chica debajo del saldo de la fila, para que se entienda de dónde sale el número.
+  function ncNotaHtml(k){
+    if(!k || !(k.ncAplicado>0.5) && !(k.signo<0 && k.saldo<-0.5)) return '';
+    const t = k.signo<0
+      ? ((k.ncAplicado>0.5?'aplicada '+money(k.ncAplicado):'')+(k.saldo<-0.5?(k.ncAplicado>0.5?' · ':'')+'a favor '+money(-k.saldo):''))
+      : '− NC '+money(k.ncAplicado);
+    return '<div style="font-size:11px;color:var(--muted);font-weight:400;white-space:nowrap">'+t+'</div>';
   }
 
   // ---------- ENDOSO de cheques de terceros — API para el módulo Cheques ----------
@@ -4742,15 +4798,19 @@ function buildFilterTable(cfg){
     const badgeEstado = { pagado:'<span class="cmp-estado pagado">Pagado</span>', apagar:'<span class="cmp-estado apagar">A pagar</span>', vencido:'<span class="cmp-estado vencido">Vencido</span>', parcial:'<span class="cmp-estado parcial">Parcial</span>' };
     rows.forEach(({c,k})=>{
       const fac = (c.puntoVenta||c.nroFactura) ? ((c.condIva||'')+' '+(c.puntoVenta||'')+(c.nroFactura?'-'+c.nroFactura:'')).trim() : '—';
+      // Una NC dice qué pasó con ella: aplicada a facturas del proveedor, o a favor si no había a qué
+      const badge = k.signo<0
+        ? '<span class="cmp-estado pagado" title="Nota de Crédito: se descuenta de las facturas pendientes del proveedor, la más vieja primero">'+(Math.abs(k.saldo)<=0.5?'NC aplicada':(k.ncAplicado>0.5?'NC aplicada en parte':'NC a favor'))+'</span>'
+        : badgeEstado[k.estado];
       html += '<tr>'+
-        '<td>'+badgeEstado[k.estado]+'</td>'+
+        '<td>'+badge+'</td>'+
         '<td>'+fmtFecha(c.fecha)+'</td>'+
         '<td><div class="cel-nombre" title="'+esc(c.proveedor)+'"><b>'+esc(c.proveedor)+'</b>'+(c.tipoComprobante!=='Compra'?' <span class="badge blue">'+esc(c.tipoComprobante)+'</span>':'')+'</div></td>'+
         '<td>'+c.categoria+'</td>'+
         '<td style="font-variant-numeric:tabular-nums">'+fac+'</td>'+
         '<td class="num"><b>'+money(k.total)+'</b></td>'+
         '<td class="num">'+money(k.pagado)+'</td>'+
-        '<td class="num" style="color:'+(k.saldo>0?(k.estado==='vencido'?'var(--red)':'var(--amber)'):'var(--green)')+';font-weight:700">'+money(k.saldo)+'</td>'+
+        '<td class="num" style="color:'+(k.saldo>0?(k.estado==='vencido'?'var(--red)':'var(--amber)'):'var(--green)')+';font-weight:700">'+money(k.saldo)+ncNotaHtml(k)+'</td>'+
         '<td style="white-space:nowrap">'+
           (k.saldo>0.5?'<button class="cmp-rowbtn" data-act="pago" data-id="'+c._uid+'">Pagar</button>':'')+
           '<button class="cmp-rowbtn" data-act="edit" data-id="'+c._uid+'">Editar</button>'+
@@ -10269,7 +10329,9 @@ function buildFilterTable(cfg){
     return (neto+iva+extras)*(c.tipoComprobante==='Nota de Crédito'?-1:1); }
   function desdeCompra(c){
     const total=totalCompra(c); const pagos=(c.pagos||[]); const pagado=pagos.reduce((s,p)=>s+num(p.monto),0);
-    const saldo=total-pagado; const pagada=saldo<=0.5;
+    // Saldo NETO de las Notas de Crédito del proveedor (cuenta corriente, 21/10): lo arma Compras
+    // con esta misma lista. Sin el módulo (test) cae a total − pagos, como antes.
+    const saldo=window.__compraCalc ? num(window.__compraCalc(c,_comprasRaw).saldo) : total-pagado; const pagada=saldo<=0.5;
     const ult=pagos.slice().sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))).pop()||{};
     const desc=((c.items||[]).filter(Boolean)[0]||{}).desc||'';
     return { _uid:c._uid, concepto:(desc||c.categoria||'Costo fijo'), proveedor:c.proveedor||'—',
@@ -10480,7 +10542,7 @@ function buildFilterTable(cfg){
         E.push({fecha:String(c.fechaAcreditacion||c.fecha||'').slice(0,10)||hoyISO, signo:1, monto:neto,
           tipo:'plataforma', cuenta:c.cuenta||'',
           concepto:'A acreditar '+(c.medio||'plataforma')+' · '+(v.cliente||'—')}); }); });
-    compras.forEach(c=>{ const total=calcCompra(c); const pagado=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const saldo=total-pagado;
+    compras.forEach(c=>{ const saldo=saldoCompra(c);
       if(saldo>0.5){ const f=String(c.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:-1, monto:saldo, concepto:'Compra a pagar · '+(c.proveedor||'—')}); }
       // Débitos de la TARJETA pendientes: la factura ya está saldada (no entra por el saldo de arriba),
       // pero la plata va a salir el día que el banco debite el resumen. Van SEPARADOS del saldo, igual
@@ -10498,6 +10560,11 @@ function buildFilterTable(cfg){
     (c.items||[]).forEach(it=>{ const b=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100); neto+=b; const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); iva+=b*al/100; });
     neto*=f; iva*=f; const extras=num(c.percepIva)+num(c.percepIibb)+num(c.impInternos)+num(c.intereses);
     const signo=c.tipoComprobante==='Nota de Crédito'?-1:1; return (neto+iva+extras)*signo; }
+  // Saldo de una compra NETO de las Notas de Crédito del proveedor (cuenta corriente, 21/10): lo
+  // calcula Compras con ESTA lista. Con "total − pagos" a secas la NC no descontaba de nada y la
+  // proyección seguía sacando la factura entera. Sin el módulo (test) cae al cálculo de antes.
+  function saldoCompra(c){ return window.__compraCalc ? num(window.__compraCalc(c, compras).saldo)
+    : calcCompra(c) - (c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); }
 
   // ---------- Render ----------
   function render(){
@@ -11535,8 +11602,13 @@ function buildFilterTable(cfg){
       R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
     return R; }
   const esTarjeta=m=>/tarjeta|visa/i.test(String(m||''));   // misma regla que Compras y Caja (débitos del resumen)
+  // Saldo de una compra NETO de las Notas de Crédito del proveedor (cuenta corriente, 21/10): lo
+  // calcula Compras con ESTA lista. Con "total − pagos" a secas, "A pagar" y "Vencido" seguían
+  // contando la factura entera aunque el proveedor ya hubiera hecho la NC (MANSO, 21/10).
+  function saldoCompra(c){ return window.__compraCalc ? num(window.__compraCalc(c, compras).saldo)
+    : calcC(c).total - (c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); }
   function porPagar(){ const R=[];
-    compras.forEach(c=>{ const t=calcC(c).total; const pag=(c.pagos||[]).reduce((s,p)=>s+num(p.monto),0); const s=t-pag;
+    compras.forEach(c=>{ const s=saldoCompra(c);
       if(s>0.5) R.push({quien:c.proveedor||'—', monto:s, venc:String(c.vencimiento||'').slice(0,10)||hoyISO, tipo:'compra'}); });
     cheques.forEach(c=>{ if(c.tipo!=='emitido'||!chqPend(c)) return;
       R.push({quien:c.entidad||'—', monto:num(c.monto), venc:String(c.fechaVencimiento||'').slice(0,10)||hoyISO, tipo:'cheque', estadoChq:c.estado}); });
