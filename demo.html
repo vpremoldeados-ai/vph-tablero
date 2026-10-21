@@ -2325,6 +2325,7 @@ window.__demoSeed = function () {
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
           <button class="cmp-btn cmp-btn-primary" id="caj-saldo">💰 Declarar saldo real</button>
           <button class="cmp-btn" id="caj-mov">+ Movimiento</button>
+          <button class="cmp-btn" id="caj-conciliar" title="Leer el extracto del banco y compararlo con lo cargado">🏦 Conciliar con el banco</button>
         </div>
       </div>
       <div id="caj-ancla" class="asof"></div>
@@ -2377,6 +2378,17 @@ window.__demoSeed = function () {
         <button class="cmp-x" id="mt-cerrar">✕</button>
       </div>
       <div class="cmp-dialog-body" id="mt-form"></div>
+    </div>
+  </div>
+
+  
+  <div class="cmp-overlay" id="caj-con-modal">
+    <div class="cmp-dialog" style="max-width:960px">
+      <div class="cmp-dialog-head">
+        <h3>🏦 Conciliar con el banco</h3>
+        <button class="cmp-x" id="caj-con-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="caj-con-body"></div>
     </div>
   </div>
 
@@ -11427,6 +11439,349 @@ function buildFilterTable(cfg){
   function fld(l,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+l+'</label>'+inner+'</div>'; }
 
    
+   
+   
+   
+   
+   
+   
+   
+   
+   
+  const CON_TOL = c => c.tipo === 'plataforma' ? Math.max(2, Math.abs(c.monto) * 0.001) : 1;
+  const isoDia = (iso, n) => { const d = new Date(String(iso).slice(0, 10) + 'T12:00:00'); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+  const difDias = (a, b) => Math.round((new Date(String(a).slice(0, 10) + 'T12:00:00') - new Date(String(b).slice(0, 10) + 'T12:00:00')) / 864e5);
+  const normTxt = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+   
+  function fechaExtracto(v) {
+    if (v == null || v === '') return '';
+    if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 864e5)); return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate()); }
+    if (v instanceof Date && !isNaN(v)) return v.getFullYear() + '-' + p2(v.getMonth() + 1) + '-' + p2(v.getDate());
+    const s = String(v).trim();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return m[1] + '-' + p2(+m[2]) + '-' + p2(+m[3]);
+    m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+    if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; if (+m[2] < 1 || +m[2] > 12 || +m[1] < 1 || +m[1] > 31) return ''; return y + '-' + p2(+m[2]) + '-' + p2(+m[1]); }
+    return '';
+  }
+   
+  function importeExtracto(v) {
+    if (typeof v === 'number') return isNaN(v) ? 0 : v;
+    let s = String(v == null ? '' : v).trim().replace(/\$|\s| /g, ''); if (!s) return 0;
+    let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    if (s.endsWith('-')) { neg = true; s = s.slice(0, -1); }
+    if (s.startsWith('-')) { neg = !neg; s = s.slice(1); }
+    if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+    const n = parseFloat(s); return isNaN(n) ? 0 : (neg ? -n : n);
+  }
+   
+   
+  function columnasExtracto(rows) {
+    for (let r = 0; r < Math.min(rows.length, 40); r++) {
+      const h = (rows[r] || []).map(normTxt); const usados = [];
+      const ix = re => { const i = h.findIndex((x, k) => usados.indexOf(k) < 0 && re.test(x)); if (i >= 0) usados.push(i); return i; };
+      const fecha = ix(/^fecha/); if (fecha < 0) continue;
+      const deb = ix(/debito|^debe$|egreso|^retiro/), cred = ix(/credito|^haber$|ingreso|^deposito/);
+      const imp = ix(/^importe|^monto/), saldo = ix(/^saldo/);
+      const desc = ix(/descrip|concepto|detalle|movimiento|operacion|leyenda/);
+      const ref = ix(/comprobante|referencia|^nro|numero|^n°/);
+      if ((deb >= 0 && cred >= 0) || imp >= 0) return { fila: r, fecha, desc, deb, cred, imp, saldo, ref };
+    }
+    return null;
+  }
+   
+   
+   
+  function parseExtracto(rows, mapeo) {
+    const map = mapeo || columnasExtracto(rows);
+    if (!map) return { error: 'No encontré la fila de títulos (Fecha, Descripción, Débito/Crédito o Importe, Saldo).', movs: [] };
+    let movs = [];
+    for (let r = map.fila + 1; r < rows.length; r++) {
+      const row = rows[r] || []; const f = fechaExtracto(row[map.fecha]); if (!f) continue;
+      let monto = 0;
+      if (map.deb >= 0 || map.cred >= 0) monto = Math.abs(importeExtracto(map.cred >= 0 ? row[map.cred] : 0)) - Math.abs(importeExtracto(map.deb >= 0 ? row[map.deb] : 0));
+      if (!monto && map.imp >= 0) monto = importeExtracto(row[map.imp]);
+      if (!monto) continue;
+      const saldo = map.saldo >= 0 && row[map.saldo] !== '' && row[map.saldo] != null ? importeExtracto(row[map.saldo]) : null;
+      const desc = [map.desc >= 0 ? row[map.desc] : '', map.ref >= 0 && row[map.ref] ? '(' + row[map.ref] + ')' : ''].filter(x => String(x).trim()).join(' ');
+      movs.push({ fila: r, fecha: f, desc: String(desc).trim(), monto: Math.round(monto * 100) / 100, saldo });
+    }
+    if (!movs.length) return { error: 'La fila de títulos está, pero no encontré movimientos con fecha e importe debajo.', movs: [], mapeo: map };
+     
+     
+    const asc = movs[0].fecha <= movs[movs.length - 1].fecha;
+    const crono = asc ? movs.slice() : movs.slice().reverse();
+    const cierra = signo => { let ok = 0, n = 0; for (let i = 1; i < crono.length; i++) { const a = crono[i - 1], b = crono[i]; if (a.saldo == null || b.saldo == null) continue; n++; if (Math.abs(a.saldo + signo * b.monto - b.saldo) < 0.05) ok++; } return n ? ok / n : null; };
+    let control = cierra(1), invertido = false;
+    if (control != null && control < 0.5) { const inv = cierra(-1); if (inv != null && inv > control) { crono.forEach(m => { m.monto = -m.monto; }); control = inv; invertido = true; } }
+    const ult = crono[crono.length - 1];
+    return { movs: crono, mapeo: map, desde: crono[0].fecha, hasta: ult.fecha, saldoFinal: ult.saldo, control, invertido,
+      entradas: crono.filter(m => m.monto > 0).reduce((s, m) => s + m.monto, 0), salidas: crono.filter(m => m.monto < 0).reduce((s, m) => s - m.monto, 0) };
+  }
+
+   
+   
+  function candidatosConciliacion(cuenta) {
+    const C = []; const deCuenta = c => !c || c === cuenta;
+    ventas.forEach(v => (v.cobros || []).forEach(c => {
+      if (esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio))) return;
+      if (!deCuenta(c.cuenta)) return;
+      if (esPlataformaCobro(c.medio)) {
+        const neto = netoPlat(c); if (neto <= 0.5) return;
+        const fe = String(c.fechaAcreditacion || '').slice(0, 10) || (c.fecha ? isoDia(c.fecha, 14) : hoyISO);
+        if (c.acreditado) C.push({ id: 'pl_' + c.id, tipo: 'plataforma', signo: 1, monto: neto, fecha: fe, desde: isoDia(fe, -7), hasta: isoDia(fe, 7), registrado: true, concepto: 'Acreditación ' + (c.medio || 'plataforma') + ' · ' + (v.cliente || '—') });
+        else C.push({ id: 'pl_' + c.id, tipo: 'plataforma', signo: 1, monto: neto, fecha: fe, desde: isoDia(fe, -7), hasta: isoDia(fe, 45), registrado: false, concepto: 'Acreditación ' + (c.medio || 'plataforma') + ' · ' + (v.cliente || '—'), accion: { tipo: 'acreditar', ventaUid: v._uid, cobroId: c.id, texto: 'Marcar ACREDITADO el cobro ' + (c.medio || 'VIUMI') + ' de ' + (v.cliente || '—') } });
+        return;
+      }
+      const f = String(c.fecha || '').slice(0, 10); if (!f || num(c.monto) <= 0) return;
+      C.push({ id: 'co_' + v._uid + '_' + (c.id || f), tipo: 'cobro', signo: 1, monto: num(c.monto), fecha: f, desde: isoDia(f, -5), hasta: isoDia(f, 5), registrado: true, concepto: 'Cobro · ' + (v.cliente || '—') });
+    }));
+    compras.forEach(c => (c.pagos || []).forEach(p => {
+      if (esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio)) || (window.__esRetencion && window.__esRetencion(p.medio))) return;
+      if (esTarjeta(p.medio) && Array.isArray(p.debitos) && p.debitos.length) return;    
+      if (!deCuenta(p.cuenta)) return;
+      const f = String(p.fecha || '').slice(0, 10); if (!f || num(p.monto) <= 0) return;
+      C.push({ id: 'pa_' + c._uid + '_' + (p.id || f), tipo: 'pago', signo: -1, monto: num(p.monto), fecha: f, desde: isoDia(f, -5), hasta: isoDia(f, 5), registrado: true, concepto: 'Pago · ' + (c.proveedor || '—') });
+    }));
+     
+    const visa = {};
+    compras.forEach(c => (c.pagos || []).forEach(p => {
+      if (!esTarjeta(p.medio) || !Array.isArray(p.debitos)) return;
+      p.debitos.forEach((dd, idx) => { const m = num(dd.monto); if (m <= 0.5 || !deCuenta(dd.cuenta || p.cuenta)) return;
+        const f = String((dd.debitado ? (dd.fechaDebitado || dd.fecha) : dd.fecha) || '').slice(0, 10); if (!f) return;
+        const k = (dd.debitado ? 'D' : 'P') + f; const g = visa[k] = visa[k] || { fecha: f, debitado: !!dd.debitado, monto: 0, items: [], n: 0 };
+        g.monto += m; g.n++; g.items.push({ compraUid: c._uid, pagoId: p.id, idx }); }); }));
+    Object.keys(visa).forEach(k => { const g = visa[k];
+      C.push({ id: 'tj_' + k, tipo: 'tarjeta', signo: -1, monto: Math.round(g.monto * 100) / 100, fecha: g.fecha, desde: isoDia(g.fecha, g.debitado ? -5 : -5), hasta: isoDia(g.fecha, g.debitado ? 5 : 15), registrado: g.debitado,
+        concepto: 'Resumen VISA del ' + fmtFecha(g.fecha) + ' (' + g.n + ' débito' + (g.n > 1 ? 's' : '') + ')',
+        accion: g.debitado ? null : { tipo: 'debitar', items: g.items, texto: 'Marcar DEBITADO el resumen VISA del ' + fmtFecha(g.fecha) + ' (' + g.n + ' débitos)' } }); });
+    cheques.forEach(c => {
+      const propio = c.tipo === 'emitido'; const cta = c.cuenta || (propio ? chequera() : '');
+      if (cta && cta !== cuenta) return; const v = String(c.fechaVencimiento || '').slice(0, 10) || hoyISO;
+      if (c.estado === 'cobrado') { const f = String(c.fechaMov || v).slice(0, 10);
+        C.push({ id: 'ch_' + c._uid, tipo: 'cheque', signo: propio ? -1 : 1, monto: num(c.monto), fecha: f, desde: isoDia(f, -5), hasta: isoDia(f, 5), registrado: true, concepto: (propio ? 'Cheque pagado · ' : 'Cheque cobrado · ') + (c.entidad || '—') + (c.numero ? ' N° ' + c.numero : '') }); return; }
+      if (propio && c.estado === 'cartera') C.push({ id: 'ch_' + c._uid, tipo: 'cheque', signo: -1, monto: num(c.monto), fecha: v, desde: isoDia(v, -2), hasta: isoDia(v, 90), registrado: false,
+        concepto: 'Cheque propio · ' + (c.entidad || '—') + (c.numero ? ' N° ' + c.numero : '') + ' (vence ' + fmtFecha(v) + ')', accion: { tipo: 'chequeOk', uid: c._uid, texto: 'Marcar PAGADO el cheque propio a ' + (c.entidad || '—') } });
+      if (!propio && (c.estado === 'depositado' || c.estado === 'cartera')) C.push({ id: 'ch_' + c._uid, tipo: 'cheque', signo: 1, monto: num(c.monto), fecha: v, desde: isoDia(v, -2), hasta: isoDia(v, 45), registrado: false,
+        concepto: 'Cheque de ' + (c.entidad || '—') + (c.numero ? ' N° ' + c.numero : '') + ' (' + c.estado + ', vence ' + fmtFecha(v) + ')', accion: { tipo: 'chequeOk', uid: c._uid, texto: 'Marcar COBRADO el cheque de ' + (c.entidad || '—') } });
+    });
+    caja.movs.forEach(m => { if (!deCuenta(m.cuenta)) return; const f = String(m.fecha || '').slice(0, 10); if (!f) return;
+      C.push({ id: 'mv_' + m._uid, tipo: 'manual', signo: num(m.signo) >= 0 ? 1 : -1, monto: num(m.monto), fecha: f, desde: isoDia(f, -3), hasta: isoDia(f, 3), registrado: true, concepto: m.concepto || 'Movimiento manual' }); });
+    return C;
+  }
+
+   
+   
+   
+   
+   
+  function conciliarBanco(movsBanco, cands) {
+    const usadoL = {}, usadoC = {}, pares = [];
+    movsBanco.forEach((l, li) => cands.forEach((c, ci) => {
+      if ((l.monto > 0 ? 1 : -1) !== c.signo) return;
+      if (Math.abs(Math.abs(l.monto) - c.monto) > CON_TOL(c)) return;
+      if (l.fecha < c.desde || l.fecha > c.hasta) return;
+      pares.push({ li, ci, d: Math.abs(difDias(l.fecha, c.fecha)), reg: c.registrado ? 0 : 1 }); }));
+    pares.sort((a, b) => a.d - b.d || a.reg - b.reg || a.li - b.li);
+    const out = { conciliados: [], acciones: [], soloBanco: [], soloTablero: [] };
+    pares.forEach(p => { if (usadoL[p.li] || usadoC[p.ci]) return; usadoL[p.li] = usadoC[p.ci] = 1;
+      const l = movsBanco[p.li], c = cands[p.ci];
+      if (c.registrado || !c.accion) out.conciliados.push({ linea: l, cand: c });
+      else out.acciones.push({ linea: l, cand: c, exacto: true }); });
+    movsBanco.forEach((l, li) => { if (usadoL[li] || l.monto >= 0) return;
+      const ci = cands.findIndex((c, k) => !usadoC[k] && c.tipo === 'tarjeta' && c.accion && l.fecha >= c.desde && l.fecha <= c.hasta && Math.abs(-l.monto - c.monto) <= c.monto * 0.03);
+      if (ci >= 0) { usadoL[li] = usadoC[ci] = 1; out.acciones.push({ linea: l, cand: cands[ci], exacto: false, dif: Math.round((-l.monto - cands[ci].monto) * 100) / 100 }); } });
+    movsBanco.forEach((l, li) => { if (!usadoL[li]) out.soloBanco.push({ linea: l, gasto: esGastoBancario(l.desc) }); });
+    const d0 = movsBanco.length ? movsBanco[0].fecha : '', d1 = movsBanco.length ? movsBanco[movsBanco.length - 1].fecha : '';
+    cands.forEach((c, ci) => { if (!usadoC[ci] && c.registrado && c.fecha >= d0 && c.fecha <= d1) out.soloTablero.push(c); });
+    return out;
+  }
+   
+   
+  const esGastoBancario = d => /impuesto|imp\.? ?ley|ley 25\.?413|25413|comision|com\.|i\.?v\.?a\b|percep|sircreb|iibb|ingresos brutos|mantenim|interes|sellos|cargo|seguro de|gasto/.test(normTxt(d));
+
+   
+  function saldoCuentaAl(cuenta, fecha) {
+    const a = ancla(); if (!a || fecha < a.fecha) return null;
+    const base = num((cuentasDe(a).find(c => c.nombre === cuenta) || {}).monto);
+    return movimientosReales(a.fecha).filter(m => m.cuenta === cuenta && m.fecha <= fecha).reduce((s, m) => s + m.signo * m.monto, base);
+  }
+  function saldosTodasAl(fecha) {
+    const a = ancla(); if (!a || fecha < a.fecha) return null;
+    const m = {}; cuentasDe(a).forEach(c => { m[c.nombre] = (m[c.nombre] || 0) + num(c.monto); });
+    let sin = 0;
+    movimientosReales(a.fecha).filter(x => x.fecha <= fecha).forEach(x => { const d = x.signo * x.monto; if (x.cuenta && (x.cuenta in m)) m[x.cuenta] += d; else if (x.cuenta) m[x.cuenta] = (m[x.cuenta] || 0) + d; else sin += d; });
+    return { cuentas: m, sinAsignar: sin };
+  }
+
+   
+  let conXlsxProm = null;
+  function conCargarXLSX() {
+    if (window.XLSX) return Promise.resolve(window.XLSX); if (conXlsxProm) return conXlsxProm;
+    conXlsxProm = new Promise((res, rej) => { const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.integrity = 'sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw'; s.crossOrigin = 'anonymous';
+      s.onload = () => window.XLSX ? res(window.XLSX) : rej(new Error('la librería no expuso XLSX'));
+      s.onerror = () => rej(new Error('no se pudo descargar la librería de Excel (¿sin conexión?)')); document.head.appendChild(s);
+    }).catch(e => { conXlsxProm = null; throw e; });
+    return conXlsxProm;
+  }
+   
+  function filasCSV(txt) {
+    const lineas = String(txt).replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    const cuenta = ch => lineas.slice(0, 20).reduce((s, l) => s + (l.split(ch).length - 1), 0);
+    const sep = [';', '\t', ','].sort((a, b) => cuenta(b) - cuenta(a))[0];
+    return lineas.map(l => { const out = []; let cur = '', q = false;
+      for (let i = 0; i < l.length; i++) { const ch = l[i]; if (ch === '"') { if (q && l[i + 1] === '"') { cur += '"'; i++; } else q = !q; } else if (ch === sep && !q) { out.push(cur); cur = ''; } else cur += ch; }
+      out.push(cur); return out.map(x => x.trim()); });
+  }
+  async function leerArchivoExtracto(file) {
+    if (/\.(csv|txt)$/i.test(file.name)) return filasCSV(await file.text());
+    const X = await conCargarXLSX(); const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]]; return X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  }
+
+  let conEstado = null;    
+  function abrirConciliacion() {
+    const a = ancla();
+    const cuentas = cuentasDe(a).map(c => c.nombre).filter(n => n && !/efectivo|caja chica/i.test(n));
+    if (!cuentas.length) { alert('Primero declará el saldo de las cuentas en «💰 Declarar saldo real».'); return; }
+    conEstado = { cuenta: conEstado && cuentas.indexOf(conEstado.cuenta) >= 0 ? conEstado.cuenta : (cuentas.find(n => /vph/i.test(n)) || cuentas[0]) };
+    $('caj-con-body').innerHTML =
+      '<p class="note" style="margin-top:0">Bajá los movimientos de la cuenta desde el home banking (Macro Empresas → Cuentas → Movimientos → <b>Exportar a Excel</b>) y guardalos en Drive, en <b>Extractos bancarios\\' + esc(conEstado.cuenta) + '</b>. Después elegí el archivo acá: el Tablero lo compara con lo cargado y te propone lo que falta. <b>No se guarda nada hasta que toques «Aplicar».</b></p>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">' +
+        '<div class="cmp-field" style="min-width:200px"><label>Cuenta</label><select id="caj-con-cuenta">' + cuentas.map(n => '<option' + (n === conEstado.cuenta ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>' +
+        '<button class="cmp-btn cmp-btn-primary" id="caj-con-elegir">📂 Elegir el extracto (Excel o CSV)</button>' +
+        '<input type="file" id="caj-con-file" accept=".xlsx,.xls,.csv,.txt" style="display:none">' +
+        '<span id="caj-con-archivo" style="font-size:13px;color:var(--muted)"></span>' +
+      '</div><div id="caj-con-out"></div>';
+    $('caj-con-cuenta').onchange = () => { conEstado.cuenta = $('caj-con-cuenta').value; if (conEstado.rows) analizarConciliacion(); };
+    $('caj-con-elegir').onclick = () => $('caj-con-file').click();
+    $('caj-con-file').onchange = async () => { const f = $('caj-con-file').files[0]; if (!f) return;
+      $('caj-con-archivo').textContent = 'Leyendo ' + f.name + '…';
+      try { conEstado.rows = await leerArchivoExtracto(f); conEstado.archivo = f.name; conEstado.mapeo = null; $('caj-con-archivo').textContent = f.name; analizarConciliacion(); }
+      catch (e) { $('caj-con-archivo').textContent = ''; $('caj-con-out').innerHTML = '<div class="alert bad"><div><b>No pude leer el archivo.</b><div class="act">' + esc(e.message) + '</div></div></div>'; }
+      $('caj-con-file').value = ''; };
+    $('caj-con-modal').classList.add('open');
+  }
+
+  function analizarConciliacion() {
+    const st = conEstado; const ext = parseExtracto(st.rows, st.mapeo);
+    st.ext = ext;
+    if (ext.error) { pintarMapeo(ext.error); return; }
+    st.res = conciliarBanco(ext.movs, candidatosConciliacion(st.cuenta));
+    st.saldoTab = saldoCuentaAl(st.cuenta, ext.hasta);
+    pintarConciliacion();
+  }
+   
+  function pintarMapeo(msg) {
+    const rows = conEstado.rows || []; const ancho = Math.max(0, ...rows.slice(0, 40).map(r => (r || []).length));
+    const ops = sel => '<option value="-1">—</option>' + Array.from({ length: ancho }, (_, i) => '<option value="' + i + '"' + (sel === i ? ' selected' : '') + '>Columna ' + (i + 1) + '</option>').join('');
+    const campo = (k, l) => '<div class="cmp-field"><label>' + l + '</label><select data-conmap="' + k + '">' + ops(-1) + '</select></div>';
+    $('caj-con-out').innerHTML = '<div class="alert warn"><div><b>' + esc(msg) + '</b><div class="act">Indicá en qué columna está cada dato y en qué fila están los títulos.</div></div></div>' +
+      '<div class="tbl-wrap" style="max-height:220px;overflow:auto"><table><tbody>' + rows.slice(0, 15).map((r, i) => '<tr><td style="color:var(--muted)">Fila ' + (i + 1) + '</td>' + (r || []).map(x => '<td class="cel-envuelve">' + esc(x) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>' +
+      '<div class="cmp-form-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px">' +
+        '<div class="cmp-field"><label>Fila de títulos</label><input data-conmap="fila" type="number" min="1" value="1"></div>' +
+        campo('fecha', 'Fecha') + campo('desc', 'Descripción') + campo('saldo', 'Saldo') + campo('deb', 'Débito (sale)') + campo('cred', 'Crédito (entra)') + campo('imp', 'Importe con signo') + campo('ref', 'Comprobante') +
+      '</div><div class="cmp-form-foot"><button class="cmp-btn cmp-btn-primary" id="caj-con-mapear">Leer con estas columnas</button></div>';
+    $('caj-con-mapear').onclick = () => { const m = {}; document.querySelectorAll('[data-conmap]').forEach(el => { m[el.dataset.conmap] = +el.value; });
+      m.fila = Math.max(0, (m.fila || 1) - 1); if (m.fecha < 0) { alert('Elegí al menos la columna de la fecha.'); return; }
+      conEstado.mapeo = m; analizarConciliacion(); };
+  }
+
+  function pintarConciliacion() {
+    const st = conEstado, ext = st.ext, r = st.res, a = ancla();
+    const lin = l => '<td>' + fmtFecha(l.fecha) + '</td><td class="cel-envuelve" style="max-width:280px">' + esc(l.desc || '—') + '</td><td class="num" style="color:' + (l.monto < 0 ? 'var(--red)' : 'var(--green)') + '">' + money(l.monto) + '</td>';
+    const ctrl = ext.control == null ? '<span style="color:var(--muted)">el extracto no trae saldo por fila</span>'
+      : ext.control >= 0.98 ? '<span style="color:var(--green)">✓ los saldos del extracto cierran fila por fila' + (ext.invertido ? ' (los importes venían con el signo al revés: se corrigió)' : '') + '</span>'
+      : '<span style="color:var(--red)">⚠ los saldos del extracto NO cierran (' + Math.round(ext.control * 100) + '% de las filas): revisá que sea el archivo completo</span>';
+    const sinRegistrar = r.soloBanco;
+    const puedeAnclar = a && ext.saldoFinal != null && ext.hasta >= a.fecha && ext.hasta <= hoyISO;
+    const dif = st.saldoTab == null || ext.saldoFinal == null ? null : ext.saldoFinal - st.saldoTab;
+    let h = '<div class="cmp-summary" style="margin-bottom:10px">' +
+      '<div><b>' + ext.movs.length + '</b> movimientos del ' + fmtFecha(ext.desde) + ' al ' + fmtFecha(ext.hasta) + ' · entraron <b>' + money(ext.entradas) + '</b> · salieron <b>' + money(ext.salidas) + '</b></div>' +
+      '<div style="font-size:12.5px">' + ctrl + '</div>' +
+      '<div style="font-size:12.5px;margin-top:4px">✓ <b>' + r.conciliados.length + '</b> ya están en el Tablero · ✏️ <b>' + r.acciones.length + '</b> para marcar · ❓ <b>' + sinRegistrar.length + '</b> solo en el banco · 🔎 <b>' + r.soloTablero.length + '</b> en el Tablero y no en el banco</div></div>';
+    if (r.acciones.length) h += '<h3 style="margin:14px 0 6px">✏️ Para marcar en el Tablero</h3><p class="note" style="margin:0 0 6px">El banco ya los muestra y en el Tablero siguen pendientes. Se marcan con la <b>fecha real del banco</b>.</p>' +
+      '<div class="tbl-wrap"><table><thead><tr><th></th><th>Fecha</th><th>En el banco</th><th class="num">Importe</th><th>Qué se marca</th></tr></thead><tbody>' +
+      r.acciones.map((x, i) => '<tr><td><input type="checkbox" data-conacc="' + i + '"' + (x.exacto ? ' checked' : '') + '></td>' + lin(x.linea) + '<td class="cel-envuelve" style="max-width:300px">' + esc(x.cand.accion.texto) + (x.exacto ? '' : '<div style="color:var(--amber);font-size:11.5px">⚠ El banco debitó ' + money(-x.linea.monto) + ' y el Tablero tiene ' + money(x.cand.monto) + ' (diferencia ' + money(x.dif) + ': intereses o compras sin cargar). Revisalo antes de tildar.</div>') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    if (sinRegistrar.length) h += '<h3 style="margin:14px 0 6px">❓ En el banco y no en el Tablero</h3><p class="note" style="margin:0 0 6px">Los gastos del banco (impuesto al cheque, comisiones, IVA, percepciones) no están en ningún lado: tildados se registran como <b>movimiento de Caja</b>. Una entrada de un cliente o un pago a un proveedor conviene cargarlos en Ventas o Compras (así baja la deuda); registrarlos acá solo los suma a la caja.</p>' +
+      '<div class="tbl-wrap"><table><thead><tr><th></th><th>Fecha</th><th>En el banco</th><th class="num">Importe</th><th>Sugerencia</th></tr></thead><tbody>' +
+      sinRegistrar.map((x, i) => '<tr><td><input type="checkbox" data-conman="' + i + '"' + (x.gasto ? ' checked' : '') + '></td>' + lin(x.linea) + '<td class="cel-envuelve" style="max-width:260px;font-size:12px;color:var(--muted)">' + (x.gasto ? 'Gasto bancario: registrarlo en Caja' : x.linea.monto > 0 ? '¿Un cobro sin cargar en Ventas?' : '¿Un pago sin cargar en Compras?') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    if (r.soloTablero.length) h += '<details style="margin-top:12px"><summary><b>🔎 En el Tablero y no en el banco (' + r.soloTablero.length + ')</b> — revisalos: puede ser una fecha o una cuenta mal cargada</summary><div class="tbl-wrap"><table><tbody>' +
+      r.soloTablero.map(c => '<tr><td>' + fmtFecha(c.fecha) + '</td><td class="cel-envuelve">' + esc(c.concepto) + '</td><td class="num">' + money(c.signo * c.monto) + '</td></tr>').join('') + '</tbody></table></div></details>';
+    if (r.conciliados.length) h += '<details style="margin-top:8px"><summary><b>✓ Ya registrados (' + r.conciliados.length + ')</b></summary><div class="tbl-wrap"><table><tbody>' +
+      r.conciliados.map(x => '<tr>' + lin(x.linea) + '<td class="cel-envuelve" style="color:var(--muted)">' + esc(x.cand.concepto) + '</td></tr>').join('') + '</tbody></table></div></details>';
+    h += '<h3 style="margin:14px 0 6px">💰 Saldo de la cuenta</h3>';
+    if (ext.saldoFinal == null) h += '<p class="note">El extracto no trae la columna de saldo: no se puede actualizar el saldo desde acá.</p>';
+    else {
+      h += '<div style="font-size:14px">Según el banco, <b>' + esc(st.cuenta) + '</b> tenía <b>' + money(ext.saldoFinal) + '</b> al ' + fmtFecha(ext.hasta) + '.' +
+        (st.saldoTab != null ? ' El Tablero calcula <b>' + money(st.saldoTab) + '</b> (diferencia <b style="color:' + (Math.abs(dif) < 1 ? 'var(--green)' : 'var(--red)') + '">' + money(dif) + '</b>, antes de aplicar lo de arriba).' : '') + '</div>';
+      if (puedeAnclar) {
+        const sa = saldosTodasAl(ext.hasta);
+        h += '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="caj-con-anclar" checked><span>Declarar <b>' + money(ext.saldoFinal) + '</b> como saldo real de ' + esc(st.cuenta) + ' al ' + fmtFecha(ext.hasta) + '. Las demás cuentas pasan con el saldo que calcula el Tablero a esa fecha' +
+          (sa && Math.abs(sa.sinAsignar) > 0.5 ? '. <span style="color:var(--amber)">⚠ Hay ' + money(sa.sinAsignar) + ' en movimientos <b>sin cuenta</b>: al declarar el saldo real del banco dejan de sumarse (el banco ya muestra lo que pasó de verdad).</span>' : '') + '</span></label>';
+      } else if (a && ext.hasta < a.fecha) h += '<p class="note">El extracto termina el ' + fmtFecha(ext.hasta) + ', antes del último saldo declarado (' + fmtFecha(a.fecha) + '): sirve para marcar, no para actualizar el saldo. Bajá el extracto hasta hoy.</p>';
+    }
+    h += '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-con-cancel">Cerrar sin guardar</button><button class="cmp-btn cmp-btn-primary" id="caj-con-aplicar">✅ Aplicar lo tildado</button></div>';
+    $('caj-con-out').innerHTML = h;
+    $('caj-con-cancel').onclick = cerrarConciliacion;
+    $('caj-con-aplicar').onclick = aplicarConciliacion;
+  }
+
+  async function aplicarConciliacion() {
+    const st = conEstado, ext = st.ext, r = st.res, c = fb();
+    if (!window.__usaNube || !c || !c.db) { alert('La conciliación escribe en la nube: iniciá sesión.'); return; }
+    const acc = r.acciones.filter((x, i) => { const el = document.querySelector('[data-conacc="' + i + '"]'); return el && el.checked; });
+    const man = r.soloBanco.filter((x, i) => { const el = document.querySelector('[data-conman="' + i + '"]'); return el && el.checked; });
+    const anclar = $('caj-con-anclar') && $('caj-con-anclar').checked;
+    if (!acc.length && !man.length && !anclar) { alert('No hay nada tildado.'); return; }
+    const sa = anclar ? saldosTodasAl(ext.hasta) : null;    
+    if (!confirm('Se van a guardar:\n\n' + (acc.length ? '· ' + acc.length + ' marca' + (acc.length > 1 ? 's' : '') + ' (acreditaciones, débitos, cheques)\n' : '') +
+      (man.length ? '· ' + man.length + ' movimiento' + (man.length > 1 ? 's' : '') + ' de Caja por ' + money(man.reduce((s, x) => s + x.linea.monto, 0)) + '\n' : '') +
+      (anclar ? '· Saldo real de ' + st.cuenta + ': ' + money(ext.saldoFinal) + ' al ' + fmtFecha(ext.hasta) + '\n' : '') + '\n¿Confirmás?')) return;
+    const { FS, db } = c; const fallas = []; let hechas = 0;
+    for (const x of acc) {
+      const ac = x.cand.accion, f = x.linea.fecha;
+      try {
+        if (ac.tipo === 'acreditar') {
+          const ref = FS.doc(db, 'vph_ventas', ac.ventaUid);
+          await FS.runTransaction(db, async tx => { const s = await tx.get(ref); if (!s.exists()) throw new Error('la venta ya no existe');
+            const cobros = (s.data().cobros || []).map(k => ({ ...k })); const i = cobros.findIndex(k => k.id === ac.cobroId);
+            if (i < 0) throw new Error('el cobro ya no está'); if (cobros[i].acreditado) return;
+            cobros[i].acreditado = true; cobros[i].fechaAcreditacion = f; tx.update(ref, { cobros }); });
+        } else if (ac.tipo === 'debitar') {
+          const mal = ac.items.filter(it => !(window.__marcarDebitoTarjeta && window.__marcarDebitoTarjeta(it.compraUid, it.pagoId, it.idx, { debitado: true, fechaDebitado: f })));
+          if (mal.length) throw new Error(mal.length + ' débito(s) no se encontraron');
+        } else if (ac.tipo === 'chequeOk') {
+          await FS.setDoc(FS.doc(db, 'vph_cheques', ac.uid), { estado: 'cobrado', fechaMov: f, cuenta: st.cuenta }, { merge: true });
+        }
+        hechas++;
+      } catch (e) { fallas.push(ac.texto + ': ' + e.message); }
+    }
+    const ts = hoyISO + 'T' + new Date().toTimeString().slice(0, 8);
+    man.forEach(x => persist({ tipo: 'mov', signo: x.linea.monto >= 0 ? 1 : -1, fecha: x.linea.fecha, monto: Math.abs(x.linea.monto), concepto: (x.linea.desc || 'Movimiento del banco') + ' (conciliación)', cuenta: st.cuenta, origen: 'conciliacion', ts }));
+    if (anclar && sa) {
+      const cuentas = Object.keys(sa.cuentas).map(n => ({ nombre: n, monto: Math.round((n === st.cuenta ? ext.saldoFinal : sa.cuentas[n]) * 100) / 100 }));
+      if (!cuentas.some(x => x.nombre === st.cuenta)) cuentas.push({ nombre: st.cuenta, monto: ext.saldoFinal });
+      persist({ tipo: 'saldo', fecha: ext.hasta, cuentas, nota: 'Conciliación bancaria de ' + st.cuenta + ' (extracto ' + (st.archivo || '') + ')', origen: 'conciliacion', ts });
+    }
+    persist({ tipo: 'conciliacion', cuenta: st.cuenta, archivo: st.archivo || '', desde: ext.desde, hasta: ext.hasta, saldoBanco: ext.saldoFinal, saldoTablero: st.saldoTab,
+      movimientos: ext.movs.length, conciliados: r.conciliados.length, marcas: hechas, manuales: man.length, anclado: !!anclar, ts });
+    alert((fallas.length ? '⚠ Se guardó todo menos:\n\n' + fallas.join('\n') + '\n\nEsas marcalas a mano.' : '✅ Conciliación guardada.') +
+      '\n\n' + hechas + ' marca(s) · ' + man.length + ' movimiento(s) de Caja' + (anclar ? ' · saldo de ' + st.cuenta + ' actualizado' : ''));
+    if (!fallas.length) cerrarConciliacion();
+  }
+  function cerrarConciliacion() { $('caj-con-modal').classList.remove('open'); }
+  window.__parseExtracto = parseExtracto;
+  window.__conciliarBanco = conciliarBanco;
+  window.__esGastoBancario = esGastoBancario;
+
+
+   
   function sub(col,setter){ const c=fb(); if(!c||!c.db)return; if(unsub[col])unsub[col]();
     unsub[col]=c.FS.onSnapshot(c.FS.collection(c.db,col), snap=>{ setter(snap.docs.map(d=>({...d.data(),_uid:d.id}))); render(); if(window.__finanzasRefresh) window.__finanzasRefresh(); }, err=>console.error('caja '+col+':',err)); }
   function startSync(){ if(window.__rol!=='admin') return;
@@ -11500,6 +11855,9 @@ function buildFilterTable(cfg){
 
   $('caj-saldo').onclick=abrirSaldo;
   $('caj-mov').onclick=abrirMov;
+  $('caj-conciliar').onclick=abrirConciliacion;
+  $('caj-con-cerrar').onclick=cerrarConciliacion;
+  $('caj-con-modal').addEventListener('click',e=>{ if(e.target===$('caj-con-modal')) cerrarConciliacion(); });
   $('caj-cerrar').onclick=cerrar;
   $('caj-modal').addEventListener('click',e=>{ if(e.target===$('caj-modal')) cerrar(); });
    
