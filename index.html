@@ -2303,8 +2303,8 @@ window.__construirNav = function(){
   const permitidas = PAGES.filter(p=>permit.includes(p.id));
   const inicial = permitidas[0];   // la página de arranque NO cambia con el orden del menú (sigue siendo la Vista Diaria)
   const visibles = navOrdenar(permitidas, navOrdenLeer());
-  const nav = document.getElementById('nav'); if(!nav) return; nav.innerHTML='';
-  if(!visibles.length){ const t=document.getElementById('page-title'); if(t)t.textContent='Sin permisos'; const main=document.querySelector('main'); if(main){ const av=document.createElement('div'); av.className='alert warn'; av.style.margin='20px 0'; av.innerHTML='<span class="aico">🔒</span><div><b>Tu usuario no tiene permisos asignados.</b><div class="act">Pedile al administrador que te asigne un rol.</div></div>'; const up=document.getElementById('updated-line'); if(up&&up.parentNode) up.parentNode.insertBefore(av, up.nextSibling); } return; }
+  const nav = document.getElementById('nav'); if(!nav) return; nav.innerHTML=''; const avViejo=document.getElementById('aviso-sin-permisos'); if(avViejo) avViejo.remove();
+  if(!visibles.length){ const t=document.getElementById('page-title'); if(t)t.textContent='Sin permisos'; const main=document.querySelector('main'); if(main){ const av=document.createElement('div'); av.id='aviso-sin-permisos'; av.className='alert warn'; av.style.margin='20px 0'; av.innerHTML='<span class="aico">🔒</span><div><b>Tu usuario no tiene permisos asignados.</b><div class="act">Pedile al administrador que te asigne un rol.</div></div>'; const up=document.getElementById('updated-line'); if(up&&up.parentNode) up.parentNode.insertBefore(av, up.nextSibling); } return; }
   // Solo con mouse: en el celular/tablet el arrastre con el dedo se confunde con el scroll de la fila.
   const navArrastrable = !(window.matchMedia && matchMedia('(pointer:coarse)').matches);
   visibles.forEach((p,i)=>{
@@ -6925,8 +6925,12 @@ function buildFilterTable(cfg){
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
-      if(u){ hideLogin(); updateUserBar(); vigilarInactividad();
+      if(u){ hideLogin(); updateUserBar();
+        // Sesión vencida por inactividad: se cierra acá y NO se lee el rol (22/10). Antes se leía igual, fallaba
+        // por el cierre, el menú quedaba armado como "Sin permisos" y al volver a ingresar no se rearmaba.
+        if(vigilarInactividad()) return;
         leerRol(u).then(()=>{
+          if(usuario!==u) return;   // la sesión cambió mientras se leía el rol: lo resuelve el aviso siguiente
           window.__construirNav && window.__construirNav();
           if(window.__rol==='admin'){ startSync(); loadReportes(); }
           (window.__afterLogin||[]).forEach(fn=>{ try{ fn(u); }catch(e){ console.error(e); } });
@@ -6948,9 +6952,9 @@ function buildFilterTable(cfg){
     // Si la sesión quedó abierta de antes (la pestaña se cerró y se volvió a abrir), la marca vieja manda:
     // se mira ANTES de marcar actividad, si no abrir el Tablero "renovaría" una sesión vencida.
     let previa=0; try{ previa=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
-    if(previa && Date.now()-previa > INACTIVIDAD_HORAS*3600*1000){ try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){} AUTH.signOut(fbAuth).catch(()=>{}); return; }
+    if(previa && Date.now()-previa > INACTIVIDAD_HORAS*3600*1000){ try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){} AUTH.signOut(fbAuth).catch(()=>{}); return true; }
     ultimaMarca=0; marcarActividad();
-    if(vigiaInactividad) return;
+    if(vigiaInactividad) return false;
     ['click','keydown','touchstart','scroll','mousemove'].forEach(ev=>window.addEventListener(ev, marcarActividad, {passive:true, capture:true}));
     const revisar=()=>{
       let ult=0; try{ ult=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
@@ -6960,6 +6964,7 @@ function buildFilterTable(cfg){
       }
     };
     revisar(); vigiaInactividad=setInterval(revisar, 60000);
+    return false;
   }
   // fail-closed: sin ficha en vph_roles => sin acceso (no admin). Solo roles asignados explícitamente tienen permisos.
   async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; } else { window.__rol='sinacceso'; window.__rolNombre=''; } }catch(e){ window.__rol='sinacceso'; window.__rolNombre=''; } }

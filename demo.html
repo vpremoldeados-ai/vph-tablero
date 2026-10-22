@@ -2737,8 +2737,8 @@ window.__construirNav = function(){
   const permitidas = PAGES.filter(p=>permit.includes(p.id));
   const inicial = permitidas[0];    
   const visibles = navOrdenar(permitidas, navOrdenLeer());
-  const nav = document.getElementById('nav'); if(!nav) return; nav.innerHTML='';
-  if(!visibles.length){ const t=document.getElementById('page-title'); if(t)t.textContent='Sin permisos'; const main=document.querySelector('main'); if(main){ const av=document.createElement('div'); av.className='alert warn'; av.style.margin='20px 0'; av.innerHTML='<span class="aico">🔒</span><div><b>Tu usuario no tiene permisos asignados.</b><div class="act">Pedile al administrador que te asigne un rol.</div></div>'; const up=document.getElementById('updated-line'); if(up&&up.parentNode) up.parentNode.insertBefore(av, up.nextSibling); } return; }
+  const nav = document.getElementById('nav'); if(!nav) return; nav.innerHTML=''; const avViejo=document.getElementById('aviso-sin-permisos'); if(avViejo) avViejo.remove();
+  if(!visibles.length){ const t=document.getElementById('page-title'); if(t)t.textContent='Sin permisos'; const main=document.querySelector('main'); if(main){ const av=document.createElement('div'); av.id='aviso-sin-permisos'; av.className='alert warn'; av.style.margin='20px 0'; av.innerHTML='<span class="aico">🔒</span><div><b>Tu usuario no tiene permisos asignados.</b><div class="act">Pedile al administrador que te asigne un rol.</div></div>'; const up=document.getElementById('updated-line'); if(up&&up.parentNode) up.parentNode.insertBefore(av, up.nextSibling); } return; }
    
   const navArrastrable = !(window.matchMedia && matchMedia('(pointer:coarse)').matches);
   visibles.forEach((p,i)=>{
@@ -7338,8 +7338,12 @@ function buildFilterTable(cfg){
     buildLoginUI();
     authM.onAuthStateChanged(fbAuth, u=>{
       usuario=u;
-      if(u){ hideLogin(); updateUserBar(); vigilarInactividad();
+      if(u){ hideLogin(); updateUserBar();
+         
+         
+        if(vigilarInactividad()) return;
         leerRol(u).then(()=>{
+          if(usuario!==u) return;    
           window.__construirNav && window.__construirNav();
           if(window.__rol==='admin'){ startSync(); loadReportes(); }
           (window.__afterLogin||[]).forEach(fn=>{ try{ fn(u); }catch(e){ console.error(e); } });
@@ -7361,9 +7365,9 @@ function buildFilterTable(cfg){
      
      
     let previa=0; try{ previa=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
-    if(previa && Date.now()-previa > INACTIVIDAD_HORAS*3600*1000){ try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){} AUTH.signOut(fbAuth).catch(()=>{}); return; }
+    if(previa && Date.now()-previa > INACTIVIDAD_HORAS*3600*1000){ try{ localStorage.removeItem(CLAVE_ACTIVIDAD); }catch(e){} AUTH.signOut(fbAuth).catch(()=>{}); return true; }
     ultimaMarca=0; marcarActividad();
-    if(vigiaInactividad) return;
+    if(vigiaInactividad) return false;
     ['click','keydown','touchstart','scroll','mousemove'].forEach(ev=>window.addEventListener(ev, marcarActividad, {passive:true, capture:true}));
     const revisar=()=>{
       let ult=0; try{ ult=parseInt(localStorage.getItem(CLAVE_ACTIVIDAD)||'0',10)||0; }catch(e){}
@@ -7373,6 +7377,7 @@ function buildFilterTable(cfg){
       }
     };
     revisar(); vigiaInactividad=setInterval(revisar, 60000);
+    return false;
   }
    
   async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; } else { window.__rol='sinacceso'; window.__rolNombre=''; } }catch(e){ window.__rol='sinacceso'; window.__rolNombre=''; } }
@@ -7504,7 +7509,15 @@ function buildFilterTable(cfg){
   const ALICUOTAS = [ {v:'21',l:'21%'},{v:'10.5',l:'10,5%'},{v:'27',l:'27%'},{v:'5',l:'5%'},{v:'2.5',l:'2,5%'},{v:'0',l:'0%'},{v:'exento',l:'Exento'},{v:'nogravado',l:'No Grav.'} ];
    
   const MEDIO_CHEQUE = 'Cheque / E-Cheq';
-  const MEDIOS_COBRO = ['Transferencia','Efectivo',MEDIO_CHEQUE,'Tarjeta','Mercado Pago','Viumi','Retención'];
+   
+   
+   
+   
+   
+   
+   
+  const MEDIO_COMP = 'Compensación / ajuste (sin plata)';
+  const MEDIOS_COBRO = ['Transferencia','Efectivo',MEDIO_CHEQUE,'Tarjeta','Mercado Pago','Viumi','Retención',MEDIO_COMP];
    
    
    
@@ -7547,6 +7560,8 @@ function buildFilterTable(cfg){
    
   const esRetencion = m => /retenci/i.test(String(m||''));
   window.__esRetencion = esRetencion;    
+  const esCompensacion = m => /compensaci/i.test(String(m||''));
+  window.__esCompensacionCobro = esCompensacion;    
    
   const IMPUESTOS_RET = ['Ganancias','IVA','Ingresos Brutos','SUSS'];
    
@@ -8238,6 +8253,7 @@ function buildFilterTable(cfg){
     const m=String(c.medio||'—'); let d=m;
     if(esCheque(m)) d+=(c.chNumero?' N° '+c.chNumero:'')+(c.chBanco?' '+c.chBanco:'')+(c.chVenc?' (vence '+fmtFecha(String(c.chVenc).slice(0,10))+')':'');
     else if(esRetencion(m)) d='Retención'+(c.retImpuesto?' '+c.retImpuesto:'')+(c.retCertificado?' cert. '+c.retCertificado:'');
+    else if(esCompensacion(m)) d='Compensación / ajuste'+(c.obs?' · '+c.obs:'');
     if(c.chequeRechazado) d+=' — RECHAZADO (no computa)';
     return d.replace(/\s+/g,' ').trim();
   }
@@ -8416,7 +8432,7 @@ function buildFilterTable(cfg){
     const by={}; DB.ventas.forEach(v=>{ if(v.cliente && calc(v).saldo>0.5) by[v.cliente]=true; });
     return Object.keys(by).sort();
   }
-  const blankValorImp = (medio,monto)=>({ medio:medio||MEDIOS_IMPUTAR[0], monto:monto||0, chNumero:'', chBanco:'', chVenc:'', cuenta:'', retImpuesto:IMPUESTOS_RET[0], retCertificado:'' });
+  const blankValorImp = (medio,monto)=>({ medio:medio||MEDIOS_IMPUTAR[0], monto:monto||0, chNumero:'', chBanco:'', chVenc:'', cuenta:'', retImpuesto:IMPUESTOS_RET[0], retCertificado:'', obs:'' });
   const totalValoresImp = ()=> round2(imputValores.reduce((a,x)=>a+num(x.monto),0));
    
   function recalcSplitsImp(){ imputSplits=window.__repartirFIFO(totalValoresImp(), imputPend); imputManual=false; }
@@ -8438,7 +8454,7 @@ function buildFilterTable(cfg){
     $('vnt-modal-imputar').classList.add('open');
   }
   function valorImpHtml(x,i){
-    const ch=esCheque(x.medio), ret=esRetencion(x.medio);
+    const ch=esCheque(x.medio), ret=esRetencion(x.medio), comp=esCompensacion(x.medio);
     const inp='style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px"';
     let extra='';
     if(ch) extra='<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr 1fr;margin:8px 0 0">'+
@@ -8449,6 +8465,8 @@ function buildFilterTable(cfg){
       field('¿Qué impuesto?','','<select '+inp+' data-vi="'+i+'" data-vf="retImpuesto">'+IMPUESTOS_RET.map(t=>'<option'+(t===x.retImpuesto?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select>')+
       field('N° de certificado','','<input '+inp+' data-vi="'+i+'" data-vf="retCertificado" value="'+esc(x.retCertificado)+'" placeholder="el que figura en el comprobante">')+'</div>'+
       '<div style="font-size:11px;color:var(--muted);margin-top:6px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH. Para subir el PDF del certificado, usá el ✅ de cada venta.</div>';
+    else if(comp) extra='<div style="margin-top:8px">'+field('Motivo (obligatorio)','','<input '+inp+' data-vi="'+i+'" data-vf="obs" value="'+esc(x.obs)+'" placeholder="ej.: saldo a favor anterior al Tablero (Contagram, comprobante N° y fecha)">')+'</div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px">No entra plata a ninguna cuenta: un saldo a favor que el cliente tenía de antes del Tablero, una compensación con algo que VPH le debe, o un ajuste de centavos. La venta queda cobrada en esa parte y el motivo sale en el recibo.</div>';
     else extra='<div style="margin-top:8px">'+field('¿En qué cuenta entró?','','<select '+inp+' data-vi="'+i+'" data-vf="cuenta">'+cuentasOpt(x.cuenta)+'</select>')+'</div>';
     return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
       '<div style="display:flex;gap:8px;align-items:flex-end">'+
@@ -8469,7 +8487,7 @@ function buildFilterTable(cfg){
       '<p style="margin:-6px 0 10px;font-size:12.5px;color:var(--muted)">'+(imputCliente?'Saldo total pendiente: <b style="color:var(--text)">'+money(totalSaldo)+'</b>':'Elegí un cliente para ver sus facturas pendientes.')+'</p>'+
       '<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">Cómo pagó</div>'+
       imputValores.map(valorImpHtml).join('')+
-      '<button class="cmp-btn" type="button" id="ic-addval" style="margin-bottom:6px">＋ Agregar valor (otro e-cheq, una retención, efectivo…)</button>'+
+      '<button class="cmp-btn" type="button" id="ic-addval" style="margin-bottom:6px">＋ Agregar valor (otro e-cheq, una retención, una compensación, efectivo…)</button>'+
       '<div id="ic-totval" style="font-size:12.5px;margin:0 0 12px"></div>'+
       '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0">'+
         '<div style="font-size:12.5px;font-weight:800">Reparto por venta (la más vieja primero)</div>'+
@@ -8532,6 +8550,8 @@ function buildFilterTable(cfg){
     if(Math.abs(tv-ts)>=0.01){ alert('El total de los valores ('+money(tv)+') no coincide con lo repartido en las ventas ('+money(ts)+'). Ajustalo antes de registrar.'); return; }
     const sinCert=valores.filter(x=>esRetencion(x.medio) && !String(x.retCertificado||'').trim());
     if(sinCert.length && !confirm('Hay una retención sin N° de certificado: sin ese número el contador no puede computar el crédito.\n¿Registrar igual?')) return;
+    const sinMotivo=valores.filter(x=>esCompensacion(x.medio) && !String(x.obs||'').trim());
+    if(sinMotivo.length){ alert('Hay una compensación / ajuste sin motivo. Escribí de dónde sale ese saldo a favor (o qué ajusta): es lo único que después explica por qué la factura figura cobrada sin plata.'); return; }
     const piezas=window.__cascadaValores(valores, activos);
     const cobrosPorVenta={}, cheques=[], aplicados={}, maestroCh={}, nrosCh={};
     piezas.forEach(p=>{
@@ -8539,6 +8559,7 @@ function buildFilterTable(cfg){
       const rec={ id:'cob_'+newUid(), fecha, monto:p.monto, medio:val.medio, chequeRechazado:false };
       if(esCheque(val.medio)){ rec.chNumero=String(val.chNumero||'').trim(); rec.chBanco=String(val.chBanco||'').trim(); rec.chVenc=val.chVenc||fecha; }
       else if(esRetencion(val.medio)){ rec.retImpuesto=val.retImpuesto||IMPUESTOS_RET[0]; rec.retCertificado=String(val.retCertificado||'').trim(); }    
+      else if(esCompensacion(val.medio)){ rec.obs=String(val.obs||'').trim(); }    
       else rec.cuenta=val.cuenta||'';
       (cobrosPorVenta[v._uid]=cobrosPorVenta[v._uid]||[]).push(rec);
        
@@ -8556,7 +8577,7 @@ function buildFilterTable(cfg){
     cheques.forEach(({v,rec,vi,total})=>{ if(window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:(nrosCh[vi]||[]).join(' + '), entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:total, fechaEmision:fecha, fechaVencimiento:rec.chVenc||fecha, chequeRechazado:false }); });
     const facturas=Object.values(aplicados).map(a=>({ comprobante:a.comprobante, fecha:a.fecha, monto:a.monto, saldo:round2(a.saldoAntes-a.monto) }));
     const cliRef=DB.ventas.find(v=>v.cliente===imputCliente)||{};
-    const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):'');
+    const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):esCompensacion(x.medio)?(x.obs?' · '+x.obs:''):'');
     const recibo={ proveedor:imputCliente, cuit:cliRef.cuit||'', condIva:cliRef.condIva||'', fecha,
       valores:valores.map(x=>({ fecha, detalle:detalleValor(x), monto:num(x.monto) })), facturas };
     $('vnt-modal-imputar').classList.remove('open');
@@ -8939,6 +8960,7 @@ function buildFilterTable(cfg){
         '<span>'+fmtFecha(c.fecha)+' · '+esc(c.medio||'—')+(esCheque(c.medio)&&c.chNumero?' N°'+esc(c.chNumero):'')+
           (esCheque(c.medio)?' <span style="color:var(--blue);font-size:11px">🏦 en Cheques</span>'
            : esPlataforma(c.medio)?'<span style="font-size:11px;color:'+(c.acreditado?'var(--green)':'#2f6fb2')+'"> · '+(c.acreditado?'✓ acreditado':'⏳ se acredita el '+fmtFecha(c.fechaAcreditacion))+' · neto '+money(netoPlataforma(c))+(c.cuenta?' → '+esc(c.cuenta):'')+'</span>'
+           : esCompensacion(c.medio)?(c.obs?' <span style="color:var(--muted);font-size:11px">· '+esc(c.obs)+'</span>':'')
            : (c.cuenta?' <span style="color:var(--muted);font-size:11px">→ '+esc(c.cuenta)+'</span>':''))+
           (c.chequeRechazado?' · <b style="color:var(--red)">⚠️ RECHAZADO</b>':'')+'</span>'+
         '<span style="display:flex;gap:8px;align-items:center"><b>'+money(num(c.monto))+'</b>'+
@@ -8951,7 +8973,7 @@ function buildFilterTable(cfg){
     const montoDef = ed ? num(ed.monto) : kk.saldo, fechaDef = ed ? ed.fecha : hoyISO,
           medioDef = ed ? ed.medio : (cobroMedioSugerido || (num(v.finCuotas) ? medioViumi : MEDIOS_COBRO[0]));
     if(!ed) cobroMedioSugerido='';    
-    const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef);
+    const chShow = esCheque(medioDef), platShow = esPlataforma(medioDef), retShow = esRetencion(medioDef), compShow = esCompensacion(medioDef);
      
      
      
@@ -8966,7 +8988,7 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
         field('Monto','','<input id="vc-monto" value="'+montoDef+'">') + field('Fecha','','<input type="date" id="vc-fecha" value="'+fechaDef+'">') +
         field('Medio','','<select id="vc-medio">'+medioOpts(MEDIOS_COBRO, medioDef)+'</select>') +
-        '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+(chShow?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
+        '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+((chShow||platShow||retShow||compShow)?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
        
        
@@ -8982,6 +9004,13 @@ function buildFilterTable(cfg){
           '<span id="vc-ret-msg" style="font-size:12px"></span>'+
         '</div>'+
         '<div style="font-size:11px;color:var(--muted);margin-top:8px">Esta plata NO entra a ninguna cuenta: la deposita el cliente en ARCA a nombre de VPH y se descuenta del impuesto. Subí el PDF que te manda el cliente y se completa solo.</div>'+
+      '</div>'+
+       
+       
+      '<div id="vc-comp-extra" style="display:'+(compShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
+        '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Compensación / ajuste — no entra plata a ninguna cuenta</div>'+
+        field('Motivo (obligatorio)','','<input id="vc-comp-obs" value="'+esc((ed&&ed.obs)||'')+'" placeholder="ej.: saldo a favor anterior al Tablero (Contagram, comprobante N° y fecha)">')+
+        '<div style="font-size:11px;color:var(--muted);margin-top:6px">Para un saldo a favor que el cliente tenía de antes del Tablero, una compensación con algo que VPH le debe, o un ajuste de centavos. La venta queda cobrada en esa parte, pero Caja no cuenta ningún ingreso. El motivo sale en el recibo y en el estado de cuenta.</div>'+
       '</div>'+
       '<div id="vc-cheque-extra" style="display:'+(chShow?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
         '<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">Datos del cheque (se crea/actualiza en el módulo Cheques)</div>'+
@@ -9017,13 +9046,14 @@ function buildFilterTable(cfg){
       '</div>'+
       '<div class="cmp-form-foot">'+(cobroEdit!=null?'<button class="cmp-btn" id="vc-cancel-edit">Cancelar edición</button>':'<button class="cmp-btn" id="vc-cancel">Cerrar</button>')+'<button class="cmp-btn cmp-btn-primary" id="vc-save">'+(cobroEdit!=null?'Guardar cambios':'Registrar cobro')+'</button></div>';
      
-    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2), ret=esRetencion(v2);
+    $('vc-medio').addEventListener('change',()=>{ const v2=$('vc-medio').value, ch=esCheque(v2), pl=esPlataforma(v2), ret=esRetencion(v2), comp=esCompensacion(v2);
       $('vc-cheque-extra').style.display = ch?'block':'none';
       $('vc-plat-extra').style.display = pl?'block':'none';
       if($('vc-ret-extra')) $('vc-ret-extra').style.display = ret?'block':'none';
+      if($('vc-comp-extra')) $('vc-comp-extra').style.display = comp?'block':'none';
        
        
-      $('vc-cuenta-wrap').style.display = (ch||pl||ret)?'none':'';
+      $('vc-cuenta-wrap').style.display = (ch||pl||ret||comp)?'none':'';
       if(pl) sugerirLiquidacion(); });
 
      
@@ -9144,6 +9174,10 @@ function buildFilterTable(cfg){
           retArchivoPend=null;
         }
       }
+      else if(esCompensacion(rec.medio)){
+         
+        rec.obs=$('vc-comp-obs')?$('vc-comp-obs').value.trim():'';
+        if(!rec.obs){ alert('Escribí el motivo de la compensación: de dónde sale ese saldo a favor, o qué ajusta.'); return; } }
       else { rec.cuenta=$('vc-cuenta')?$('vc-cuenta').value:''; }    
       const lv=viva(); const cobros=(lv.cobros||[]).slice();
       if(cobroEdit!=null){ const j=posViva(cobros, prev, cobroEdit); if(j>=0) cobros[j]=rec; else cobros.push(rec); cobroEdit=null; } else { cobros.push(rec); }
@@ -10817,7 +10851,8 @@ function buildFilterTable(cfg){
     const M=[];
      
      
-    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio))) return;
+     
+    ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio)) || (window.__esCompensacionCobro && window.__esCompensacionCobro(c.medio))) return;
        
        
        
@@ -11597,7 +11632,7 @@ function buildFilterTable(cfg){
   function candidatosConciliacion(cuenta) {
     const C = []; const deCuenta = c => !c || c === cuenta;
     ventas.forEach(v => (v.cobros || []).forEach(c => {
-      if (esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio))) return;
+      if (esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio)) || (window.__esCompensacionCobro && window.__esCompensacionCobro(c.medio))) return;
       if (!deCuenta(c.cuenta)) return;
       if (esPlataformaCobro(c.medio)) {
         const neto = netoPlat(c); if (neto <= 0.5) return;
