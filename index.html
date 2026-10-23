@@ -8515,6 +8515,7 @@ function buildFilterTable(cfg){
     { const dneg=editing.items.find(it=>num(it.precioUnit)<0 && (String(it.codigo||'').trim() || !String(it.desc||'').trim()));
       if(dneg){ alert('Un renglón con precio negativo es un DESCUENTO: escribile una descripción (ej. "Bonificación reposición 45 losetas") y que NO tenga código de producto'+(dneg.codigo?' (este tiene '+dneg.codigo+')':'')+'.\n\nSi lleva el código de la loseta, el Tablero lo cuenta como mercadería: suma kilos, costo y carga al pedido.'); return; } }
     if(editing.items.some(it=>num(it.precioUnit)<0) && calc(editing).total<0){ alert('El total no puede quedar negativo: el descuento es mayor que lo cotizado.'); return; }
+    const esAlta=!editing._uid;   // ANTES de asignarle el uid: después todo parece edición
     if(!editing._uid) editing._uid=newUid();
     vincularLeadAntes(editing);
     const cb=_onSaved; _onSaved=null;
@@ -8523,6 +8524,9 @@ function buildFilterTable(cfg){
     asignarNroInterno(v).then(()=>{
       persistVenta(v);
       if(cb){ try{ cb(); }catch(e){ console.error('venta onSaved:',e); } }
+      // Una venta YA pasada a producción que cambió de renglones: su pedido no se entera solo y Stock y
+      // Faltantes seguiría contando lo de antes (23/10, TOTAL CONTAINERS). Producción compara y ofrece.
+      if(!esAlta && window.__ofrecerActualizarPedido){ try{ window.__ofrecerActualizarPedido(v); }catch(e){ console.error('actualizar pedido:',e); } }
     });
   }
 
@@ -20879,9 +20883,95 @@ function buildFilterTable(cfg){
     const ent=String(v.domicilioEntrega||'').trim();
     pe.direccion = ent || cli.direccion || '';
     pe.ciudad    = ent ? '' : (cli.localidad||'');   // con dirección de entrega propia no se inventa la localidad de la ficha
-    pe.items=(v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0 && num(it.precioUnit)>=0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
+    pe.items=itemsPedidoDeVenta(v);
     if(!pe.items.length) pe.items=[{producto:'',codigo:'',cantidad:1}];
     tab='coord'; render(); openPed(pe);
+  };
+  // Los renglones del pedido que salen de una venta: lo que lleva el camión. Los de precio NEGATIVO son
+  // descuentos y no viajan. Una sola cuenta para CREAR el pedido y para ACTUALIZARLO (23/10).
+  function itemsPedidoDeVenta(v){
+    return (v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0 && num(it.precioUnit)>=0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
+  }
+  // El flete no ocupa stock ni pallets: queda fuera de la comparación pedido ↔ venta (si no, un pedido al
+  // que le sacaron el renglón de flete avisaría una diferencia cada vez que se guarda la venta).
+  function esRenglonFlete(it){ return !!it && (/^fle/i.test(String(it.codigo||'').trim()) || /^\s*flete\b/i.test(String(it.producto||it.desc||''))); }
+  // Clave del producto de un renglón, resuelta contra el catálogo: un renglón viejo sin código ("Base de
+  // hormigón BNV-40") y el mismo producto con código (BNV40) son UNO, no una diferencia.
+  function clavePedItem(it){ const pr=resolverProd(it.producto,it.codigo); return pr ? keyDe(pr.codigo,pr.nombre) : keyDe(it.codigo,it.producto); }
+  // Cantidad por producto (el mismo producto en dos renglones suma una sola cantidad).
+  function cantPorProducto(items){
+    const m={}, nom={};
+    (items||[]).filter(it=>it && (it.producto||it.codigo) && num(it.cantidad)>0 && !esRenglonFlete(it)).forEach(it=>{
+      const k=clavePedItem(it); m[k]=(m[k]||0)+num(it.cantidad); if(!nom[k]) nom[k]=it.producto||it.codigo; });
+    return {m, nom};
+  }
+  // Pura: en qué productos el pedido dice otra cantidad que la venta. [] = están iguales.
+  function difPedidoVenta(pedItems, ventaItems){
+    const a=cantPorProducto(pedItems), b=cantPorProducto(ventaItems);
+    const ks=Object.keys(a.m).concat(Object.keys(b.m).filter(k=>!(k in a.m)));
+    return ks.filter(k=>Math.abs((a.m[k]||0)-(b.m[k]||0))>1e-9)
+             .map(k=>({k, nombre:b.nom[k]||a.nom[k]||k, antes:a.m[k]||0, ahora:b.m[k]||0}));
+  }
+  function textoDifPedido(difs){
+    return difs.map(d=> '• '+d.nombre+': '+(!d.antes ? 'se agrega '+nf(d.ahora) : !d.ahora ? 'se saca ('+nf(d.antes)+')' : nf(d.antes)+' → '+nf(d.ahora))).join('\n');
+  }
+  // Pura: los campos del pedido que cambian para que quede igual a la venta. El flete que el pedido ya
+  // tenía se conserva tal cual. Se borra el armado guardado (pe.plan) SOLO de los productos cuya cantidad
+  // cambió, y los mixtos (podían referenciar tandas que ya no existen): misma regla que ✂️ Partir y ➕ Unir.
+  function cambiosPedidoDesdeVenta(pe, ventaItems, difs){
+    // El mismo producto en dos renglones de la venta (el agregado suele ir aparte) va en UN renglón del
+    // pedido: los pallets se arman por renglón, y separados pueden ocupar uno de más (como en ➕ Unir).
+    const items=[];
+    ventaItems.filter(it=>!esRenglonFlete(it)).forEach(it=>{
+      const k=clavePedItem(it), ya=items.find(x=>clavePedItem(x)===k);
+      if(ya) ya.cantidad=num(ya.cantidad)+num(it.cantidad); else items.push({producto:it.producto||'', codigo:it.codigo||'', cantidad:num(it.cantidad)});
+    });
+    (pe.items||[]).filter(esRenglonFlete).forEach(it=>items.push(it));
+    // El plan se guarda con la clave CRUDA del renglón (la de cargaRows): se borra esa y la resuelta.
+    const cambia={}; difs.forEach(d=>{ cambia[d.k]=1; });
+    const plan={...(pe.plan||{})};
+    Object.keys(cambia).forEach(k=>{ delete plan[k]; });
+    (pe.items||[]).forEach(it=>{ if(it && (it.producto||it.codigo) && cambia[clavePedItem(it)]) delete plan[keyDe(it.codigo,it.producto)]; });
+    return { items: items.length ? items : [{producto:'',codigo:'',cantidad:1}], plan, mixtos:[] };
+  }
+  // API (23/10, pedido de Marcelo: le sumó 6 Cubos de Apoyo a una venta de TOTAL CONTAINERS y Stock y
+  // Faltantes no los contaba — el comprometido sale del PEDIDO, que se arma una sola vez al pasar la venta
+  // a producción). La llama Ventas al GUARDAR una venta YA EXISTENTE. Si el pedido quedó distinto:
+  //  · UN pedido, sin entregar y de esa sola venta → ofrece actualizarlo (confirm con el detalle).
+  //  · entregado, partido en varios viajes (✂️) o con varias ventas unidas (➕) → solo AVISA: ahí no hay
+  //    una cuenta segura de qué cambiar, y tocarlo podría descontar stock de más.
+  // Devuelve qué pasó ('sin-pedido' · 'igual' · 'actualizado' · 'no' · 'entregado' · 'varias' · 'partido').
+  window.__ofrecerActualizarPedido = function(v){
+    if(!v || !v._uid || !window.__pedidosDeVenta) return 'sin-pedido';
+    const peds=window.__pedidosDeVenta(v._uid);
+    if(!peds || !peds.length) return 'sin-pedido';
+    const ventaItems=itemsPedidoDeVenta(v);
+    const cli=v.cliente||'—';
+    if(peds.length>1){
+      const todos=[].concat(...peds.map(p=>p.items||[]));
+      const difs=difPedidoVenta(todos, ventaItems); if(!difs.length) return 'igual';
+      alert('Guardaste cambios en la venta de '+cli+', pero su entrega está partida en '+peds.length+' pedidos y no se actualizan solos:\n\n'+textoDifPedido(difs)+'\n\nCorregilos a mano en Producción y Logística → Entregas a coordinar (Editar), así Stock y Faltantes cuenta lo comprometido.');
+      return 'partido';
+    }
+    const pe=peds[0];
+    const difs=difPedidoVenta(pe.items, ventaItems); if(!difs.length) return 'igual';
+    if(pe.estado==='entregado'){
+      alert('Guardaste cambios en la venta de '+cli+', pero su pedido ya figura ENTREGADO y no se toca:\n\n'+textoDifPedido(difs)+'\n\nSi sale mercadería de más, cargá un pedido nuevo en Producción y Logística por lo que falta entregar.');
+      return 'entregado';
+    }
+    if(ventasDePed(pe).length>1){
+      alert('Guardaste cambios en la venta de '+cli+', pero su pedido reúne varias ventas (se unieron) y no se actualiza solo:\n\n'+textoDifPedido(difs)+'\n\nCorregilo a mano en Producción y Logística → Entregas a coordinar (Editar).');
+      return 'varias';
+    }
+    if(!confirm('Cambiaste la venta de '+cli+'. Su pedido de producción todavía tiene lo de antes:\n\n'+textoDifPedido(difs)+'\n\n¿Actualizo el pedido para que quede igual a la venta? Así Stock y Faltantes cuenta lo comprometido y el remito sale con lo correcto.')) return 'no';
+    const cambios=cambiosPedidoDesdeVenta(pe, ventaItems, difs);
+    const vivo=(pedidos||[]).find(p=>p._uid===pe._uid); if(vivo) Object.assign(vivo, cambios);
+    // updateDoc y no setDoc merge: el merge MEZCLARÍA el mapa `plan` y dejaría el armado viejo de los
+    // productos que cambiaron. Solo esos tres campos: no pisa nada que otro esté editando en el pedido.
+    const c=fb();
+    if(c&&c.db) c.FS.updateDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), cambios).catch(e=>alert('No se pudo actualizar el pedido: '+e.message+'\n\nCorregilo a mano en Producción y Logística → Entregas a coordinar.'));
+    try{ render(); }catch(e){}
+    return 'actualizado';
   };
 
   // ---------- Sync ----------

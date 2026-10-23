@@ -8924,6 +8924,7 @@ function buildFilterTable(cfg){
     { const dneg=editing.items.find(it=>num(it.precioUnit)<0 && (String(it.codigo||'').trim() || !String(it.desc||'').trim()));
       if(dneg){ alert('Un renglón con precio negativo es un DESCUENTO: escribile una descripción (ej. "Bonificación reposición 45 losetas") y que NO tenga código de producto'+(dneg.codigo?' (este tiene '+dneg.codigo+')':'')+'.\n\nSi lleva el código de la loseta, el Tablero lo cuenta como mercadería: suma kilos, costo y carga al pedido.'); return; } }
     if(editing.items.some(it=>num(it.precioUnit)<0) && calc(editing).total<0){ alert('El total no puede quedar negativo: el descuento es mayor que lo cotizado.'); return; }
+    const esAlta=!editing._uid;    
     if(!editing._uid) editing._uid=newUid();
     vincularLeadAntes(editing);
     const cb=_onSaved; _onSaved=null;
@@ -8932,6 +8933,9 @@ function buildFilterTable(cfg){
     asignarNroInterno(v).then(()=>{
       persistVenta(v);
       if(cb){ try{ cb(); }catch(e){ console.error('venta onSaved:',e); } }
+       
+       
+      if(!esAlta && window.__ofrecerActualizarPedido){ try{ window.__ofrecerActualizarPedido(v); }catch(e){ console.error('actualizar pedido:',e); } }
     });
   }
 
@@ -12490,7 +12494,7 @@ function buildFilterTable(cfg){
      
      
      
-    return { desc:'Flete', codigo:'FLETE', cant:pallets, descPct:0,
+    return { desc:'Flete por pallet', codigo:'FLETE', cant:pallets, descPct:0,
              precioUnit: sf ? round2(precio) : round2(precio/1.21),
              iva: sf ? 'nogravado' : '21' };
   }
@@ -21091,9 +21095,95 @@ function buildFilterTable(cfg){
     const ent=String(v.domicilioEntrega||'').trim();
     pe.direccion = ent || cli.direccion || '';
     pe.ciudad    = ent ? '' : (cli.localidad||'');    
-    pe.items=(v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0 && num(it.precioUnit)>=0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
+    pe.items=itemsPedidoDeVenta(v);
     if(!pe.items.length) pe.items=[{producto:'',codigo:'',cantidad:1}];
     tab='coord'; render(); openPed(pe);
+  };
+   
+   
+  function itemsPedidoDeVenta(v){
+    return (v.items||[]).filter(it=>it && (it.desc||it.codigo) && num(it.cant)>0 && num(it.precioUnit)>=0).map(it=>{ const pr=resolverProd(it.desc,it.codigo); return { producto: pr?pr.nombre:(it.desc||''), codigo: pr?(pr.codigo||''):(it.codigo||''), cantidad:num(it.cant) }; });
+  }
+   
+   
+  function esRenglonFlete(it){ return !!it && (/^fle/i.test(String(it.codigo||'').trim()) || /^\s*flete\b/i.test(String(it.producto||it.desc||''))); }
+   
+   
+  function clavePedItem(it){ const pr=resolverProd(it.producto,it.codigo); return pr ? keyDe(pr.codigo,pr.nombre) : keyDe(it.codigo,it.producto); }
+   
+  function cantPorProducto(items){
+    const m={}, nom={};
+    (items||[]).filter(it=>it && (it.producto||it.codigo) && num(it.cantidad)>0 && !esRenglonFlete(it)).forEach(it=>{
+      const k=clavePedItem(it); m[k]=(m[k]||0)+num(it.cantidad); if(!nom[k]) nom[k]=it.producto||it.codigo; });
+    return {m, nom};
+  }
+   
+  function difPedidoVenta(pedItems, ventaItems){
+    const a=cantPorProducto(pedItems), b=cantPorProducto(ventaItems);
+    const ks=Object.keys(a.m).concat(Object.keys(b.m).filter(k=>!(k in a.m)));
+    return ks.filter(k=>Math.abs((a.m[k]||0)-(b.m[k]||0))>1e-9)
+             .map(k=>({k, nombre:b.nom[k]||a.nom[k]||k, antes:a.m[k]||0, ahora:b.m[k]||0}));
+  }
+  function textoDifPedido(difs){
+    return difs.map(d=> '• '+d.nombre+': '+(!d.antes ? 'se agrega '+nf(d.ahora) : !d.ahora ? 'se saca ('+nf(d.antes)+')' : nf(d.antes)+' → '+nf(d.ahora))).join('\n');
+  }
+   
+   
+   
+  function cambiosPedidoDesdeVenta(pe, ventaItems, difs){
+     
+     
+    const items=[];
+    ventaItems.filter(it=>!esRenglonFlete(it)).forEach(it=>{
+      const k=clavePedItem(it), ya=items.find(x=>clavePedItem(x)===k);
+      if(ya) ya.cantidad=num(ya.cantidad)+num(it.cantidad); else items.push({producto:it.producto||'', codigo:it.codigo||'', cantidad:num(it.cantidad)});
+    });
+    (pe.items||[]).filter(esRenglonFlete).forEach(it=>items.push(it));
+     
+    const cambia={}; difs.forEach(d=>{ cambia[d.k]=1; });
+    const plan={...(pe.plan||{})};
+    Object.keys(cambia).forEach(k=>{ delete plan[k]; });
+    (pe.items||[]).forEach(it=>{ if(it && (it.producto||it.codigo) && cambia[clavePedItem(it)]) delete plan[keyDe(it.codigo,it.producto)]; });
+    return { items: items.length ? items : [{producto:'',codigo:'',cantidad:1}], plan, mixtos:[] };
+  }
+   
+   
+   
+   
+   
+   
+   
+  window.__ofrecerActualizarPedido = function(v){
+    if(!v || !v._uid || !window.__pedidosDeVenta) return 'sin-pedido';
+    const peds=window.__pedidosDeVenta(v._uid);
+    if(!peds || !peds.length) return 'sin-pedido';
+    const ventaItems=itemsPedidoDeVenta(v);
+    const cli=v.cliente||'—';
+    if(peds.length>1){
+      const todos=[].concat(...peds.map(p=>p.items||[]));
+      const difs=difPedidoVenta(todos, ventaItems); if(!difs.length) return 'igual';
+      alert('Guardaste cambios en la venta de '+cli+', pero su entrega está partida en '+peds.length+' pedidos y no se actualizan solos:\n\n'+textoDifPedido(difs)+'\n\nCorregilos a mano en Producción y Logística → Entregas a coordinar (Editar), así Stock y Faltantes cuenta lo comprometido.');
+      return 'partido';
+    }
+    const pe=peds[0];
+    const difs=difPedidoVenta(pe.items, ventaItems); if(!difs.length) return 'igual';
+    if(pe.estado==='entregado'){
+      alert('Guardaste cambios en la venta de '+cli+', pero su pedido ya figura ENTREGADO y no se toca:\n\n'+textoDifPedido(difs)+'\n\nSi sale mercadería de más, cargá un pedido nuevo en Producción y Logística por lo que falta entregar.');
+      return 'entregado';
+    }
+    if(ventasDePed(pe).length>1){
+      alert('Guardaste cambios en la venta de '+cli+', pero su pedido reúne varias ventas (se unieron) y no se actualiza solo:\n\n'+textoDifPedido(difs)+'\n\nCorregilo a mano en Producción y Logística → Entregas a coordinar (Editar).');
+      return 'varias';
+    }
+    if(!confirm('Cambiaste la venta de '+cli+'. Su pedido de producción todavía tiene lo de antes:\n\n'+textoDifPedido(difs)+'\n\n¿Actualizo el pedido para que quede igual a la venta? Así Stock y Faltantes cuenta lo comprometido y el remito sale con lo correcto.')) return 'no';
+    const cambios=cambiosPedidoDesdeVenta(pe, ventaItems, difs);
+    const vivo=(pedidos||[]).find(p=>p._uid===pe._uid); if(vivo) Object.assign(vivo, cambios);
+     
+     
+    const c=fb();
+    if(c&&c.db) c.FS.updateDoc(c.FS.doc(c.db,'vph_pedidos',pe._uid), cambios).catch(e=>alert('No se pudo actualizar el pedido: '+e.message+'\n\nCorregilo a mano en Producción y Logística → Entregas a coordinar.'));
+    try{ render(); }catch(e){}
+    return 'actualizado';
   };
 
    
