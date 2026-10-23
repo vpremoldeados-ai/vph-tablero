@@ -585,6 +585,12 @@
   // Fuentes de alertas EN VIVO: cada módulo hace window.__alertSources.push(()=>[...]) al arrancar.
   window.__alertSources = window.__alertSources || [];
   window.__refreshAlertas = window.__refreshAlertas || function(){};   // lo reemplaza el motor de alertas tras el login
+  // 📦 "Va en una CAJITA apoyada sobre el pallet" (23/10, Marcelo): los anclajes (ANC38, ANC10…) y los kits
+  // de nivelación (KNIV) NO ocupan pallet ni suman al flete, aunque tengan udPorPallet cargado. Vive acá
+  // porque lo usan tres módulos (flete de Presupuestos/CRM, armado de pallets de Producción y el remito).
+  window.__enCajita = function(codigo, nombre){
+    return /^(ANC|KNIV)/i.test(String(codigo||'').trim()) || /anclaj|kit de nivelaci/i.test(String(nombre||''));
+  };
 
   // Canal de una venta: Minorista / Mayorista / Sin canal. UNA sola definición para TODA la app —
   // la usan __mixVentas (módulo Ventas, que reparte por MONTO) y __resumenMes (módulo Finanzas, que
@@ -12081,6 +12087,7 @@ function buildFilterTable(cfg){
       const pr=(it.codigo&&prods.find(p=>ncp(p.codigo)===ncp(it.codigo)))||prods.find(p=>ncp(p.nombre)===ncp(it.desc));
       if(!it.desc && !it.codigo) return;
       if(pr && String(pr.tipo||'')==='Servicio') return;   // un servicio (pintado) no ocupa lugar en el camión: sin esto contaba 1 pallet de más
+      if(window.__enCajita && window.__enCajita(it.codigo||(pr&&pr.codigo), (pr&&pr.nombre)||it.desc)) return;   // anclajes y kits de nivelación van en una cajita sobre el pallet
       hay=true;
       const ud=pr?num(pr.udPorPallet):0;
       frac += ud>0 ? cant/ud : 1;   // sin udPorPallet cargado: se asume 1 pallet por ítem (conservador)
@@ -18426,7 +18433,7 @@ function buildFilterTable(cfg){
       // ⚓ Los anclajes (ANC38) viajan en el MISMO pallet que los topes: no son carga propia. Sin esto
       // sumaban un pallet fantasma al camión y al remito y descontaban stock de algo que no se lleva
       // la cuenta (08/10, Marcelo). Siguen en el remito como renglón (sin pallets) y en el cartel ⚓.
-      if(String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase()==='ANC38' || /anclaj/i.test(String((pr&&pr.nombre)||it.producto||''))) return;
+      if(String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase()==='ANC38' || window.__enCajita(it.codigo||(pr&&pr.codigo), (pr&&pr.nombre)||it.producto)) return;   // anclajes y kits de nivelación: en cajita, no son carga propia
       // El Flete puede venir como renglón del pedido SIN estar cargado en el catálogo (pasó: código
       // "FLE"): ahí `pr` es null y el chequeo de arriba no lo agarra. Un servicio no se carga en el
       // camión — si se cuela, suma un pallet fantasma al viaje y al remito.
@@ -22207,7 +22214,7 @@ function buildFilterTable(cfg){
   // un pallet de verdad y no debe contarse (si no, un renglón suelto suma un pallet fantasma).
   // Un plan de varios pallets, o de uno con menos unidades que el total, SÍ es un armado real.
   function planEsReal(r){
-    if(!r.pallets.length) return false;
+    if(r.cajita || !r.pallets.length) return false;
     if(r.ud>0) return true;
     return !(r.pallets.length===1 && r.pallets[0]===Math.round(num(r.it.cant)));
   }
@@ -22226,7 +22233,8 @@ function buildFilterTable(cfg){
     const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0)
       .map(it=>{ const pr=prodDe(it); const ud=pr?num(pr.udPorPallet):0;
         const pl=(it.pallets&&it.pallets.length)?it.pallets.map(u=>Math.round(num(u))).filter(u=>u>0):planStdPallets(it.cant,ud);
-        return { it:it, pr:pr, ud:ud, peso:(pr?num(pr.pesoUnit):0), pallets:pl }; })
+        const caj=!!(window.__enCajita && window.__enCajita(it.codigo||(pr&&pr.codigo), (pr&&pr.nombre)||it.desc));   // va en una cajita sobre el pallet: ni pallet ni bulto propio
+        return { it:it, pr:pr, ud:caj?0:ud, peso:(pr?num(pr.pesoUnit):0), pallets:caj?[]:pl, cajita:caj }; })
       // Un SERVICIO no se entrega: no va al remito ni suma bultos ni pallets. Lo normal es detectarlo
       // por el catálogo (tipo 'Servicio'), pero el Flete puede venir como renglón de una venta o de un
       // pedido SIN estar cargado en el catálogo (pasó de verdad: código "FLE", y el remito lo contaba
@@ -22256,7 +22264,7 @@ function buildFilterTable(cfg){
     const compartida={}; grupos.forEach(g=>g.forEach(y=>{ compartida[y.id]=1; }));
     const esComp=(r,i)=> !!compartida[its.indexOf(r)+'#'+i];
     const exclusivas=r=> r.pallets.filter((u,i)=>!esComp(r,i));
-    const bultosDe=r=> planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant));
+    const bultosDe=r=> r.cajita ? 0 : (planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant)));
     let filas=its.map(r=>'<tr><td>'+celdaCodigo(r.it.codigo)+'</td><td>'+esc(r.it.desc||'')+'</td><td>'+esc(r.it.obs||'')+'</td>'+
       '<td class="n">'+nf(r.it.cant)+'</td><td class="n">'+nf(bultosDe(r))+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';
