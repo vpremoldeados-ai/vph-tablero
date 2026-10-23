@@ -452,6 +452,7 @@
   #pe-tabla-stock th{font-size:10.5px;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:bottom}
   #pe-tabla-stock .pe-col-prod{white-space:normal;line-height:1.25;min-width:150px}
   #pe-tabla-stock .pe-col-cod{font-size:11.5px;color:var(--muted)}
+  #pe-tabla-stock .pe-m2-ver{font-size:11px;font-weight:700;margin-top:2px;white-space:normal}
   #pe-tabla-stock .pe-m2-sub{font-size:10px;color:var(--muted);font-weight:400}
 
   /* Topes de estacionamiento (08/09): 10 columnas con inputs/select adentro — mismo achique de
@@ -1145,7 +1146,7 @@
       <section>
         <h2><span class="dot" style="background:var(--red)"></span>Stock y faltantes</h2>
         <div class="asof" id="pe-stock-asof"></div>
-        <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
+        <div style="margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"><label style="font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:6px">¿Cuántos m² querés vender? <input type="number" min="0" step="1" id="pe-m2-consulta" placeholder="ej. 60" style="width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:8px"></label></div>
         <div class="tbl-wrap"><table id="pe-tabla-stock" class="pe-tbl-planilla"></table></div>
         <div id="pe-bases-2h" style="margin-top:10px"></div>
         <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. El (físico − comprometido) se separa en dos columnas: <b>Falta fabricar</b> (rojo) = lo vendido que supera al físico, o sea lo que hay que fabricar; y <b>Disponible para vender</b> = el sobrante, cuando da positivo. <b>FALTANTE</b> (rojo) = hay algo para fabricar; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En secado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>En secado ya vendidos</b> = unidades que ya están vendidas y esperan que termine de secar su lote: <b>no es un faltante</b>, se resuelve solo cuando seca (la fecha está en la columna En secado). Si falta de verdad, lo marca en rojo la columna Falta fabricar. <b>m² p/ vender</b> = lo que se puede entregar YA (seco − comprometido) pasado a metros cuadrados (solo losetas y greens; los topes, el listón y el cordón se venden por unidad o metro lineal). Las unidades por m² se cargan en Base de Datos → Productos.</p>
@@ -18552,6 +18553,7 @@ function buildFilterTable(cfg){
     // 100 m² y entero de ahí para arriba, que es como se cotiza.
     const nm2 = v => (v||0).toLocaleString('es-AR',{minimumFractionDigits:0, maximumFractionDigits: Math.abs(v)<100?1:0});
     const filas=activos().map(p=>({p, s:stockDe(p)}));
+    const inM2 = $('pe-m2-consulta'); const m2Pedido = inM2 ? Math.max(0, num(inM2.value)) : 0;
     let rows=filas;
     if(q){ const s=q.toLowerCase(); rows=rows.filter(f=>(f.p.nombre+' '+f.p.codigo).toLowerCase().includes(s)); }
     rows.sort((a,b)=>a.s.dispReal-b.s.dispReal);
@@ -18566,7 +18568,7 @@ function buildFilterTable(cfg){
     // (físico) diga OK porque el lote todavía está secando.
     const rpS = window.__resumenProduccion ? window.__resumenProduccion() : null;
     const vendPor = {}; (rpS && Array.isArray(rpS.porProducto) ? rpS.porProducto : []).forEach(x=>{ vendPor[x.k]=x; });
-    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Cuánto hay que fabricar: lo vendido que supera al físico (físico − comprometido, cuando da negativo)">Falta fabricar</th><th class="num" title="Físico − comprometido, cuando da positivo: lo que queda libre contando lo que está secando">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden vender hoy = P/ vender ÷ unidades por m². Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
+    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Cuánto hay que fabricar: lo vendido que supera al físico (físico − comprometido, cuando da negativo)">Falta fabricar</th><th class="num" title="Físico − comprometido, cuando da positivo: lo que queda libre contando lo que está secando">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden entregar HOY (seco − comprometido, ÷ unidades por m²). Debajo: lo que habrá con lo que está secando. Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
     if(!rows.length) html+='<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
       const v = vendPor[s.k] || null;
@@ -18578,8 +18580,24 @@ function buildFilterTable(cfg){
       const uxm2 = num(p.unidadesPorM2);
       const m2v = (uxm2>0 && v) ? v.disponible/uxm2 : null;   // lo que se puede vender hoy
       const m2f = (uxm2>0) ? s.dispReal/uxm2 : null;          // el físico − comprometido, de respaldo
-      const m2Cel = m2v===null ? '<span style="color:var(--muted);font-weight:400">—</span>'
-        : nm2(m2v)+' m²'+((m2f!==null && Math.abs(m2f-m2v)>=0.05) ? '<div class="pe-m2-sub">físico '+nm2(m2f)+' m²</div>' : '');
+      // 23/10 (Marcelo: "lo que necesito saber rápido es si tengo para vender 60 m² de LC40 o LC60"):
+      // la celda dice primero lo que se puede entregar HOY (nunca negativo: lo vendido que espera su lote
+      // no es un faltante de m²) y debajo lo que habrá con lo que está secando y desde cuándo. Con el
+      // casillero "¿cuántos m²?" lleno, agrega el veredicto para ESE producto.
+      const m2Hoy = m2v===null ? null : Math.max(0, m2v);
+      let m2Sub = '', m2Ver = '', m2Ok = null;
+      if(m2v!==null){
+        const lotes = (s.lotes||[]).slice().sort((a,b)=>String(a.el)<String(b.el)?-1:1);
+        const totalConSecado = (m2f!==null) ? Math.max(0,m2f) : m2Hoy;
+        if(totalConSecado - m2Hoy >= 0.05) m2Sub = '<div class="pe-m2-sub">con lo que seca: '+nm2(totalConSecado)+' m²'+(lotes[0]?' (desde '+fmtF(lotes[0].el)+')':'')+'</div>';
+        if(m2Pedido>0){
+          if(m2Hoy>=m2Pedido){ m2Ok='si'; m2Ver='<div class="pe-m2-ver" style="color:var(--green)">✓ alcanza hoy</div>'; }
+          else { let acum=m2v*uxm2, desde=null; for(const l of lotes){ acum+=num(l.cantidad); if(acum/uxm2>=m2Pedido){ desde=l.el; break; } }
+            if(desde){ m2Ok='luego'; m2Ver='<div class="pe-m2-ver" style="color:var(--amber)">⏳ alcanza desde '+fmtF(desde)+'</div>'; }
+            else { m2Ok='no'; m2Ver='<div class="pe-m2-ver" style="color:var(--red)">✗ no alcanza (faltan fabricar '+nm2(Math.max(0,m2Pedido-totalConSecado))+' m²)</div>'; } }
+        }
+      }
+      const m2Cel = m2v===null ? '<span style="color:var(--muted);font-weight:400">—</span>' : nm2(m2Hoy)+' m² hoy'+m2Sub+m2Ver;
       /* "En secado ya vendidos" (17/09, pedido de Marcelo — reemplaza a "P/ vender"): la columna vieja
          mostraba secado − comprometido, y en un tope con el lote secando daba −144 en ROJO. Parecía un
          faltante y no lo era: eran 144 unidades vendidas esperando que su lote termine de secar, algo
@@ -18605,7 +18623,7 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td>'+
         // data-sortval numérico: sin esto __ordenable leería "219,9 m² físico 165 m²" y ordenaría
         // cualquier cosa. Los que no se venden por m² van a -1, así quedan al final.
-        '<td class="num pe-col-m2" data-label="m² p/ vender" data-sortval="'+(m2v===null?-1:m2v)+'" style="color:'+colV+';font-weight:700">'+m2Cel+'</td></tr>'; });
+        '<td class="num pe-col-m2" data-label="m² p/ vender" data-sortval="'+(m2v===null?-1:m2Hoy)+'" style="color:'+(m2Ok==='si'?'var(--green)':m2Ok==='no'?'var(--red)':colV)+';font-weight:700">'+m2Cel+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · Falta fabricar = lo vendido que supera al físico · Disponible para vender = el sobrante (físico − comprometido) · En secado ya vendidos = lo vendido que espera que seque su lote';
     // Indicador de bases de doble hierro (criterio de Marcelo): pallets de LC60 = físico ÷ 70 (el
@@ -21065,6 +21083,7 @@ function buildFilterTable(cfg){
   $('pe-ped-nuevo').onclick=()=>openPed(null);
   { const pb=$('pe-programa'); if(pb) pb.onclick=programaTransportista; }
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
+  if($('pe-m2-consulta')) $('pe-m2-consulta').addEventListener('input',()=>render());
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
   [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
