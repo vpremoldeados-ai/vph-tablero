@@ -9432,7 +9432,7 @@ function buildFilterTable(cfg){
     // El flete que se le cotizó al lead (forma de entrega + pallets a cobrar) entra como un renglón más,
     // igual que en el presupuesto. Antes la venta nacía SIN él: había que acordarse de agregarlo a mano,
     // y si no, se entregaba el envío sin cobrarlo.
-    const fl = fleteDeOrigen(v.items, lead.zona, lead.palletsFlete, v.listaPrecios);
+    const fl = fleteDeOrigen(v.items, lead.zona, lead.palletsFlete, v.listaPrecios, lead.precioFlete);
     if(fl) v.items.push(fl);
     sincronizarSinFacturar(v);   // sin facturar → "Sin factura" + IVA X, aunque el lead traiga otra condición
     openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;   // el lead solo pasa a "confirmado" si la venta se guarda de verdad
@@ -12127,10 +12127,12 @@ function buildFilterTable(cfg){
   // Cotiza el flete desde otro módulo (lo usa el CRM para el detalle en vivo del lead).
   // items: [{desc, codigo, cant}] → {pallets, costo, kg, label, precioPallet, palletsAuto, manual}
   // palletsManual (opcional): pallets cargados a mano; sin él la cotización es la automática de siempre.
-  window.__fleteCotizar = (items, zona, palletsManual)=>{ const f=calcFlete(items, zona);
+  window.__fleteCotizar = (items, zona, palletsManual, precioManual)=>{ const f=calcFlete(items, zona);
     const pallets=palletsFleteDe({palletsFlete:palletsManual}, f);
-    return Object.assign({}, f, {pallets, costo:zonaCosto(zona)*pallets, palletsAuto:f.pallets,
-      manual:pallets!==f.pallets, label:zonaLabel(zona), precioPallet:zonaCosto(zona)}); };
+    const precio=precioPalletDe(zona, precioManual);   // el cargado a mano en el lead, o el de la zona
+    return Object.assign({}, f, {pallets, costo:precio*pallets, palletsAuto:f.pallets,
+      manual:pallets!==f.pallets, label:zonaLabel(zona), precioPallet:precio,
+      precioZona:zonaCosto(zona), precioManual:precio!==zonaCosto(zona)}); };
   // Renglón "Flete" listo para insertar en OTRO comprobante (lo usa Ventas al convertir un presupuesto
   // o un lead en venta: hasta el 05/08 la venta nacía sin el flete que se le había presupuestado).
   // `items` son los renglones SIN el flete. null si esa zona no cobra flete.
@@ -12741,6 +12743,7 @@ function buildFilterTable(cfg){
     p.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
     p.leadUid = lead._uid||'';   // vínculo con el lead que lo originó: el CRM lo usa para mostrar el monto cotizado
     p.palletsFlete = Math.round(num(lead.palletsFlete))||0;   // pallets armados a mano en el lead (0 = automático)
+    p.precioFlete = num(lead.precioFlete)>0 ? num(lead.precioFlete) : 0;   // precio por pallet cargado a mano en el lead (0 = el de la zona)
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     // Cantidad cargada en el lead ya incluye el 5% de recortes (CRM, recalcUnidades) — se aclara acá para que el cliente vea por qué el número no es el m² × u/m² "justo".
@@ -14924,7 +14927,7 @@ function buildFilterTable(cfg){
 
   // ---------- Form ----------
   let editing=null, estadoAlAbrir=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'', pago:'A confirmar', lugar:'', domicilioFacturacion:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'', pago:'A confirmar', lugar:'', domicilioFacturacion:'', zona:'', palletsFlete:0, precioFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); estadoAlAbrir = l ? (l.estado||'nuevo') : null; editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -14970,7 +14973,7 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn" id="cf-comparativo" title="Generar PDF comparativo de 4 modelos para este cliente">📋 Comparativo</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona') drawFleteBox(); }); });
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona'){ editing.precioFlete=0; drawFleteBox(); } }); });   // al cambiar de zona se descarta el precio a mano: era de OTRA zona
     // ---- Qué factura le va a corresponder (06/10, pedido de Marcelo): consumidor final → B, RI → A.
     // Se muestra debajo de Cond. IVA y al tipear el CUIT/DNI se deduce la condición (empresa → A,
     // DNI → B); con un CUIT de persona sin historial solo se avisa. Es la condición que después
@@ -15144,42 +15147,61 @@ function buildFilterTable(cfg){
     updateTot(); }
   function updateTot(){ const tot=editing.items.reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
     const b=$('cf-tot-box'); if(b) b.innerHTML = tot>0 ? 'Total ítems (con IVA): <b>'+money(tot)+'</b>' : ''; }
-  // Detalle del flete en vivo: pallets que ocupan las unidades pedidas × precio de la forma de entrega elegida.
+  // Renglón de FLETE del lead, en vivo: pallets que ocupan las unidades pedidas × precio por pallet de la forma
+  // de entrega elegida. Los dos números son editables (pallets a cobrar y precio por pallet con IVA): el precio
+  // de zona está estandarizado pero a veces cambia por viaje. Lo que se cargue acá viaja al presupuesto y a la
+  // venta (`palletsFlete` / `precioFlete`, los mismos campos que usa Presupuestos). Vacío = automático / de la zona.
   function drawFleteBox(){
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
     if(!zona){ box.innerHTML='<span style="color:var(--muted)">Elegí la <b>forma de entrega</b> arriba para calcular el flete.</span>'; return; }
     if(!window.__fleteCotizar){ box.innerHTML=''; return; }
     const items=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
-    const f=window.__fleteCotizar(items, zona, editing.palletsFlete);
+    const f=window.__fleteCotizar(items, zona, editing.palletsFlete, editing.precioFlete);
     const cab='🚚 <b>'+esc(f.label||'')+'</b>';
+    if(zona==='retiro'){ box.innerHTML=cab+' · <b style="color:var(--green)">sin flete</b>'; return; }
     if(!items.some(it=>it.cant>0)){ box.innerHTML=cab+' · <span style="color:var(--muted)">cargá productos con cantidad para calcular el flete</span>'; return; }
-    if(f.precioPallet<=0){ box.innerHTML=cab+' · <b style="color:var(--green)">sin flete</b> <span style="color:var(--muted)">('+f.pallets+' pallet'+(f.pallets!==1?'s':'')+' · '+num(f.kg).toLocaleString('es-AR')+' kg)</span>'; return; }
-    box.innerHTML=cab+' · <span id="cf-flete-det">'+f.pallets+' pallet'+(f.pallets!==1?'s':'')+'</span> × '+money(f.precioPallet)+' = <b id="cf-flete-costo" style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+    const totItems=(editing.items||[]).reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
+    const inpSt='padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700';
+    box.innerHTML=cab+' · <b>Flete por pallet</b>'+
       // Pallets a cobrar editables: la cuenta automática llena pallets completos, pero en la fábrica se
       // acomodan distinto (155 losetas en 2 pallets de 80 y 75, en vez de 3). Vacío o 0 = automático.
-      '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">'+
         '<label for="cf-pallets" style="font-size:11.5px;color:var(--muted);font-weight:700">Pallets a cobrar</label>'+
-        '<input id="cf-pallets" inputmode="numeric" value="'+esc(f.pallets)+'" style="width:58px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700">'+
-        (f.manual?'<button type="button" class="cmp-rowbtn" id="cf-pallets-auto">↺ Volver al automático ('+f.palletsAuto+')</button>':'')+
+        '<input id="cf-pallets" inputmode="numeric" value="'+esc(f.pallets)+'" style="width:58px;'+inpSt+'">'+
+        '<span style="color:var(--muted)">×</span>'+
+        '<label for="cf-precio-flete" style="font-size:11.5px;color:var(--muted);font-weight:700">Precio por pallet (con IVA)</label>'+
+        '<input id="cf-precio-flete" inputmode="decimal" value="'+(f.precioPallet>0?esc(String(Math.round(f.precioPallet*100)/100).replace('.',',')):'')+'" placeholder="precio" style="width:110px;'+inpSt+'">'+
+        '<span style="color:var(--muted)">=</span> <b id="cf-flete-costo" style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+        (f.manual?'<button type="button" class="cmp-rowbtn" id="cf-pallets-auto">↺ Pallets automáticos ('+f.palletsAuto+')</button>':'')+
+        (f.precioManual?'<button type="button" class="cmp-rowbtn" id="cf-precio-auto">↺ Precio de la zona ('+(f.precioZona>0?money(f.precioZona):'$0')+')</button>':'')+
       '</div>'+
       (f.manual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Pallets armados a mano. Por cantidad y peso darían <b>'+f.palletsAuto+'</b>: si cambiás los productos, revisá que este número siga estando bien.</div>':'')+
+      (f.precioManual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Precio por pallet cargado a mano para este lead (el de la zona es '+(f.precioZona>0?money(f.precioZona):'$0')+'). Se usa tal cual en el presupuesto y en la venta.</div>':'')+
+      (f.precioPallet<=0?'<div style="font-size:10.5px;color:#c0392b;margin-top:2px"><b>Esta forma de entrega no tiene precio cargado:</b> escribilo en «Precio por pallet» para que se cobre el flete.</div>':'')+
+      '<div id="cf-flete-total" style="margin-top:6px;font-size:13px">'+(f.costo>0?'Total con flete (con IVA): <b>'+money(totItems+f.costo)+'</b>':'')+'</div>'+
       '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Peso total '+num(f.kg).toLocaleString('es-AR')+' kg · el flete se consolida entre productos (tope '+num(window.__param('kgPorPallet',1500)).toLocaleString('es-AR')+' kg por pallet). Se agrega como renglón al generar el presupuesto.</div>';
+    // Mientras se tipea se actualizan SOLO los números (mismo motivo que en la tabla de ítems: redibujar la
+    // caja entera destruiría el input y no se podría escribir un número de varios dígitos).
+    const refrescar=()=>{
+      const pl = editing.palletsFlete>0 ? editing.palletsFlete : f.palletsAuto;
+      const pr = num(editing.precioFlete)>0 ? num(editing.precioFlete) : f.precioZona;
+      const c=$('cf-flete-costo'), t=$('cf-flete-total');
+      if(c) c.textContent = money(pl*pr);
+      if(t) t.innerHTML = pl*pr>0 ? 'Total con flete (con IVA): <b>'+money(totItems+pl*pr)+'</b>' : '';
+    };
     const inp=$('cf-pallets');
     if(inp){
-      // Mientras se tipea se actualizan SOLO los dos números (mismo motivo que en la tabla de ítems:
-      // redibujar la caja entera destruiría el input y no se podría escribir un número de 2 dígitos).
-      inp.addEventListener('input',()=>{
-        const v=Math.max(0, Math.round(num(inp.value)));
-        editing.palletsFlete=v;
-        const pl = v>0 ? v : f.palletsAuto;
-        const d=$('cf-flete-det'), c=$('cf-flete-costo');
-        if(d) d.textContent = pl+' pallet'+(pl!==1?'s':'');
-        if(c) c.textContent = money(pl*f.precioPallet);
-      });
+      inp.addEventListener('input',()=>{ editing.palletsFlete=Math.max(0, Math.round(num(inp.value))); refrescar(); });
       inp.addEventListener('change', drawFleteBox);   // al salir del campo se repinta con el aviso/botón
     }
+    const ip=$('cf-precio-flete');
+    if(ip){
+      ip.addEventListener('input',()=>{ editing.precioFlete = num(ip.value)>0 ? num(ip.value) : 0; refrescar(); });
+      ip.addEventListener('change', drawFleteBox);
+    }
     if($('cf-pallets-auto')) $('cf-pallets-auto').onclick=()=>{ editing.palletsFlete=0; drawFleteBox(); };
+    if($('cf-precio-auto')) $('cf-precio-auto').onclick=()=>{ editing.precioFlete=0; drawFleteBox(); };
   }
   function drawSegui(){
     const actividades=(editing.seguimiento||[]).filter(Boolean).slice().reverse();
