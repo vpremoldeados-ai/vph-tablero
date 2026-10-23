@@ -12080,6 +12080,7 @@ function buildFilterTable(cfg){
     (items||[]).forEach(it=>{ if(esItemFlete(it)) return; const cant=num(it.cant); if(cant<=0) return;
       const pr=(it.codigo&&prods.find(p=>ncp(p.codigo)===ncp(it.codigo)))||prods.find(p=>ncp(p.nombre)===ncp(it.desc));
       if(!it.desc && !it.codigo) return;
+      if(pr && String(pr.tipo||'')==='Servicio') return;   // un servicio (pintado) no ocupa lugar en el camión: sin esto contaba 1 pallet de más
       hay=true;
       const ud=pr?num(pr.udPorPallet):0;
       frac += ud>0 ? cant/ud : 1;   // sin udPorPallet cargado: se asume 1 pallet por ítem (conservador)
@@ -12608,10 +12609,11 @@ function buildFilterTable(cfg){
       if(precioPalletDe(editing.zona,editing.precioFlete)>0 && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.');
     });
   }
+  const esFleteProd=p=>/^FLE/i.test(String(p.codigo||'')) || /^flete/i.test(String(p.nombre||''));
   function drawPicker(){
     const cont=$('pf-picker'); if(!cont) return;
     const lista=editing.listaPrecios;
-    const prods=catProductos().filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    const prods=catProductos().filter(p=>p.activo!==false && !esFleteProd(p));   // los Servicios (ej. PINTVA) SÍ se ofrecen; solo el flete va por la zona
     if(!prods.length){ cont.innerHTML='<span style="font-size:12px;color:var(--muted)">Sin productos en el catálogo (Base de Datos → Productos).</span>'; return; }
     const enUso=new Set(editing.items.map(it=>String(it.codigo||'').trim().toUpperCase()).filter(Boolean));
     cont.innerHTML = prods.map((p,i)=>{
@@ -15090,10 +15092,11 @@ function buildFilterTable(cfg){
     }
     drawItems();
   }
+  const esFleteProd=p=>/^FLE/i.test(String(p.codigo||'')) || /^flete/i.test(String(p.nombre||''));
   function drawPicker(){
     const cont=$('cf-picker'); if(!cont) return;
     const lista=editing.listaPrecios;
-    const prods=catProd().filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    const prods=catProd().filter(p=>p.activo!==false && !esFleteProd(p));   // ídem Presupuestos: PINTVA (Servicio) se ofrece
     if(!prods.length){ cont.innerHTML='<span style="font-size:12px;color:var(--muted)">Sin productos en el catálogo (Base de Datos → Productos).</span>'; return; }
     const enUso=new Set(editing.items.map(it=>String(it.codigo||'').trim().toUpperCase()).filter(Boolean));
     cont.innerHTML = prods.map((p,i)=>{
