@@ -11666,6 +11666,8 @@ function buildFilterTable(cfg){
 
   // Para que Costos Fijos y otros disparen el recálculo de la caja al cambiar
   window.__cajaRefresh = ()=>{ try{ render(); if(window.__finanzasRefresh) window.__finanzasRefresh(); }catch(e){} };
+  // Los previstos de sueldos usan el día de pago de Parámetros, que puede llegar DESPUÉS del primer dibujo.
+  window.addEventListener('vph-params', ()=>{ try{ render(); }catch(e){} });
   // El disponible real de hoy, para que Finanzas muestre el MISMO número que Caja (una sola fuente de verdad).
   // Devuelve null si todavía no se declaró ningún saldo.
   window.__cajaDisponible = ()=>{ try{ const d=disponibleHoy(); return d?{total:d.total, base:d.base, ent:d.ent, sal:d.sal, desde:d.desde}:null; }catch(e){ return null; } };
@@ -21184,7 +21186,8 @@ function buildFilterTable(cfg){
   function startSync(){ if(!puede()) return; sub('vph_productos',a=>prods=a); sub('vph_produccion',a=>prod=a); sub('vph_entregas',a=>ent=a);
     // Al crearse o borrarse un pedido, Ventas tiene que repintar: ahí se muestra si la venta ya se
     // pasó a Producción, y sin este aviso seguiría marcando como pendiente una que ya se pasó.
-    sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar(); });
+    sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar();
+      if(window.__cajaRefresh) window.__cajaRefresh(); });   // la fecha de cobro de cada venta (Caja) sale de la entrega
     sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a);
     // Los feriados los consumen OTROS módulos (e-cheqs, VIUMI, tarjeta) a través de __esFeriado, así
     // que al llegar la lista hay que avisarles: si no, la primera pantalla que se abra calcula sin
