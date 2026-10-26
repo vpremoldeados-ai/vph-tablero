@@ -395,6 +395,7 @@
   #pe-tabla-stock th{font-size:10.5px;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:bottom}
   #pe-tabla-stock .pe-col-prod{white-space:normal;line-height:1.25;min-width:150px}
   #pe-tabla-stock .pe-col-cod{font-size:11.5px;color:var(--muted)}
+  #pe-tabla-stock .pe-m2-ver{font-size:11px;font-weight:700;margin-top:2px;white-space:normal}
   #pe-tabla-stock .pe-m2-sub{font-size:10px;color:var(--muted);font-weight:400}
 
   
@@ -1074,6 +1075,12 @@ window.__demoSeed = function () {
    
   window.__alertSources = window.__alertSources || [];
   window.__refreshAlertas = window.__refreshAlertas || function(){};    
+   
+   
+   
+  window.__enCajita = function(codigo, nombre){
+    return /^(ANC|KNIV)/i.test(String(codigo||'').trim()) || /anclaj|kit de nivelaci/i.test(String(nombre||''));
+  };
 
    
    
@@ -1611,7 +1618,7 @@ window.__demoSeed = function () {
       <section>
         <h2><span class="dot" style="background:var(--red)"></span>Stock y faltantes</h2>
         <div class="asof" id="pe-stock-asof"></div>
-        <div style="margin-bottom:10px"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"></div>
+        <div style="margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input type="text" class="search-box" id="pe-buscar" placeholder="Buscar producto..." style="margin-left:0"><label style="font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:6px">¿Cuántos m² querés vender? <input type="number" min="0" step="1" id="pe-m2-consulta" placeholder="ej. 60" style="width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:8px"></label></div>
         <div class="tbl-wrap"><table id="pe-tabla-stock" class="pe-tbl-planilla"></table></div>
         <div id="pe-bases-2h" style="margin-top:10px"></div>
         <p class="note"><b>Físico</b> = inicial + producido − entregado (todo lo que hay en planta). <b>Comprometido</b> = pedidos pendientes de entregar. El (físico − comprometido) se separa en dos columnas: <b>Falta fabricar</b> (rojo) = lo vendido que supera al físico, o sea lo que hay que fabricar; y <b>Disponible para vender</b> = el sobrante, cuando da positivo. <b>FALTANTE</b> (rojo) = hay algo para fabricar; <b>Bajo mínimo</b> (ámbar) = por debajo del stock mínimo (se carga en Base de Datos → Productos). <b>En secado</b> = fabricado hace menos de 10 días: cuenta en el físico, pero la <b>fecha</b> en que se puede entregar la maneja Sofía al cargar la venta o el presupuesto. <b>En secado ya vendidos</b> = unidades que ya están vendidas y esperan que termine de secar su lote: <b>no es un faltante</b>, se resuelve solo cuando seca (la fecha está en la columna En secado). Si falta de verdad, lo marca en rojo la columna Falta fabricar. <b>m² p/ vender</b> = lo que se puede entregar YA (seco − comprometido) pasado a metros cuadrados (solo losetas y greens; los topes, el listón y el cordón se venden por unidad o metro lineal). Las unidades por m² se cargan en Base de Datos → Productos.</p>
@@ -7331,7 +7338,12 @@ function buildFilterTable(cfg){
      
      
      
-    try{ fbDb = fsM.initializeFirestore(fbApp, { localCache: fsM.persistentLocalCache({ tabManager: fsM.persistentMultipleTabManager() }) }); }
+     
+     
+     
+     
+    if(cacheEnMemoria()){ console.warn('Esta pestaña usa Firestore sin caché compartida (la caché de pestañas no respondió).'); fbDb = fsM.initializeFirestore(fbApp, {}); }
+    else try{ fbDb = fsM.initializeFirestore(fbApp, { localCache: fsM.persistentLocalCache({ tabManager: fsM.persistentMultipleTabManager() }) }); }
     catch(e){ console.warn('Sin caché persistente de Firestore, sigo sin caché:', e && e.message); fbDb = fsM.getFirestore(fbApp); }
     const fbStorage = stM ? stM.getStorage(fbApp) : null;
     window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth, ST:stM, storage:fbStorage };    
@@ -7380,7 +7392,21 @@ function buildFilterTable(cfg){
     return false;
   }
    
-  async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; } else { window.__rol='sinacceso'; window.__rolNombre=''; } }catch(e){ window.__rol='sinacceso'; window.__rolNombre=''; } }
+   
+   
+   
+  const ROL_ESPERA_MS = 12000, CLAVE_CACHE_MEM = 'vph_cache_memoria_v1';
+  function cacheEnMemoria(){ try{ return sessionStorage.getItem(CLAVE_CACHE_MEM)==='1'; }catch(e){ return false; } }
+  function recargarSinCache(){ try{ sessionStorage.setItem(CLAVE_CACHE_MEM,'1'); }catch(e){ return false; } location.reload(); return true; }
+  async function leerRol(u){
+    let snap;
+    try{ snap=await Promise.race([ FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('el rol no contestó en '+ROL_ESPERA_MS/1000+' s')), ROL_ESPERA_MS)) ]); }
+    catch(e){ console.warn('No se pudo leer el rol:', e && e.message);
+      if(!cacheEnMemoria() && recargarSinCache()) return new Promise(()=>{});    
+      window.__rol='sinacceso'; window.__rolNombre=''; return; }
+    if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; }
+    else { window.__rol='sinacceso'; window.__rolNombre=''; } }
   async function loadReportes(){
     try{
       const snap = await FS.getDoc(FS.doc(fbDb,'vph_reportes','dashboard'));
@@ -9841,7 +9867,7 @@ function buildFilterTable(cfg){
      
      
      
-    const fl = fleteDeOrigen(v.items, lead.zona, lead.palletsFlete, v.listaPrecios);
+    const fl = fleteDeOrigen(v.items, lead.zona, lead.palletsFlete, v.listaPrecios, lead.precioFlete);
     if(fl) v.items.push(fl);
     sincronizarSinFacturar(v);    
     openForm(v); _onSaved = (typeof onSaved==='function') ? onSaved : null;    
@@ -12467,6 +12493,8 @@ function buildFilterTable(cfg){
     (items||[]).forEach(it=>{ if(esItemFlete(it)) return; const cant=num(it.cant); if(cant<=0) return;
       const pr=(it.codigo&&prods.find(p=>ncp(p.codigo)===ncp(it.codigo)))||prods.find(p=>ncp(p.nombre)===ncp(it.desc));
       if(!it.desc && !it.codigo) return;
+      if(pr && String(pr.tipo||'')==='Servicio') return;    
+      if(window.__enCajita && window.__enCajita(it.codigo||(pr&&pr.codigo), (pr&&pr.nombre)||it.desc)) return;    
       hay=true;
       const ud=pr?num(pr.udPorPallet):0;
       frac += ud>0 ? cant/ud : 1;    
@@ -12514,10 +12542,12 @@ function buildFilterTable(cfg){
    
    
    
-  window.__fleteCotizar = (items, zona, palletsManual)=>{ const f=calcFlete(items, zona);
+  window.__fleteCotizar = (items, zona, palletsManual, precioManual)=>{ const f=calcFlete(items, zona);
     const pallets=palletsFleteDe({palletsFlete:palletsManual}, f);
-    return Object.assign({}, f, {pallets, costo:zonaCosto(zona)*pallets, palletsAuto:f.pallets,
-      manual:pallets!==f.pallets, label:zonaLabel(zona), precioPallet:zonaCosto(zona)}); };
+    const precio=precioPalletDe(zona, precioManual);    
+    return Object.assign({}, f, {pallets, costo:precio*pallets, palletsAuto:f.pallets,
+      manual:pallets!==f.pallets, label:zonaLabel(zona), precioPallet:precio,
+      precioZona:zonaCosto(zona), precioManual:precio!==zonaCosto(zona)}); };
    
    
    
@@ -12993,10 +13023,11 @@ function buildFilterTable(cfg){
       if(precioPalletDe(editing.zona,editing.precioFlete)>0 && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.');
     });
   }
+  const esFleteProd=p=>/^FLE/i.test(String(p.codigo||'')) || /^flete/i.test(String(p.nombre||''));
   function drawPicker(){
     const cont=$('pf-picker'); if(!cont) return;
     const lista=editing.listaPrecios;
-    const prods=catProductos().filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    const prods=catProductos().filter(p=>p.activo!==false && !esFleteProd(p));    
     if(!prods.length){ cont.innerHTML='<span style="font-size:12px;color:var(--muted)">Sin productos en el catálogo (Base de Datos → Productos).</span>'; return; }
     const enUso=new Set(editing.items.map(it=>String(it.codigo||'').trim().toUpperCase()).filter(Boolean));
     cont.innerHTML = prods.map((p,i)=>{
@@ -13128,6 +13159,7 @@ function buildFilterTable(cfg){
     p.domicilioEntrega = lead.lugar||'';    
     p.leadUid = lead._uid||'';    
     p.palletsFlete = Math.round(num(lead.palletsFlete))||0;    
+    p.precioFlete = num(lead.precioFlete)>0 ? num(lead.precioFlete) : 0;    
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
      
@@ -15286,7 +15318,7 @@ function buildFilterTable(cfg){
 
    
   let editing=null, estadoAlAbrir=null;
-  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'', pago:'A confirmar', lugar:'', domicilioFacturacion:'', zona:'', palletsFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
+  function blank(){ return { fecha:hoyISO, cliente:'', telefono:'', email:'', cuit:'', condIva:'A', categoria:'MINORISTA', listaPrecios:window.__listaDefecto.minorista, origen:'', pago:'A confirmar', lugar:'', domicilioFacturacion:'', zona:'', palletsFlete:0, precioFlete:0, estado:'nuevo', monto:0, m2:0, items:[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}], seguimiento:[], nota:'', proximoSeguimiento:'', contactado:false }; }
   function openForm(l){ editing = l?JSON.parse(JSON.stringify(l)):blank(); estadoAlAbrir = l ? (l.estado||'nuevo') : null; editing.listaPrecios=normLista(editing.listaPrecios); if(!editing.items||!editing.items.length)editing.items=[{producto:'',cantidad:1,precioUnit:0,descPct:0,iva:'21'}]; if(!editing.seguimiento)editing.seguimiento=[]; $('crm-form-title').textContent=l?'Editar Lead':'Nuevo Lead'; drawForm(); $('crm-modal').classList.add('open'); }
   function closeForm(){ $('crm-modal').classList.remove('open'); editing=null; }
   function fld(label,cls,inner){ return '<div class="cmp-field '+(cls||'')+'"><label>'+label+'</label>'+inner+'</div>'; }
@@ -15332,7 +15364,7 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn" id="cf-comparativo" title="Generar PDF comparativo de 4 modelos para este cliente">📋 Comparativo</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona') drawFleteBox(); }); });
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona'){ editing.precioFlete=0; drawFleteBox(); } }); });    
      
      
      
@@ -15449,10 +15481,11 @@ function buildFilterTable(cfg){
     }
     drawItems();
   }
+  const esFleteProd=p=>/^FLE/i.test(String(p.codigo||'')) || /^flete/i.test(String(p.nombre||''));
   function drawPicker(){
     const cont=$('cf-picker'); if(!cont) return;
     const lista=editing.listaPrecios;
-    const prods=catProd().filter(p=>p.activo!==false && (p.tipo||'')!=='Servicio');
+    const prods=catProd().filter(p=>p.activo!==false && !esFleteProd(p));    
     if(!prods.length){ cont.innerHTML='<span style="font-size:12px;color:var(--muted)">Sin productos en el catálogo (Base de Datos → Productos).</span>'; return; }
     const enUso=new Set(editing.items.map(it=>String(it.codigo||'').trim().toUpperCase()).filter(Boolean));
     cont.innerHTML = prods.map((p,i)=>{
@@ -15507,41 +15540,60 @@ function buildFilterTable(cfg){
   function updateTot(){ const tot=editing.items.reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
     const b=$('cf-tot-box'); if(b) b.innerHTML = tot>0 ? 'Total ítems (con IVA): <b>'+money(tot)+'</b>' : ''; }
    
+   
+   
+   
   function drawFleteBox(){
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
     if(!zona){ box.innerHTML='<span style="color:var(--muted)">Elegí la <b>forma de entrega</b> arriba para calcular el flete.</span>'; return; }
     if(!window.__fleteCotizar){ box.innerHTML=''; return; }
     const items=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
-    const f=window.__fleteCotizar(items, zona, editing.palletsFlete);
+    const f=window.__fleteCotizar(items, zona, editing.palletsFlete, editing.precioFlete);
     const cab='🚚 <b>'+esc(f.label||'')+'</b>';
+    if(zona==='retiro'){ box.innerHTML=cab+' · <b style="color:var(--green)">sin flete</b>'; return; }
     if(!items.some(it=>it.cant>0)){ box.innerHTML=cab+' · <span style="color:var(--muted)">cargá productos con cantidad para calcular el flete</span>'; return; }
-    if(f.precioPallet<=0){ box.innerHTML=cab+' · <b style="color:var(--green)">sin flete</b> <span style="color:var(--muted)">('+f.pallets+' pallet'+(f.pallets!==1?'s':'')+' · '+num(f.kg).toLocaleString('es-AR')+' kg)</span>'; return; }
-    box.innerHTML=cab+' · <span id="cf-flete-det">'+f.pallets+' pallet'+(f.pallets!==1?'s':'')+'</span> × '+money(f.precioPallet)+' = <b id="cf-flete-costo" style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+    const totItems=(editing.items||[]).reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
+    const inpSt='padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700';
+    box.innerHTML=cab+' · <b>Flete por pallet</b>'+
        
        
-      '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">'+
         '<label for="cf-pallets" style="font-size:11.5px;color:var(--muted);font-weight:700">Pallets a cobrar</label>'+
-        '<input id="cf-pallets" inputmode="numeric" value="'+esc(f.pallets)+'" style="width:58px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700">'+
-        (f.manual?'<button type="button" class="cmp-rowbtn" id="cf-pallets-auto">↺ Volver al automático ('+f.palletsAuto+')</button>':'')+
+        '<input id="cf-pallets" inputmode="numeric" value="'+esc(f.pallets)+'" style="width:58px;'+inpSt+'">'+
+        '<span style="color:var(--muted)">×</span>'+
+        '<label for="cf-precio-flete" style="font-size:11.5px;color:var(--muted);font-weight:700">Precio por pallet (con IVA)</label>'+
+        '<input id="cf-precio-flete" inputmode="decimal" value="'+(f.precioPallet>0?esc(String(Math.round(f.precioPallet*100)/100).replace('.',',')):'')+'" placeholder="precio" style="width:110px;'+inpSt+'">'+
+        '<span style="color:var(--muted)">=</span> <b id="cf-flete-costo" style="color:var(--blue);font-size:14px">'+money(f.costo)+'</b>'+
+        (f.manual?'<button type="button" class="cmp-rowbtn" id="cf-pallets-auto">↺ Pallets automáticos ('+f.palletsAuto+')</button>':'')+
+        (f.precioManual?'<button type="button" class="cmp-rowbtn" id="cf-precio-auto">↺ Precio de la zona ('+(f.precioZona>0?money(f.precioZona):'$0')+')</button>':'')+
       '</div>'+
       (f.manual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Pallets armados a mano. Por cantidad y peso darían <b>'+f.palletsAuto+'</b>: si cambiás los productos, revisá que este número siga estando bien.</div>':'')+
+      (f.precioManual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Precio por pallet cargado a mano para este lead (el de la zona es '+(f.precioZona>0?money(f.precioZona):'$0')+'). Se usa tal cual en el presupuesto y en la venta.</div>':'')+
+      (f.precioPallet<=0?'<div style="font-size:10.5px;color:#c0392b;margin-top:2px"><b>Esta forma de entrega no tiene precio cargado:</b> escribilo en «Precio por pallet» para que se cobre el flete.</div>':'')+
+      '<div id="cf-flete-total" style="margin-top:6px;font-size:13px">'+(f.costo>0?'Total con flete (con IVA): <b>'+money(totItems+f.costo)+'</b>':'')+'</div>'+
       '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Peso total '+num(f.kg).toLocaleString('es-AR')+' kg · el flete se consolida entre productos (tope '+num(window.__param('kgPorPallet',1500)).toLocaleString('es-AR')+' kg por pallet). Se agrega como renglón al generar el presupuesto.</div>';
+     
+     
+    const refrescar=()=>{
+      const pl = editing.palletsFlete>0 ? editing.palletsFlete : f.palletsAuto;
+      const pr = num(editing.precioFlete)>0 ? num(editing.precioFlete) : f.precioZona;
+      const c=$('cf-flete-costo'), t=$('cf-flete-total');
+      if(c) c.textContent = money(pl*pr);
+      if(t) t.innerHTML = pl*pr>0 ? 'Total con flete (con IVA): <b>'+money(totItems+pl*pr)+'</b>' : '';
+    };
     const inp=$('cf-pallets');
     if(inp){
-       
-       
-      inp.addEventListener('input',()=>{
-        const v=Math.max(0, Math.round(num(inp.value)));
-        editing.palletsFlete=v;
-        const pl = v>0 ? v : f.palletsAuto;
-        const d=$('cf-flete-det'), c=$('cf-flete-costo');
-        if(d) d.textContent = pl+' pallet'+(pl!==1?'s':'');
-        if(c) c.textContent = money(pl*f.precioPallet);
-      });
+      inp.addEventListener('input',()=>{ editing.palletsFlete=Math.max(0, Math.round(num(inp.value))); refrescar(); });
       inp.addEventListener('change', drawFleteBox);    
     }
+    const ip=$('cf-precio-flete');
+    if(ip){
+      ip.addEventListener('input',()=>{ editing.precioFlete = num(ip.value)>0 ? num(ip.value) : 0; refrescar(); });
+      ip.addEventListener('change', drawFleteBox);
+    }
     if($('cf-pallets-auto')) $('cf-pallets-auto').onclick=()=>{ editing.palletsFlete=0; drawFleteBox(); };
+    if($('cf-precio-auto')) $('cf-precio-auto').onclick=()=>{ editing.precioFlete=0; drawFleteBox(); };
   }
   function drawSegui(){
     const actividades=(editing.seguimiento||[]).filter(Boolean).slice().reverse();
@@ -18756,7 +18808,7 @@ function buildFilterTable(cfg){
        
        
        
-      if(String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase()==='ANC38' || /anclaj/i.test(String((pr&&pr.nombre)||it.producto||''))) return;
+      if(String(it.codigo||(pr&&pr.codigo)||'').trim().toUpperCase()==='ANC38' || window.__enCajita(it.codigo||(pr&&pr.codigo), (pr&&pr.nombre)||it.producto)) return;    
        
        
        
@@ -18871,6 +18923,7 @@ function buildFilterTable(cfg){
      
     const nm2 = v => (v||0).toLocaleString('es-AR',{minimumFractionDigits:0, maximumFractionDigits: Math.abs(v)<100?1:0});
     const filas=activos().map(p=>({p, s:stockDe(p)}));
+    const inM2 = $('pe-m2-consulta'); const m2Pedido = inM2 ? Math.max(0, num(inM2.value)) : 0;
     let rows=filas;
     if(q){ const s=q.toLowerCase(); rows=rows.filter(f=>(f.p.nombre+' '+f.p.codigo).toLowerCase().includes(s)); }
     rows.sort((a,b)=>a.s.dispReal-b.s.dispReal);
@@ -18885,8 +18938,8 @@ function buildFilterTable(cfg){
      
     const rpS = window.__resumenProduccion ? window.__resumenProduccion() : null;
     const vendPor = {}; (rpS && Array.isArray(rpS.porProducto) ? rpS.porProducto : []).forEach(x=>{ vendPor[x.k]=x; });
-    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Cuánto hay que fabricar: lo vendido que supera al físico (físico − comprometido, cuando da negativo)">Falta fabricar</th><th class="num" title="Físico − comprometido, cuando da positivo: lo que queda libre contando lo que está secando">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden vender hoy = P/ vender ÷ unidades por m². Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
-    if(!rows.length) html+='<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
+    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Cuánto hay que fabricar: lo vendido que supera al físico (físico − comprometido, cuando da negativo)">Falta fabricar</th><th class="num" title="Físico − comprometido, cuando da positivo: lo que queda libre contando lo que está secando">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-uhoy" title="Unidades que se pueden entregar HOY: lo que ya está seco menos lo comprometido (no cuenta lo que todavía está en secado)">Unidades para vender HOY</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden entregar HOY (seco − comprometido, ÷ unidades por m²). Debajo: lo que habrá con lo que está secando. Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
+    if(!rows.length) html+='<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
       const v = vendPor[s.k] || null;
       const colV = !v ? 'var(--muted)' : v.estadoVenta==='falta'?'var(--red)':v.estadoVenta==='bajo'?'var(--amber)':'var(--green)';
@@ -18897,8 +18950,26 @@ function buildFilterTable(cfg){
       const uxm2 = num(p.unidadesPorM2);
       const m2v = (uxm2>0 && v) ? v.disponible/uxm2 : null;    
       const m2f = (uxm2>0) ? s.dispReal/uxm2 : null;           
-      const m2Cel = m2v===null ? '<span style="color:var(--muted);font-weight:400">—</span>'
-        : nm2(m2v)+' m²'+((m2f!==null && Math.abs(m2f-m2v)>=0.05) ? '<div class="pe-m2-sub">físico '+nm2(m2f)+' m²</div>' : '');
+       
+       
+       
+       
+      const m2Hoy = m2v===null ? null : Math.max(0, m2v);
+      let m2Sub = '', m2Ver = '', m2Ok = null;
+      if(m2v!==null){
+        const lotes = (s.lotes||[]).slice().sort((a,b)=>(+new Date(a.el))-(+new Date(b.el)));    
+        const totalConSecado = (m2f!==null) ? Math.max(0,m2f) : m2Hoy;
+        if(totalConSecado - m2Hoy >= 0.05) m2Sub = '<div class="pe-m2-sub">con lo que seca: '+nm2(totalConSecado)+' m²'+(lotes[0]?' (desde '+fmtF(lotes[0].el)+(lotes.length>1 && fmtF(lotes[lotes.length-1].el)!==fmtF(lotes[0].el)?' hasta '+fmtF(lotes[lotes.length-1].el):'')+')':'')+'</div>';
+        if(m2Pedido>0){
+          if(m2Hoy>=m2Pedido){ m2Ok='si'; m2Ver='<div class="pe-m2-ver" style="color:var(--green)">✓ alcanza hoy</div>'; }
+          else { let acum=m2v*uxm2, desde=null; for(const l of lotes){ acum+=num(l.cantidad); if(acum/uxm2>=m2Pedido){ desde=l.el; break; } }
+            if(desde){ m2Ok='luego'; m2Ver='<div class="pe-m2-ver" style="color:var(--amber)">⏳ alcanza desde '+fmtF(desde)+'</div>'; }
+            else { m2Ok='no'; m2Ver='<div class="pe-m2-ver" style="color:var(--red)">✗ no alcanza (faltan fabricar '+nm2(Math.max(0,m2Pedido-totalConSecado))+' m²)</div>'; } }
+        }
+      }
+       
+      const uHoy = Math.max(0, v ? num(v.disponible) : num(s.curado) - num(s.comprometido));
+      const m2Cel = m2v===null ? '<span style="color:var(--muted);font-weight:400">—</span>' : nm2(m2Hoy)+' m² hoy'+m2Sub+m2Ver;
       
 
        
@@ -18919,7 +18990,8 @@ function buildFilterTable(cfg){
         '<td class="num" data-label="Mín" style="color:var(--muted)">'+(s.min>0?nf(s.min):'—')+'</td><td data-label="Estado">'+badge[s.estado]+'</td>'+
          
          
-        '<td class="num pe-col-m2" data-label="m² p/ vender" data-sortval="'+(m2v===null?-1:m2v)+'" style="color:'+colV+';font-weight:700">'+m2Cel+'</td></tr>'; });
+        '<td class="num pe-col-uhoy" data-label="Unidades para vender HOY" data-sortval="'+uHoy+'" style="color:'+(uHoy>0?colV:'var(--muted)')+';font-weight:'+(uHoy>0?800:400)+'">'+nf(uHoy)+'</td>'+
+        '<td class="num pe-col-m2" data-label="m² p/ vender" data-sortval="'+(m2v===null?-1:m2Hoy)+'" style="color:'+(m2Ok==='si'?'var(--green)':m2Ok==='no'?'var(--red)':colV)+';font-weight:700">'+m2Cel+'</td></tr>'; });
     $('pe-tabla-stock').innerHTML=html; window.__ordenable('pe-tabla-stock');
     $('pe-stock-asof').textContent='Al '+fmtFecha(hoyISO)+' · '+activos().length+' productos · Falta fabricar = lo vendido que supera al físico · Disponible para vender = el sobrante (físico − comprometido) · En secado ya vendidos = lo vendido que espera que seque su lote';
      
@@ -21245,6 +21317,7 @@ function buildFilterTable(cfg){
   $('pe-ped-nuevo').onclick=()=>openPed(null);
   { const pb=$('pe-programa'); if(pb) pb.onclick=programaTransportista; }
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
+  if($('pe-m2-consulta')) $('pe-m2-consulta').addEventListener('input',()=>render());
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
   [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
@@ -22383,7 +22456,7 @@ function buildFilterTable(cfg){
    
    
   function planEsReal(r){
-    if(!r.pallets.length) return false;
+    if(r.cajita || !r.pallets.length) return false;
     if(r.ud>0) return true;
     return !(r.pallets.length===1 && r.pallets[0]===Math.round(num(r.it.cant)));
   }
@@ -22402,7 +22475,8 @@ function buildFilterTable(cfg){
     const its=(obj.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0)
       .map(it=>{ const pr=prodDe(it); const ud=pr?num(pr.udPorPallet):0;
         const pl=(it.pallets&&it.pallets.length)?it.pallets.map(u=>Math.round(num(u))).filter(u=>u>0):planStdPallets(it.cant,ud);
-        return { it:it, pr:pr, ud:ud, peso:(pr?num(pr.pesoUnit):0), pallets:pl }; })
+        const caj=!!(window.__enCajita && window.__enCajita(it.codigo||(pr&&pr.codigo), (pr&&pr.nombre)||it.desc));    
+        return { it:it, pr:pr, ud:caj?0:ud, peso:(pr?num(pr.pesoUnit):0), pallets:caj?[]:pl, cajita:caj }; })
        
        
        
@@ -22432,7 +22506,7 @@ function buildFilterTable(cfg){
     const compartida={}; grupos.forEach(g=>g.forEach(y=>{ compartida[y.id]=1; }));
     const esComp=(r,i)=> !!compartida[its.indexOf(r)+'#'+i];
     const exclusivas=r=> r.pallets.filter((u,i)=>!esComp(r,i));
-    const bultosDe=r=> planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant));
+    const bultosDe=r=> r.cajita ? 0 : (planEsReal(r) ? r.pallets.length : Math.round(num(r.it.cant)));
     let filas=its.map(r=>'<tr><td>'+celdaCodigo(r.it.codigo)+'</td><td>'+esc(r.it.desc||'')+'</td><td>'+esc(r.it.obs||'')+'</td>'+
       '<td class="n">'+nf(r.it.cant)+'</td><td class="n">'+nf(bultosDe(r))+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="5" style="text-align:center;color:#888">Sin productos.</td></tr>';

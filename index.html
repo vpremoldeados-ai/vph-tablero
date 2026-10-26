@@ -6925,7 +6925,12 @@ function buildFilterTable(cfg){
     // Con la caché, al recargar se lee solo lo que cambió desde la última vez. Multi-pestaña
     // (persistentMultipleTabManager) para que dos pestañas del Tablero no se peleen por la caché.
     // Si el navegador no lo permite (modo incógnito, cuota de disco), cae al modo de siempre.
-    try{ fbDb = fsM.initializeFirestore(fbApp, { localCache: fsM.persistentLocalCache({ tabManager: fsM.persistentMultipleTabManager() }) }); }
+    // 🔴 26/10: con varias pestañas del Tablero abiertas, una pestaña nueva puede quedar como
+    // "secundaria" de la caché compartida y no recibir NUNCA respuesta (se midió: el rol no llegaba
+    // y sin la caché se leía en 1,5 s). Si eso pasa, `leerRol` marca esta pestaña (sessionStorage,
+    // solo ella) y la recarga SIN caché compartida: lee directo del servidor, como antes del 18/08.
+    if(cacheEnMemoria()){ console.warn('Esta pestaña usa Firestore sin caché compartida (la caché de pestañas no respondió).'); fbDb = fsM.initializeFirestore(fbApp, {}); }
+    else try{ fbDb = fsM.initializeFirestore(fbApp, { localCache: fsM.persistentLocalCache({ tabManager: fsM.persistentMultipleTabManager() }) }); }
     catch(e){ console.warn('Sin caché persistente de Firestore, sigo sin caché:', e && e.message); fbDb = fsM.getFirestore(fbApp); }
     const fbStorage = stM ? stM.getStorage(fbApp) : null;
     window.__fbctx = { FS, AUTH, db: fbDb, auth: fbAuth, ST:stM, storage:fbStorage };   // compartido con otros módulos (Ventas, etc.)
@@ -6974,7 +6979,21 @@ function buildFilterTable(cfg){
     return false;
   }
   // fail-closed: sin ficha en vph_roles => sin acceso (no admin). Solo roles asignados explícitamente tienen permisos.
-  async function leerRol(u){ try{ const snap=await FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)); if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; } else { window.__rol='sinacceso'; window.__rolNombre=''; } }catch(e){ window.__rol='sinacceso'; window.__rolNombre=''; } }
+  // Solo un documento que NO EXISTE deja sin acceso. Si la lectura falla o no contesta en ROL_ESPERA_MS
+  // (la caché compartida entre pestañas trabada, ver initFirebase), la pestaña se recarga sin esa caché
+  // UNA vez; recién si sin caché también falla, queda sin acceso (fail-closed, como siempre).
+  const ROL_ESPERA_MS = 12000, CLAVE_CACHE_MEM = 'vph_cache_memoria_v1';
+  function cacheEnMemoria(){ try{ return sessionStorage.getItem(CLAVE_CACHE_MEM)==='1'; }catch(e){ return false; } }
+  function recargarSinCache(){ try{ sessionStorage.setItem(CLAVE_CACHE_MEM,'1'); }catch(e){ return false; } location.reload(); return true; }
+  async function leerRol(u){
+    let snap;
+    try{ snap=await Promise.race([ FS.getDoc(FS.doc(fbDb,'vph_roles',u.uid)),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('el rol no contestó en '+ROL_ESPERA_MS/1000+' s')), ROL_ESPERA_MS)) ]); }
+    catch(e){ console.warn('No se pudo leer el rol:', e && e.message);
+      if(!cacheEnMemoria() && recargarSinCache()) return new Promise(()=>{});   // se recarga: no arma nada
+      window.__rol='sinacceso'; window.__rolNombre=''; return; }
+    if(snap.exists()){ const d=snap.data(); window.__rol=d.rol||'sinacceso'; window.__rolNombre=d.nombre||''; }
+    else { window.__rol='sinacceso'; window.__rolNombre=''; } }
   async function loadReportes(){
     try{
       const snap = await FS.getDoc(FS.doc(fbDb,'vph_reportes','dashboard'));
