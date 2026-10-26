@@ -10621,7 +10621,11 @@ function buildFilterTable(cfg){
       for(let i=0;i<14 && (d.getDay()===0||d.getDay()===6||(feriado&&feriado(f(d))));i++) d.setDate(d.getDate()+1);
       return f(d); };
     const g={};
+    // Un plan en CUOTAS numeradas ("Cuota 2 Balances 2024/2025" de Bruzzo, 26/10) no es un gasto de todos
+    // los meses: no cuenta para la recurrencia (si no, mezclado con los honorarios del mismo proveedor,
+    // preveía otra cuota de $1,9 M que no existe).
     (lista||[]).forEach(c=>{ if(!cats.includes(c.categoria) || c.tipoComprobante==='Nota de Crédito') return;
+      if((c.items||[]).some(it=>/\bcuota\s*\d+/i.test(String(it&&it.desc||'')))) return;
       const ms=String(c._uid||'').match(/^sue_(\d{4}-\d{2})_(Q\d)_(.+)$/);
       const per=ms?ms[1]:String(c.periodo||c.fecha||'').slice(0,7); if(!/^\d{4}-\d{2}$/.test(per)) return;
       const key=ms?('sue|'+ms[3]+'|'+ms[2]):('prov|'+String(c.proveedor||'').trim().toUpperCase().replace(/\s+/g,' ')+'|'+String(c.categoria));
