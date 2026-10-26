@@ -1918,6 +1918,7 @@
       <h2><span class="dot" style="background:var(--amber)"></span>Proyección de caja</h2>
       <div class="asof" id="caj-proy-asof"></div>
       <div class="filter-bar" id="caj-proy-filtros"></div>
+      <div class="chart-box" style="height:300px;margin-bottom:12px"><canvas id="caj-ch-flujo"></canvas></div>
       <div class="tbl-wrap"><table id="caj-tabla-proy"></table></div>
       <p class="note">Suma lo que <b>va a entrar</b> (cheques en cartera, ventas a cobrar) y lo que <b>hay que pagar</b> (cheques emitidos, compras y costos fijos pendientes) por fecha, arrancando del disponible de hoy. La columna <b>Saldo</b> te dice con cuánto quedás cada día: si se pone en rojo, ese día no alcanza.</p>
     </section>
@@ -10728,7 +10729,8 @@ function buildFilterTable(cfg){
     const filas=fechas.map(f=>{ const arr=buckets[f]; const inn=arr.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), out=arr.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
       saldo=saldo+inn-out; if(saldo<minSaldo){ minSaldo=saldo; minFecha=f; }
       const detalle=arr.slice().sort((a,b)=>b.monto-a.monto).map(e=>(e.signo>0?'▲ ':'▼ ')+esc(e.concepto)+' '+money(e.monto)).join('<br>');
-      return {f, inn, out, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO), sinFecha:f===SIN_FECHA}; });
+      const outPrev=arr.filter(e=>e.signo<0&&e.tipo==='previsto').reduce((s,e)=>s+e.monto,0);
+      return {f, inn, out, outPrev, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO), sinFecha:f===SIN_FECHA}; });
 
     const proyFinal = d.total+proyIn-proyOut-totPrev;
     // Plata de plataformas (VIUMI) que ya se cobró pero todavía no acreditó. Va en tarjeta propia
@@ -10777,6 +10779,7 @@ function buildFilterTable(cfg){
       '<td class="num" data-label="Sale" style="color:var(--red)">'+(r.out?money(r.out):'')+'</td>'+
       '<td class="num" data-label="Saldo" style="font-weight:800;color:'+(r.saldo<0?'var(--red)':'var(--text)')+'">'+money(r.saldo)+'</td></tr>'; });
     $('caj-tabla-proy').innerHTML=ph; window.__ordenable('caj-tabla-proy');
+    pintarFlujo(d.total, filas);
     $('caj-proy-asof').textContent='Arranca del disponible de hoy y suma/resta por fecha de vencimiento · horizonte '+(filtro==='todos'?'completo':filtro+' días');
 
     // Movimientos reales desde el ancla
@@ -10790,6 +10793,33 @@ function buildFilterTable(cfg){
     $('caj-tabla-mov').querySelectorAll('button[data-delmov]').forEach(b=>b.onclick=()=>{ if(confirm('¿Eliminar este movimiento manual?')) removeDoc(b.dataset.delmov); });
   }
   function k(l,cls,v,sub){ return '<div class="kpi '+cls+'"><div class="label">'+l+'</div><div class="value" style="font-size:20px">'+v+'</div><div class="sub">'+sub+'</div></div>'; }
+  // Gráfico del FLUJO (26/10, pedido de Marcelo: "debería haber una forma gráfica de ver el flujo"). Sale
+  // de las MISMAS filas que la tabla de abajo (no hay una segunda cuenta): barras de lo que entra (verde),
+  // lo que sale cargado (rojo) y los fijos previstos (ámbar), y la línea del saldo proyectado con el cero y
+  // el colchón mínimo. Lo que no tiene fecha de cobro no se grafica (no se sabe en qué día cae).
+  let chFlujo=null;
+  function datosFlujo(total, filas){
+    const fs=filas.filter(r=>!r.sinFecha);
+    return { labels:['Hoy'].concat(fs.map(r=>r.vencido?'Hoy y venc.':fmtFecha(r.f).slice(0,5))),
+      entra:[0].concat(fs.map(r=>Math.round(r.inn))),
+      sale:[0].concat(fs.map(r=>-Math.round(r.out-(r.outPrev||0)))),
+      previsto:[0].concat(fs.map(r=>-Math.round(r.outPrev||0))),
+      saldo:[Math.round(total)].concat(fs.map(r=>Math.round(r.saldo))) }; }
+  function pintarFlujo(total, filas){
+    const el=$('caj-ch-flujo'); if(!el || typeof Chart==='undefined') return;
+    const D=datosFlujo(total, filas), colchon=window.__cajaColchon?num(window.__cajaColchon()):0;
+    if(chFlujo) chFlujo.destroy();
+    chFlujo=new Chart(el, { data:{ labels:D.labels, datasets:[
+      { type:'line', label:'Saldo proyectado', data:D.saldo, borderColor:'#1f3b5a', backgroundColor:'#1f3b5a', stepped:true, borderWidth:2.5, pointRadius:2, stack:'saldo', order:0,
+        segment:{ borderColor:c=>c.p1.parsed.y<0?'#d64541':'#1f3b5a' } },
+      { type:'line', label:'Colchón mínimo', data:D.labels.map(()=>colchon), borderColor:'#9aa5b1', borderDash:[6,4], borderWidth:1.5, pointRadius:0, stack:'colchon', order:1, hidden:!(colchon>0) },
+      { type:'bar', label:'Entra', data:D.entra, backgroundColor:'#38b26a', borderRadius:3, stack:'mov', order:2 },
+      { type:'bar', label:'Sale (cargado)', data:D.sale, backgroundColor:'#d64541', borderRadius:3, stack:'mov', order:2 },
+      { type:'bar', label:'Fijos previstos', data:D.previsto, backgroundColor:'#f0a830', borderRadius:3, stack:'mov', order:2 } ] },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false},
+        plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:c=>c.raw?c.dataset.label+': '+money(Math.abs(c.raw)):null } } },
+        scales:{ x:{ stacked:true }, y:{ stacked:true, ticks:{ callback:v=>fmtM(v) },
+          grid:{ color:c=>c.tick.value===0?'#5b6b7c':'rgba(0,0,0,.06)', lineWidth:c=>c.tick.value===0?2:1 } } } } }); }
   function cell(l,v,col){ return '<div class="cell"><div class="l">'+l+'</div><div class="v" style="color:'+col+'">'+v+'</div></div>'; }
   function isoMas(d){ const x=new Date(HOY); x.setDate(x.getDate()+d); return x.getFullYear()+'-'+p2(x.getMonth()+1)+'-'+p2(x.getDate()); }
 
