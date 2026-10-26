@@ -10999,6 +10999,42 @@ function buildFilterTable(cfg){
    
    
   const SIN_FECHA='9999-12-31';    
+   
+   
+   
+   
+   
+   
+   
+  function previstosFijos(lista, hoy, cats, totalDe, feriado){
+    const mesMas=(per,n)=>{ const p=per.split('-'); const d=new Date(+p[0], +p[1]-1+n, 1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+    const ultDia=per=>{ const p=per.split('-'); return new Date(+p[0], +p[1], 0).getDate(); };
+    const hoyPer=String(hoy).slice(0,7), m1=mesMas(hoyPer,-1), m2=mesMas(hoyPer,-2);
+    const debito=iso=>{ const p=iso.split('-'); const d=new Date(+p[0], +p[1], 1);
+      const f=x=>x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+      for(let i=0;i<14 && (d.getDay()===0||d.getDay()===6||(feriado&&feriado(f(d))));i++) d.setDate(d.getDate()+1);
+      return f(d); };
+    const g={};
+    (lista||[]).forEach(c=>{ if(!cats.includes(c.categoria) || c.tipoComprobante==='Nota de Crédito') return;
+      const ms=String(c._uid||'').match(/^sue_(\d{4}-\d{2})_(Q\d)_(.+)$/);
+      const per=ms?ms[1]:String(c.periodo||c.fecha||'').slice(0,7); if(!/^\d{4}-\d{2}$/.test(per)) return;
+      const key=ms?('sue|'+ms[3]+'|'+ms[2]):('prov|'+String(c.proveedor||'').trim().toUpperCase().replace(/\s+/g,' ')+'|'+String(c.categoria));
+      (g[key]=g[key]||[]).push({c, per}); });
+    const E=[];
+    Object.values(g).forEach(arr=>{
+      const pers=new Set(arr.map(x=>x.per)); if(!pers.has(m1) || !pers.has(m2)) return;
+      const ult=arr.slice().sort((a,b)=>a.per.localeCompare(b.per) || String(a.c.fecha||'').localeCompare(String(b.c.fecha||''))).pop();
+      const monto=Math.round(num(totalDe(ult.c))*100)/100; if(!(monto>0.5)) return;
+      const vto=String(ult.c.vencimiento||ult.c.fecha||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(vto)) return;
+      const desfase=(+vto.slice(0,4)-+ult.per.slice(0,4))*12+(+vto.slice(5,7)-+ult.per.slice(5,7));    
+      const visa=(ult.c.pagos||[]).some(p=>/tarjeta|visa/i.test(String(p.medio||'')));
+      [hoyPer, mesMas(hoyPer,1)].forEach(per=>{ if(pers.has(per)) return;
+        const pm=mesMas(per,desfase), dia=Math.min(+vto.slice(8,10), ultDia(pm));
+        let f=pm+'-'+String(dia).padStart(2,'0'); if(visa) f=debito(f);
+        if(f<hoy) return;    
+        E.push({fecha:f, signo:-1, monto, tipo:'previsto',
+          concepto:'Previsto'+(visa?' (VISA)':'')+' · '+(ult.c.proveedor||'—')+' — como el de '+ult.per.slice(5,7)+'/'+ult.per.slice(2,4)+', todavía sin cargar'}); }); });
+    return E; }
   function eventosProyeccion(){
     const E=[];
     cheques.forEach(c=>{ if(c.estado!=='cartera'&&c.estado!=='depositado') return; const f=String(c.fechaVencimiento||'').slice(0,10)||hoyISO;
@@ -11037,6 +11073,7 @@ function buildFilterTable(cfg){
      
      
      
+    if(window.__catComprasFijas) previstosFijos(compras, hoyISO, window.__catComprasFijas(), c=>calcCompra(c), window.__esFeriado).forEach(e=>E.push(e));
     return E; }
    
   function calcCompra(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
@@ -11065,7 +11102,8 @@ function buildFilterTable(cfg){
     }
      
     const ev=eventosProyeccion();
-    const proyIn=ev.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), proyOut=ev.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
+    const proyIn=ev.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), proyOut=ev.filter(e=>e.signo<0&&e.tipo!=='previsto').reduce((s,e)=>s+e.monto,0);
+    const evPrev=ev.filter(e=>e.tipo==='previsto'), totPrev=evPrev.reduce((s,e)=>s+e.monto,0);
     const dias=filtro==='todos'?999999:num(filtro); const limite=isoMas(dias);
      
     const evFiltrados=ev.filter(e=>e.sinFecha ? filtro==='todos' : e.fecha<=limite);
@@ -11079,7 +11117,7 @@ function buildFilterTable(cfg){
       const detalle=arr.slice().sort((a,b)=>b.monto-a.monto).map(e=>(e.signo>0?'▲ ':'▼ ')+esc(e.concepto)+' '+money(e.monto)).join('<br>');
       return {f, inn, out, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO), sinFecha:f===SIN_FECHA}; });
 
-    const proyFinal = d.total+proyIn-proyOut;
+    const proyFinal = d.total+proyIn-proyOut-totPrev;
      
      
      
@@ -11091,8 +11129,9 @@ function buildFilterTable(cfg){
       (evPlat.length ? k('A acreditarse (VIUMI)','info', fmtM(totPlat),
         evPlat.length+' cobro'+(evPlat.length>1?'s':'')+' con tarjeta'+(proxPlat?' · el próximo entra el '+fmtFecha(proxPlat.fecha):'')) : '')+
       k('Por cobrar (todo)','info', fmtM(proyIn), 'Cheques + ventas a cobrar'+(evPlat.length?' + acreditaciones':''))+
-      k('Por pagar (todo)', proyOut?'warn':'good', fmtM(proyOut), 'Cheques + compras + costos fijos')+
-      k('Saldo si se cumple todo', proyFinal<0?'bad':'good', money(proyFinal), 'Disponible + por cobrar − por pagar');
+      k('Por pagar (todo)', proyOut?'warn':'good', fmtM(proyOut), 'Cheques + compras + costos fijos cargados')+
+      (evPrev.length ? k('Fijos previstos','warn', fmtM(totPrev), evPrev.length+' costo'+(evPrev.length>1?'s':'')+' fijo'+(evPrev.length>1?'s':'')+' de todos los meses, todavía sin cargar (este mes y el que viene)') : '')+
+      k('Saldo si se cumple todo', proyFinal<0?'bad':'good', money(proyFinal), 'Disponible + por cobrar − por pagar'+(evPrev.length?' − previstos':''));
 
     const cuentasAncla=cuentasDe(d.ancla);
     $('caj-ancla').innerHTML='Saldo declarado el <b>'+fmtFecha(d.desde)+'</b> ('+cuentasAncla.map(c=>esc(c.nombre)+': '+money(num(c.monto))).join(' · ')+') · desde entonces entraron '+money(d.ent)+' y salieron '+money(d.sal)+'.';
