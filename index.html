@@ -10610,7 +10610,9 @@ function buildFilterTable(cfg){
   // ÚLTIMA vez y el mismo día del mes (los sueldos, por persona y quincena, con su fecha de pago). Si se
   // pagó con VISA, sale el día del débito del resumen. Apenas se carga la compra real, el previsto se va
   // solo (nunca se cuentan los dos). Pura: no escribe nada.
-  function previstosFijos(lista, hoy, cats, totalDe, feriado){
+  // diaPago(q) = el día de pago de Parámetros para esa quincena (sueDiaPago1/2; 0 = sin dato): manda sobre
+  // la fecha de la última vez, que puede ser de antes de que se cambiara (la 2ª se pagaba a fin de mes).
+  function previstosFijos(lista, hoy, cats, totalDe, feriado, diaPago){
     const mesMas=(per,n)=>{ const p=per.split('-'); const d=new Date(+p[0], +p[1]-1+n, 1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
     const ultDia=per=>{ const p=per.split('-'); return new Date(+p[0], +p[1], 0).getDate(); };
     const hoyPer=String(hoy).slice(0,7), m1=mesMas(hoyPer,-1), m2=mesMas(hoyPer,-2);
@@ -10630,10 +10632,12 @@ function buildFilterTable(cfg){
       const ult=arr.slice().sort((a,b)=>a.per.localeCompare(b.per) || String(a.c.fecha||'').localeCompare(String(b.c.fecha||''))).pop();
       const monto=Math.round(num(totalDe(ult.c))*100)/100; if(!(monto>0.5)) return;
       const vto=String(ult.c.vencimiento||ult.c.fecha||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(vto)) return;
-      const desfase=(+vto.slice(0,4)-+ult.per.slice(0,4))*12+(+vto.slice(5,7)-+ult.per.slice(5,7));   // la 2ª quincena se paga el mes siguiente
+      let desfase=(+vto.slice(0,4)-+ult.per.slice(0,4))*12+(+vto.slice(5,7)-+ult.per.slice(5,7)), diaV=+vto.slice(8,10);   // la 2ª quincena se paga el mes siguiente
+      const q=(String(ult.c._uid||'').match(/^sue_\d{4}-\d{2}_(Q[12])_/)||[])[1], dp=q&&diaPago?Math.round(+diaPago(q)||0):0;
+      if(dp>0){ diaV=dp; desfase=q==='Q2'?1:0; }
       const visa=(ult.c.pagos||[]).some(p=>/tarjeta|visa/i.test(String(p.medio||'')));
       [hoyPer, mesMas(hoyPer,1)].forEach(per=>{ if(pers.has(per)) return;
-        const pm=mesMas(per,desfase), dia=Math.min(+vto.slice(8,10), ultDia(pm));
+        const pm=mesMas(per,desfase), dia=Math.min(diaV, ultDia(pm));
         let f=pm+'-'+String(dia).padStart(2,'0'); if(visa) f=debito(f);
         if(f<hoy) return;   // ya pasó la fecha de este mes sin cargarse: no se inventa que sale hoy
         E.push({fecha:f, signo:-1, monto, tipo:'previsto',
@@ -10677,7 +10681,8 @@ function buildFilterTable(cfg){
     // Los costos fijos CARGADOS ya están en el bloque de compras de arriba: no se proyectan aparte (los
     // contaría DOS VECES). Lo que sí se suma son los PREVISTOS de los fijos recurrentes que todavía no se
     // cargaron este mes o el que viene (previstosFijos: un mes con la compra cargada no genera previsto).
-    if(window.__catComprasFijas) previstosFijos(compras, hoyISO, window.__catComprasFijas(), c=>calcCompra(c), window.__esFeriado).forEach(e=>E.push(e));
+    if(window.__catComprasFijas) previstosFijos(compras, hoyISO, window.__catComprasFijas(), c=>calcCompra(c), window.__esFeriado,
+      q=>num(window.__param ? window.__param(q==='Q2'?'sueDiaPago2':'sueDiaPago1', 0) : 0)).forEach(e=>E.push(e));
     return E; }
   // Total de una compra (sin depender del módulo): neto + IVA + percepciones, con signo NC
   function calcCompra(c){ let neto=0,iva=0; const f=1-num(c.descGeneral)/100;
