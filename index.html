@@ -1031,6 +1031,14 @@
   <!-- ================= COMERCIAL ================= -->
   <div class="page" id="page-comercial">
     <div class="kpis" id="kpis-comercial"></div>
+    <!-- Contribución por KILO por cliente, EN VIVO (26/10). La pinta Finanzas (__pintarContribCli) con la
+         misma cuenta que el resultado del mes. Prefijo de ids: ckc-. -->
+    <section id="ckc-sec">
+      <h2><span class="dot" style="background:var(--accent)"></span>💲 Contribución por kilo por cliente <select id="ckc-periodo" style="margin-left:auto;font-size:13px"><option value="mes">Mes en curso</option><option value="ant">Mes anterior</option><option value="3m">Últimos 3 meses</option></select></h2>
+      <div class="asof" id="ckc-res">en vivo</div>
+      <div class="tbl-wrap"><table id="ckc-tabla"></table></div>
+      <p class="note">Contribución = neto de los productos (sin flete) − su costo de receta del catálogo de HOY. <b>$ por kg</b> en rojo = ese cliente deja menos por kilo de lo que el negocio necesita en promedio para cubrir la estructura del período: es a quien conviene subirle el precio primero. Los fijos del mes en curso pueden estar incompletos (lo que todavía no se cargó en Compras), así que la referencia del mes en curso puede salir baja.</p>
+    </section>
     <div class="grid2">
       <section>
         <h2><span class="dot"></span>Margen por producto</h2>
@@ -12060,7 +12068,7 @@ function buildFilterTable(cfg){
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
     } }
   // Lo llaman Caja y Costos Fijos cuando cambian sus datos
-  window.__finanzasRefresh = ()=>{ try{ render(); }catch(e){} };
+  window.__finanzasRefresh = ()=>{ try{ render(); }catch(e){} try{ pintarContribCli(); }catch(e){} };
   // KPIs financieros en vivo para la Vista Diaria (mismos números que la página Finanzas).
   // Devuelve null si todavía no llegaron los datos (ventas/compras): así la Vista Diaria cae a la foto
   // del cierre hasta que haya datos reales, en vez de mostrar $0.
@@ -12092,6 +12100,9 @@ function buildFilterTable(cfg){
     // tiene costo (ej. el Flete) queda FUERA del cálculo — nunca se cuenta como si fuera 100% de margen,
     // porque eso mostraría una rentabilidad mejor que la real. "cobertura" dice qué % del neto se pudo costear.
     let netoCon=0, costoVar=0, netoTot=0;
+    // Contribución POR CLIENTE (26/10): se acumula en el MISMO recorrido, renglón por renglón, así la suma
+    // de los clientes no puede diferir del total del mes. Solo los renglones con costo (el flete no).
+    const pcc={};
     ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(f.slice(0,7)!==per) return;
       const t=num(calcV(v).total); vTot+=t; const cl=v.cliente||'—'; porCli[cl]=(porCli[cl]||0)+t;
       // Una NOTA DE CRÉDITO RESTA sus renglones (08/10). Hasta acá se sumaban como si fueran otra
@@ -12107,15 +12118,17 @@ function buildFilterTable(cfg){
       const esNC = v.tipoComprobante==='Nota de Crédito', sg = esNC?-1:1, bonif = esNC && v.ncMotivo==='bonificacion';
       if(!esNC) vCant++;   // una NC no es una venta más: no entra en la cantidad ni en el ticket promedio
       const fd=1-num(v.descGeneral)/100, _canal=window.__canalVenta(v);
+      const cc=pcc[cl]||(pcc[cl]={cliente:cl, canales:{}, ventas:0, kg:0, neto:0, costo:0});
+      if(!esNC) cc.ventas++;
       (v.items||[]).filter(Boolean).forEach(it=>{ const w=pesoItem(it);
-        if(w>0 && !bonif){ const _k=w*num(it.cant)*sg; kgV+=_k;
+        if(w>0 && !bonif){ const _k=w*num(it.cant)*sg; kgV+=_k; cc.kg+=_k; cc.canales[_canal||'Sin canal']=(cc.canales[_canal||'Sin canal']||0)+_k;
           if(_canal==='Minorista') kgMin+=_k; else if(_canal==='Mayorista') kgMay+=_k; }
         if(!it.desc && !it.codigo) return;
         const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*fd;   // neto del renglón
         if(!(base>0)) return;
         netoTot+=base*sg;
         const cu=costoItem(it);
-        if(cu>0){ netoCon+=base*sg; if(!bonif) costoVar+=num(it.cant)*cu*fd*sg; }
+        if(cu>0){ netoCon+=base*sg; cc.neto+=base*sg; if(!bonif){ costoVar+=num(it.cant)*cu*fd*sg; cc.costo+=num(it.cant)*cu*fd*sg; } }
       }); });
     // Solo las compras OPERATIVAS (categorías marcadas como costo fijo o costo variable) entran en el
     // resultado del mes. Lo que no pertenece a la operación de la fábrica se suma aparte en
@@ -12133,7 +12146,8 @@ function buildFilterTable(cfg){
     return { periodo:per, ventas:vTot, cantVentas:vCant, ventaPromedio:vCant?vTot/vCant:0, compras:cTot, comprasNoOper:cNoOper,
       resultado:vTot-cTot, clienteTop:topCli, clienteTopPct:topPct, kgVendidos:kgV,
       kgMinorista:kgMin, kgMayorista:kgMay, kgSinCanal:Math.max(kgV-kgMin-kgMay,0),
-      netoVendido:netoTot, costoVariable:costoVar, coberturaCosto:cobertura, margenContribucion:margenContrib };
+      netoVendido:netoTot, costoVariable:costoVar, coberturaCosto:cobertura, margenContribucion:margenContrib,
+      porClienteContrib:Object.values(pcc) };
   };
   // Ventas mes a mes EN VIVO — lo consume el gráfico "Ingresos vs Egresos" de la Vista Diaria, que antes
   // se dibujaba una sola vez con la serie congelada del import viejo.
@@ -12193,6 +12207,48 @@ function buildFilterTable(cfg){
         noOper:c.noOper||0, porCat:c.porCat||{} };
     });
   };
+  // ---------- Contribución por KILO por CLIENTE (26/10, pedido de Marcelo) ----------
+  // Junta el desglose por cliente de __resumenMes (misma cuenta que el resultado del mes) para los meses
+  // pedidos. contribución = neto de los renglones con costo − costo de receta (catálogo de HOY; el flete
+  // no entra). REFERENCIA = (fijos + variables del período que no están en la receta) ÷ kilos vendidos:
+  // lo que cada kilo tiene que dejar, en promedio, para que el negocio no pierda.
+  window.__contribPorCliente = (meses)=>{
+    const R=window.__resultadoPorMes?(window.__resultadoPorMes()||[]):[];
+    const map={}; let kgT=0, fijos=0, varP=0;
+    (meses||[]).forEach(m=>{ const r=window.__resumenMes(m); if(!r) return; kgT+=num(r.kgVendidos);
+      (r.porClienteContrib||[]).forEach(c=>{ const k=String(c.cliente||'—').trim().toUpperCase().replace(/\s+/g,' ');
+        const t=map[k]||(map[k]={cliente:c.cliente, canales:{}, ventas:0, kg:0, neto:0, costo:0});
+        t.ventas+=c.ventas; t.kg+=c.kg; t.neto+=c.neto; t.costo+=c.costo;
+        Object.entries(c.canales||{}).forEach(([a,b])=>{ t.canales[a]=(t.canales[a]||0)+b; }); });
+      const x=R.find(y=>y.mes===m); if(x){ fijos+=num(x.fijos); varP+=num(x.varPeriodo); } });
+    const filas=Object.values(map).map(t=>{ const contrib=t.neto-t.costo, can=Object.entries(t.canales).sort((a,b)=>b[1]-a[1])[0];
+      return {...t, canal:can?can[0]:'—', contrib, porKg:t.kg>0.5?contrib/t.kg:null}; });
+    return {filas, kgTotal:kgT, fijos, varPeriodo:varP, ref:kgT>0?(fijos+varP)/kgT:null}; };
+  function mesesContribCli(op){ const h=hoyISO.slice(0,7), ant=n=>{ const p=h.split('-'); const d=new Date(+p[0], +p[1]-1-n, 1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+    return op==='ant'?[ant(1)] : op==='3m'?[ant(2),ant(1),h] : [h]; }
+  function pintarContribCli(){
+    const t=document.getElementById('ckc-tabla'), sel=document.getElementById('ckc-periodo'); if(!t||!sel) return;
+    if(!sel.__ok){ sel.__ok=1; sel.onchange=pintarContribCli; }
+    const C=window.__contribPorCliente(mesesContribCli(sel.value));
+    const $$=v=>'$ '+Math.round(v).toLocaleString('es-AR'), kg=v=>Math.round(v).toLocaleString('es-AR')+' kg';
+    const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    const porCanal={}; C.filas.forEach(f=>{ const o=porCanal[f.canal]||(porCanal[f.canal]={kg:0,c:0}); o.kg+=f.kg; o.c+=f.contrib; });
+    const prom=k=>porCanal[k]&&porCanal[k].kg>0?$$(porCanal[k].c/porCanal[k].kg)+'/kg':'—';
+    const deb=C.ref!=null?C.filas.filter(f=>f.porKg!=null&&f.porKg<C.ref):[], kgDeb=deb.reduce((s,f)=>s+f.kg,0);
+    document.getElementById('ckc-res').innerHTML = C.ref==null ? 'Sin ventas con kilos en el período.' :
+      'Para cubrir los fijos y variables del período cada kilo tiene que dejar <b>'+$$(C.ref)+'/kg</b> (fijos '+$$(C.fijos)+' + variables fuera de la receta '+$$(C.varPeriodo)+' ÷ '+kg(C.kgTotal)+'). '+
+      'Promedio minorista <b>'+prom('Minorista')+'</b> · mayorista <b>'+prom('Mayorista')+'</b>. '+
+      (deb.length?'<b style="color:var(--red)">'+deb.length+' cliente'+(deb.length>1?'s':'')+' por debajo de la referencia: '+kg(kgDeb)+' ('+Math.round(kgDeb/C.kgTotal*100)+'% de los kilos)</b>.':'<b style="color:var(--green)">Todos los clientes cubren la referencia.</b>');
+    const filas=C.filas.filter(f=>Math.abs(f.kg)>0.5||Math.abs(f.neto)>0.5).sort((a,b)=>b.kg-a.kg);
+    let h='<thead><tr><th>Cliente</th><th>Canal</th><th class="num">Ventas</th><th class="num">Kilos</th><th class="num">Neto productos</th><th class="num">Costo receta</th><th class="num">Contribución</th><th class="num">$ por kg</th><th class="num">vs. referencia</th></tr></thead><tbody>';
+    if(!filas.length) h+='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:14px">Sin ventas en el período.</td></tr>';
+    filas.forEach(f=>{ const dif=(f.porKg!=null&&C.ref!=null)?f.porKg-C.ref:null, col=dif==null?'var(--muted)':(dif<0?'var(--red)':'var(--green)');
+      h+='<tr><td data-label="Cliente" class="cel-nombre" title="'+escH(f.cliente)+'"><b>'+escH(f.cliente)+'</b></td><td data-label="Canal">'+escH(f.canal)+'</td>'+
+        '<td class="num" data-label="Ventas">'+f.ventas+'</td><td class="num" data-label="Kilos">'+kg(f.kg)+'</td><td class="num" data-label="Neto">'+$$(f.neto)+'</td><td class="num" data-label="Costo">'+$$(f.costo)+'</td>'+
+        '<td class="num" data-label="Contribución">'+$$(f.contrib)+'</td><td class="num" data-label="$ por kg" style="font-weight:800;color:'+col+'">'+(f.porKg==null?'—':$$(f.porKg))+'</td>'+
+        '<td class="num" data-label="vs. referencia" style="color:'+col+'">'+(dif==null?'—':(dif>=0?'+':'−')+'$'+Math.round(Math.abs(dif)).toLocaleString('es-AR')+'/kg')+'</td></tr>'; });
+    t.innerHTML=h+'</tbody>'; if(window.__ordenable) window.__ordenable(t); }
+  window.__pintarContribCli = pintarContribCli;
   boot();
 })();
 </script>
