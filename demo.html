@@ -1359,6 +1359,12 @@ window.__demoSeed = function () {
       <div class="kpis" id="stkdisp-kpis" style="margin-bottom:12px"></div>
       <div class="tbl-wrap"><table id="stkdisp-tabla"></table></div>
     </section>
+    
+    <section id="vdflujo-sec" style="display:none">
+      <h2><span class="dot" style="background:var(--amber)"></span>💧 Flujo de caja — próximos 30 días<button class="cmp-btn" id="vdflujo-ir" style="margin-left:auto;font-size:12px">Ver en Caja →</button></h2>
+      <div class="asof" id="vdflujo-res"></div>
+      <div class="chart-box" style="height:280px"><canvas id="vdflujo-ch"></canvas></div>
+    </section>
     <div class="kpis" id="kpis-inicio"></div>
     <div class="grid3">
       <section>
@@ -11115,18 +11121,8 @@ function buildFilterTable(cfg){
     const proyIn=ev.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), proyOut=ev.filter(e=>e.signo<0&&e.tipo!=='previsto').reduce((s,e)=>s+e.monto,0);
     const evPrev=ev.filter(e=>e.tipo==='previsto'), totPrev=evPrev.reduce((s,e)=>s+e.monto,0);
     const dias=filtro==='todos'?999999:num(filtro); const limite=isoMas(dias);
-     
-    const evFiltrados=ev.filter(e=>e.sinFecha ? filtro==='todos' : e.fecha<=limite);
-     
-    const buckets={};
-    evFiltrados.forEach(e=>{ const b=e.fecha<hoyISO?hoyISO:e.fecha; (buckets[b]=buckets[b]||[]).push(e); });
-    const fechas=Object.keys(buckets).sort();
-    let saldo=d.total, minSaldo=d.total, minFecha=hoyISO;
-    const filas=fechas.map(f=>{ const arr=buckets[f]; const inn=arr.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), out=arr.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
-      saldo=saldo+inn-out; if(saldo<minSaldo){ minSaldo=saldo; minFecha=f; }
-      const detalle=arr.slice().sort((a,b)=>b.monto-a.monto).map(e=>(e.signo>0?'▲ ':'▼ ')+esc(e.concepto)+' '+money(e.monto)).join('<br>');
-      const outPrev=arr.filter(e=>e.signo<0&&e.tipo==='previsto').reduce((s,e)=>s+e.monto,0);
-      return {f, inn, out, outPrev, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO), sinFecha:f===SIN_FECHA}; });
+    const {filas, minSaldo, minFecha} = filasProyeccion(ev, d.total, filtro);
+    pintarFlujoVD(ev, d.total);
 
     const proyFinal = d.total+proyIn-proyOut-totPrev;
      
@@ -11175,7 +11171,7 @@ function buildFilterTable(cfg){
       '<td class="num" data-label="Sale" style="color:var(--red)">'+(r.out?money(r.out):'')+'</td>'+
       '<td class="num" data-label="Saldo" style="font-weight:800;color:'+(r.saldo<0?'var(--red)':'var(--text)')+'">'+money(r.saldo)+'</td></tr>'; });
     $('caj-tabla-proy').innerHTML=ph; window.__ordenable('caj-tabla-proy');
-    pintarFlujo(d.total, filas);
+    pintarFlujo('caj-ch-flujo', d.total, filas);
     $('caj-proy-asof').textContent='Arranca del disponible de hoy y suma/resta por fecha de vencimiento · horizonte '+(filtro==='todos'?'completo':filtro+' días');
 
      
@@ -11193,7 +11189,33 @@ function buildFilterTable(cfg){
    
    
    
-  let chFlujo=null;
+   
+   
+   
+  function filasProyeccion(ev, total, filtroH){
+    const limite=isoMas(filtroH==='todos'?999999:num(filtroH));
+    const buckets={};
+    ev.filter(e=>e.sinFecha ? filtroH==='todos' : e.fecha<=limite)
+      .forEach(e=>{ const b=e.fecha<hoyISO?hoyISO:e.fecha; (buckets[b]=buckets[b]||[]).push(e); });
+    let saldo=total, minSaldo=total, minFecha=hoyISO, primerNeg='';
+    const filas=Object.keys(buckets).sort().map(f=>{ const arr=buckets[f]; const inn=arr.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), out=arr.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
+      saldo=saldo+inn-out; if(saldo<minSaldo){ minSaldo=saldo; minFecha=f; } if(saldo<0 && !primerNeg && f!==SIN_FECHA) primerNeg=f;
+      const detalle=arr.slice().sort((a,b)=>b.monto-a.monto).map(e=>(e.signo>0?'▲ ':'▼ ')+esc(e.concepto)+' '+money(e.monto)).join('<br>');
+      const outPrev=arr.filter(e=>e.signo<0&&e.tipo==='previsto').reduce((s,e)=>s+e.monto,0);
+      return {f, inn, out, outPrev, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO), sinFecha:f===SIN_FECHA}; });
+    return {filas, minSaldo, minFecha, primerNeg}; }
+   
+   
+   
+  function pintarFlujoVD(ev, total){
+    const sec=$('vdflujo-sec'); if(!sec) return;
+    const P=filasProyeccion(ev, total, '30');
+    sec.style.display='';
+    const sinCero = P.primerNeg ? '<b style="color:var(--red)">pasa a negativo el '+fmtFecha(P.primerNeg)+'</b>' : '<b style="color:var(--green)">no baja de cero en 30 días</b>';
+    $('vdflujo-res').innerHTML='Disponible hoy <b>'+money(total)+'</b> · saldo más bajo <b style="color:'+(P.minSaldo<0?'var(--red)':'var(--text)')+'">'+money(P.minSaldo)+'</b> el '+fmtFecha(P.minFecha)+' · '+sinCero+'.';
+    pintarFlujo('vdflujo-ch', total, P.filas);
+    const b=$('vdflujo-ir'); if(b && !b.__ok){ b.__ok=1; b.onclick=()=>{ if(window.irAPagina) window.irAPagina('Caja'); }; } }
+  const chFlujo={};
   function datosFlujo(total, filas){
     const fs=filas.filter(r=>!r.sinFecha);
     return { labels:['Hoy'].concat(fs.map(r=>r.vencido?'Hoy y venc.':fmtFecha(r.f).slice(0,5))),
@@ -11201,11 +11223,11 @@ function buildFilterTable(cfg){
       sale:[0].concat(fs.map(r=>-Math.round(r.out-(r.outPrev||0)))),
       previsto:[0].concat(fs.map(r=>-Math.round(r.outPrev||0))),
       saldo:[Math.round(total)].concat(fs.map(r=>Math.round(r.saldo))) }; }
-  function pintarFlujo(total, filas){
-    const el=$('caj-ch-flujo'); if(!el || typeof Chart==='undefined') return;
+  function pintarFlujo(id, total, filas){
+    const el=$(id); if(!el || typeof Chart==='undefined') return;
     const D=datosFlujo(total, filas), colchon=window.__cajaColchon?num(window.__cajaColchon()):0;
-    if(chFlujo) chFlujo.destroy();
-    chFlujo=new Chart(el, { data:{ labels:D.labels, datasets:[
+    if(chFlujo[id]) chFlujo[id].destroy();
+    chFlujo[id]=new Chart(el, { data:{ labels:D.labels, datasets:[
       { type:'line', label:'Saldo proyectado', data:D.saldo, borderColor:'#1f3b5a', backgroundColor:'#1f3b5a', stepped:true, borderWidth:2.5, pointRadius:2, stack:'saldo', order:0,
         segment:{ borderColor:c=>c.p1.parsed.y<0?'#d64541':'#1f3b5a' } },
       { type:'line', label:'Colchón mínimo', data:D.labels.map(()=>colchon), borderColor:'#9aa5b1', borderDash:[6,4], borderWidth:1.5, pointRadius:0, stack:'colchon', order:1, hidden:!(colchon>0) },
