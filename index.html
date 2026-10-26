@@ -10980,6 +10980,24 @@ function buildFilterTable(cfg){
   // Los IMPUESTOS del resumen como compra del banco. El IVA solo se discrimina si cierra la cuenta
   // (IVA ≈ 21% de intereses+comisiones): así entra al Libro IVA como crédito. Si no cierra, todo va
   // no gravado — conservador, no se inventa crédito fiscal. Las percepciones van a SUS campos.
+  // Consumos en DÓLARES del resumen VISA (26/10, Marcelo: "compramos dólares con plata de Macro MAV a
+  // precio oficial", "2 días antes"). Se cargan como UNA compra a pagar, en pesos a la cotización dada,
+  // que vence 2 días antes del resumen (si cae fin de semana o feriado, el día hábil anterior): así
+  // entra a la proyección de Caja ese día. Al comprar los dólares se le registra el pago desde MAV.
+  function dolarOficial(){ const n=num(window.__param?window.__param('dolarOficial',1579):1579); return n>0?n:1579; }
+  function fechaCompraUsd(vto){
+    const p=String(vto||'').slice(0,10).split('-').map(Number); if(p.length<3||!p[0]) return hoyISO;
+    const d=new Date(p[0],p[1]-1,p[2]); d.setDate(d.getDate()-2);
+    const iso=x=>x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+    for(let i=0;i<10 && (d.getDay()===0||d.getDay()===6||(window.__esFeriado&&window.__esFeriado(iso(d))));i++) d.setDate(d.getDate()-1);
+    return iso(d); }
+  function compraUsdDesdeResumen(res, cot){
+    const f=fechaCompraUsd(res.vencimiento||hoyISO), tot=round2c(res.usd.reduce((s,x)=>s+x.monto,0));
+    return { _titulo:'Nueva Compra (consumos en dólares del resumen VISA)',
+      proveedor:'Consumos en dólares VISA', fecha:f, vencimiento:f,
+      nota:'Consumos en DÓLARES del resumen VISA'+(res.vencimiento?' que vence el '+fmtFecha(res.vencimiento):'')+': u$s '+tot.toFixed(2).replace('.',',')+' a $ '+cot+' (dólar oficial). Se pagan comprando los dólares desde Banco Macro MAV: al comprarlos, registrá el pago desde esa cuenta con el importe real.',
+      items: res.usd.map(x=>({desc:(x.detalle||'Consumo')+' (u$s '+x.monto.toFixed(2).replace('.',',')+')', codigo:'', cant:1, precioUnit:round2c(x.monto*cot), descPct:0, iva:'nogravado'})) };
+  }
   function compraImpuestosDesdeResumen(res){
     const items=[]; let percepIva=0, percepIibb=0; const netos=[], ivas=[];
     res.impuestos.forEach(x=>{
@@ -11060,7 +11078,10 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn" id="caj-tjr-imp" style="margin:6px 0">➕ Cargar los impuestos como gasto ('+money(res.totalImpuestos)+')</button>';
     }
     if(res.usd && res.usd.length){
-      h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">'+res.usd.length+' consumo'+(res.usd.length>1?'s':'')+' en DÓLARES (u$s '+res.usd.reduce((s,x)=>s+x.monto,0).toFixed(2).replace('.',',')+'): '+res.usd.map(x=>esc(x.detalle.slice(0,26))).join(' · ')+' — no se cotejan acá: esa plata entra en pesos por los cargos del banco (DB.RG) el día del débito.</div>';
+      const usdTot=round2c(res.usd.reduce((s,x)=>s+x.monto,0)), fUsd=fechaCompraUsd(res.vencimiento||hoyISO);
+      h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">'+res.usd.length+' consumo'+(res.usd.length>1?'s':'')+' en DÓLARES (u$s '+usdTot.toFixed(2).replace('.',',')+'): '+res.usd.map(x=>esc(x.detalle.slice(0,26))).join(' · ')+'. Se pagan comprando los dólares desde <b>Banco Macro MAV</b> 2 días antes del vencimiento del resumen (el <b>'+fmtFecha(fUsd)+'</b>).</div>'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 8px"><label style="font-size:12.5px">Dólar oficial $ <input type="number" id="caj-tjr-cot" step="0.01" style="width:90px" value="'+esc(String(dolarOficial()))+'"></label>'+
+        '<button class="cmp-btn" id="caj-tjr-usd">➕ Cargar los u$s '+usdTot.toFixed(2).replace('.',',')+' como compra a pagar el '+fmtFecha(fUsd)+'</button></div>';
     }
     if(res.creditos.length){
       h+='<div style="font-size:12.5px;color:var(--muted);margin:6px 0">Además leí '+res.creditos.length+' crédito'+(res.creditos.length>1?'s':'')+'/devolución'+(res.creditos.length>1?'es':'')+' que no se cotejan solos: '+res.creditos.map(x=>esc(x.detalle.slice(0,30)+' '+money(x.monto))).join(' · ')+'.</div>';
@@ -11074,6 +11095,13 @@ function buildFilterTable(cfg){
       let hechos=0; c.fechasMal.forEach(p=>{ if(window.__marcarDebitoTarjeta(p.compraUid,p.pagoId,p.idx,{fecha:res.vencimiento})) hechos++; });
       if(!hechos) alert('No se pudo corregir. Probá de nuevo.');
       if(window.__cajaRefresh) window.__cajaRefresh();
+    };
+    const ub=$('caj-tjr-usd');
+    if(ub) ub.onclick=()=>{
+      if(!window.__nuevaCompraPrecargada){ alert('El módulo Compras no está disponible.'); return; }
+      const cot=num(($('caj-tjr-cot')||{}).value);
+      if(!(cot>0)){ alert('Cargá la cotización del dólar oficial.'); return; }
+      window.__nuevaCompraPrecargada(compraUsdDesdeResumen(res, cot));
     };
     const ib=$('caj-tjr-imp');
     if(ib) ib.onclick=()=>{
@@ -13856,6 +13884,7 @@ function buildFilterTable(cfg){
     {g:'Finanzas', k:'viumiCom6',  l:'VIUMI: comisión 6 cuotas (%)',  def:13.19, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas', k:'viumiCom9',  l:'VIUMI: comisión 9 cuotas (%)',  def:18.49, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
     {g:'Finanzas', k:'viumiCom12', l:'VIUMI: comisión 12 cuotas (%)', def:22.59, t:'num', hint:'Sin IVA, sobre el monto bruto.'},
+    {g:'Finanzas',   k:'dolarOficial', l:'Dólar oficial (para los consumos en dólares de la VISA)', def:1579, t:'num', hint:'Cotización con la que se pasan a pesos los consumos en dólares del resumen VISA al cargarlos como compra (se pagan comprando dólares desde Banco Macro MAV 2 días antes del vencimiento). Se puede corregir en el momento de cargarlos.'},
     {g:'Finanzas',   k:'cajaColchon', l:'Colchón mínimo de caja', def:2000000, t:'num', hint:'Cuánta plata querés que quede en la cuenta DESPUÉS de pagar un e-cheq. Al armar un pago con e-cheqs propios, el Tablero mira la cuenta de la chequera el día de cada vencimiento y avisa si el saldo queda por debajo de este número. Subilo en los meses cargados (sueldos, aguinaldo) y bajalo si te resulta muy conservador. En 0 solo avisa cuando la cuenta queda en rojo.'},
     {g:'Finanzas',   k:'cuentaChequera', l:'Cuenta de la que salen los cheques propios', def:'Banco Macro VPH', t:'txt', hint:'Un cheque propio se debita SIEMPRE de esta cuenta, así que el Tablero puede avisarte si ese día no va a haber fondos ahí. Se propone sola al cargar un cheque propio; si usás más de una chequera, cambiala a mano en cada cheque.'},
     {g:'Finanzas',   k:'tarjetaCuenta', l:'Cuenta de la que se debita la tarjeta VISA', def:'Banco Macro VPH', t:'txt', hint:'El resumen de la tarjeta se debita de esta cuenta. Al pagar una compra con «VISA / Tarjeta» se propone sola, junto con la fecha del débito (primer día hábil del mes siguiente) — las dos quedan editables en cada pago.'},
