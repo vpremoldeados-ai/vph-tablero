@@ -7494,6 +7494,21 @@ function buildFilterTable(cfg){
     if(dias>tol) return {cod:'reclamar', cls:'reclamar', ico:'🔴', txt:pre+'Reclamar · '+dias+' d', det:entTxt+plazoTxt+' Exigible desde el '+fmtFecha(exigible)+': hace '+dias+' días.'+recTxt, cobrable:true, urg:3, exigible, dias, parcial};
     return {cod:'cobrar', cls:parcial?'parcial':'cobrar', ico:'💰', txt:pre+'Cobrar'+(dias>0?' · '+dias+' d':''), det:entTxt+plazoTxt+' En condición de cobrar desde el '+fmtFecha(exigible)+'.'+recTxt, cobrable:true, urg:2, exigible, dias, parcial};
   }
+  // CUÁNDO entra la plata de una venta, para la proyección de Caja (26/10, pedido de Marcelo: "toda venta
+  // que sabemos la fecha de cobro tiene que tenerla"). Sale de la MISMA condicionCobro, no de una segunda
+  // cuenta: exigible = lo más tarde entre la entrega y el plazo; sin entregar, el día programado del
+  // pedido (y si tiene plazo, no antes de que venza). {fecha:'' } = no se sabe: falta programar la entrega.
+  // null = no opina (sin saldo, o los pedidos todavía no cargaron) y Caja usa el vencimiento de siempre.
+  function fechaCobroVenta(v){
+    const c=condicionCobro(v); if(c.cod==='nada') return null;
+    if(c.cod==='rechazado') return {fecha:hoyISO, motivo:'cheque rechazado'};
+    if(c.cod==='cobrar'||c.cod==='reclamar'||c.cod==='plazo') return {fecha:c.exigible, motivo:c.cod==='plazo'?'vence el plazo':'ya se puede cobrar'};
+    if(!c.programada) return {fecha:'', motivo:'sin fecha de entrega'};
+    const vto=sumarDiasISO(v.fecha, plazoCobroDe(v));
+    return c.cod==='esperar' && vto>c.programada ? {fecha:vto, motivo:'vence el plazo (entrega '+fmtFecha(c.programada)+')'}
+      : {fecha:c.programada, motivo:'cobrar al entregar'};
+  }
+  window.__fechaCobroVenta = v => fechaCobroVenta(v);
   function condCobroHtml(v,k){ const c=condicionCobro(v,k); if(c.cod==='nada') return '';
     return '<div class="cond-cobro '+c.cls+'" title="'+esc(c.det||'')+'">'+c.ico+' '+esc(c.txt)+'</div>'; }
   // El filtro de la lista por estado de cobro (lo usa render). Aparte para poder testearlo sin el DOM.
@@ -10587,6 +10602,7 @@ function buildFilterTable(cfg){
   // OJO: el saldo de una venta/compra YA descuenta los cobros/pagos hechos con cheque (entran en v.cobros / c.pagos).
   // Por eso el cheque pendiente es un importe SEPARADO y NO hay que restarlo del saldo: son cosas distintas.
   // (Restarlo hacía desaparecer la parte de la venta que el cliente todavía debía en efectivo.)
+  const SIN_FECHA='9999-12-31';   // ventas sin entrega programada: van al final, en su propia fila
   function eventosProyeccion(){
     const E=[];
     cheques.forEach(c=>{ if(c.estado!=='cartera'&&c.estado!=='depositado') return; const f=String(c.fechaVencimiento||'').slice(0,10)||hoyISO;
@@ -10598,7 +10614,13 @@ function buildFilterTable(cfg){
         cuenta: c.cuenta || (propio?chequera():''), cuentaAsumida: propio && !c.cuenta,
         concepto:(propio?'Cheque a pagar · ':'Cheque a cobrar · ')+(c.entidad||'—')}); });
     ventas.forEach(v=>{ if(v.tipoComprobante==='Nota de Crédito') return; const saldo=num(calcV(v).saldo);
-      if(saldo>0.5){ const f=String(v.vencimiento||'').slice(0,10)||hoyISO; E.push({fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')}); }
+      // La fecha sale de la condición de cobro de Ventas (entrega + plazo), no del campo `vencimiento`,
+      // que casi siempre quedó igual a la fecha de la venta y mandaba todo a "hoy". Sin entrega
+      // programada no se inventa una fecha: va aparte, como "sin fecha de cobro".
+      if(saldo>0.5){ const fc=window.__fechaCobroVenta ? window.__fechaCobroVenta(v) : null;
+        const f = fc ? fc.fecha : (String(v.vencimiento||'').slice(0,10)||hoyISO);
+        E.push(f ? {fecha:f, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')+(fc?' ('+fc.motivo+')':'')}
+                 : {fecha:SIN_FECHA, sinFecha:true, signo:1, monto:saldo, concepto:'Venta a cobrar · '+(v.cliente||'—')+' (sin fecha de entrega: programala en Producción)'}); }
       // Plata de la plataforma todavía no acreditada. Va SEPARADA del saldo de la venta (que ya está
       // en cero: el cliente pagó), igual que un cheque en cartera. Lleva cuenta, así aparece en
       // "¿Alcanza en cada cuenta?" — es lo que va a entrar a Macro VPH ese día.
@@ -10649,7 +10671,8 @@ function buildFilterTable(cfg){
     const ev=eventosProyeccion();
     const proyIn=ev.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), proyOut=ev.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
     const dias=filtro==='todos'?999999:num(filtro); const limite=isoMas(dias);
-    const evFiltrados=ev.filter(e=>e.fecha<=limite);
+    // Lo que no tiene fecha de cobro sale solo en "Todo" (no se sabe si cae en los próximos 15/30/60 días).
+    const evFiltrados=ev.filter(e=>e.sinFecha ? filtro==='todos' : e.fecha<=limite);
     // Agrupar por fecha-bucket (vencido/hoy colapsa a hoy)
     const buckets={};
     evFiltrados.forEach(e=>{ const b=e.fecha<hoyISO?hoyISO:e.fecha; (buckets[b]=buckets[b]||[]).push(e); });
@@ -10658,7 +10681,7 @@ function buildFilterTable(cfg){
     const filas=fechas.map(f=>{ const arr=buckets[f]; const inn=arr.filter(e=>e.signo>0).reduce((s,e)=>s+e.monto,0), out=arr.filter(e=>e.signo<0).reduce((s,e)=>s+e.monto,0);
       saldo=saldo+inn-out; if(saldo<minSaldo){ minSaldo=saldo; minFecha=f; }
       const detalle=arr.slice().sort((a,b)=>b.monto-a.monto).map(e=>(e.signo>0?'▲ ':'▼ ')+esc(e.concepto)+' '+money(e.monto)).join('<br>');
-      return {f, inn, out, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO)}; });
+      return {f, inn, out, saldo, detalle, vencido:f===hoyISO && arr.some(e=>e.fecha<hoyISO), sinFecha:f===SIN_FECHA}; });
 
     const proyFinal = d.total+proyIn-proyOut;
     // Plata de plataformas (VIUMI) que ya se cobró pero todavía no acreditó. Va en tarjeta propia
@@ -10684,7 +10707,9 @@ function buildFilterTable(cfg){
       cell('DISPONIBLE HOY', money(d.total), d.total>0?'var(--green)':'var(--red)');
     const alerta = minSaldo<0 ? '<b style="color:var(--red)">⚠️ Con los pagos comprometidos, el '+fmtFecha(minFecha)+' la caja quedaría en '+money(minSaldo)+'.</b> Adelantá cobranzas o corré algún pago.' : 'Con lo comprometido, el saldo más bajo proyectado es '+money(minSaldo)+' (el '+fmtFecha(minFecha)+').';
     const hayS=pc.some(c=>c.sinAsignar);
-    $('caj-explica').innerHTML = 'El <b>disponible hoy</b> es plata real, abierto por cuenta. Lo demás es proyección con fechas de vencimiento. '+alerta+
+    const evSF=ev.filter(e=>e.sinFecha), totSF=evSF.reduce((s,e)=>s+e.monto,0);
+    const avisoSF = evSF.length ? ' <b style="color:var(--amber)">⚠️ '+evSF.length+' venta'+(evSF.length>1?'s':'')+' por '+money(totSF)+' sin fecha de cobro</b>: no tienen la entrega programada. Ponele día en Producción → Entregas a coordinar y entran a la proyección en esa fecha (se ven al final, con el horizonte «Todo»).' : '';
+    $('caj-explica').innerHTML = 'El <b>disponible hoy</b> es plata real, abierto por cuenta. Lo demás es proyección: las compras por su vencimiento y las ventas por su fecha de cobro (la entrega y el plazo del cliente, lo mismo que dice Ventas). '+alerta+avisoSF+
       (hayS?' <b style="color:var(--amber)">⚠️ Hay movimientos «Sin asignar»</b>: son cobros/pagos cargados antes de que existiera el campo de cuenta, o cheques sin cuenta de depósito. El total es correcto igual; para que el detalle por cuenta cierre, editalos e indicá la cuenta.':'');
 
     renderCuentas(d, limite);
@@ -10698,7 +10723,7 @@ function buildFilterTable(cfg){
     let ph='<tr><th>Fecha</th><th>Detalle</th><th class="num">Entra</th><th class="num">Sale</th><th class="num">Saldo proyectado</th></tr>';
     ph+='<tr><td data-label="Fecha"><b>Hoy</b></td><td data-label="Detalle">Disponible actual</td><td class="num"></td><td class="num"></td><td class="num"><b>'+money(d.total)+'</b></td></tr>';
     if(!filas.length) ph+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin cobros ni pagos comprometidos en este período 👍</td></tr>';
-    filas.forEach(r=>{ ph+='<tr><td data-label="Fecha"><b>'+(r.vencido?'Hoy y vencidos':fmtFecha(r.f))+'</b></td>'+
+    filas.forEach(r=>{ ph+='<tr'+(r.sinFecha?' class="total"':'')+'><td data-label="Fecha"><b>'+(r.sinFecha?'Sin fecha de cobro':r.vencido?'Hoy y vencidos':fmtFecha(r.f))+'</b></td>'+
       '<td data-label="Detalle" style="font-size:11.5px;line-height:1.5">'+r.detalle+'</td>'+
       '<td class="num" data-label="Entra" style="color:var(--green)">'+(r.inn?money(r.inn):'')+'</td>'+
       '<td class="num" data-label="Sale" style="color:var(--red)">'+(r.out?money(r.out):'')+'</td>'+
