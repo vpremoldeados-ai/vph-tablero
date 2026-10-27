@@ -534,7 +534,12 @@
     '3 Minorista Responsable Inscripto', // IVA discriminado · factura A
     '4 Lista Promedio',
     '5 Mayorista Facturado',             // IVA discriminado · factura A
-    '6 Mayorista Sin Facturar'           // precio final − 10,5% · sin factura
+    '6 Mayorista Sin Facturar',          // precio final − 10,5% · sin factura
+    // 27/10 (Marcelo): mayoristas fuera de la ciudad a los que el flete va DENTRO del precio ("puesto en su
+    // corralón", ej. Wall Stone y Bergese Hnos) — así nadie escribe un precio a mano. Son la 5 y la 6 más
+    // el flete por pallet (param fleteListaConFlete, SIN IVA) repartido por las unidades de cada pallet.
+    '7 Mayorista Facturado con Flete',
+    '8 Mayorista Sin Facturar con Flete'
   ];
   window.__listasPrecio = ()=> LISTAS_PRECIO_ARR.slice();
   window.__listaDefecto = { minorista: LISTAS_PRECIO_ARR[0], mayorista: LISTAS_PRECIO_ARR[4] };
@@ -581,7 +586,26 @@
     else if(/mayorista/i.test(s)) base = mayo;
     else                          base = mino;
     if(!base) base = mino || mayo;                                  // lo que haya cargado
-    return /sin factura/i.test(s) ? r2(base*(1-window.__DESC_SIN_FACTURA)) : base;
+    const sf = /sin factura/i.test(s);
+    let precio = sf ? r2(base*(1-window.__DESC_SIN_FACTURA)) : base;
+    // Listas "con Flete": + flete por pallet (SIN IVA) ÷ unidades por pallet; con IVA si se factura.
+    // Un servicio o lo que va en la cajita sobre el pallet (anclajes, kits) no ocupa pallet: no suma.
+    if(/con flete/i.test(s) && precio){
+      const ud = nn(prod && prod.udPorPallet);
+      const sinPallet = String(prod&&prod.tipo||'')==='Servicio' || (window.__enCajita && window.__enCajita(prod&&prod.codigo, prod&&prod.nombre));
+      const fp = window.__param ? nn(window.__param('fleteListaConFlete', 26250)) : 26250;
+      if(ud>0 && !sinPallet && fp>0) precio = r2(precio + fp/ud*(sf?1:1.21));
+    }
+    return precio;
+  };
+  // La lista PROPIA de un cliente (campo "Lista de precios" de su ficha en Base de Datos), o '' si no
+  // tiene una: Ventas y Presupuestos la cargan sola al elegir el cliente (27/10, Marcelo: que Sofía no
+  // escriba precios a mano). Va en el global porque la usan dos IIFE.
+  window.__listaDeCliente = function(nombre){
+    const nz = s => String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Z0-9]/g,'');
+    const n = nz(nombre); if(!n) return '';
+    const f = (window.__catalogoClientes ? window.__catalogoClientes() : []).find(c=>nz(c.nombre)===n);
+    return f && f.listaPrecios ? window.__normLista(f.listaPrecios) : '';
   };
   // Fuentes de alertas EN VIVO: cada módulo hace window.__alertSources.push(()=>[...]) al arrancar.
   window.__alertSources = window.__alertSources || [];
@@ -8463,6 +8487,11 @@ function buildFilterTable(cfg){
       // facturar" (las categorías con el 10,5%). Solo se copia si la ficha la tiene cargada.
       const fx=fichaCliente($('vf-cli').value);
       if(fx && fx.categoria){ editing.categoria=fx.categoria; const s=$('vf-cat'); if(s) s.value=fx.categoria; }
+      // Lista PROPIA del cliente (su ficha): se carga sola y re-precia, igual que si se eligiera a mano.
+      const lc=window.__listaDeCliente ? window.__listaDeCliente($('vf-cli').value) : '';
+      if(lc && lc!==editing.listaPrecios){ editing.listaPrecios=lc;
+        editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p) aplicarProducto(it,p,lc); }); reprecioPlan();
+        sincronizarSinFacturar(editing); drawForm(); return; }
       if(sincronizarSinFacturar(editing)) drawForm();
     });
     $('vf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('vf-lista').value; let ch=false; editing.items.forEach(it=>{ const p=matchProducto(it.desc); if(p){ aplicarProducto(it,p,editing.listaPrecios); ch=true; } });
@@ -12780,7 +12809,12 @@ function buildFilterTable(cfg){
     $('pf-cond').addEventListener('change',pintarTipoPre);
     $('pf-lista').addEventListener('change',()=>setTimeout(pintarTipoPre,0));   // la lista "sin facturar" fuerza X DESPUÉS de este handler: repintar al terminar
     sugerirFiscalPre(false);
-    $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } sugerirFiscalPre(false); });
+    $('pf-cli').addEventListener('change',()=>{ const f=clientesConocidos().find(c=>c.nombre===$('pf-cli').value); if(f && !$('pf-cuit').value){ $('pf-cuit').value=f.cuit||''; editing.cuit=f.cuit||''; if(f.cond){ $('pf-cond').value=f.cond; editing.condIva=f.cond; } } sugerirFiscalPre(false);
+      // Lista PROPIA del cliente (su ficha): se elige sola y dispara el change de la lista, que re-precia,
+      // recalcula el flete y ajusta la condición de IVA en un solo lugar (27/10).
+      const lc=window.__listaDeCliente ? window.__listaDeCliente($('pf-cli').value) : '';
+      const sel=$('pf-lista');
+      if(lc && sel && lc!==editing.listaPrecios){ if(![...sel.options].some(o=>o.value===lc)) sel.add(new Option(lc,lc)); sel.value=lc; if(sel.__repintar) sel.__repintar(); sel.dispatchEvent(new Event('change',{bubbles:true})); } });
     $('pf-lista').addEventListener('change',()=>{ editing.listaPrecios=$('pf-lista').value; let ch=false; editing.items.forEach(it=>{ const pr=matchProducto(it.desc); if(pr){ aplicarProducto(it,pr,editing.listaPrecios); ch=true; } }); if(editing.zona) aplicarFlete(editing); if(ch||editing.zona){ drawItems(); drawTotals(); }
       // Una cotización SIN FACTURAR va con condición de IVA X: no se identifica al comprador. El
       // presupuesto no tiene "tipo de comprobante" (siempre es un presupuesto), pero esta condición
@@ -13383,7 +13417,7 @@ function buildFilterTable(cfg){
 
   const ENT = {
     clientes: { col:'vph_clientes', label:'Clientes', sing:'Cliente', origen:'vph_ventas', campoOrigen:'cliente',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'categoria',l:'Categoría (lista)',t:'select',opts:['',...CATS],cards:1},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'localidad',l:'Localidad',t:'text'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'categoria',l:'Categoría (lista)',t:'select',opts:['',...CATS],cards:1},{k:'listaPrecios',l:'Lista de precios propia (vacío = según la categoría)',t:'select',opts:['',...window.__listasPrecio()]},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'localidad',l:'Localidad',t:'text'},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'categoria',h:'Categoría'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','email','telefono'] },
     proveedores: { col:'vph_proveedores', label:'Proveedores', sing:'Proveedor', origen:'vph_compras', campoOrigen:'proveedor',
@@ -14045,6 +14079,7 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = camión de Sánchez a Wall Stone ($210.000 ÷ 8 pallets).'},
     {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
     {g:'Flete', k:'fleteOtsenre',   l:'7 OTSENRE ($ por pallet)',                       def:0, t:'num', hint:'Precio final (con IVA). Si varía por viaje, dejalo en 0 y cargá el precio en cada presupuesto (campo "Precio del flete por pallet").'},
     // Lista de precios mayorista en PDF (Base de Datos → 📄). El flete de "hasta 100 km" lo cobra
