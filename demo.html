@@ -14385,6 +14385,8 @@ function buildFilterTable(cfg){
       '<button style="'+b+'" data-l="maySF">Mayorista Contado</button>'+
       '<button style="'+b+'" data-l="may100">Mayorista Facturado — hasta 100 km</button>'+
       '<button style="'+b+'" data-l="maySF100">Mayorista Contado — hasta 100 km</button>'+
+      '<button style="'+b+'" data-l="mayFlete">Mayorista Facturado — con flete (puesto)</button>'+
+      '<button style="'+b+'" data-l="maySFFlete">Mayorista Contado — con flete (puesto)</button>'+
       '<button style="'+b+'" data-l="min">Minorista</button>'+
       '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
     document.body.appendChild(ov);
@@ -14456,7 +14458,7 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
-    {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = camión de Sánchez a Wall Stone ($210.000 ÷ 8 pallets).'},
+    {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = un camión de 8 pallets a $210.000.'},
     {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
     {g:'Flete', k:'fleteOtsenre',   l:'7 OTSENRE ($ por pallet)',                       def:0, t:'num', hint:'Precio final (con IVA). Si varía por viaje, dejalo en 0 y cargá el precio en cada presupuesto (campo "Precio del flete por pallet").'},
      
@@ -17577,7 +17579,10 @@ function buildFilterTable(cfg){
     {k:'cbaFact', l:'CBA · Facturado',       pdf:'Mayorista Facturado',                 lp:'may'},
     {k:'cbaSF',   l:'CBA · Contado',         pdf:'Mayorista Contado',                   lp:'maySF'},
     {k:'intFact', l:'Interior · Facturado',  pdf:'Mayorista Facturado — hasta 100 km',  lp:'may100'},
-    {k:'intSF',   l:'Interior · Contado',    pdf:'Mayorista Contado — hasta 100 km',    lp:'maySF100'}
+    {k:'intSF',   l:'Interior · Contado',    pdf:'Mayorista Contado — hasta 100 km',    lp:'maySF100'},
+     
+    {k:'fleFact', l:'Con flete · Facturado', pdf:'Mayorista Facturado — con flete',    lp:'mayFlete'},
+    {k:'fleSF',   l:'Con flete · Contado',   pdf:'Mayorista Contado — con flete',      lp:'maySFFlete'}
   ];    
   function mayTipo(k){ return MAY_TIPOS.find(t=>t.k===k)||MAY_TIPOS[0]; }
    
@@ -23126,7 +23131,14 @@ function buildFilterTable(cfg){
     may100:  { campo:'precioMayorista',   nombre:'Mayorista hasta 100 km', may:1, flete100:1,
                cond:'Precios finales por unidad, IVA incluido (Factura A o B). '+LP_PAGO_FACT+' Compra mínima: 4 pallets. '+LP_100+' '+LP_COMUN },
     maySF100:{ campo:'precioMayoristaSF', nombre:'Mayorista Contado hasta 100 km', may:1, flete100:1,
-               cond:'Precios por unidad. '+LP_PAGO_CONT+' Compra mínima: 4 pallets. '+LP_100+' '+LP_COMUN }
+               cond:'Precios por unidad. '+LP_PAGO_CONT+' Compra mínima: 4 pallets. '+LP_100+' '+LP_COMUN },
+     
+     
+     
+    mayFlete:  { campo:'precioMayorista',   nombre:'Mayorista con flete', may:1, lpTablero:'7 Mayorista Facturado con Flete',
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_FACT+' Compra mínima: 1 pallet. '+LP_COMUN },
+    maySFFlete:{ campo:'precioMayoristaSF', nombre:'Mayorista Contado con flete', may:1, lpTablero:'8 Mayorista Sin Facturar con Flete',
+               cond:'Precios por unidad, PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Compra mínima: 1 pallet. '+LP_COMUN }
   };
    
    
@@ -23154,7 +23166,7 @@ function buildFilterTable(cfg){
       .filter(p=>!(L.may && FUERA_LISTAS_MAYORISTAS.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
        
        
-      .filter(p=>!L.flete100 || num(p.udPorPallet)>0)
+      .filter(p=>!(L.flete100||L.lpTablero) || num(p.udPorPallet)>0)
        
       .sort((a,b)=>nombreLista(a).localeCompare(nombreLista(b),'es'));
     if(!prods.length) return {error:'No hay productos con precio cargado en la lista "'+L.nombre+'".'};
@@ -23163,6 +23175,7 @@ function buildFilterTable(cfg){
     const hoyISO=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
      
     const unit = p => { const base=num(p[L.campo]);
+      if(L.lpTablero && window.__precioDeLista) return Math.round(window.__precioDeLista(p, L.lpTablero));
       return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
       return { codigo:p.codigo, nombre:nombreLista(p), pu:pu, sugerido:Math.round(pu*(1+margen/100)),
