@@ -1647,6 +1647,7 @@
             <option value="particular">5 Transporte Particular</option>
             <option value="brio">6 Brio</option>
             <option value="otsenre">7 OTSENRE</option>
+            <option value="maygran">8 Mayorista Gran Córdoba / Sierras Chicas</option>
           </select>
         </div>
         <div class="cmp-field" id="pre-comp-fin-wrap">
@@ -12314,10 +12315,16 @@ function buildFilterTable(cfg){
     {k:'mati', l:'4 Interior con Mati', par:'fleteMati', def:140000},
     {k:'particular', l:'5 Transporte Particular', par:'fleteParticular', def:0},
     {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000},
-    {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0}   // igual que Brío; el precio suele variar por viaje → se pisa en el presupuesto (precioFlete)
+    {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0},   // igual que Brío; el precio suele variar por viaje → se pisa en el presupuesto (precioFlete)
+    // 27/10 (Marcelo): a los MAYORISTAS el flete dentro de Córdoba va incluido; en Gran Córdoba y Sierras
+    // Chicas (Río Ceballos, La Calera, Villa Allende, Camino a Pekos…) se cobra aparte, $29.000 por pallet
+    // SIN IVA. `neto`: el parámetro se carga sin IVA → facturado paga 29.000 + IVA, sin factura 29.000.
+    {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true}
   ];
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
-  const zonaCosto=k=>{ const z=ZONAS.find(x=>x.k===k); return (z&&z.par)?num(window.__param(z.par,z.def)):0; };
+  // Siempre FINAL con IVA, como el resto de las zonas: una zona `neto` se pasa a final acá.
+  const zonaCosto=k=>{ const z=ZONAS.find(x=>x.k===k); return (z&&z.par)?round2(num(window.__param(z.par,z.def))*(z.neto?1.21:1)):0; };
+  const zonaNeta=k=>{ const z=ZONAS.find(x=>x.k===k); return !!(z&&z.neto); };
   // Precio por pallet a COBRAR: el que se cargó a mano en el presupuesto (`precioFlete`, final con IVA) o,
   // si está vacío, el de la zona (Parámetros). Pasa solo si hay una zona que cobre flete.
   const precioPalletDe=(zona,manual)=>{ const m=num(manual); return (zona && zona!=='retiro' && m>0) ? m : zonaCosto(zona); };
@@ -12374,8 +12381,10 @@ function buildFilterTable(cfg){
     // El precio de zona es FINAL (con IVA) por pallet, igual que en el cotizador → se netea para el renglón,
     // como hace aplicarProducto con los productos. Descripción simple: "Flete", cantidad = pallets,
     // precio unitario = costo por pallet — sin repetir el nombre de la zona ni el conteo entre paréntesis.
+    // Zona cargada SIN IVA (mayorista Gran Córdoba): el que no factura paga el neto, no el final.
+    const netoSF = sf && zonaNeta(zona) && !(num(precioManual)>0);
     return { desc:'Flete por pallet', codigo:'FLETE', cant:pallets, descPct:0,
-             precioUnit: sf ? round2(precio) : round2(precio/1.21),
+             precioUnit: (sf && !netoSF) ? round2(precio) : round2(precio/1.21),
              iva: sf ? 'nogravado' : '21' };
   }
   // Reemplaza el renglón "Flete" del presupuesto según la zona y los ítems actuales.
@@ -14031,6 +14040,7 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
     {g:'Flete', k:'fleteOtsenre',   l:'7 OTSENRE ($ por pallet)',                       def:0, t:'num', hint:'Precio final (con IVA). Si varía por viaje, dejalo en 0 y cargá el precio en cada presupuesto (campo "Precio del flete por pallet").'},
     // Lista de precios mayorista en PDF (Base de Datos → 📄). El flete de "hasta 100 km" lo cobra
     // Expreso Biletta y lo actualiza cuando quiere — por eso es un parámetro y no un número en el código.
