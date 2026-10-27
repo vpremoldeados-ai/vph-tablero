@@ -8840,7 +8840,12 @@ function buildFilterTable(cfg){
         rec.acreditado=!!($('vc-pl-acred')&&$('vc-pl-acred').checked);
         rec.cuenta=$('vc-pl-cuenta')?$('vc-pl-cuenta').value:'';   // dónde acredita, no dónde entró hoy
         if(!rec.fechaAcreditacion){ alert('Poné la fecha en que se acredita la plata de la plataforma.'); return; }
-        if(netoPlataforma(rec)<=0){ alert('Los descuentos de la liquidación se comen todo el cobro. Revisá los importes.'); return; } }
+        if(netoPlataforma(rec)<=0){ alert('Los descuentos de la liquidación se comen todo el cobro. Revisá los importes.'); return; }
+        // 27/10 (Marcelo): de 8 ventas cobradas por VIUMI desde julio, 6 se cargaron al precio de CONTADO
+        // y el costo de las cuotas (15-23%) lo pagó VPH. Si la venta no tiene plan de cuotas elegido, preguntar.
+        // Solo al registrar un cobro NUEVO (editar uno viejo no vuelve a preguntar).
+        if(!prev && finAplicaVta(v) && !num(v.finCuotas) &&
+           !confirm('⚠️ Este cobro es por VIUMI y la venta NO tiene plan de cuotas elegido: los precios quedaron al de CONTADO.\n\nSi el cliente pagó en CUOTAS, el costo de la financiación lo estaría pagando VPH. En ese caso tocá Cancelar, abrí la venta (✏️), elegí en "Forma de pago acordada" el plan de cuotas, guardá y cobrá por el total nuevo.\n\nSi pagó en 1 pago (débito o crédito sin cuotas), Aceptar.\n\n¿Registrar el cobro igual?')) return; }
       else if(esRetencion(rec.medio)){
         // Sin cuenta A PROPÓSITO: no entró plata a ningún banco. Guardar una descuadraría el detalle
         // por cuenta de Caja con un ingreso que nunca existió.
