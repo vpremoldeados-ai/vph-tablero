@@ -611,6 +611,28 @@
     return 'Sin canal';
   };
 
+  // ---------- Descuento en una venta/presupuesto MAYORISTA (27/10, pedido de Marcelo) ----------
+  // Se sacó la condición "5% de descuento por más de 5 pallets": las listas mayoristas no llevan descuento
+  // por cantidad. No se bloquea (puede haber una excepción), se pregunta. Devuelve la "huella" de los
+  // descuentos ('' = ninguno): así Ventas y Presupuestos preguntan solo si el descuento es NUEVO o cambió,
+  // y no cada vez que se reabre una venta vieja que ya lo tenía. Va en el global: lo usan dos IIFE.
+  window.__descuentoMayorista = function(v){
+    if(!v || window.__canalVenta(v)!=='Mayorista') return '';
+    if(/cr[eé]dito/i.test(String(v.tipoComprobante||''))) return '';
+    const n=x=>{ let s=String(x==null?'':x).trim(); if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.'); const r=parseFloat(s); return isFinite(r)?r:0; };
+    const it=(v.items||[]).map(i=>n(i.descPct)).filter(p=>p>0);
+    const g=n(v.descGeneral);
+    if(!it.length && !(g>0)) return '';
+    return 'r'+it.join('/')+'|g'+g;
+  };
+  window.__confirmarDescuentoMayorista = function(v, previo){
+    const h=window.__descuentoMayorista(v);
+    if(!h || h===window.__descuentoMayorista(previo)) return true;
+    const ren=h.slice(1, h.indexOf('|g')), g=h.slice(h.indexOf('|g')+2);
+    const qu=[ren ? 'descuento en '+ren.split('/').length+' renglón(es): '+ren.split('/').join('%, ')+'%' : '', g!=='0' ? 'descuento general '+g+'%' : ''].filter(Boolean).join(' y ');
+    return confirm('⚠️ Esta venta es MAYORISTA y lleva '+qu+'.\n\nDesde el 27/10 las listas mayoristas NO llevan descuento por cantidad (se sacó el 5% por más de 5 pallets).\n\n¿Confirmás el descuento igual?');
+  };
+
   // ---------- Qué factura le corresponde a un cliente (06/10, pedido de Marcelo) ----------
   // VPH es Responsable Inscripto: a otro RI le hace Factura A (IVA discriminado); a un consumidor
   // final, monotributista o exento, Factura B; "X" es la venta sin facturar. UNA sola tabla para
@@ -8576,6 +8598,7 @@ function buildFilterTable(cfg){
     { const dneg=editing.items.find(it=>num(it.precioUnit)<0 && (String(it.codigo||'').trim() || !String(it.desc||'').trim()));
       if(dneg){ alert('Un renglón con precio negativo es un DESCUENTO: escribile una descripción (ej. "Bonificación reposición 45 losetas") y que NO tenga código de producto'+(dneg.codigo?' (este tiene '+dneg.codigo+')':'')+'.\n\nSi lleva el código de la loseta, el Tablero lo cuenta como mercadería: suma kilos, costo y carga al pedido.'); return; } }
     if(editing.items.some(it=>num(it.precioUnit)<0) && calc(editing).total<0){ alert('El total no puede quedar negativo: el descuento es mayor que lo cotizado.'); return; }
+    if(!window.__confirmarDescuentoMayorista(editing, editing._uid && DB.ventas.find(x=>x._uid===editing._uid))) return;
     const esAlta=!editing._uid;   // ANTES de asignarle el uid: después todo parece edición
     if(!editing._uid) editing._uid=newUid();
     vincularLeadAntes(editing);
@@ -12956,6 +12979,7 @@ function buildFilterTable(cfg){
     { const dneg=editing.items.find(it=>num(it.precioUnit)<0 && (String(it.codigo||'').trim() || !String(it.desc||'').trim()));
       if(dneg){ alert('Un renglón con precio negativo es un DESCUENTO: escribile una descripción (ej. "Bonificación reposición 45 losetas") y que NO tenga código de producto'+(dneg.codigo?' (este tiene '+dneg.codigo+')':'')+'.\n\nSi lleva el código de la loseta, el Tablero lo cuenta como mercadería: suma kilos, costo y carga al pedido.'); return; } }
     if(editing.items.some(it=>num(it.precioUnit)<0) && calc(editing).total<0){ alert('El total no puede quedar negativo: el descuento es mayor que lo cotizado.'); return; }
+    if(!window.__confirmarDescuentoMayorista(editing, editing._uid && DB.presupuestos.find(x=>x._uid===editing._uid))) return;
     const cerrarYAvisar=pp=>{ const cb=_onSaved; _onSaved=null; closeForm(); if(cb){ try{ cb(pp); }catch(e){ console.error('presupuesto onSaved:',e); } } };
     if(!editing._uid){ asignarNumeroYGuardar(editing, cerrarYAvisar); return; }
     persist(editing); cerrarYAvisar(); }
