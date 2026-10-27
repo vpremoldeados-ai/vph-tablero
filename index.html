@@ -7449,9 +7449,10 @@ function buildFilterTable(cfg){
     const f=String(v.fecha||'').slice(0,10), vto=String(v.vencimiento||'').slice(0,10), esISO=s=>/^\d{4}-\d{2}-\d{2}$/.test(s);
     // Un vencimiento cargado A MANO (posterior a la emisión) es el plazo pactado con ESE cliente: manda.
     if(esISO(vto) && esISO(f) && vto>f){ const d=Math.round((parseF(vto)-parseF(f))/864e5); if(d>0) return d; }
-    // Sin factura = contado: no se le da plazo a quien no lleva factura (condición del presupuesto).
-    if(v.tipoComprobante==='Sin factura' || esSinFacturar(v.listaPrecios, v.categoria)) return 0;
     const may = (window.__canalVenta?window.__canalVenta(v):'')==='Mayorista';
+    // Sin factura = contado, salvo el MAYORISTA: 30 días desde el encargo, pague en efectivo o con cheque
+    // (Marcelo, 27/10). Al minorista sin factura no se le da plazo (condición del presupuesto).
+    if(!may && (v.tipoComprobante==='Sin factura' || esSinFacturar(v.listaPrecios, v.categoria))) return 0;
     return Math.max(0, Math.round(paramNum(may?'plazoCobroMayorista':'plazoCobroMinorista', may?30:0)));
   }
   // Qué pasó con la ENTREGA, mirando TODOS los pedidos de la venta (un pedido partido en dos viajes
