@@ -18393,6 +18393,7 @@ function buildFilterTable(cfg){
   window.__igCharlas=charlas;
 
   function burbuja(m){
+    if(m.dir==='comentario') return '<div style="margin:8px 0;padding:8px 10px;border-radius:10px;border:1px dashed '+(m.autor==='sombra'?'#c98a06':'#d6249f')+';white-space:pre-wrap"><div style="font-size:11px;color:var(--muted);margin-bottom:2px">'+(m.autor==='sombra'?'💬 Comentario · 🕶️ modo sombra (no se publicó nada)':'💬 Comentario · respondido por el asistente')+' · '+fmt(m.ts)+'</div>'+esc(m.texto)+'</div>';
     if(m.dir==='evento') return '<div style="text-align:center;margin:8px 0"><span class="badge green">'+esc(m.texto)+' · '+fmt(m.ts)+'</span></div>';
     const sale=m.dir==='out';
     const quien=m.autor==='persona'?'👤 Persona':(m.autor==='agente'?'🤖 Asistente':'Cliente');
@@ -18411,10 +18412,10 @@ function buildFilterTable(cfg){
       '<div class="kpi good"><div class="label">Con lead en el CRM</div><div class="value">'+todas.filter(c=>c.leadUid).length+'</div><div class="sub">Dejaron su WhatsApp</div></div>'+
       '<div class="kpi warn"><div class="label">Sin WhatsApp todavía</div><div class="value">'+todas.filter(c=>!c.leadUid).length+'</div><div class="sub">Solo consultaron</div></div>'+
       '<div class="kpi"><div class="label">Hoy</div><div class="value">'+todas.filter(c=>c.ultimoMs>=hoy.getTime()).length+'</div><div class="sub">Charlas con actividad hoy</div></div>';
-    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano']];
+    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios']];
     $('igb-filtros').innerHTML=F.map(([k,l])=>'<button class="filter-btn'+(filtro===k?' active':'')+'" data-f="'+k+'">'+l+'</button>').join('');
     $('igb-filtros').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
-    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona));
+    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')));
     $('igb-count').textContent=lista.length+' charla'+(lista.length!==1?'s':'');
     $('igb-lista').innerHTML=lista.length?lista.map(c=>{
       const abierta=abiertas.has(c.k);
