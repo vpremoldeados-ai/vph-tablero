@@ -17235,6 +17235,17 @@ function buildFilterTable(cfg){
     return (interior?'int':'cba')+(sf?'SF':'Fact');
   }
   function mayPeriodo(){ return hoyISO.slice(0,7); }
+  // 28/10 (pedido de Marcelo: mandar la lista NUEVA del +10% del 27/10 a todos): la lista tiene una
+  // FECHA DE VIGENCIA propia (campo `lista.desde`, ISO, en el mismo doc de Mayoristas; botón 🆕 Lista
+  // nueva). El sello de "✓ enviada" compara contra esa fecha, no contra el mes: así una lista nueva a
+  // mitad de mes vuelve a dejar a TODOS pendientes (el 27/10 ya había 30 de 34 selladas con la vieja).
+  // Sin fecha cargada, vale el mes de siempre (compatibilidad con lo guardado antes).
+  let MAYLISTA={};
+  const MAY_LISTA_KEY='vph_crm_may_lista_v1';
+  function mayListaClave(){ const d=String((MAYLISTA&&MAYLISTA.desde)||'').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : mayPeriodo(); }
+  function mayClaveLabel(k){ k=String(k||''); return /^\d{4}-\d{2}-\d{2}$/.test(k) ? (k.slice(8,10)+'/'+k.slice(5,7)+'/'+k.slice(0,4)) : mayMesLabel(k); }
+  // "27 de octubre" para el texto del mensaje.
+  function mayFechaLarga(k){ k=String(k||''); const M=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']; const m=M[(+k.slice(5,7)||0)-1]; return (+k.slice(8,10))+' de '+(m||''); }
   function mayMesLabel(p){
     const M=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
     const par=String(p||'').split('-'); const n=M[(+par[1]||0)-1];
@@ -17293,9 +17304,16 @@ function buildFilterTable(cfg){
       if(seg==='dormido' || seg==='nunca') return holaP+' Te escribo para saber si tenés alguna obra o pedido donde te pueda servir con losetas, green blocks o topes — fabricamos a pedido y entregamos en 7 días hábiles, así no te hace falta tener stock parado. Cualquier consulta estoy acá 👌';
       return holaP+' ¿Cómo andás de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
     }
-    // 02/10 (decisión del pedido de envío con la lista adjunta): avisa que la lista CAMBIÓ — el +3% del
-    // 01/10 se mandaba con un texto que no decía que los precios eran otros.
-    return hola+' Te paso la lista de precios mayorista actualizada, vigente desde '+mayMesLabel(mayPeriodo())+' 👇 Fabricamos a pedido con entrega en 7 días hábiles, así no necesitás stock inmovilizado. ¡Avisame si querés que te reserve producción!';
+    // 28/10 (texto aprobado por Marcelo, para el +10% del 27/10): corto y sin detalle de cuánto subió —
+    // "un pequeño ajuste por la suba de materias primas e insumos", para no invitar a comparar. Con una
+    // fecha de vigencia cargada (🆕 Lista nueva) dice el día y aclara que lo pedido antes va al precio
+    // anterior; sin fecha, nombra el mes (como antes) y no promete nada sobre pedidos previos.
+    const clave=mayListaClave(), conFecha=/^\d{4}-\d{2}-\d{2}$/.test(clave);
+    const vig = conFecha ? ('el '+mayFechaLarga(clave)) : mayMesLabel(clave);
+    return 'Hola'+(nombre?' '+nombre:'')+'! ¿Cómo estás? Soy '+firma+' de VPH Premoldeados.'+
+      '\n\nTe paso la lista de precios mayorista actualizada, vigente desde '+vig+'. Tiene un pequeño ajuste por la suba de materias primas e insumos.'+
+      '\n\n'+(conFecha?('Lo que ya tenías pedido antes del '+(+clave.slice(8,10))+' se respeta al precio anterior. '):'')+'Entrega en 7 días hábiles, como siempre.'+
+      '\n\nCualquier consulta estoy acá 👌';
   }
   // ---------- Actividad real del revendedor (22/09, pedido de Marcelo) ----------
   // El seguimiento por calendario (mensual/quincenal a TODOS por igual) no distingue a quién priorizar.
@@ -17365,6 +17383,11 @@ function buildFilterTable(cfg){
   function mayLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function maySaveLocal(){ try{ localStorage.setItem(MAY_KEY, JSON.stringify(MAYW)); }catch(e){} }
   function mayAvisoLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_AVISO_KEY)); if(d && typeof d==='object') return d; }catch(e){} return {}; }
+  function mayListaLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_LISTA_KEY)); if(d && typeof d==='object') return d; }catch(e){} return {}; }
+  function mayListaSave(li){ MAYLISTA=li||{};
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{lista:MAYLISTA},{merge:true}).catch(e=>alert('Error al guardar la vigencia de la lista: '+e.message)); else alert('Iniciá sesión.'); }
+    else { try{ localStorage.setItem(MAY_LISTA_KEY, JSON.stringify(MAYLISTA)); }catch(e){} }
+  }
   function mayAvisoSave(av){ MAYAVISO=av||{};
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{aviso:MAYAVISO},{merge:true}).catch(e=>alert('Error al guardar el aviso: '+e.message)); else alert('Iniciá sesión.'); }
     else { try{ localStorage.setItem(MAY_AVISO_KEY, JSON.stringify(MAYAVISO)); }catch(e){} }
@@ -17373,10 +17396,10 @@ function buildFilterTable(cfg){
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{filas:MAYW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
     else maySaveLocal();
   }
-  function mayBtnLabel(){ const per=mayPeriodo(); const env=MAYW.filter(r=>r.listaPeriodo===per).length;
+  function mayBtnLabel(){ const per=mayListaClave(); const env=MAYW.filter(r=>r.listaPeriodo===per).length;
     return '🧱 Mayoristas'+(MAYW.length?(' ('+env+'/'+MAYW.length+')'):''); }
-  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); MAYAVISO=mayAvisoLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
-    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[]; MAYAVISO=(d&&d.aviso&&typeof d.aviso==='object')?d.aviso:{};
+  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); MAYAVISO=mayAvisoLoadLocal(); MAYLISTA=mayListaLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
+    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[]; MAYAVISO=(d&&d.aviso&&typeof d.aviso==='object')?d.aviso:{}; MAYLISTA=(d&&d.lista&&typeof d.lista==='object')?d.lista:{};
       const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
       const panel=$('crm-may-panel'); if(panel && panel.style.display!=='none') drawMayoristas(); }, err=>console.error('mayoristas:',err)); }
   // Cambia UNA fila por su índice en MAYW (las vistas siempre guardan data-mi = índice maestro).
@@ -17392,7 +17415,7 @@ function buildFilterTable(cfg){
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
     else if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
-    else mayUpd(p.mi, r=>({...r, listaPeriodo:mayPeriodo(), listaFecha:hoyISO, accionPor:firma}));
+    else mayUpd(p.mi, r=>({...r, listaPeriodo:mayListaClave(), listaFecha:hoyISO, accionPor:firma}));
     const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
     drawMayoristas();
   }
@@ -17450,7 +17473,7 @@ function buildFilterTable(cfg){
   // A quiénes les falta la lista de este mes Y se les puede mandar ahora (con teléfono, con lista
   // generable y sin haberlos salteado en esta sesión).
   function mayPendientes(){
-    const per=mayPeriodo();
+    const per=mayListaClave();
     return mayVista().filter(({r})=> r.listaPeriodo!==per && String(r.telefono||'').trim() && topesWaLink(r.telefono) && !maySaltados[mayClave(r)] && !mayListaError(r));
   }
   // Deja la lista en el portapapeles. El write() va DENTRO del clic y ANTES de abrir WhatsApp (Chrome
@@ -17499,6 +17522,22 @@ function buildFilterTable(cfg){
     r.png.then(b=>{ const u=URL.createObjectURL(b); if(w) w.location.href=u; else window.open(u,'_blank'); })
       .catch(()=>{ if(w) w.close(); alert('No se pudo armar la imagen de la lista.'); });
   }
+  // 🆕 Lista nueva: fija desde qué día rige la lista (dd/mm/aaaa). Todos los que tenían la anterior
+  // marcada como enviada vuelven a quedar pendientes en ▶ Siguiente. Vacío = volver al mes de siempre.
+  function mayConfigurarLista(){
+    const act=String((MAYLISTA&&MAYLISTA.desde)||'');
+    const def= act ? mayClaveLabel(act) : (hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'/'+hoyISO.slice(0,4));
+    const v=prompt('¿Desde qué día rige la lista nueva? (dd/mm/aaaa)\n\nLos que ya tenían marcada la lista anterior vuelven a quedar pendientes en ▶ Siguiente, y el mensaje dice "vigente desde el …".\n\n(Dejalo vacío para volver a contar por mes.)', def);
+    if(v===null) return;
+    if(!String(v).trim()){ if(confirm('¿Volver a contar la lista por mes calendario?')){ mayListaSave({}); drawMayoristas(); } return; }
+    const m=/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(String(v));
+    if(!m){ alert('Fecha no entendida. Escribila como dd/mm/aaaa, por ejemplo 27/10/2026.'); return; }
+    const iso=m[3]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[1]).slice(-2);
+    if(iso===act) return;
+    const vuelven=MAYW.filter(r=>r.listaPeriodo && r.listaPeriodo!==iso).length;
+    if(!confirm('Lista vigente desde el '+mayClaveLabel(iso)+'.\n\n'+(vuelven?(vuelven+' cliente'+(vuelven>1?'s':'')+' que ya tenían la lista anterior vuelven a quedar pendientes.'):'Nadie tenía la anterior marcada.')+'\n\n¿Confirmás?')) return;
+    mayListaSave({desde:iso}); drawMayoristas();
+  }
   function mayConfigurarAviso(){
     const a=MAYAVISO||{};
     const desde=prompt('¿Desde cuándo rige la lista nueva?\nEj: 1° de noviembre\n\n(Dejalo vacío para BORRAR el aviso.)', a.desde||'');
@@ -17513,7 +17552,7 @@ function buildFilterTable(cfg){
   }
   function drawMayoristas(){
     const cont=$('crm-may-controles'), tabla=$('crm-may-tabla'); if(!cont||!tabla) return;
-    const per=mayPeriodo(), mes=mayMesLabel(per);
+    const per=mayListaClave(), conFecha=/^\d{4}-\d{2}-\d{2}$/.test(per), mes=conFecha?('del '+mayClaveLabel(per)):('de '+mayMesLabel(per));
     const env=MAYW.filter(r=>r.listaPeriodo===per).length;
     const sinTel=MAYW.filter(r=>!String(r.telefono||'').trim()).length;
     // Un error por grupo de lista (se pregunta una vez por grupo, no por fila).
@@ -17527,7 +17566,7 @@ function buildFilterTable(cfg){
         mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
         '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
       return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
-        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista de '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
         '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
@@ -17539,7 +17578,7 @@ function buildFilterTable(cfg){
       cartel+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<button class="cmp-btn" data-may-siguiente'+((pend.length && !cf)?'':' disabled')+' style="background:#1e9e5a;color:#fff;font-weight:800'+((pend.length && !cf)?'':';opacity:.5')+'" title="Abre el WhatsApp del próximo cliente sin la lista de este mes, con el mensaje escrito y su lista copiada para pegar">▶ Siguiente ('+pend.length+')</button>'+
-        '<span style="font-weight:800;font-size:13px">Lista de '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
+        '<span style="font-weight:800;font-size:13px">Lista '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
         (sinTel?('<span style="font-size:12px;color:#c0392b">· '+sinTel+' sin teléfono cargado</span>'):'')+
         (sinLista?('<span style="font-size:12px;color:#b45309" title="Las listas «hasta 100 km» no se generan hasta cargar el flete por pallet de Biletta en Base de Datos → ⚙️ Parámetros">· '+sinLista+' de Interior sin lista (falta el flete)</span>'):'')+
         (nSalt?('<span style="font-size:12px;color:#64748b">· '+nSalt+' salteado'+(nSalt>1?'s':'')+' <button class="cmp-btn" data-may-resaltar title="Vuelve a ofrecerlos en ▶ Siguiente">↺ reintentar</button></span>'):'')+
@@ -17549,6 +17588,7 @@ function buildFilterTable(cfg){
         '</span>'+
       '</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
+        '<button class="cmp-btn" data-may-lista-cfg title="Fija desde qué día rige la lista nueva: los que ya tenían la anterior vuelven a quedar pendientes y el mensaje dice la fecha">🆕 '+(conFecha?'Lista vigente desde '+mayClaveLabel(per):'Lista nueva')+'</button>'+
         '<button class="cmp-btn" data-may-aviso-cfg title="Prepara el aviso de aumento de precios para los revendedores: desde cuándo rige, el % y hasta cuándo se mantiene el precio actual">📣 '+(MAYAVISO.desde?'Editar aviso de aumento':'Aviso de aumento')+'</button>'+
         (MAYAVISO.desde?('<span style="font-size:12px;color:#334155">vigente desde <b>'+esc(MAYAVISO.desde)+'</b>'+(MAYAVISO.pct?(' · '+esc(MAYAVISO.pct)+'%'):'')+' · enviados: <b>'+MAYW.filter(r=>r.avisoClave===String(MAYAVISO.desde)).length+'</b> de '+MAYW.length+'</span>'):'')+
         '<button class="cmp-btn" data-may-actualizar-act title="Cruza esta lista contra vph_ventas: última compra, cuántas y por cuánto en total — clasifica a cada uno en Activo / En atención / Dormido / Nunca compró">🔄 Actualizar actividad</button>'+
@@ -17557,7 +17597,7 @@ function buildFilterTable(cfg){
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
+    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
     const nCol=MAYAVISO.desde?11:10;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
@@ -17580,7 +17620,7 @@ function buildFilterTable(cfg){
           ' '+(hecho?('<span style="color:#1e9e5a;font-weight:700;font-size:11.5px">'+hecho+'</span>'):'')+(detalle?('<span style="color:#94a3b8;font-size:11px"> '+detalle+'</span>'):'');
       };
       const listaHecha = r.listaPeriodo===per ? '✓ enviada' : '';
-      const listaDet = (!listaHecha && r.listaPeriodo) ? ('últ: '+esc(mayMesLabel(r.listaPeriodo))) : '';
+      const listaDet = (!listaHecha && r.listaPeriodo) ? ('últ: '+esc(mayClaveLabel(r.listaPeriodo))) : '';
       const stockDet = r.stockFecha ? ('últ: '+esc(String(r.stockFecha).slice(8,10)+'/'+String(r.stockFecha).slice(5,7))) : '';
       const actCel = !mayActTs ? '<span style="color:#94a3b8">—</span>' :
         '<span style="color:'+s.c+';font-weight:700;font-size:11.5px">'+esc(s.l)+'</span>'+
@@ -17607,6 +17647,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
     cont.querySelectorAll('[data-may-siguiente]').forEach(b=>b.onclick=()=>maySiguiente());
     cont.querySelectorAll('[data-may-aviso-cfg]').forEach(b=>b.onclick=()=>mayConfigurarAviso());
+    cont.querySelectorAll('[data-may-lista-cfg]').forEach(b=>b.onclick=()=>mayConfigurarLista());
     cont.querySelectorAll('[data-may-resaltar]').forEach(b=>b.onclick=()=>{ maySaltados={}; drawMayoristas(); });
     tabla.querySelectorAll('[data-may-ver]').forEach(b=>b.onclick=()=>mayVerLista(b.dataset.mayVer));
     tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>mayAbrirChat(+b.dataset.mayAbrirChat, b.dataset.mayAccion));
