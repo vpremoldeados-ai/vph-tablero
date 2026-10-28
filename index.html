@@ -1524,6 +1524,20 @@
     </section>
   </div>
 
+  <!-- ================= BANDEJA INSTAGRAM (agente de Instagram, 28/10) ================= -->
+  <div class="page" id="page-igbandeja">
+    <div class="kpis" id="igb-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="margin:0"><span class="dot" style="background:#d6249f"></span>Bandeja Instagram</h2>
+        <span class="result-count" id="igb-count" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="filter-bar" id="igb-filtros"></div>
+      <div id="igb-lista"></div>
+      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
+    </section>
+  </div>
+
   <!-- ================= CONVERTIR CONVERSACIÓN EN LEAD (Bandeja WhatsApp) ================= -->
   <div class="cmp-overlay" id="wab-conv-modal">
     <div class="cmp-dialog" style="max-width:640px">
@@ -2337,6 +2351,7 @@ const PAGES = [
   { id:'prodent', nombre:'Producción y Logística', ico:'🏭' },
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
   { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
+  { id:'igbandeja', nombre:'Bandeja Instagram', ico:'📸' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'remitos', nombre:'Remitos', ico:'🚚' },
@@ -13896,7 +13911,7 @@ function buildFilterTable(cfg){
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
     'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
-    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_topes_prospectos'];
+    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_topes_prospectos','vph_ig_mensajes'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -18334,6 +18349,107 @@ function buildFilterTable(cfg){
   $('wab-conv-cerrar').onclick=cerrarConvertir;
   $('wab-conv-modal').addEventListener('click',e=>{ if(e.target===$('wab-conv-modal')) cerrarConvertir(); });
   boot();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO BANDEJA INSTAGRAM (28/10) — lee lo que escribe el agente de Instagram
+     (Cloudflare Worker vph-agente-instagram, carpeta agente-instagram\worker en Drive).
+     Colección vph_ig_mensajes: {igsid, usuario, nombre, dir:'in'|'out'|'evento',
+     autor:'cliente'|'agente'|'persona'|'sistema', texto, leadUid, ts (ISO)}. Solo lectura.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fb=()=>window.__fbctx;
+  const COL='vph_ig_mensajes', DIAS=30, PAUSA_MS=12*3600000;
+  const tsMs=t=>{ const n=Date.parse(t||''); return isNaN(n)?0:n; };
+  const fmt=t=>{ const n=tsMs(t); return n?new Date(n).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'; };
+  const igLink=u=>{ const x=String(u||'').replace(/^@/,''); return x?'https://ig.me/m/'+encodeURIComponent(x):'https://www.instagram.com/direct/inbox/'; };
+
+  let MSGS=[], filtro='', unsub=null;
+  const abiertas=new Set();
+
+  // Pura (la prueban los tests): agrupa por persona, ordena y resume cada charla.
+  function charlas(msgs, ahoraMs){
+    const g=new Map();
+    (msgs||[]).forEach(m=>{ const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
+    const out=[];
+    g.forEach((lista,k)=>{
+      lista.sort((a,b)=>tsMs(a.ts)-tsMs(b.ts));
+      const ult=lista[lista.length-1];
+      const conNombre=lista.slice().reverse().find(m=>m.usuario||m.nombre)||{};
+      const leadUid=(lista.slice().reverse().find(m=>m.leadUid)||{}).leadUid||'';
+      const ultPersona=lista.filter(m=>m.autor==='persona').map(m=>tsMs(m.ts)).sort((a,b)=>b-a)[0]||0;
+      out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid,
+        ultimoMs:tsMs(ult.ts), entrantes:lista.filter(m=>m.dir==='in').length,
+        persona: !!ultPersona && (ahoraMs-ultPersona)<PAUSA_MS,
+        sinRespuesta: ult.dir==='in' });
+    });
+    return out.sort((a,b)=>b.ultimoMs-a.ultimoMs);
+  }
+  window.__igCharlas=charlas;
+
+  function burbuja(m){
+    if(m.dir==='evento') return '<div style="text-align:center;margin:8px 0"><span class="badge green">'+esc(m.texto)+' · '+fmt(m.ts)+'</span></div>';
+    const sale=m.dir==='out';
+    const quien=m.autor==='persona'?'👤 Persona':(m.autor==='agente'?'🤖 Asistente':'Cliente');
+    return '<div style="display:flex;justify-content:'+(sale?'flex-end':'flex-start')+';margin-top:6px">'+
+      '<div style="max-width:78%;padding:7px 10px;border-radius:12px;white-space:pre-wrap;'+
+        (sale?'background:rgba(214,36,159,.10);border:1px solid rgba(214,36,159,.25)':'background:var(--panel2,rgba(127,127,127,.08));border:1px solid var(--border)')+'">'+
+        '<div style="font-size:11px;color:var(--muted);margin-bottom:2px">'+quien+' · '+fmt(m.ts)+'</div>'+esc(m.texto)+'</div></div>';
+  }
+
+  function render(){
+    if(!$('igb-lista')) return;
+    const todas=charlas(MSGS, Date.now());
+    const hoy=new Date(); hoy.setHours(0,0,0,0);
+    $('igb-kpis').innerHTML=
+      '<div class="kpi info"><div class="label">Charlas ('+DIAS+' días)</div><div class="value">'+todas.length+'</div><div class="sub">Personas que escribieron por DM</div></div>'+
+      '<div class="kpi good"><div class="label">Con lead en el CRM</div><div class="value">'+todas.filter(c=>c.leadUid).length+'</div><div class="sub">Dejaron su WhatsApp</div></div>'+
+      '<div class="kpi warn"><div class="label">Sin WhatsApp todavía</div><div class="value">'+todas.filter(c=>!c.leadUid).length+'</div><div class="sub">Solo consultaron</div></div>'+
+      '<div class="kpi"><div class="label">Hoy</div><div class="value">'+todas.filter(c=>c.ultimoMs>=hoy.getTime()).length+'</div><div class="sub">Charlas con actividad hoy</div></div>';
+    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano']];
+    $('igb-filtros').innerHTML=F.map(([k,l])=>'<button class="filter-btn'+(filtro===k?' active':'')+'" data-f="'+k+'">'+l+'</button>').join('');
+    $('igb-filtros').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
+    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona));
+    $('igb-count').textContent=lista.length+' charla'+(lista.length!==1?'s':'');
+    $('igb-lista').innerHTML=lista.length?lista.map(c=>{
+      const abierta=abiertas.has(c.k);
+      const vis=(abierta||c.msgs.length<=4)?c.msgs:c.msgs.slice(-3);
+      const ocultos=c.msgs.length-vis.length;
+      const lead=c.leadUid && window.__leadPorUid ? window.__leadPorUid(c.leadUid) : null;
+      return '<div class="kb-card" style="margin-bottom:8px">'+
+        '<div class="cli">'+esc(c.nombre||c.usuario||'Usuario de Instagram')+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
+          (c.leadUid?' <span class="badge green" title="Dejó su WhatsApp: ya está en el CRM">🎯 Lead'+(lead&&lead.estado?' · '+esc(lead.estado):'')+'</span>':' <span class="badge amber">Sin WhatsApp</span>')+
+          (c.persona?' <span class="badge" title="Una persona respondió desde Instagram: el asistente está en pausa en esta charla">👤 Atendida a mano</span>':'')+'</div>'+
+        '<div class="meta">'+c.entrantes+' mensaje'+(c.entrantes!==1?'s':'')+' del cliente · último: '+fmt(c.msgs[c.msgs.length-1].ts)+'</div>'+
+        (ocultos>0?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&c.msgs.length>4?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▴ Ver menos</button>':''))+
+        vis.map(burbuja).join('')+
+        '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
+          '<a class="kb-wa" href="'+igLink(c.usuario)+'" target="_blank" rel="noopener" style="background:#d6249f;border-color:#d6249f">📸 Abrir en Instagram</a>'+
+          (c.leadUid?'<button class="kb-move" data-crm="1">🎯 Ver en el CRM</button>':'')+
+        '</div></div>';
+    }).join(''):'<div class="kb-empty">No hay charlas'+(filtro?' con este filtro':' en los últimos '+DIAS+' días')+'.</div>';
+    $('igb-lista').querySelectorAll('button[data-x]').forEach(b=>b.onclick=()=>{ const k=b.dataset.x; if(abiertas.has(k)) abiertas.delete(k); else abiertas.add(k); render(); });
+    $('igb-lista').querySelectorAll('button[data-crm]').forEach(b=>b.onclick=()=>{ if(typeof irAPagina==='function') irAPagina('CRM / Leads'); });
+  }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; stopSync();
+    const desde=new Date(Date.now()-DIAS*86400000).toISOString();
+    unsub=c.FS.onSnapshot(c.FS.query(c.FS.collection(c.db,COL), c.FS.where('ts','>=',desde)),
+      snap=>{ MSGS=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); },
+      err=>console.error('ig_mensajes:',err));
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  window.__afterLogin.push(startSync);
+  window.__afterLogout.push(()=>{ stopSync(); MSGS=[]; render(); });
+  if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+  render();
 })();
 </script>
 
