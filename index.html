@@ -10973,6 +10973,12 @@ function buildFilterTable(cfg){
   // de Compras, que es la dueña de los pagos — esta pantalla solo muestra y dispara.
   function renderTarjeta(){
     const sec=$('caj-sec-tarjeta'); if(!sec) return;
+    // Cómo figura el comercio en el resumen del banco (ficha del proveedor, campo aliasResumen): la
+    // factura dice "SANTA BARBARA SA" y el resumen "MERCADOPAGO*YPF". Solo se muestra; nada lo usa para emparejar.
+    const aliasResumenHtml=nombre=>{
+      const k=String(nombre||'').trim().toLowerCase();
+      const f=(window.__catalogoProveedores?window.__catalogoProveedores():[]).find(p=>String(p.nombre||'').trim().toLowerCase()===k);
+      return f && f.aliasResumen ? ' <span style="font-size:11px;color:var(--muted)">· en el resumen: '+esc(f.aliasResumen)+'</span>' : ''; };
     const pend = window.__tarjetaPendientes ? window.__tarjetaPendientes() : [];
     // La sección se muestra SIEMPRE que la Caja esté andando: el botón de cotejar el resumen vive
     // acá y tiene que estar aunque todavía no haya ningún débito cargado — el cotejo sirve justamente
@@ -11000,7 +11006,7 @@ function buildFilterTable(cfg){
         '<td colspan="2" style="text-align:right"><button class="cmp-rowbtn" data-tjmes="'+esc(m)+'">✓ Se debitó todo el resumen</button></td></tr>';
       arr.forEach(x=>{ h+='<tr'+(x.fecha<hoyISO?' style="color:var(--amber)"':'')+'>'+
         '<td data-label="Débito">'+fmtFecha(x.fecha)+(x.cuotas>1?' <span style="font-size:11px;color:var(--muted)">cuota '+x.cuotaN+'/'+x.cuotas+'</span>':'')+'</td>'+
-        '<td data-label="Proveedor"><b>'+esc(x.proveedor)+'</b>'+(x.nroFactura?' <span style="font-size:11px;color:var(--muted)">'+esc(x.nroFactura)+'</span>':'')+'</td>'+
+        '<td data-label="Proveedor"><b>'+esc(x.proveedor)+'</b>'+(x.nroFactura?' <span style="font-size:11px;color:var(--muted)">'+esc(x.nroFactura)+'</span>':'')+aliasResumenHtml(x.proveedor)+'</td>'+
         '<td class="num" data-label="Monto">'+money(x.monto)+'</td>'+
         '<td data-label="Cuenta">'+esc(x.cuenta||'—')+'</td>'+
         '<td><button class="cmp-rowbtn" data-tjdeb="'+esc(x.compraUid)+'|'+esc(x.pagoId)+'|'+x.idx+'">✓ Ya se debitó</button></td></tr>'; }); });
@@ -13456,7 +13462,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'categoria',h:'Categoría'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','email','telefono'] },
     proveedores: { col:'vph_proveedores', label:'Proveedores', sing:'Proveedor', origen:'vph_compras', campoOrigen:'proveedor',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'plazoPagoDias',l:'Vence la factura a los … días de su fecha (ej. 30. Vacío = contado / contra entrega)',t:'number'},{k:'plazoEcheqDias',l:'El e-cheq se fecha a los … días de la FACTURA (ej. MAPEI 60. Vacío = igual que el vencimiento)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'aliasResumen',l:'Cómo figura en el resumen de la tarjeta (ej. MERCADOPAGO*YPF). Solo para reconocerlo al cotejar',t:'text',col2:1},{k:'plazoPagoDias',l:'Vence la factura a los … días de su fecha (ej. 30. Vacío = contado / contra entrega)',t:'number'},{k:'plazoEcheqDias',l:'El e-cheq se fecha a los … días de la FACTURA (ej. MAPEI 60. Vacío = igual que el vencimiento)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'plazoPagoDias',h:'Vto. días',num:1},{k:'plazoEcheqDias',h:'E-cheq días',num:1},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
