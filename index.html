@@ -13303,9 +13303,10 @@ function buildFilterTable(cfg){
       const m = MODELOS_COMP[idx];
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
       if(!prod){ alert('Producto "'+m.nombre+'" no está en el catálogo (Base de Datos → Productos). Revisá que el nombre coincida exactamente.'); return null; }
-      const udM2 = num(prod.unidadesPorM2)||1;
+      const udM2 = num(prod.unidadesPorM2)||0;   // 0 = se vende por unidad (topes, cordón): el "m²" del modal son unidades
       // Mismo criterio que el CRM (recalcUnidades, MERMA_RECORTES): +5% por recortes/roturas.
-      const cant = Math.ceil(m2 * udM2 * 1.05);
+      // Sin unidades por m² (topes) no hay recortes: si piden 184 son 184.
+      const cant = udM2>0 ? Math.ceil(m2 * udM2 * 1.05) : Math.ceil(m2);
       const it = { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: 0, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
       aplicarProducto(it, prod, lista);   // misma función que usan Ventas/Presupuestos/CRM: neteo e IVA correctos según el producto y la lista (sin facturar no se netea)
       // Cada modelo es una OPCIÓN INDEPENDIENTE (el cliente elige UNA, no las 4 juntas), así que el
@@ -22403,7 +22404,7 @@ function buildFilterTable(cfg){
         '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
         // generarComparativo calcula la cantidad con +5% (MERMA_RECORTES del CRM): mismo aviso que el
         // presupuesto normal, para que el cliente entienda por qué no es m² × unidades por m² "justo".
-        '<br><b>📐 Cantidad:</b> las unidades incluyen un 5% adicional por recortes.'+
+        ((v.items||[]).some(x=>num(x.udM2)>0) ? '<br><b>📐 Cantidad:</b> las unidades incluyen un 5% adicional por recortes.' : '')+
         '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
         (finPlanes.length ? '<br><b>💳 Financiado:</b> precio total con tarjeta de crédito en '+finPlanes.join('/')+' cuotas — '+esc(v.finPerfilLabel||'')+' (Contado es el que compite; "—" es un plan sin tasa cargada para esa tarjeta).' : '')+
         '</div>'+
