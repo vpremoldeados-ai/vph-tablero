@@ -12371,12 +12371,12 @@ function buildFilterTable(cfg){
     {k:'mati', l:'4 Interior con Mati', par:'fleteMati', def:140000},
     {k:'particular', l:'5 Transporte Particular', par:'fleteParticular', def:0},
     {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000},
-    {k:'cotizar', l:'9 Transporte externo (a cotizar)', par:null, def:0},   // 29/10: el precio por pallet lo cotiza cada transporte; se carga a mano (precioFlete / fleteManual del comparativo)
     {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0},   // igual que Brío; el precio suele variar por viaje → se pisa en el presupuesto (precioFlete)
     // 27/10 (Marcelo): a los MAYORISTAS el flete dentro de Córdoba va incluido; en Gran Córdoba y Sierras
     // Chicas (Río Ceballos, La Calera, Villa Allende, Camino a Pekos…) se cobra aparte, $29.000 por pallet
     // SIN IVA. `neto`: el parámetro se carga sin IVA → facturado paga 29.000 + IVA, sin factura 29.000.
-    {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true}
+    {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true},
+    {k:'cotizar', l:'9 Transporte externo (a cotizar)', par:null, def:0}   //
   ];
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
   // Siempre FINAL con IVA, como el resto de las zonas: una zona `neto` se pasa a final acá.
@@ -15391,6 +15391,8 @@ function buildFilterTable(cfg){
       window.__abrirComparativo({ cliente, zona: editing.zona||'', m2: m2Lead>0?m2Lead:100, categoria: editing.categoria||'',
         listaPrecios: editing.listaPrecios||'', condIva: editing.condIva||'', cuit: editing.cuit||'',
         domicilioFacturacion: editing.domicilioFacturacion||'', domicilioEntrega: editing.lugar||'', leadUid: uid,
+        // Transporte externo: el precio por pallet y los pallets cargados en la ficha pasan al comparativo.
+        fleteManual: editing.zona==='cotizar' ? { destino: editing.lugar||'', precio: num(editing.precioFlete), pallets: num(editing.palletsFlete) } : null,
         // Mismo criterio que "⚡ Presupuesto": el lead pasa a Cotizado recién cuando el comparativo se guardó.
         onSaved: ()=>{ const l=uid && DB.leads.find(x=>x._uid===uid); if(l && ((l.estado||'nuevo')==='nuevo'||l.estado==='contactado')){ const prev=l.estado; l.estado='cotizado'; aplicarAutoSeguimiento(l,prev); persist(l); } } });
       closeForm();  // cierra la ficha del lead
