@@ -1686,7 +1686,14 @@
             <option value="brio">6 Brio</option>
             <option value="otsenre">7 OTSENRE</option>
             <option value="maygran">8 Mayorista Gran Córdoba / Sierras Chicas</option>
+            <option value="cotizar">9 Transporte externo (a cotizar)</option>
           </select>
+        </div>
+        <div class="cmp-field" id="pre-comp-flete-man" style="display:none">
+          <label>Flete cotizado por el transporte</label>
+          <input id="pre-comp-flete-dest" placeholder="Destino (ej. Catamarca)" style="margin-bottom:4px">
+          <div style="display:flex;gap:6px"><input id="pre-comp-flete-precio" inputmode="decimal" placeholder="$ por pallet, con IVA" style="flex:1"><input id="pre-comp-flete-pallets" inputmode="decimal" placeholder="Pallets (vacío = auto)" style="flex:1"></div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">Precio FINAL por pallet (flete + seguro + IVA + tramo hasta el depósito de carga). El PDF aclara que la descarga NO está incluida.</div>
         </div>
         <div class="cmp-field" id="pre-comp-fin-wrap">
           <label>Financiación con tarjeta (solo Minorista)</label>
@@ -12364,6 +12371,7 @@ function buildFilterTable(cfg){
     {k:'mati', l:'4 Interior con Mati', par:'fleteMati', def:140000},
     {k:'particular', l:'5 Transporte Particular', par:'fleteParticular', def:0},
     {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000},
+    {k:'cotizar', l:'9 Transporte externo (a cotizar)', par:null, def:0},   // 29/10: el precio por pallet lo cotiza cada transporte; se carga a mano (precioFlete / fleteManual del comparativo)
     {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0},   // igual que Brío; el precio suele variar por viaje → se pisa en el presupuesto (precioFlete)
     // 27/10 (Marcelo): a los MAYORISTAS el flete dentro de Córdoba va incluido; en Gran Córdoba y Sierras
     // Chicas (Río Ceballos, La Calera, Villa Allende, Camino a Pekos…) se cobra aparte, $29.000 por pallet
@@ -12706,8 +12714,8 @@ function buildFilterTable(cfg){
     if(n.esComparativo===true){
       const perfil=n.finPerfil || (((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.l===n.finPerfilLabel))||{}).k || '';
       (n.adicionales||[]).forEach(a=>{ const pr=matchProducto(a.codigo)||matchProducto(a.desc); if(pr){ const d=a.desc; aplicarProducto(a,pr,n.listaPrecios); a.desc=d; } else sinPrecio.push(a.desc||a.codigo); });
-      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[], n.adicionales||[]));
-      n.zonaTexto=zonaLabel(n.zona); n.totalRef=calcComparativo(n).total;
+      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[], n.adicionales||[], n.fleteManual));
+      n.zonaTexto=zonaTextoComp(n.zona, n.fleteManual); n.totalRef=calcComparativo(n).total;
     } else if(n.zona){ n.items=base; aplicarFlete(n); }   // el flete se vuelve a cotizar con la tarifa de hoy
     return {nuevo:n, sinPrecio};
   }
@@ -13176,6 +13184,8 @@ function buildFilterTable(cfg){
     // La lista del lead manda (ej. "2 Minorista Sin Facturar"); sin lista, la de la categoría.
     $('pre-comp-lista').innerHTML=compListasOpts(d.listaPrecios ? normLista(d.listaPrecios) : compListaDefecto($('pre-comp-categoria').value));
     $('pre-comp-zona').value=d.zona||'capital';
+    const fm=d.fleteManual||{}; $('pre-comp-flete-dest').value=fm.destino||''; $('pre-comp-flete-precio').value=fm.precio?String(fm.precio).replace('.',','):''; $('pre-comp-flete-pallets').value=fm.pallets?String(fm.pallets).replace('.',','):'';
+    const verFlete=()=>{ $('pre-comp-flete-man').style.display=($('pre-comp-zona').value==='cotizar')?'':'none'; }; $('pre-comp-zona').onchange=verFlete; verFlete();
     $('pre-comp-fin').innerHTML=compFinOpts();
     sincFinComparativo();
     compAdic=[]; drawCompAdic();
@@ -13194,7 +13204,7 @@ function buildFilterTable(cfg){
   function defaultsDeComparativo(p){
     const its=Array.isArray(p.items)?p.items:[];
     return { editUid:p._uid, numero:p.numero||'', cliente:p.cliente||'', m2:num((its[0]||{}).m2total)||'', categoria:p.categoria||'',
-      listaPrecios:p.listaPrecios||'', zona:p.zona||'', leadUid:p.leadUid||'', cuit:p.cuit||'',
+      listaPrecios:p.listaPrecios||'', zona:p.zona||'', fleteManual:p.fleteManual||null, leadUid:p.leadUid||'', cuit:p.cuit||'',
       // condIva X la pone la lista sin facturar: si la cambian a facturada no tiene que quedar pegada
       condIva:String(p.condIva||'').toUpperCase()==='X'?'':(p.condIva||''),
       domicilioFacturacion:p.domicilioFacturacion||'', domicilioEntrega:p.domicilioEntrega||'',
@@ -13257,12 +13267,14 @@ function buildFilterTable(cfg){
   // Flete y financiación de UN modelo del comparativo. La usan generarComparativo y
   // "🔄 Actualizar precios" (un solo cálculo: el comparativo actualizado no puede salir distinto
   // del que se habría generado hoy de cero).
-  function fleteYFinModelo(it, zona, finPerfil, finPlanes, adic){
+  function fleteYFinModelo(it, zona, finPerfil, finPlanes, adic, man){
     adic = adic||[];
     // Los adicionales viajan JUNTO con el modelo elegido: el flete de cada opción los incluye.
     const f = calcFlete([it].concat(adic), zona);
     it.fletePallets = f.pallets;
     it.fleteCosto = f.costo;
+    // Transporte externo: el precio por pallet (y los pallets, si el transporte los armó distinto) se cargan a mano.
+    if(zona==='cotizar' && man){ const pal=num(man.pallets)>0?num(man.pallets):f.pallets; it.fletePallets=pal; it.fleteCosto=round2(num(man.precio)*pal); }
     // Financiado: mismo criterio que escaleraDoc (el flete se financia como un renglón más, VIUMI
     // retiene sobre el TOTAL facturado) — acá se financia directo el TOTAL contado del modelo
     // (mercadería + flete, los dos ya con IVA) porque solo se muestra el total por plan, no un
@@ -13280,6 +13292,7 @@ function buildFilterTable(cfg){
       (finPlanes||[]).forEach(c=>{ it.fin[c] = planesReales.includes(c) ? Math.round(window.__precioFinanciado(contado, c, finPerfil)) : null; });
     } else delete it.fin;
   }
+  function zonaTextoComp(zona, man){ return (zona==='cotizar') ? ('transporte externo'+((man&&man.destino)?' a '+man.destino:'')) : zonaLabel(zona); }
   function generarComparativo(){
     const m2 = num($('pre-comp-m2').value); if(m2<=0){ alert('Ingresá m² positivos.'); return; }
     const zona = $('pre-comp-zona').value; if(!zona){ alert('Elegí una zona de flete.'); return; }
@@ -13299,6 +13312,11 @@ function buildFilterTable(cfg){
     // Sin facturar → Cond. IVA X (mismo criterio que armarDesdeLead); si no, la del lead.
     const condIva = esSinFacturarPre(lista, categoria) ? 'X' : (compCtx.condIva||'A');
     const adic = armarAdicionales(lista); if(adic===null) return;
+    let fleteMan=null;
+    if(zona==='cotizar'){
+      fleteMan={ destino:($('pre-comp-flete-dest').value||'').trim(), precio:num($('pre-comp-flete-precio').value), pallets:num($('pre-comp-flete-pallets').value) };
+      if(!(fleteMan.precio>0)){ alert('Cargá el precio por pallet que cotizó el transporte.'); return; }
+    }
     const items = modelos.map(idx=>{
       const m = MODELOS_COMP[idx];
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
@@ -13312,7 +13330,7 @@ function buildFilterTable(cfg){
       // Cada modelo es una OPCIÓN INDEPENDIENTE (el cliente elige UNA, no las 4 juntas), así que el
       // flete de cada renglón se calcula SOLO — nunca consolidado entre modelos distintos como haría
       // un presupuesto normal (calcFlete junta pallets de varios ítems porque ahí SÍ viajan juntos).
-      fleteYFinModelo(it, zona, finPerfil, finPlanes, adic);
+      fleteYFinModelo(it, zona, finPerfil, finPlanes, adic, fleteMan);
       return it;
     }).filter(Boolean);
     if(items.length===0) return;
@@ -13331,7 +13349,8 @@ function buildFilterTable(cfg){
       leadUid: compCtx.leadUid||'',
       adicionales: adic,
       zona: zona,
-      zonaTexto: zonaLabel(zona),   // el módulo Documentos es OTRA IIFE y no tiene zonaLabel/zonaCosto
+      fleteManual: fleteMan,
+      zonaTexto: zonaTextoComp(zona, fleteMan),   // el módulo Documentos es OTRA IIFE y no tiene zonaLabel/zonaCosto
       palletsFlete: 0,
       items: items,
       finPlanes: finPlanes,
@@ -22292,7 +22311,8 @@ function buildFilterTable(cfg){
     //    entrega que tiene disponible como revendedor y, ADEMÁS, dónde y cuándo venir a buscarla.
     //  · MINORISTA que retira → la leyenda de retiro REEMPLAZA a la de envíos (decisión del 31/07):
     //    no tiene sentido hablarle de la entrega en obra a alguien que la viene a buscar.
-    const entrega = mayorista
+    const ENVIO_EXT = '<b>Métodos de Envíos:</b> Envío '+((v&&v.fleteManual&&v.fleteManual.destino)?'a '+esc(v.fleteManual.destino)+' ':'')+'por transporte de carga, puesto en destino. <b>El flete no incluye la descarga del material</b>: el cliente debe contar con los medios (autoelevador, hidrogrúa o personal) para descargar al llegar el camión. '+FECHAS;
+    const entrega = String((v&&v.zona)||'')==='cotizar' ? ENVIO_EXT : mayorista
       ? (ENVIO_MAYO + (retira ? '<div style="margin-top:3px">'+RETIRO+'</div>' : ''))
       : (retira ? RETIRO : ENVIO_MINO);
     // Formas de pago, tres textos distintos (pedido de Marcelo, 05/08):
@@ -22401,7 +22421,7 @@ function buildFilterTable(cfg){
         (adics.length ? '<div style="font-size:10px;margin:-4px 0 12px;padding:6px 8px;background:#f7faf8;border:1px solid #d8e8dd;border-radius:4px"><b>➕ Adicionales incluidos en cada opción:</b> '+
           adics.map(a=>esc(nf(a.cant))+' × '+esc(a.desc)+' a '+money(a.precioUnit)+' = <b>'+money(a.subtotal)+'</b>').join(' · ')+'</div>' : '');
       const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
-        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
+        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+(String(v.zona||'')==='cotizar'?' <b>El flete NO incluye la descarga del material.</b>':'')+
         // generarComparativo calcula la cantidad con +5% (MERMA_RECORTES del CRM): mismo aviso que el
         // presupuesto normal, para que el cliente entienda por qué no es m² × unidades por m² "justo".
         ((v.items||[]).some(x=>num(x.udM2)>0) ? '<br><b>📐 Cantidad:</b> las unidades incluyen un 5% adicional por recortes.' : '')+
