@@ -17943,6 +17943,11 @@ function buildFilterTable(cfg){
       const p=bnWebPend; bnWebPend=null;
       const fin=['enviado','sinwa','repetido'].includes(d.estado);
       const ok=bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
+      // 30/10: si el texto salió pero la imagen no, queda anotado en la ficha (para mandarla a mano).
+      if(ok && d.estado==='enviado' && /^imagen:/.test(String(d.detalle||''))){
+        const bi=BNW.findIndex(r=>r && (r.nombre||'')===(p.nombre||'') && String(r.telefono||'')===String(p.bnTel||''));
+        if(bi>=0) bnUpd(bi, r=>({...r, notas:('⚠️ '+String(d.detalle)+' ('+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'). '+(r.notas||'')).trim()}));
+      }
       if(!fin) bnWebPausar((d.detalle||d.estado||'error de la extensión')+' (con '+p.nombre+')');
       else if(!ok) bnWebPausar('no encontré la ficha de '+(p.nombre||'?')+' para anotar el envío');
       const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
