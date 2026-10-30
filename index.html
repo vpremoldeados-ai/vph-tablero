@@ -17757,12 +17757,14 @@ function buildFilterTable(cfg){
     return n.length>=2 ? n : '';
   }
   function bnSaludo(nombre){ const n=bnNombreSaludo(nombre); return n ? 'Hola, ¿cómo están en '+n+'?' : 'Hola, ¿cómo están?'; }
-  function bnTexto(accion, nombre){
-    const f=bnFirma();
+  // 30/10: `firmaLinea` = la firma de la LÍNEA que manda (app de Marcelo / WhatsApp Web de Sofía). Sin ella, la de "✍️ Firmo como".
+  function bnTexto(accion, nombre, firmaLinea){
+    const fx=String(firmaLinea||'').trim();
+    const f=fx ? (/^marcelo$/i.test(fx) ? 'Marcelo Vassallo' : fx) : bnFirma();
     // 29/10: genérico (sirve igual para los que recibieron la BNV-40 y para los de los cubos).
     if(accion==='seguimiento') return bnSaludo(nombre)+' ¿Pudieron ver lo que les mandé de las bases para módulos? Si quieren, les paso los precios con el flete hasta su fábrica o depósito, o les acerco una muestra. Quedo atento. '+f+', Vassallo Premoldeados.';
     // 29/10: texto de la reconsulta de Marcelo + "producto nuevo para que puedan vender". Firma con "✍️ Firmo como".
-    const nom=(((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
+    const nom=fx || (((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
     return bnSaludo(nombre)+' Soy '+nom+' de Vassallo Premoldeados (Toledo, Córdoba).\n\n'+
       'Les escribo porque lanzamos un *producto nuevo* para que sumen a lo que venden: los *Cubos de Apoyo CA-30* (30×30×30 cm, ≈60 kg) y *CA-40* (40×40×40 cm, ≈140 kg). Son de hormigón y traen una chapa de acero arriba para soldar el módulo.\n\n'+
       'Con 6 cubos por módulo queda separado del suelo y nivelado, sin encofrar ni esperar el fraguado en obra. Los pueden sumar a su presupuesto: un ítem más para vender y un problema menos en cada entrega.\n\n'+
@@ -17787,7 +17789,7 @@ function buildFilterTable(cfg){
     const m=bnMail();
     return 'https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(String(email||'').trim())+'&su='+encodeURIComponent(m.asunto)+'&body='+encodeURIComponent(m.cuerpo);
   }
-  let BNW=[], bnUnsub=null, bnConfirm=null, bnImg='', bnFiltro='';   // bnConfirm = {bi, accion} tras abrir un chat/mail
+  let BNW=[], bnUnsub=null, bnConfirm=null, bnImg='', bnFiltro='', bnCargado=false;   // bnConfirm = {bi, accion} tras abrir un chat/mail
   function bnLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(BN_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function bnSave(list){ BNW=list.slice();
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,BN_COL,BN_DOC),{filas:BNW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
@@ -17796,7 +17798,7 @@ function buildFilterTable(cfg){
   function bnBtnLabel(){ const seg=BNW.filter(bnTocaSeguimiento).length;
     return '📐 Base Nivel'+(BNW.length?(' ('+BNW.length+(seg?(' · '+seg+' a seguir'):'')+')'):''); }
   function bnSubscribe(){ if(!window.__usaNube){ BNW=bnLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(bnUnsub)bnUnsub();
-    bnUnsub=c.FS.onSnapshot(c.FS.doc(c.db,BN_COL,BN_DOC), snap=>{ const d=snap.exists()?snap.data():null; BNW=(d&&Array.isArray(d.filas))?d.filas:[];
+    bnUnsub=c.FS.onSnapshot(c.FS.doc(c.db,BN_COL,BN_DOC), snap=>{ const d=snap.exists()?snap.data():null; BNW=(d&&Array.isArray(d.filas))?d.filas:[]; bnCargado=true;
       const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
       const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); }, err=>console.error('basenivel:',err)); }
   function bnUpd(bi, fn){ const l=BNW.slice(); if(!l[bi]) return; l[bi]=fn({...l[bi]}); bnSave(l); }
@@ -17849,55 +17851,185 @@ function buildFilterTable(cfg){
   // contactos) y cuando no queda ninguno sigue con Topes. Se prende POR PC, como el de Topes.
   const BN_RESERVA_MS=30*60000;
   function bnAutoOn(){ try{ return localStorage.getItem('vph_bn_auto_v1')==='1'; }catch(e){ return false; } }
-  function bnAutoCandidatos(ahora){
-    const pc=topesPcId(), seg=[], cont=[];
+  // DOS LÍNEAS EN LA MISMA PC (30/10, Marcelo): la Lenovo tiene la APP de WhatsApp con el número de Marcelo
+  // y WhatsApp WEB (en Chrome) con el de Sofía. Cada línea es un automático aparte, con su firma, su espera
+  // y su tope: 'app' = el ayudante de siempre (enviar.ps1, reloj de 🔁 Automático de Topes, firma de
+  // "✍️ Firmo como"); 'web' = la extensión "Ayudante WhatsApp Web VPH" (carpeta ayudante-whatsapp-web).
+  // Cada línea tiene su propio id (`pc` y `pc-web`): con eso se reserva la fila, se cuenta el tope y la
+  // espera, y el seguimiento lo manda la MISMA línea que hizo el primer contacto (así lo firma la misma persona).
+  function bnLineaPc(linea){ return linea==='web' ? topesPcId()+'-web' : topesPcId(); }
+  function bnWebLs(k, d){ try{ const v=localStorage.getItem('vph_bnweb_'+k+'_v1'); return v==null ? d : v; }catch(e){ return d; } }
+  function bnWebLsSet(k, v){ try{ localStorage.setItem('vph_bnweb_'+k+'_v1', String(v)); }catch(e){} }
+  function bnWebOn(){ return bnWebLs('on','0')==='1'; }
+  function bnWebFirma(){ return String(bnWebLs('firma','Sofía')).trim(); }
+  function bnWebNum(k, d){ const n=Number(bnWebLs(k, d)); return isFinite(n) && n>=0 ? Math.round(n) : d; }
+  function bnLineaFirma(linea){ return linea==='web' ? bnWebFirma() : (((typeof topesFirma==='function') && topesFirma()) || ''); }
+  function bnAutoCandidatos(ahora, linea){
+    const pc=bnLineaPc(linea), seg=[], cont=[];
     BNW.forEach((r,bi)=>{
       if(!r || !String(r.telefono||'').trim() || !topesWaLink(r.telefono)) return;
-      if(r.abiertoPc && r.abiertoPc!==pc && ahora-(Number(r.abiertoTs)||0)<BN_RESERVA_MS) return;   // lo está mandando la otra PC
-      if(bnTocaSeguimiento(r)) seg.push({bi, accion:'seguimiento'});
+      if(r.abiertoPc && r.abiertoPc!==pc && ahora-(Number(r.abiertoTs)||0)<BN_RESERVA_MS) return;   // lo está mandando otra línea u otra PC
+      if(bnTocaSeguimiento(r)){
+        // 30/10: el seguimiento sale por la línea que mandó el primero (misma firma, mismo chat). Un contacto
+        // viejo sin línea registrada lo sigue la app (era la única que había).
+        const dueño=r.ultimoEnvioPc||topesPcId();
+        if(dueño===pc) seg.push({bi, accion:'seguimiento'});
+      }
       else if((r.estado||'pendiente')==='pendiente' && !r.contactoFecha) cont.push({bi, accion:'contacto'});
     });
     // 05/10 (Marcelo): primero los que NUNCA recibieron nada; los seguimientos esperan a que se acaben.
     return cont.concat(seg);
   }
-  // El próximo pedido para el buzón (o null). Reserva la fila para que la otra PC no la tome.
-  function bnAutoPedido(ahora){
-    if(!bnAutoOn()) return null;
-    const c=bnAutoCandidatos(ahora)[0]; if(!c) return null;
+  // El próximo pedido para la línea (o null). Reserva la fila para que la otra línea / PC no la tome.
+  function bnAutoPedido(ahora, linea){
+    if(linea==='web' ? !bnWebOn() : !bnAutoOn()) return null;
+    const c=bnAutoCandidatos(ahora, linea)[0]; if(!c) return null;
     const r=BNW[c.bi];
     const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
     const wa=nro(topesWaLink(r.telefono)), wa2=nro(topesWaLink(r.telefono, true));
     if(!wa) return null;
-    bnUpd(c.bi, x=>({...x, abiertoPc:topesPcId(), abiertoTs:ahora}));
+    bnUpd(c.bi, x=>({...x, abiertoPc:bnLineaPc(linea), abiertoTs:ahora}));
     return {origen:'basenivel', accion:c.accion, nombre:r.nombre||'', bnTel:String(r.telefono||''), tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
-      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion, r.nombre)};
+      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion, r.nombre, bnLineaFirma(linea))};
   }
-  // Lo que contestó el ayudante (estado enviado / sinwa; cualquier otro = solo liberar la reserva).
+  // Lo que contestó el ayudante (estado enviado / sinwa / repetido; cualquier otro = solo liberar la reserva).
   // La fila se busca por nombre Y teléfono: el orden de la lista puede cambiar mientras el ayudante manda.
-  function bnAutoRegistrar(b){
+  function bnAutoRegistrar(b, linea){
     let bi=BNW.findIndex(r=>r && (r.nombre||'')===(b.nombre||'') && String(r.telefono||'')===String(b.bnTel||''));
     if(bi<0) bi=BNW.findIndex(r=>r && (r.nombre||'')===(b.nombre||''));
-    if(bi<0) return;
-    if(b.estado==='enviado') bnUpd(bi, r=>bnSinReserva(bnAplicarEnvio(r, b.accion, bnFirma(), topesPcId(), Number(b.enviadoTs)||Date.now())));
+    if(bi<0) return false;
+    const firma=bnLineaFirma(linea) || bnFirma();
+    if(b.estado==='enviado') bnUpd(bi, r=>bnSinReserva(bnAplicarEnvio(r, b.accion, firma, bnLineaPc(linea), Number(b.enviadoTs)||Date.now())));
     else if(b.estado==='sinwa') bnUpd(bi, r=>bnSinReserva(bnSinWa(r)));
+    // Ese número ya tenía el mensaje en el chat: queda Contactado, sin sumar al tope ni sellar la hora.
+    else if(b.estado==='repetido') bnUpd(bi, r=>bnSinReserva({...r, estado:(r.estado||'pendiente')==='pendiente'?'contactado':r.estado, contactoFecha:(r.contactoFecha||hoyISO), ultimoEnvioPc:(r.ultimoEnvioPc||bnLineaPc(linea)), notas:('(ya tenía el mensaje en el chat) '+(r.notas||'')).trim()}));
     else bnUpd(bi, r=>bnSinReserva({...r}));
     const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
+    return true;
   }
-  // Para la espera y el tope de Topes (topesUltimoEnvioTs / topesEnviadosHoy): lo que ESTA PC mandó hoy.
-  function bnEnviosHoy(){ const pc=topesPcId(); return BNW.filter(r=>r && r.ultimoEnvioFecha===hoyISO && (!r.ultimoEnvioPc || r.ultimoEnvioPc===pc)).length; }
-  function bnUltimoEnvioTs(){ const pc=topesPcId(); return BNW.reduce((m,r)=> r && r.ultimoEnvioFecha===hoyISO && r.ultimoEnvioPc===pc && Number(r.ultimoEnvioTs)>m ? Number(r.ultimoEnvioTs) : m, 0); }
+  // Para la espera y el tope: lo que ESA LÍNEA mandó hoy (sin argumento, la app: Topes lo suma porque sale del mismo número).
+  function bnEnviosHoy(pc){ pc=pc||topesPcId(); return BNW.filter(r=>r && r.ultimoEnvioFecha===hoyISO && (r.ultimoEnvioPc ? r.ultimoEnvioPc===pc : pc===topesPcId())).length; }
+  function bnUltimoEnvioTs(pc){ pc=pc||topesPcId(); return BNW.reduce((m,r)=> r && r.ultimoEnvioFecha===hoyISO && r.ultimoEnvioPc===pc && Number(r.ultimoEnvioTs)>m ? Number(r.ultimoEnvioTs) : m, 0); }
+  // ---------- 🌐 LÍNEA WHATSAPP WEB (30/10) ----------
+  // Mismo ciclo que 📸 Instagram automático: el Tablero elige, reserva y le pasa el pedido por
+  // window.postMessage({vphWa:1,...}) a la extensión, que lo manda desde la pestaña de WhatsApp Web
+  // (texto + imagen de los cubos en el primer contacto) y contesta el resultado. Espera y tope propios;
+  // mismo horario que Topes. Ante cualquier error o 5 min sin respuesta, se PAUSA sola.
+  const BNWEB_ESPERA_MAX=5*60000;
+  let bnWebExtTs=0, bnWebPend=null, bnWebTimer=null;
+  function bnWebNota(){ return String(bnWebLs('nota','')); }
+  function bnWebSet(on, nota){ bnWebLsSet('on', on?'1':'0'); if(nota!=null) bnWebLsSet('nota', nota); }
+  function bnWebTope(){ return bnWebNum('tope', 15); }
+  function bnWebEspera(ahoraMs){
+    const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
+    const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
+    const desde=P('topesHoraDesde',8), hasta=P('topesHoraHasta',19), min=bnWebNum('min', 15);
+    const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
+    if(ahora<aHora(desde)) return {ms:aHora(desde)-ahora, motivo:'antes', min, desde, hasta};
+    if(ahora>=aHora(hasta)) return {ms:Infinity, motivo:'despues', min, desde, hasta};
+    const ult=bnUltimoEnvioTs(bnLineaPc('web')); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
+    const ms=Math.min(min*60000, Math.max(0, ult+min*60000-ahora));
+    return {ms, motivo:ms>0?'espacio':'', min, desde, hasta};
+  }
+  function bnWebPausar(motivo){
+    const h=new Date(), p=n=>String(n).padStart(2,'0');
+    bnWebSet(false, '⚠️ WhatsApp Web en pausa ('+p(h.getHours())+':'+p(h.getMinutes())+'): '+motivo);
+    const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
+  }
+  function bnWebOnMensaje(ev){
+    const d=ev && ev.data; if(!d || d.vphWa!==1 || ev.source!==window) return;
+    if(d.tipo==='hola'){ const antes=Date.now()-bnWebExtTs>60000; bnWebExtTs=Date.now(); if(antes){ const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); } return; }
+    if(d.tipo==='resultado' && bnWebPend && d.id===bnWebPend.id){
+      const p=bnWebPend; bnWebPend=null;
+      const fin=['enviado','sinwa','repetido'].includes(d.estado);
+      const ok=bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
+      if(!fin) bnWebPausar((d.detalle||d.estado||'error de la extensión')+' (con '+p.nombre+')');
+      else if(!ok) bnWebPausar('no encontré la ficha de '+(p.nombre||'?')+' para anotar el envío');
+      const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
+    }
+  }
+  function bnWebTick(){
+    if(!bnWebOn()) return;
+    if(window.__usaNube && !bnCargado) return;
+    const ahora=Date.now();
+    const d=new Date(), p=n=>String(n).padStart(2,'0');
+    if(d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())!==hoyISO){ location.reload(); return; }
+    if(bnWebPend){
+      if(ahora-bnWebPend.ts > BNWEB_ESPERA_MAX){
+        const x=bnWebPend; bnWebPend=null;
+        bnAutoRegistrar({...x, estado:'liberar'}, 'web');
+        bnWebPausar('la extensión no contestó el envío a '+x.nombre+'. Mirá WhatsApp Web: si salió, marcalo Contactado a mano.');
+      }
+      return;
+    }
+    try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
+    const panel=$('crm-bn-panel'), redraw=()=>{ if(panel && panel.style.display!=='none') drawBaseNivel(); };
+    if(ahora-bnWebExtTs > 60000){ redraw(); return; }   // la extensión no está en este Chrome
+    const tope=bnWebTope();
+    if(tope && bnEnviosHoy(bnLineaPc('web'))>=tope){ redraw(); return; }
+    if(bnWebEspera(ahora).ms>0){ redraw(); return; }
+    const ped=bnAutoPedido(ahora, 'web'); if(!ped){ redraw(); return; }
+    bnWebPend={...ped, id:'wa'+ahora.toString(36), ts:ahora};
+    const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : '';
+    window.postMessage({vphWa:1, tipo:'enviar', id:bnWebPend.id, tel:ped.tel, tel2:ped.tel2, texto:ped.texto, imagen:img, familia:ped.tipo}, '*');
+    redraw();
+  }
+  function bnWebArrancarReloj(){
+    if(bnWebTimer) return;
+    bnWebTimer=setInterval(bnWebTick, 30000);
+    setTimeout(bnWebTick, 3000);
+  }
+  try{ window.addEventListener('message', bnWebOnMensaje); }catch(e){}
+  function bnWebCambiar(on){
+    if(on){
+      if(!bnWebFirma()){ alert('Escribí con qué nombre firma la línea de WhatsApp Web.'); drawBaseNivel(); return; }
+      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, el mensaje de los Cubos de Apoyo (con la imagen) firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
+      bnWebSet(true, ''); bnWebArrancarReloj();
+      try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
+    } else bnWebSet(false, '');
+    drawBaseNivel();
+  }
   function bnAutoHtml(){
-    const on=bnAutoOn(), c=bnAutoCandidatos(Date.now());
-    const nSeg=c.filter(x=>x.accion==='seguimiento').length, nCont=c.length-nSeg;
-    const b=(typeof topesAutoBuzon!=='undefined' && topesAutoBuzon) || {};
+    const ahora=Date.now();
+    const cola=l=>{ const c=bnAutoCandidatos(ahora, l), s=c.filter(x=>x.accion==='seguimiento').length; return '<b>'+(c.length-s)+'</b> primeros · <b>'+s+'</b> seguimientos'; };
+    const caja='display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-size:12.5px';
+    const inp=(id,v,w,t)=>'<input type="number" min="0" id="'+id+'" value="'+esc(String(v))+'" style="width:'+w+'px" title="'+esc(t)+'">';
+    // Línea 1: la APP de WhatsApp (ayudante de siempre, reloj de 🔁 Automático de Topes).
+    const on=bnAutoOn(), b=(typeof topesAutoBuzon!=='undefined' && topesAutoBuzon) || {};
+    const minApp=(typeof topesMinutosPc==='function' && topesMinutosPc()!=null) ? topesMinutosPc() : Math.round(Number(window.__param ? window.__param('topesMinutosEntre',15) : 15));
     let nota='';
-    if(on && !topesAutoOn()) nota='<span style="color:#b45309;font-weight:600">⚠️ Falta prender <b>🔁 Automático</b> en la pestaña Topes (es el mismo ayudante).</span>';
+    if(on && !topesAutoOn()) nota='<span style="color:#b45309;font-weight:600">⚠️ Falta prender <b>🔁 Automático</b> en la pestaña Topes (es el que arranca el ayudante de la app).</span>';
     else if(on && b.origen==='basenivel' && (b.estado==='pedido'||b.estado==='enviando')) nota='📤 Mandando a <b>'+esc(b.nombre||'')+'</b>…';
-    else if(on) nota='En cola: <b>'+nCont+'</b> primeros contactos · <b>'+nSeg+'</b> seguimientos. Salen antes que los de Topes, con la misma espera, horario y tope del día.';
-    return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-size:12.5px">'+
-      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="El ayudante de Topes manda también estos: el mensaje con el flyer y, a los '+BN_SEGUI_DIAS+' días, el seguimiento. Necesita 🔁 Automático prendido en Topes.">'+
-      '<input type="checkbox" id="bn-auto-chk"'+(on?' checked':'')+'> 🤖 Que el ayudante los mande solo</label>'+
+    else if(on) nota='En cola: '+cola('app')+'.';
+    const app='<div style="'+caja+'">'+
+      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="El ayudante de la app de WhatsApp (el de Topes) manda el mensaje de los cubos con la imagen y, a los '+BN_SEGUI_DIAS+' días, el seguimiento. Necesita 🔁 Automático prendido en Topes.">'+
+      '<input type="checkbox" id="bn-auto-chk"'+(on?' checked':'')+'> 📱 App de WhatsApp</label>'+
+      '<span>firma <b>'+esc(bnLineaFirma('app')||'(escribila en Topes → ✍️ Firmo como)')+'</b></span>'+
+      '<span>cada '+inp('bn-app-min', minApp, 52, 'Minutos entre mensajes de la app (vale también para Topes en esta PC)')+' min</span>'+
       (nota?('<span>'+nota+'</span>'):'')+'</div>';
+    // Línea 2: WhatsApp WEB (extensión de Chrome).
+    const won=bnWebOn(), ext=(ahora-bnWebExtTs)<=60000, wnota=bnWebNota(), wtope=bnWebTope(), wenv=bnEnviosHoy(bnLineaPc('web'));
+    let st='';
+    if(won){
+      const esp=bnWebEspera(ahora);
+      if(bnWebPend) st='📤 Mandando a <b>'+esc(bnWebPend.nombre)+'</b>…';
+      else if(!ext) st='<span style="color:#b45309">⏳ No encuentro la extensión <b>Ayudante WhatsApp Web VPH</b> en este Chrome (o recargá esta página)</span>';
+      else if(wtope && wenv>=wtope) st='Tope de hoy alcanzado ('+wenv+'), sigue mañana';
+      else if(esp.motivo==='antes') st='Arranca a las '+topesFmtHora(esp.desde);
+      else if(esp.motivo==='despues') st='Terminó el horario de hoy';
+      else if(esp.ms>0) st='Próximo en '+Math.ceil(esp.ms/60000)+' min';
+      else st='Listo para el próximo';
+      st+=' · hoy '+wenv+(wtope?(' de '+wtope):'')+' · en cola: '+cola('web');
+    }
+    const web='<div style="'+caja+'">'+
+      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="La extensión Ayudante WhatsApp Web VPH manda desde el WhatsApp Web de este Chrome, con su firma, su espera y su tope.">'+
+      '<input type="checkbox" id="bn-web-chk"'+(won?' checked':'')+'> 🌐 WhatsApp Web</label>'+
+      '<span>firma <input id="bn-web-firma" value="'+esc(bnWebFirma())+'" style="width:80px"></span>'+
+      '<span>cada '+inp('bn-web-min', bnWebNum('min',15), 52, 'Minutos entre mensajes de WhatsApp Web')+' min</span>'+
+      '<span>tope '+inp('bn-web-tope', wtope, 52, 'Máximo de mensajes por día de WhatsApp Web (0 = sin tope)')+' por día</span>'+
+      (st?('<span>'+st+'</span>'):'')+
+      (!won && wnota ? '<span style="color:#b45309;font-weight:600">'+esc(wnota)+'</span>' : '')+'</div>';
+    return '<div style="font-size:12px;color:#475569;margin-bottom:4px"><b>🤖 Envío automático</b> — dos líneas separadas: cada una firma con su nombre, tiene su espera y no repite los prospectos de la otra. El seguimiento lo manda la misma línea que hizo el primer contacto.</div>'+app+web;
   }
   function drawBaseNivel(){
     const cont=$('crm-bn-controles'), tabla=$('crm-bn-tabla'); if(!cont||!tabla) return;
@@ -17959,6 +18091,12 @@ function buildFilterTable(cfg){
     if(chkAuto) chkAuto.onchange=()=>{ try{ localStorage.setItem('vph_bn_auto_v1', chkAuto.checked?'1':'0'); }catch(e){}
       if(chkAuto.checked && topesAutoOn()) topesAutoArrancarReloj();
       drawBaseNivel(); };
+    // 30/10: las dos líneas. Minutos de la app = los de esta PC para el ayudante (vph_topes_min_v1, también Topes).
+    const appMin=cont.querySelector('#bn-app-min');
+    if(appMin) appMin.onchange=()=>{ const n=Math.max(0, Math.round(Number(appMin.value)||0)); try{ localStorage.setItem('vph_topes_min_v1', String(n)); }catch(e){} drawBaseNivel(); };
+    const webChk=cont.querySelector('#bn-web-chk'); if(webChk) webChk.onchange=()=>bnWebCambiar(webChk.checked);
+    const webFirma=cont.querySelector('#bn-web-firma'); if(webFirma) webFirma.onchange=()=>{ bnWebLsSet('firma', String(webFirma.value||'').trim()); drawBaseNivel(); };
+    ['min','tope'].forEach(k=>{ const el=cont.querySelector('#bn-web-'+k); if(el) el.onchange=()=>{ bnWebLsSet(k, Math.max(0, Math.round(Number(el.value)||0))); drawBaseNivel(); }; });
     cont.querySelectorAll('[data-bn-si]').forEach(b=>b.onclick=()=>bnConfirmar(true));
     cont.querySelectorAll('[data-bn-no]').forEach(b=>b.onclick=()=>bnConfirmar(false));
     cont.querySelectorAll('[data-bn-sinwa]').forEach(b=>b.onclick=()=>bnConfirmar(false, true));
@@ -18018,7 +18156,7 @@ function buildFilterTable(cfg){
 
   // Base Nivel: pestaña propia (01/10, "separalos aparte también de los de Topes") + suscripción a su documento.
   $('crm-tab-basenivel').onclick=()=>setCrmTab('basenivel');
-  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>bnSubscribe()); }
+  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>{ bnSubscribe(); if(bnWebOn()) bnWebArrancarReloj(); }); }
   else bnSubscribe();
 
   boot();
