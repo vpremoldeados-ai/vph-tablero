@@ -14121,6 +14121,8 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
+    {g:'Flete', k:'fleteSeguroPct', l:'Seguro del transporte externo (% del valor declarado)', def:1.2, t:'num', hint:'Lo usa la calculadora de flete del lead (Transporte externo a cotizar).'},
+    {g:'Flete', k:'fleteTrasladoDeposito', l:'Traslado fábrica → depósito del transporte externo (por viaje, sin IVA)', def:20000, t:'num', hint:'Lo que cuesta llevar el pallet desde la fábrica al depósito del transportista en Córdoba Capital. Lo usa la calculadora de flete del lead.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = un camión de 8 pallets a $210.000.'},
     {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
@@ -15517,6 +15519,19 @@ function buildFilterTable(cfg){
   // de entrega elegida. Los dos números son editables (pallets a cobrar y precio por pallet con IVA): el precio
   // de zona está estandarizado pero a veces cambia por viaje. Lo que se cargue acá viaja al presupuesto y a la
   // venta (`palletsFlete` / `precioFlete`, los mismos campos que usa Presupuestos). Vacío = automático / de la zona.
+  // Transporte externo (a cotizar): del presupuesto del transportista al PRECIO POR PALLET con IVA, sin cuentas
+  // por fuera del Tablero. Tarifa (+ seguro sobre el valor declarado + traslado de la fábrica al depósito del
+  // transporte) + IVA, dividido por los pallets a cobrar. Pura: la usa la tarjeta del lead y la testea node.
+  function fleteExternoCalc(o){
+    const pal=Math.max(1, Math.round(num(o.pallets))||1);
+    const tarifa = o.porPallet===false ? num(o.tarifa) : num(o.tarifa)*pal;
+    const seguro = num(o.valorDecl)*num(o.seguroPct)/100;
+    const traslado = num(o.traslado);
+    const neto = tarifa+seguro+traslado;
+    const iva = neto*(o.iva==null?21:num(o.iva))/100;
+    const total = neto+iva;
+    return { pallets:pal, tarifa, seguro, traslado, neto, iva, total, precioPallet:Math.round(total/pal) };
+  }
   function drawFleteBox(){
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
@@ -15529,6 +15544,26 @@ function buildFilterTable(cfg){
     if(!items.some(it=>it.cant>0)){ box.innerHTML=cab+' · <span style="color:var(--muted)">cargá productos con cantidad para calcular el flete</span>'; return; }
     const totItems=(editing.items||[]).reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
     const inpSt='padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700';
+    const fc=editing.fleteCalc||{};
+    const pSeg=num(window.__param('fleteSeguroPct',1.2)), pTras=num(window.__param('fleteTrasladoDeposito',20000));
+    const vv=x=>(x==null||x==='')?'':esc(String(x).replace('.',','));
+    function fleteExternoHtml(){
+      const st='padding:4px 7px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700;';
+      return '<div style="margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">'+
+        '<div style="font-size:11.5px;font-weight:700;color:var(--muted);margin-bottom:6px">🧮 Calculadora: del presupuesto del transportista al precio por pallet</div>'+
+        '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;font-size:11.5px">'+
+          '<label for="cf-fx-tarifa" style="color:var(--muted);font-weight:700">Tarifa del transportista (sin IVA)</label>'+
+          '<div><input id="cf-fx-tarifa" inputmode="decimal" value="'+vv(fc.tarifa)+'" placeholder="ej. 215.200" style="width:110px;'+st+'"> '+
+            '<select id="cf-fx-modo" style="padding:4px;border:1px solid var(--border);border-radius:7px"><option value="pallet"'+(fc.modo!=='total'?' selected':'')+'>por pallet</option><option value="total"'+(fc.modo==='total'?' selected':'')+'>total del viaje</option></select></div>'+
+          '<label for="cf-fx-seg" style="color:var(--muted);font-weight:700">Seguro (% del valor declarado)</label>'+
+          '<div><input id="cf-fx-seg" inputmode="decimal" value="'+vv(fc.seguroPct==null||fc.seguroPct===''?pSeg:fc.seguroPct)+'" style="width:60px;'+st+'"> % de '+
+            '<input id="cf-fx-vd" inputmode="decimal" value="'+vv(fc.valorDecl)+'" placeholder="'+esc(String(Math.round(totItems)))+'" title="Valor declarado de la carga. Vacío = total de la mercadería con IVA" style="width:110px;'+st+'"> <span style="color:var(--muted)">valor declarado (vacío = mercadería con IVA)</span></div>'+
+          '<label for="cf-fx-tras" style="color:var(--muted);font-weight:700">Traslado fábrica → depósito del transporte (por viaje, sin IVA)</label>'+
+          '<div><input id="cf-fx-tras" inputmode="decimal" value="'+vv(fc.traslado==null||fc.traslado===''?pTras:fc.traslado)+'" style="width:110px;'+st+'"></div>'+
+        '</div>'+
+        '<div id="cf-fx-res" style="margin-top:6px;font-size:11.5px;color:var(--muted)"></div>'+
+      '</div>';
+    }
     box.innerHTML=cab+' · <b>Flete por pallet</b>'+
       // Pallets a cobrar editables: la cuenta automática llena pallets completos, pero en la fábrica se
       // acomodan distinto (155 losetas en 2 pallets de 80 y 75, en vez de 3). Vacío o 0 = automático.
@@ -15544,12 +15579,30 @@ function buildFilterTable(cfg){
       '</div>'+
       (f.manual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Pallets armados a mano. Por cantidad y peso darían <b>'+f.palletsAuto+'</b>: si cambiás los productos, revisá que este número siga estando bien.</div>':'')+
       (f.precioManual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Precio por pallet cargado a mano para este lead (el de la zona es '+(f.precioZona>0?money(f.precioZona):'$0')+'). Se usa tal cual en el presupuesto y en la venta.</div>':'')+
-      (f.precioPallet<=0?'<div style="font-size:10.5px;color:#c0392b;margin-top:2px"><b>Esta forma de entrega no tiene precio cargado:</b> escribilo en «Precio por pallet» para que se cobre el flete.</div>':'')+
+      (f.precioPallet<=0?'<div style="font-size:10.5px;color:#c0392b;margin-top:2px"><b>Esta forma de entrega no tiene precio cargado:</b> escribilo en «Precio por pallet»'+(zona==='cotizar'?' o usá la calculadora de abajo':'')+' para que se cobre el flete.</div>':'')+
+      (zona==='cotizar' ? fleteExternoHtml() : '')+
       '<div id="cf-flete-total" style="margin-top:6px;font-size:13px">'+(f.costo>0?'Total con flete (con IVA): <b>'+money(totItems+f.costo)+'</b>':'')+'</div>'+
       '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Peso total '+num(f.kg).toLocaleString('es-AR')+' kg · el flete se consolida entre productos (tope '+num(window.__param('kgPorPallet',1500)).toLocaleString('es-AR')+' kg por pallet). Se agrega como renglón al generar el presupuesto.</div>';
     // Mientras se tipea se actualizan SOLO los números (mismo motivo que en la tabla de ítems: redibujar la
     // caja entera destruiría el input y no se podría escribir un número de varios dígitos).
+    // Calculadora del transporte externo: mientras haya una tarifa cargada, el precio por pallet sale de acá.
+    const fxSync=()=>{
+      const res=$('cf-fx-res'); if(!res) return;
+      const c=editing.fleteCalc||{};
+      if(!(num(c.tarifa)>0)){ res.textContent='Cargá la tarifa del transportista y el precio por pallet se calcula solo.'; return; }
+      const pl = editing.palletsFlete>0 ? editing.palletsFlete : f.palletsAuto;
+      const r=fleteExternoCalc({ tarifa:num(c.tarifa), porPallet:c.modo!=='total', pallets:pl,
+        seguroPct:(c.seguroPct==null||c.seguroPct==='')?pSeg:num(c.seguroPct),
+        valorDecl:num(c.valorDecl)>0?num(c.valorDecl):totItems,
+        traslado:(c.traslado==null||c.traslado==='')?pTras:num(c.traslado) });
+      editing.precioFlete=r.precioPallet;
+      const pi=$('cf-precio-flete'); if(pi) pi.value=String(r.precioPallet).replace('.',',');
+      res.innerHTML='Tarifa <b>'+money(r.tarifa)+'</b> + seguro <b>'+money(r.seguro)+'</b> + traslado <b>'+money(r.traslado)+'</b> = '+money(r.neto)+
+        ' + IVA '+money(r.iva)+' = <b>'+money(r.total)+'</b> ÷ '+r.pallets+' pallet'+(r.pallets>1?'s':'')+' = <b style="color:var(--blue);font-size:13px">'+money(r.precioPallet)+' por pallet</b> (con IVA)'+
+        '<div style="font-size:10.5px;margin-top:2px">Ya está cargado en «Precio por pallet». Si lo escribís a mano ahí, la próxima vez que toques la calculadora se vuelve a calcular.</div>';
+    };
     const refrescar=()=>{
+      fxSync();
       const pl = editing.palletsFlete>0 ? editing.palletsFlete : f.palletsAuto;
       const pr = num(editing.precioFlete)>0 ? num(editing.precioFlete) : f.precioZona;
       const c=$('cf-flete-costo'), t=$('cf-flete-total');
@@ -15566,6 +15619,12 @@ function buildFilterTable(cfg){
       ip.addEventListener('input',()=>{ editing.precioFlete = num(ip.value)>0 ? num(ip.value) : 0; refrescar(); });
       ip.addEventListener('change', drawFleteBox);
     }
+    [['cf-fx-tarifa','tarifa'],['cf-fx-seg','seguroPct'],['cf-fx-vd','valorDecl'],['cf-fx-tras','traslado']].forEach(([id,k])=>{
+      const el=$(id); if(!el) return;
+      el.addEventListener('input',()=>{ editing.fleteCalc=Object.assign({},editing.fleteCalc,{[k]:el.value.trim()===''?'':num(el.value)}); refrescar(); });
+    });
+    if($('cf-fx-modo')) $('cf-fx-modo').addEventListener('change',e=>{ editing.fleteCalc=Object.assign({},editing.fleteCalc,{modo:e.target.value}); refrescar(); });
+    if(zona==='cotizar') refrescar();
     if($('cf-pallets-auto')) $('cf-pallets-auto').onclick=()=>{ editing.palletsFlete=0; drawFleteBox(); };
     if($('cf-precio-auto')) $('cf-precio-auto').onclick=()=>{ editing.precioFlete=0; drawFleteBox(); };
   }
