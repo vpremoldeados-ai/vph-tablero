@@ -23393,8 +23393,14 @@ function buildFilterTable(cfg){
       if(L.lpTablero && window.__precioDeLista) return Math.round(window.__precioDeLista(p, L.lpTablero));
       return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
-      return { codigo:p.codigo, nombre:nombreLista(p), pu:pu, sugerido:Math.round(pu*(1+margen/100)),
-        uxm2:uxm2, m2:Math.round(pu*uxm2), peso:num(p.pesoUnit), ud:ud, pallet:pu*ud }; });
+      // 02/11 (pedido de Marcelo): el revendedor ve DOS precios, cada uno por unidad Y por m² —
+      // `pu`/`m2` = su precio de costo (lo que le cobra VPH) y `sugerido`/`sugM2` = la reventa
+      // sugerida (+margen%). Antes faltaba el sugerido por m² y el "Precio x m²" era el de costo
+      // sin decirlo: se confundía con el sugerido. El m² sale del precio por unidad YA redondeado,
+      // así costo y sugerido por m² son exactamente (unidad × u/m²) y cierran entre sí.
+      const sug=Math.round(pu*(1+margen/100));
+      return { codigo:p.codigo, nombre:nombreLista(p), pu:pu, sugerido:sug,
+        uxm2:uxm2, m2:Math.round(pu*uxm2), sugM2:Math.round(sug*uxm2), peso:num(p.pesoUnit), ud:ud, pallet:pu*ud }; });
     return { L:L, margen:margen, hoy:hoy, hoyISO:hoyISO, conM2:filas.some(f=>f.uxm2>0), filas:filas };
   }
   function listaPrecios(o){
@@ -23404,22 +23410,33 @@ function buildFilterTable(cfg){
     // La foto al lado del código, igual que en presupuestos/ventas/remitos (pedido de Sofía, 11/08:
     // que el corralón identifique el producto de un vistazo). celdaCodigo no rompe si falta la foto.
     const filas=D.filas.map(f=>{ const pu=f.pu, uxm2=f.uxm2, ud=f.ud;
+      // Precio x m² en un renglón y la cantidad de unidades en otro más chico debajo (pedido de
+      // Sofía, 11/08): inline se partía feo en la columna angosta ("$18.904,00 (8" / "u/m²)").
+      const celM2 = v => '<td class="n">'+(uxm2>0?'<span style="white-space:nowrap">'+money(v)+'</span><br><span style="color:#666;font-size:9px;white-space:nowrap">'+pct(uxm2)+' u/m²</span>':'—')+'</td>';
       return '<tr><td style="white-space:nowrap">'+celdaCodigo(f.codigo)+'</td><td>'+esc(f.nombre)+'</td>'+
+        // Mayorista (02/11): primero SU PRECIO DE COSTO (unidad y m²), después el SUGERIDO DE
+        // REVENTA (unidad y m²) — dos bloques con su encabezado, para que no se confunda cuál es cuál.
         '<td class="n"><b>'+money(pu)+'</b></td>'+
-        (L.may?('<td class="n">'+money(f.sugerido)+'</td>'):'')+
-        // Precio x m² en un renglón y la cantidad de unidades en otro más chico debajo (pedido de
-        // Sofía, 11/08): inline se partía feo en la columna angosta ("$18.904,00 (8" / "u/m²)").
-        (conM2?('<td class="n">'+(uxm2>0?'<span style="white-space:nowrap">'+money(f.m2)+'</span><br><span style="color:#666;font-size:9px;white-space:nowrap">'+pct(uxm2)+' u/m²</span>':'—')+'</td>'):'')+
+        (conM2?celM2(f.m2):'')+
+        (L.may?('<td class="n">'+money(f.sugerido)+'</td>'+(conM2?celM2(f.sugM2):'')):'')+
         '<td class="n">'+(f.peso>0?pct(f.peso)+' kg':'—')+'</td>'+
         '<td class="n">'+(ud>0?nf(ud):'—')+'</td>'+
         (L.may?('<td class="n">'+(ud>0?money(f.pallet):'—')+'</td>'):'')+
         '</tr>'; }).join('');
     const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
       (L.may?'<div class="doc-obs" style="margin-bottom:6px"><b>Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.</b></div>':'')+
-      '<table class="doc-tab"><thead><tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+
-      (L.may?('<th class="n">Sugerido reventa +'+pct(margen)+'%</th>'):'')+
-      (conM2?'<th class="n">Precio x m²</th>':'')+'<th class="n">Peso x unidad</th>'+'<th class="n">Unid. x pallet</th>'+
-      (L.may?'<th class="n">Precio x pallet</th>':'')+'</tr></thead><tbody>'+filas+'</tbody></table>'+
+      '<table class="doc-tab"><thead>'+
+      (L.may
+        // Encabezado en dos niveles: el grupo arriba (Precio de costo / Sugerido de reventa) y
+        // "x unidad" / "x m²" debajo. Sin m² en la lista, cada grupo es una sola columna.
+        ? ('<tr><th rowspan="2">Código</th><th rowspan="2">Producto</th>'+
+           '<th colspan="'+(conM2?2:1)+'" style="text-align:center;background:#eef6f1">Precio de costo</th>'+
+           '<th colspan="'+(conM2?2:1)+'" style="text-align:center">Sugerido de reventa +'+pct(margen)+'%</th>'+
+           '<th rowspan="2" class="n">Peso x unidad</th><th rowspan="2" class="n">Unid. x pallet</th><th rowspan="2" class="n">Precio x pallet</th></tr>'+
+           '<tr><th class="n">x unidad</th>'+(conM2?'<th class="n">x m²</th>':'')+'<th class="n">x unidad</th>'+(conM2?'<th class="n">x m²</th>':'')+'</tr>')
+        : ('<tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+(conM2?'<th class="n">Precio x m²</th>':'')+
+           '<th class="n">Peso x unidad</th><th class="n">Unid. x pallet</th></tr>'))+
+      '</thead><tbody>'+filas+'</tbody></table>'+
       '<div class="doc-obs"><b>Condiciones:</b> '+esc(L.cond)+'<br>'+
       'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
       '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Lista '+esc(L.nombre)+' — vigente desde '+esc(hoy)+'</span></div>';
@@ -23441,13 +23458,18 @@ function buildFilterTable(cfg){
       titulo:'LISTA DE PRECIOS', sub:L.nombre, vigente:'Vigente desde '+D.hoy,
       lema: L.may ? 'Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.' : '',
       filas: D.filas.map(f=>{
-        const det=[];
-        if(L.may) det.push('Reventa sugerida '+lpPlata(f.sugerido));
-        if(f.uxm2>0) det.push('m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
-        if(f.peso>0) det.push(pct(f.peso)+' kg');
-        if(f.ud>0) det.push(nf(f.ud)+' u/pallet');
+        // Mayorista (02/11): el precio grande de la derecha es SU COSTO por unidad; `det` lleva la
+        // reventa sugerida (unidad y m²) y `det2` el costo por m² con el peso y el pallet — dos
+        // renglones, para que el sugerido y el costo no queden pegados en una misma línea.
+        const det=[], det2=[];
+        if(L.may){ det.push('Reventa sugerida '+lpPlata(f.sugerido)+' x unidad'+(f.uxm2>0?(' · '+lpPlata(f.sugM2)+' x m²'):''));
+          if(f.uxm2>0) det2.push('Costo x m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)'); }
+        else if(f.uxm2>0) det.push('m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
+        const resto = L.may ? det2 : det;
+        if(f.peso>0) resto.push(pct(f.peso)+' kg');
+        if(f.ud>0) resto.push(nf(f.ud)+' u/pallet');
         const img=IMG_PRODUCTO[String(f.codigo||'').trim().toUpperCase()];
-        return { codigo:String(f.codigo||''), nombre:String(f.nombre||''), precio:lpPlata(f.pu), det:det.join(' · '),
+        return { codigo:String(f.codigo||''), nombre:String(f.nombre||''), precio:lpPlata(f.pu), det:det.join(' · '), det2:det2.join(' · '),
           pallet:(L.may && f.ud>0) ? ('Pallet '+lpPlata(f.pallet)) : '', foto: img ? ('Productos/'+img) : '' };
       }),
       cond:'Condiciones: '+L.cond+' Precios sujetos a modificación sin previo aviso.',
@@ -23477,7 +23499,9 @@ function buildFilterTable(cfg){
         while(p>(min||14) && x.measureText(texto).width>ancho){ p--; fuente(p,peso); } };
       // 1) Lo que envuelve se mide ANTES: define el alto del canvas.
       fuente(22); const condL=lpPartir(x, M.cond, W-2*PAD);
-      const H_CAB=150, H_LEMA=M.lema?54:0, H_TH=40, H_FILA=100, H_COND=30+condL.length*31+50, H_PIE=60;
+      // Con un segundo renglón de detalle (mayorista: costo m² + peso + pallet) la fila es más alta.
+      const dosDet=M.filas.some(f=>f.det2);
+      const H_CAB=150, H_LEMA=M.lema?54:0, H_TH=40, H_FILA=dosDet?126:100, H_COND=30+condL.length*31+50, H_PIE=60;
       const H=H_CAB+H_LEMA+H_TH+M.filas.length*H_FILA+H_COND+H_PIE;
       cv.width=W; cv.height=H;
       x.fillStyle='#ffffff'; x.fillRect(0,0,W,H); x.textBaseline='alphabetic';
@@ -23496,7 +23520,7 @@ function buildFilterTable(cfg){
       x.fillStyle='#f1f5f9'; x.fillRect(0,y,W,H_TH);
       x.fillStyle='#64748b'; fuente(16,700);
       x.textAlign='left'; x.fillText('PRODUCTO', PAD, y+26);
-      x.textAlign='right'; x.fillText('PRECIO POR UNIDAD', W-PAD, y+26);
+      x.textAlign='right'; x.fillText(dosDet?'SU PRECIO DE COSTO x UNIDAD':'PRECIO POR UNIDAD', W-PAD, y+26);
       y+=H_TH;
       // 3) Un renglón por producto.
       const IZQ=PAD+92, ANCHO_TXT=W-PAD-250-IZQ;
@@ -23504,16 +23528,17 @@ function buildFilterTable(cfg){
         if(i%2){ x.fillStyle='#f8fafc'; x.fillRect(0,y,W,H_FILA); }
         const im=imgs[i+1];
         if(im && im.width && im.height){ const L=76, r=Math.min(im.width, im.height);   // recorte cuadrado centrado
-          x.drawImage(im, (im.width-r)/2, (im.height-r)/2, r, r, PAD, y+12, L, L); }
+          x.drawImage(im, (im.width-r)/2, (im.height-r)/2, r, r, PAD, y+(dosDet?25:12), L, L); }
         x.textAlign='left';
         x.fillStyle='#0f172a'; ajustar(f.nombre, ANCHO_TXT, 28, 700, 17); x.fillText(f.nombre, IZQ, y+40);
         const wNom=x.measureText(f.nombre).width;
         fuente(16,600);
         if(f.codigo && wNom+14+x.measureText(f.codigo).width<=ANCHO_TXT){ x.fillStyle='#94a3b8'; x.fillText(f.codigo, IZQ+wNom+14, y+40); }
-        if(f.det){ x.fillStyle='#475569'; ajustar(f.det, W-PAD-250-IZQ+40, 21, 400, 14); x.fillText(f.det, IZQ, y+73); }
+        if(f.det){ x.fillStyle='#1e7a4a'; ajustar(f.det, W-PAD-250-IZQ+40, 21, dosDet?600:400, 14); x.fillText(f.det, IZQ, y+73); }
+        if(f.det2){ x.fillStyle='#475569'; ajustar(f.det2, W-PAD-250-IZQ+40, 21, 400, 14); x.fillText(f.det2, IZQ, y+103); }
         x.textAlign='right';
-        x.fillStyle='#0f172a'; fuente(38,800); x.fillText(f.precio, W-PAD, f.pallet ? y+46 : y+62);
-        if(f.pallet){ x.fillStyle='#1e7a4a'; fuente(21,600); x.fillText(f.pallet, W-PAD, y+78); }
+        x.fillStyle='#0f172a'; fuente(38,800); x.fillText(f.precio, W-PAD, f.pallet ? y+(dosDet?56:46) : y+62);
+        if(f.pallet){ x.fillStyle='#1e7a4a'; fuente(21,600); x.fillText(f.pallet, W-PAD, y+(dosDet?92:78)); }
         x.fillStyle='#e2e8f0'; x.fillRect(PAD, y+H_FILA-1, W-2*PAD, 1);
         y+=H_FILA;
       });
