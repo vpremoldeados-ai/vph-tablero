@@ -11409,21 +11409,37 @@ function buildFilterTable(cfg){
     $('caj-form').innerHTML =
       '<p class="note" style="margin-top:0">Solo para lo que <b>no</b> pasa por Ventas ni Compras: un retiro, un ingreso de plata, un gasto de caja chica. Los cobros y pagos normales ya se cuentan solos.</p>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
-        fld('Tipo','','<select id="caj-m-signo"><option value="1">Entra plata (+)</option><option value="-1">Sale plata (−)</option></select>')+
+        fld('Tipo','','<select id="caj-m-signo"><option value="1">Entra plata (+)</option><option value="-1">Sale plata (−)</option><option value="0">Traspaso entre cuentas</option></select>')+
         fld('Fecha','','<input type="date" id="caj-m-fecha" value="'+hoyISO+'">')+
         fld('Monto $','','<input id="caj-m-monto" value="0">')+
-        fld('Concepto','','<input id="caj-m-concepto" placeholder="Retiro, gasto...">')+
-        fld('Cuenta','col2','<select id="caj-m-cuenta">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+
+        fld('Concepto','','<input id="caj-m-concepto" placeholder="Retiro, gasto... (en un traspaso es opcional)">')+
+        '<div id="caj-m-cta-box" style="grid-column:1/-1">'+fld('Cuenta','','<select id="caj-m-cuenta">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+'</div>'+
+        // Traspaso (02/11): UN solo registro carga las dos patas (sale de una cuenta, entra a la otra) y el total no se mueve.
+        '<div id="caj-m-tr-box" style="grid-column:1/-1;display:none"><div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+          fld('Sale de','','<select id="caj-m-de">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+
+          fld('Ingresa a','','<select id="caj-m-a">'+cuentasDe(ancla()).map((c,i)=>'<option'+(i===1?' selected':'')+'>'+esc(c.nombre)+'</option>').join('')+'</select>')+
+        '</div></div>'+
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-m-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-m-save">Guardar movimiento</button></div>';
     // Tarjetas: equivocar el signo INVIERTE la plata en la caja. Dos tarjetas (verde entra / roja sale)
     // hacen imposible confundirse. El select sigue en el DOM porque el guardado lee su .value.
     if(window.__tarjetas){
-      window.__tarjetas('caj-m-signo', {color:v=> String(v)==='1'?'var(--green)':'var(--red)'});
+      window.__tarjetas('caj-m-signo', {color:v=> String(v)==='1'?'var(--green)':String(v)==='0'?'var(--blue,#2563eb)':'var(--red)'});
       window.__tarjetas('caj-m-cuenta');
     }
+    const mostrarTraspaso=()=>{ const tr=$('caj-m-signo').value==='0';
+      $('caj-m-cta-box').style.display=tr?'none':''; $('caj-m-tr-box').style.display=tr?'':'none'; };
+    $('caj-m-signo').addEventListener('change',mostrarTraspaso);
     $('caj-m-cancel').onclick=cerrar;
     $('caj-m-save').onclick=()=>{ const monto=num($('caj-m-monto').value); if(monto<=0){ alert('El monto tiene que ser mayor a 0.'); return; }
+      if($('caj-m-signo').value==='0'){
+        const de=$('caj-m-de').value, a=$('caj-m-a').value, f=$('caj-m-fecha').value||hoyISO;
+        if(!de||!a||de===a){ alert('Elegí dos cuentas distintas: de cuál sale la plata y a cuál ingresa.'); return; }
+        const id='cajtr_'+f.replace(/-/g,'')+'_'+Date.now().toString(36), ts=hoyISO+'T'+new Date().toTimeString().slice(0,8);
+        const nota=($('caj-m-concepto').value||'').trim();
+        persist({_uid:id+'_o', tipo:'mov', signo:-1, fecha:f, monto, cuenta:de, concepto:'Traspaso a '+a+(nota?' · '+nota:''), origen:'traspaso', traspasoId:id, ts});
+        persist({_uid:id+'_d', tipo:'mov', signo:1, fecha:f, monto, cuenta:a, concepto:'Traspaso desde '+de+(nota?' · '+nota:''), origen:'traspaso', traspasoId:id, ts});
+        cerrar(); return; }
       persist({tipo:'mov', signo:num($('caj-m-signo').value)>=0?1:-1, fecha:$('caj-m-fecha').value||hoyISO, monto, concepto:$('caj-m-concepto').value||'Movimiento manual', cuenta:($('caj-m-cuenta')?$('caj-m-cuenta').value:''), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)}); cerrar(); };
     $('caj-modal').classList.add('open');
   }
