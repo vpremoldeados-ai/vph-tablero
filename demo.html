@@ -1771,23 +1771,24 @@ window.__demoSeed = function () {
         <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
       </section>
 
-      
-      <section id="pe-view-asis" style="display:none">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-          <button class="cmp-btn cmp-btn-primary" id="pe-btn-asis">＋ Llegada tarde o ausencia</button>
-          <input type="month" id="pe-asis-mes" class="cmp-select" style="max-width:170px;margin-left:auto">
-        </div>
-        <div id="pe-asis-resumen" class="note" style="margin:0 0 10px"></div>
-        <div class="tbl-wrap"><table id="pe-tabla-asis"></table></div>
-        <p class="note">Un registro por persona y por día. La tardanza se cuenta desde la hora de entrada de ⚙️ Parámetros (Producción), pasada la tolerancia. Si el nombre aparece dos veces con otra grafía, cuenta como dos personas: elegirlo de la lista cuando ya figura.</p>
-      </section>
     </div>
+  </div>
+
+  
+  <div class="page" id="page-asistencia">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <button class="cmp-btn cmp-btn-primary" id="pe-btn-asis">＋ Registrar llegada tarde</button>
+      <input type="month" id="pe-asis-mes" class="cmp-select" style="max-width:170px;margin-left:auto">
+    </div>
+    <div id="pe-asis-resumen" class="note" style="margin:0 0 10px"></div>
+    <div class="tbl-wrap"><table id="pe-tabla-asis"></table></div>
+    <p class="note">Solo llegadas tarde: un registro por persona y por día. La tardanza se cuenta desde la hora de entrada de ⚙️ Parámetros (Producción), pasada la tolerancia. Esto no descuenta nada: el presentismo lo decide Marcelo en Sueldos.</p>
   </div>
 
   
   <div class="cmp-overlay" id="pe-modal-asis">
     <div class="cmp-dialog" style="max-width:560px">
-      <div class="cmp-dialog-head"><h3>⏰ Llegada tarde o ausencia</h3><button class="cmp-x" id="pe-asis-cerrar">✕</button></div>
+      <div class="cmp-dialog-head"><h3>⏰ Llegada tarde</h3><button class="cmp-x" id="pe-asis-cerrar">✕</button></div>
       <div class="cmp-dialog-body" id="pe-form-asis"></div>
     </div>
   </div>
@@ -2807,6 +2808,7 @@ const PAGES = [
   { id:'finanzas', nombre:'Finanzas', ico:'$' },
   { id:'comercial', nombre:'Comercial', ico:'▲' },
   { id:'prodent', nombre:'Producción y Logística', ico:'🏭' },
+  { id:'asistencia', nombre:'Asistencia', ico:'⏰' },
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
   { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
   { id:'igbandeja', nombre:'Bandeja Instagram', ico:'📸' },
@@ -2825,7 +2827,7 @@ const PAGES = [
   { id:'libroiva', nombre:'Libro IVA', ico:'📚' }
 ];
  
-const PERMISOS = { produccion: ['prodent'] };
+const PERMISOS = { produccion: ['prodent','asistencia'] };
  
  
  
@@ -19596,16 +19598,16 @@ function buildFilterTable(cfg){
     
 
     const aPedir=insPedibles().length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual'],['asis','⏰ Asistencia'+(asisLlegadasMes(asisMesActual())?' ('+asisLlegadasMes(asisMesActual())+')':'')]].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
     $('pe-view-entregado').style.display = tab==='entregado'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
-    $('pe-view-asis').style.display = tab==='asis'?'':'none';
     renderKpis();
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else if(tab==='asis') renderAsis(); else renderCoord();
+    renderAsis();    
+    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -20031,6 +20033,7 @@ function buildFilterTable(cfg){
    
    
    
+   
   const asisParam=(k,d)=> (window.__param? window.__param(k,d) : d);
    
   function asisHoraMin(s){ const m=/^(\d{1,2}):(\d{2})$/.exec(String(s||'').trim()); if(!m) return null;
@@ -20046,11 +20049,10 @@ function buildFilterTable(cfg){
   function asisResumenMes(lista, mes){
     const out={};
     (lista||[]).forEach(x=>{ if(!x || String(x.fecha||'').slice(0,7)!==mes) return;
-      const k=asisClave(x.persona); if(!out[k]) out[k]={persona:x.persona, tardes:0, min:0, ausentes:0};
-      if(x.tipo==='ausente') out[k].ausentes++; else { out[k].tardes++; out[k].min+=Number(x.minutos)||0; } });
-    return Object.values(out).sort((a,b)=>((b.tardes+b.ausentes)-(a.tardes+a.ausentes)) || (b.min-a.min)); }
+      const k=asisClave(x.persona); if(!out[k]) out[k]={persona:x.persona, tardes:0, min:0};
+      out[k].tardes++; out[k].min+=Number(x.minutos)||0; });
+    return Object.values(out).sort((a,b)=> (b.tardes-a.tardes) || (b.min-a.min)); }
   const asisMesActual=()=> asisMes || hoyISO.slice(0,7);
-  const asisLlegadasMes=mes=> (asis||[]).filter(x=>String(x.fecha||'').slice(0,7)===mes).length;
 
   function renderAsis(){
     const mes=asisMesActual();
@@ -20059,19 +20061,17 @@ function buildFilterTable(cfg){
       .sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha)));
     const res=asisResumenMes(asis, mes);
     const elR=$('pe-asis-resumen');
-    if(elR) elR.innerHTML = !lista.length ? 'Sin incumplimientos cargados en este mes.'
-      : lista.length+' incumplimiento'+(lista.length>1?'s':'')+' en el mes: '+res.map(r=>
-          '<b>'+esc(r.persona)+'</b> '+[ r.tardes ? r.tardes+' tarde'+(r.tardes>1?'s':'')+(r.min?' ('+nf(r.min)+' min)':'') : '',
-                                          r.ausentes ? r.ausentes+' sin aviso' : '' ].filter(Boolean).join(' · ')).join(' · ');
+    if(elR) elR.innerHTML = !lista.length ? 'Sin llegadas tarde cargadas en este mes.'
+      : lista.length+' llegada'+(lista.length>1?'s':'')+' tarde en el mes: '+res.map(r=>
+          '<b>'+esc(r.persona)+'</b> '+r.tardes+' vez'+(r.tardes>1?'es':'')+' ('+nf(r.min)+' min)').join(' · ');
     const t=$('pe-tabla-asis'); if(!t) return;
-    t.innerHTML='<thead><tr><th>Fecha</th><th>Persona</th><th>Qué pasó</th><th>Entrada</th><th>Llegó</th><th>Min. tarde</th><th>Nota</th><th>Cargó</th><th></th></tr></thead><tbody>'+
+    t.innerHTML='<thead><tr><th>Fecha</th><th>Persona</th><th>Entrada</th><th>Llegó</th><th>Min. tarde</th><th>Nota</th><th>Cargó</th><th></th></tr></thead><tbody>'+
       (lista.length ? lista.map(x=> '<tr><td>'+esc(fmtFecha(x.fecha))+'</td><td>'+esc(x.persona)+'</td>'+
-          '<td>'+(x.tipo==='ausente' ? '<span class="badge red">No vino</span>' : '<span class="badge amber">Llegó tarde</span>')+'</td>'+
           '<td>'+esc(x.horaEntrada||'—')+'</td><td>'+esc(x.horaLlegada||'—')+'</td>'+
-          '<td style="text-align:right">'+(x.tipo==='ausente'?'—':nf(x.minutos||0))+'</td>'+
+          '<td style="text-align:right">'+nf(x.minutos||0)+'</td>'+
           '<td>'+esc(x.nota||'')+'</td><td style="font-size:11px">'+esc(x.usuario||'')+'</td>'+
           '<td><button class="cmp-btn" data-asis-del="'+esc(x._uid)+'" title="Borrar este registro">🗑</button></td></tr>').join('')
-        : '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Ningún incumplimiento cargado en este mes.</td></tr>')+'</tbody>';
+        : '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Ninguna llegada tarde cargada en este mes.</td></tr>')+'</tbody>';
     t.querySelectorAll('button[data-asis-del]').forEach(b=> b.onclick=()=>borrarAsis(b.dataset.asisDel));
   }
 
@@ -20089,26 +20089,21 @@ function buildFilterTable(cfg){
     $('pe-form-asis').innerHTML =
       '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
         '<div class="cmp-field" style="margin:0"><label>¿Qué día?</label><input type="date" id="pe-asis-fecha" value="'+hoyISO+'" style="max-width:190px"></div>'+
-        '<div class="cmp-field" style="margin:0;flex:1;min-width:220px"><label>¿Qué pasó?</label><select id="pe-asis-tipo"><option value="tarde">Llegó tarde</option><option value="ausente">No vino (sin aviso)</option></select></div>'+
+        '<div class="cmp-field" style="margin:0"><label>¿A qué hora llegó?</label><input type="time" id="pe-asis-hora" style="max-width:150px"></div>'+
       '</div>'+
       '<div class="cmp-field"><label>Persona</label><input type="text" id="pe-asis-persona" list="pe-asis-personas" placeholder="Nombre y apellido" autocomplete="off">'+
         '<datalist id="pe-asis-personas">'+nombres.map(n=>'<option value="'+esc(n)+'"></option>').join('')+'</datalist></div>'+
-      '<div class="cmp-field" id="pe-asis-hora-box"><label>¿A qué hora llegó?</label><input type="time" id="pe-asis-hora" style="max-width:150px"></div>'+
       '<div class="cmp-field"><label>Nota (opcional)</label><input type="text" id="pe-asis-nota" placeholder="ej: avisó que el colectivo no llegó"></div>'+
       '<div id="pe-asis-tot" class="note" style="margin:0 0 10px"></div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-asis-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-asis-save">Registrar</button></div>';
-    if(window.__tarjetas) window.__tarjetas('pe-asis-tipo',{mini:1});
     function updTot(){
-      const tipo=$('pe-asis-tipo').value, hora=$('pe-asis-hora').value, out=$('pe-asis-tot');
-      $('pe-asis-hora-box').style.display = tipo==='tarde' ? '' : 'none';
-      if(tipo!=='tarde'){ out.innerHTML='Se registra como <b>ausencia</b>: no vino y no avisó.'; return; }
+      const hora=$('pe-asis-hora').value, out=$('pe-asis-tot');
       if(!asisHoraMin(entrada)){ out.innerHTML='<span style="color:var(--red)">Falta la hora de entrada en ⚙️ Parámetros (Producción).</span>'; return; }
       if(!hora){ out.textContent=''; return; }
       const min=asisMinTarde(entrada,hora,tol);
       out.innerHTML = min>0 ? 'Entrada '+esc(entrada)+' → llegó '+esc(hora)+': <b>'+min+' min tarde</b>.'
         : 'Llegó dentro de la tolerancia ('+tol+' min): <b>no cuenta</b> como llegada tarde.';
     }
-    $('pe-asis-tipo').addEventListener('change',updTot);
     $('pe-asis-hora').addEventListener('input',updTot);
     updTot();
     $('pe-asis-cancel').onclick=()=>$('pe-modal-asis').classList.remove('open');
@@ -20116,24 +20111,19 @@ function buildFilterTable(cfg){
       const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
       const fecha=$('pe-asis-fecha').value;
       const persona=String($('pe-asis-persona').value||'').replace(/\s+/g,' ').trim();
-      const tipo=$('pe-asis-tipo').value;
-      const hora=tipo==='tarde' ? $('pe-asis-hora').value : '';
+      const hora=$('pe-asis-hora').value;
       const nota=String($('pe-asis-nota').value||'').trim();
       if(!fecha){ alert('Falta el día.'); return; }
       if(!persona){ alert('Falta el nombre de la persona.'); return; }
       if(!asisHoraMin(entrada)){ alert('Falta la hora de entrada en ⚙️ Parámetros (Producción).'); return; }
-      let min=0;
-      if(tipo==='tarde'){
-        if(!asisHoraMin(hora)){ alert('Poné a qué hora llegó.'); return; }
-        min=asisMinTarde(entrada,hora,tol);
-        if(!min){ alert('Llegó dentro de la tolerancia ('+tol+' min): no es un incumplimiento, no se registra.'); return; }
-      }
+      if(!asisHoraMin(hora)){ alert('Poné a qué hora llegó.'); return; }
+      const min=asisMinTarde(entrada,hora,tol);
+      if(!min){ alert('Llegó dentro de la tolerancia ('+tol+' min): no es una llegada tarde, no se registra.'); return; }
       const id=asisId(fecha,persona), previo=(asis||[]).find(a=>a._uid===id);
-      if(previo && !confirm('Ya hay un registro de '+previo.persona+' el '+fmtFecha(fecha)+' ('+
-          (previo.tipo==='ausente' ? 'no vino' : 'llegó '+(previo.horaLlegada||'')+' · '+(previo.minutos||0)+' min tarde')+').\n\n¿Lo reemplazo por este?')) return;
-      const resumen = fmtFecha(fecha)+': '+persona+(tipo==='ausente' ? ' no vino' : ' llegó '+hora+' ('+min+' min tarde)');
+      if(previo && !confirm('Ya hay un registro de '+previo.persona+' el '+fmtFecha(fecha)+' (llegó '+(previo.horaLlegada||'')+' · '+(previo.minutos||0)+' min tarde).\n\n¿Lo reemplazo por este?')) return;
+      const resumen = fmtFecha(fecha)+': '+persona+' llegó '+hora+' ('+min+' min tarde)';
        
-      c.FS.setDoc(c.FS.doc(c.db,'vph_asistencia',id), {fecha, persona, tipo, horaEntrada:entrada, horaLlegada:hora,
+      c.FS.setDoc(c.FS.doc(c.db,'vph_asistencia',id), {fecha, persona, horaEntrada:entrada, horaLlegada:hora,
           minutos:min, nota, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)})
         .then(()=>{ $('pe-modal-asis').classList.remove('open'); if(!previo) registrarUltimaCarga('vph_asistencia',[id],resumen); })
         .catch(e=>alert('No se guardó: '+((e&&e.message)||e)+'\n\nRevisá la conexión y volvé a intentar.'));
