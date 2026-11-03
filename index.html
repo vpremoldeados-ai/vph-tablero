@@ -920,6 +920,12 @@
   <!-- ================= INICIO / VISTA DIARIA ================= -->
   <div class="page active" id="page-inicio">
     <div style="text-align:right;margin-bottom:10px"><button class="cmp-btn" id="btn-msj-equipo" title="Arma el mensaje con los indicadores del mes para pegar en el grupo de WhatsApp de la empresa">📲 Mensaje para el equipo</button></div>
+    <!-- Volumen de venta de la semana: EL indicador a seguir (pedido de Marcelo, 03/11). Lo pinta __pintarVolSemana. -->
+    <section id="volsem-sec" class="objmin" style="display:none">
+      <h2 style="margin-top:0"><span class="dot" style="background:var(--accent)"></span>📊 Volumen de venta de la semana <span id="volsem-rango"></span></h2>
+      <div class="asof" id="asof-volsem"></div>
+      <div id="volsem-widget"></div>
+    </section>
     <section id="objmin-sec" class="objmin" style="display:none">
       <h2 style="margin-top:0"><span class="dot" style="background:var(--accent)"></span>🎯 Objetivo de kilos MINORISTAS <span id="objmin-mes"></span></h2>
       <div class="asof" id="asof-objmin"></div>
@@ -2906,7 +2912,7 @@ function pintarAlertas(){
 // Recalcula TODO (estáticas + fuentes en vivo) y repinta. Se llama al abrir y cuando cambian los datos.
 // 30/09 (velocidad): cada panel se repinta SOLO si su pagina esta a la vista; al entrar a una pagina se repinta en el acto (nav).
 const _pgAct=function(id){ const p=document.getElementById('page-'+id); return !!(p&&p.classList.contains('active')); };
-window.__refreshAlertasYa = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); if(_pgAct('inicio')) try{ pintarKpisInicio(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarStockDisp) window.__pintarStockDisp(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} if(_pgAct('metas')) try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} if(_pgAct('costos')) try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} if(_pgAct('resultado')) try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} if(_pgAct('comercial')) try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} try{ publicarParteEquipo(); }catch(e){} };
+window.__refreshAlertasYa = function(){ alertas = _gatherAlertas(); pintarSemaforo(); pintarAlertas(); if(_pgAct('inicio')) try{ pintarKpisInicio(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarPE) window.__pintarPE(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarVolSemana) window.__pintarVolSemana(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarObjMin) window.__pintarObjMin(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarStockDisp) window.__pintarStockDisp(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarMixVentas) window.__pintarMixVentas(); }catch(e){} if(_pgAct('metas')) try{ if(window.__pintarMetas) window.__pintarMetas(); }catch(e){} if(_pgAct('costos')) try{ if(window.__pintarCostos) window.__pintarCostos(); }catch(e){} if(_pgAct('resultado')) try{ if(window.__pintarResultado) window.__pintarResultado(); }catch(e){} if(_pgAct('comercial')) try{ if(window.__pintarComercial) window.__pintarComercial(); }catch(e){} if(_pgAct('inicio')) try{ if(window.__pintarGraficosInicio) window.__pintarGraficosInicio(); }catch(e){} try{ if(window.__pintarLibroIVA) window.__pintarLibroIVA(); }catch(e){} try{ publicarParteEquipo(); }catch(e){} };
 // 29/09: los datos en vivo disparan __refreshAlertas desde ~11 lugares (cada snapshot, cada 60 s...) y cada
 // llamada recalcula 11 paneles. Se junta todo en UNA repintada por tanda (250 ms). __refreshAlertasYa es la
 // version inmediata, para cuando el usuario acaba de entrar a la Vista Diaria.
@@ -3063,6 +3069,93 @@ window.__pintarObjMin = function(){
     '</div>';
 };
 window.__pintarObjMin();
+
+/* ================= VOLUMEN DE VENTA DE LA SEMANA — EN VIVO ================= */
+// Pedido de Marcelo (03/11): el indicador principal es el volumen vendido, minorista y mayorista, día
+// por día y contra un objetivo SEMANAL. Los kilos salen de __volumenVentas (Finanzas), con la misma regla
+// que __resumenMes, así que la suma del mes no puede contradecir al Mix de ventas ni al objetivo mensual.
+// Los objetivos se editan en Parámetros (objKgSemMin / objKgSemMay; los dos en 0 esconden el widget).
+const _volIso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+function _volHabil(d){
+  const wd=d.getDay(); if(wd<1||wd>5) return false;
+  try{ return !(window.__esFeriado && window.__esFeriado(_volIso(d))); }catch(e){ return true; }
+}
+// Pura: arma la semana de "hoy" y las 4 anteriores. Una semana con feriado tiene el objetivo proporcional.
+function volSemanaDatos(hoy, objMin, objMay, vol){
+  const lunes=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()-((hoy.getDay()+6)%7));
+  const hoyIso=_volIso(hoy);
+  const semana=(lun)=>{
+    const s={desde:_volIso(lun), dias:[], min:0, may:0, sin:0, neto:0, habiles:0, transcurridos:0};
+    for(let i=0;i<7;i++){
+      const d=new Date(lun.getFullYear(),lun.getMonth(),lun.getDate()+i), iso=_volIso(d), v=vol[iso]||{};
+      const habil=_volHabil(d), n={fecha:iso, habil, min:v.min||0, may:v.may||0, sin:v.sin||0, neto:(v.netoMin||0)+(v.netoMay||0)+(v.netoSin||0), hoy:iso===hoyIso, futuro:iso>hoyIso};
+      n.total=n.min+n.may+n.sin; s.dias.push(n); s.min+=n.min; s.may+=n.may; s.sin+=n.sin; s.neto+=n.neto;
+      if(habil){ s.habiles++; if(iso<=hoyIso) s.transcurridos++; }
+    }
+    s.hasta=s.dias[6].fecha; s.total=s.min+s.may+s.sin;
+    s.objMin=objMin*s.habiles/5; s.objMay=objMay*s.habiles/5; s.obj=s.objMin+s.objMay;
+    return s;
+  };
+  const actual=semana(lunes);
+  const frac=actual.habiles>0 ? actual.transcurridos/actual.habiles : 0;
+  actual.esperadoMin=actual.objMin*frac; actual.esperadoMay=actual.objMay*frac; actual.esperado=actual.obj*frac;
+  actual.restantes=Math.max(actual.habiles-actual.transcurridos,0);
+  const previas=[]; for(let i=1;i<=4;i++) previas.push(semana(new Date(lunes.getFullYear(),lunes.getMonth(),lunes.getDate()-7*i)));
+  return {actual, previas};
+}
+window.__pintarVolSemana = function(){
+  const sec=document.getElementById('volsem-sec'), cont=document.getElementById('volsem-widget');
+  if(!sec || !cont) return;
+  const P=(k,d)=>Math.round(Number(window.__param ? window.__param(k,d) : d)) || 0;
+  const objMin=P('objKgSemMin',13000), objMay=P('objKgSemMay',12000);
+  if(objMin+objMay<=0){ sec.style.display='none'; return; }
+  const hoy=new Date(), hace5=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()-35), m1=new Date(hoy.getFullYear(),hoy.getMonth(),1);
+  const desde=_volIso(hace5<m1?hace5:m1);
+  const vol=window.__volumenVentas ? window.__volumenVentas(desde,_volIso(hoy)) : null;
+  if(!vol){ sec.style.display='none'; return; }
+  sec.style.display='';
+  const {actual:s, previas}=volSemanaDatos(hoy,objMin,objMay,vol);
+  const kg=n=>fmtKg(Math.round(n)), pesos=n=>'$ '+Math.round(n).toLocaleString('es-AR');
+  const fc=iso=>iso.slice(8,10)+'/'+iso.slice(5,7);
+  document.getElementById('volsem-rango').textContent='— '+fc(s.desde)+' al '+fc(s.hasta);
+  const color=(real,esperado,obj)=> real>=obj&&obj>0 ? 'var(--green)' : (real>=esperado ? 'var(--accent)' : (real>=esperado*0.7 ? 'var(--amber)' : 'var(--red)'));
+  const barra=(nombre,real,obj,esperado)=>{
+    const pct=obj>0?real/obj*100:0, col=color(real,esperado,obj), marca=obj>0?Math.min(esperado/obj*100,100):0;
+    const falta=Math.max(obj-real,0);
+    const pie= obj>0&&real>=obj ? '<span style="color:var(--green);font-weight:700">OBJETIVO CUMPLIDO</span>'
+      : (s.restantes>0 ? '<span>Faltan '+kg(falta)+' · '+kg(falta/s.restantes)+' por día en '+s.restantes+(s.restantes===1?' día hábil':' días hábiles')+'</span>' : '<span>Faltaron '+kg(falta)+'</span>');
+    return '<div class="progress-wrap" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-bottom:6px;gap:10px;flex-wrap:wrap">'+
+      '<span>'+nombre+': '+kg(real)+' — <span style="color:'+col+'">'+pct.toFixed(0)+'% del objetivo</span></span><span style="color:var(--muted)">Objetivo: '+kg(obj)+'</span></div>'+
+      '<div class="progress" style="position:relative"><i style="width:'+Math.min(pct,100)+'%;background:'+col+'"></i><b style="position:absolute;top:0;bottom:0;left:'+marca+'%;width:2px;background:#333"></b></div>'+
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:5px;gap:10px;flex-wrap:wrap"><span>A esta altura: '+kg(esperado)+'</span>'+pie+'</div></div>';
+  };
+  const DIAS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const filas=s.dias.map((d,i)=>{
+    if(!d.habil && !d.total) return '';   // sábado, domingo o feriado sin ventas
+    const est=d.hoy?' style="font-weight:800;background:#f3f6fb"':(d.futuro?' style="color:var(--muted)"':'');
+    const v=x=>d.futuro?'—':kg(x);
+    return '<tr'+est+'><td>'+DIAS[i]+' '+fc(d.fecha)+(d.hoy?' (hoy)':'')+(d.habil?'':' ·')+'</td><td class="num">'+v(d.min)+'</td><td class="num">'+v(d.may)+'</td><td class="num">'+v(d.total)+'</td><td class="num">'+(d.futuro?'—':pesos(d.neto))+'</td></tr>';
+  }).join('');
+  const filasPrev=previas.map(p=>{
+    const pct=p.obj>0?p.total/p.obj*100:0, col=pct>=100?'var(--green)':(pct>=70?'var(--amber)':'var(--red)');
+    return '<tr><td>'+fc(p.desde)+' al '+fc(p.hasta)+'</td><td class="num">'+kg(p.min)+'</td><td class="num">'+kg(p.may)+'</td><td class="num">'+kg(p.total)+'</td><td class="num">'+pesos(p.neto)+'</td><td class="num" style="color:'+col+';font-weight:700">'+pct.toFixed(0)+'%</td></tr>';
+  }).join('');
+  // Lo que va del mes, contra el objetivo semanal llevado a los días hábiles del mes.
+  const per=_volIso(hoy).slice(0,7); let mMin=0,mMay=0,mNeto=0;
+  Object.keys(vol).forEach(f=>{ if(f.slice(0,7)!==per) return; const v=vol[f]; mMin+=v.min||0; mMay+=v.may||0; mNeto+=(v.netoMin||0)+(v.netoMay||0)+(v.netoSin||0); });
+  const dh=diasHabilesMes(hoy), objMes=(objMin+objMay)*dh.tot/5;
+  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+(s.habiles<5?' (semana con '+s.habiles+' días hábiles)':'')+' · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
+  const sinCanal=s.sin>0?'<div class="note" style="margin-top:0">'+kg(s.sin)+' de esta semana no son ni minoristas ni mayoristas (lista promedio o sin lista): suman solo en el total.</div>':'';
+  cont.innerHTML=
+    barra('Minorista',s.min,s.objMin,s.esperadoMin)+
+    barra('Mayorista',s.may,s.objMay,s.esperadoMay)+
+    barra('Total',s.total,s.obj,s.esperado)+sinCanal+
+    '<div style="font-size:13px;margin:4px 0 10px"><b>En lo que va del mes:</b> '+kg(mMin)+' minoristas + '+kg(mMay)+' mayoristas = <b>'+kg(mMin+mMay)+'</b> de '+kg(objMes)+' · '+pesos(mNeto)+'</div>'+
+    '<div class="tbl-wrap"><table><tr><th>Esta semana</th><th class="num">Minorista</th><th class="num">Mayorista</th><th class="num">Total</th><th class="num">Pesos</th></tr>'+filas+'</table></div>'+
+    '<div class="tbl-wrap" style="margin-top:10px"><table><tr><th>Semanas anteriores</th><th class="num">Minorista</th><th class="num">Mayorista</th><th class="num">Total</th><th class="num">Pesos</th><th class="num">Objetivo</th></tr>'+filasPrev+'</table></div>';
+};
+window.__pintarVolSemana();
+window.addEventListener('vph-params', ()=>{ try{ window.__pintarVolSemana(); }catch(e){} });
 
 /* ================= KILOS DISPONIBLES PARA VENDER — EN VIVO ================= */
 // Pedido de Marcelo (01/09): seguir en la Vista Diaria los kilos en stock que se pueden VENDER —
@@ -12273,6 +12366,27 @@ function buildFilterTable(cfg){
       netoVendido:netoTot, costoVariable:costoVar, coberturaCosto:cobertura, margenContribucion:margenContrib,
       porClienteContrib:Object.values(pcc) };
   };
+  // Kilos y pesos vendidos POR DÍA y por canal (03/11), para el volumen semanal de la Vista Diaria. Misma regla
+  // que __resumenMes: una NC resta en SU fecha y una bonificación resta los pesos pero no los kilos (la
+  // mercadería quedó en el cliente). Solo renglones con peso: el flete no es volumen vendido.
+  window.__volumenVentas = (desde,hasta)=>{
+    if(!ventas.length) return null;
+    const cat = window.__catalogoProductos?window.__catalogoProductos():[];
+    const normP = s=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
+    const pW={}, pWn={}; cat.forEach(p=>{ const w=num(p.pesoUnit); if(!(w>0)) return;
+      if(p.codigo) pW[String(p.codigo).trim().toUpperCase()]=w; if(p.nombre) pWn[normP(p.nombre)]=w; });
+    const dias={};
+    ventas.forEach(v=>{ const f=String(v.fecha||'').slice(0,10); if(!f || f<desde || f>hasta) return;
+      const esNC=v.tipoComprobante==='Nota de Crédito', sg=esNC?-1:1, bonif=esNC&&v.ncMotivo==='bonificacion', fd=1-num(v.descGeneral)/100;
+      const can=window.__canalVenta(v), c=can==='Minorista'?'Min':(can==='Mayorista'?'May':'Sin');
+      const d=dias[f]||(dias[f]={min:0,may:0,sin:0,netoMin:0,netoMay:0,netoSin:0});
+      (v.items||[]).filter(Boolean).forEach(it=>{ const w=pW[String(it.codigo||'').trim().toUpperCase()]||pWn[normP(it.desc)]||0; if(!(w>0)) return;
+        if(!bonif) d[c.toLowerCase()]+=w*num(it.cant)*sg;
+        const base=num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*fd;
+        if(base>0) d['neto'+c]+=base*sg; });
+    });
+    return dias;
+  };
   // Ventas mes a mes EN VIVO — lo consume el gráfico "Ingresos vs Egresos" de la Vista Diaria, que antes
   // se dibujaba una sola vez con la serie congelada del import viejo.
   window.__ventasPorMes = ()=>{
@@ -14140,6 +14254,9 @@ function buildFilterTable(cfg){
     // deja más del doble de contribución que uno mayorista, así que se puede facturar mucho con mix
     // malo y no cubrir la estructura igual. Lo muestra el widget de arriba de todo en la Vista Diaria.
     {g:'Comercial', k:'objKgMinMes', l:'Objetivo de kilos MINORISTAS por mes',          def:75000, t:'num', hint:'Referencia: julio 2026 cerró con 75.036 kg minoristas y agosto con 32.282. En 0 el widget de la Vista Diaria no se muestra.'},
+    // Objetivos del 📊 Volumen de venta de la semana (03/11): 25.000 kg por semana = unas 100 t por mes con el mix de octubre.
+    {g:'Comercial', k:'objKgSemMin', l:'Objetivo SEMANAL de kilos MINORISTAS', def:13000, t:'num', hint:'Para una semana de 5 días hábiles; con un feriado se ajusta solo. Con los dos objetivos semanales en 0 el widget de la Vista Diaria no se muestra.'},
+    {g:'Comercial', k:'objKgSemMay', l:'Objetivo SEMANAL de kilos MAYORISTAS', def:12000, t:'num', hint:'Para una semana de 5 días hábiles; con un feriado se ajusta solo.'},
     {g:'Comercial', k:'peKgObjetivo', l:'Punto de equilibrio en KILOS equivalentes (objetivo del mes para el equipo)', def:0, t:'num', hint:'Es el objetivo que sale en el 📲 Mensaje para el equipo de la Vista Diaria. En 0 lo calcula solo el Tablero con los costos fijos y el mix de los últimos meses cerrados; con un número, queda fijo en ese valor.'},
     {g:'Comercial', k:'peKgDesafioPct', l:'Meta del equipo: % por encima del punto de equilibrio en kilos', def:10, t:'num', hint:'El punto de equilibrio solo cubre los costos: es el piso. La meta que ve el equipo en el 📲 Mensaje diario es ese piso más este porcentaje (redondeada al millar). En 0 no hay meta aparte.'},
     // 13/10: ¿cuándo se le puede cobrar a un cliente? La venta se vuelve cobrable cuando se ENTREGÓ y
