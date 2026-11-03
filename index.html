@@ -1300,6 +1300,26 @@
         <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" class="pe-tbl-matriz" style="font-size:12px"></table></div>
         <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
       </section>
+
+      <!-- Sub-vista: ASISTENCIA — llegadas tarde y ausencias sin aviso (pedido de Marcelo, 03/11).
+           Solo registra. El presentismo lo decide Marcelo en Sueldos: acá no se descuenta nada. -->
+      <section id="pe-view-asis" style="display:none">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <button class="cmp-btn cmp-btn-primary" id="pe-btn-asis">＋ Llegada tarde o ausencia</button>
+          <input type="month" id="pe-asis-mes" class="cmp-select" style="max-width:170px;margin-left:auto">
+        </div>
+        <div id="pe-asis-resumen" class="note" style="margin:0 0 10px"></div>
+        <div class="tbl-wrap"><table id="pe-tabla-asis"></table></div>
+        <p class="note">Un registro por persona y por día. La tardanza se cuenta desde la hora de entrada de ⚙️ Parámetros (Producción), pasada la tolerancia. Si el nombre aparece dos veces con otra grafía, cuenta como dos personas: elegirlo de la lista cuando ya figura.</p>
+      </section>
+    </div>
+  </div>
+
+  <!-- Overlay: llegada tarde o ausencia (asistencia) -->
+  <div class="cmp-overlay" id="pe-modal-asis">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head"><h3>⏰ Llegada tarde o ausencia</h3><button class="cmp-x" id="pe-asis-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-asis"></div>
     </div>
   </div>
 
@@ -13953,7 +13973,7 @@ function buildFilterTable(cfg){
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
     'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
-    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_topes_prospectos','vph_ig_mensajes'];
+    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_asistencia','vph_topes_prospectos','vph_ig_mensajes'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -14111,6 +14131,8 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'diasCurado',   l:'Días de secado por defecto',                 def:10,   t:'num', hint:'Se puede sobreescribir por producto en su ficha.'},
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
+    {g:'Producción', k:'asisHoraEntrada', l:'Hora de entrada a fábrica (hh:mm)',           def:'07:00', t:'txt', hint:'Desde esta hora se cuenta la llegada tarde en ⏰ Asistencia. ⚠️ Confirmar el horario real: el 07:00 es el valor de partida.'},
+    {g:'Producción', k:'asisTolerancia',  l:'Tolerancia de llegada (minutos)',              def:5,      t:'num', hint:'Llegar hasta estos minutos después de la entrada NO cuenta como llegada tarde.'},
     {g:'Presupuestos', k:'presupAvisoVence', l:'Avisar presupuestos por vencer (días antes)', def:2, t:'num', hint:'Un presupuesto ENVIADO y todavía abierto que vence dentro de estos días aparece como alerta en la Vista Diaria, con el mensaje de recordatorio listo. En 0 no avisa.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
     // El objetivo se fija en KILOS MINORISTAS y no en pesos facturados a propósito: un kilo minorista
@@ -18733,7 +18755,8 @@ function buildFilterTable(cfg){
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[];
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[];
+  let asisMes=null;   // 'AAAA-MM' que muestra la pestaña ⏰ Asistencia; null = mes en curso
   let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
@@ -19230,15 +19253,16 @@ function buildFilterTable(cfg){
        lado. También suma ahora los urgentes por demora (stock arriba del mínimo pero que no llega
        hasta que el proveedor entrega), que antes no aparecían acá. */
     const aPedir=insPedibles().length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual'],['asis','⏰ Asistencia'+(asisLlegadasMes(asisMesActual())?' ('+asisLlegadasMes(asisMesActual())+')':'')]].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
     $('pe-view-entregado').style.display = tab==='entregado'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
+    $('pe-view-asis').style.display = tab==='asis'?'':'none';
     renderKpis();
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else if(tab==='asis') renderAsis(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -19697,6 +19721,122 @@ function buildFilterTable(cfg){
       $('pe-modal-rot').classList.remove('open');
     };
     $('pe-modal-rot').classList.add('open');
+  }
+
+  // ---------- Asistencia: llegadas tarde y ausencias sin aviso (pedido de Marcelo, 03/11) ----------
+  // Gustavo lo carga desde el celular: a quién, qué pasó y a qué hora llegó. Acá NO hay sueldos ni
+  // presentismo: este registro no descuenta nada a nadie; eso lo decide Marcelo en Sueldos.
+  // Gustavo no puede leer vph_empleados (ahí están los sueldos), así que el nombre es libre, con
+  // sugerencias de los que ya se cargaron. Un registro por persona y por día: el id sale de la fecha
+  // y del nombre, así cargar dos veces lo mismo reemplaza en vez de duplicar.
+  const asisParam=(k,d)=> (window.__param? window.__param(k,d) : d);
+  // Hora 'hh:mm' → minutos desde medianoche; null si no es una hora.
+  function asisHoraMin(s){ const m=/^(\d{1,2}):(\d{2})$/.exec(String(s||'').trim()); if(!m) return null;
+    const h=+m[1], mi=+m[2]; return (h<24 && mi<60) ? h*60+mi : null; }
+  // Minutos de tardanza: 0 si llegó dentro de la tolerancia o si falta algún dato.
+  function asisMinTarde(entrada, llegada, tolerancia){
+    const e=asisHoraMin(entrada), l=asisHoraMin(llegada); if(e==null||l==null) return 0;
+    const d=l-e; return d>(Number(tolerancia)||0) ? d : 0; }
+  // Sin tildes, sin espacios de más, en mayúsculas: "Pérez  Juan" y "perez juan" son la misma persona.
+  function asisClave(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); }
+  function asisId(fecha, persona){ return 'asi_'+fecha+'_'+asisClave(persona).replace(/[^A-Z0-9]+/g,'-'); }
+  // Resumen de un mes por persona: llegadas tarde, minutos acumulados y ausencias.
+  function asisResumenMes(lista, mes){
+    const out={};
+    (lista||[]).forEach(x=>{ if(!x || String(x.fecha||'').slice(0,7)!==mes) return;
+      const k=asisClave(x.persona); if(!out[k]) out[k]={persona:x.persona, tardes:0, min:0, ausentes:0};
+      if(x.tipo==='ausente') out[k].ausentes++; else { out[k].tardes++; out[k].min+=Number(x.minutos)||0; } });
+    return Object.values(out).sort((a,b)=>((b.tardes+b.ausentes)-(a.tardes+a.ausentes)) || (b.min-a.min)); }
+  const asisMesActual=()=> asisMes || hoyISO.slice(0,7);
+  const asisLlegadasMes=mes=> (asis||[]).filter(x=>String(x.fecha||'').slice(0,7)===mes).length;
+
+  function renderAsis(){
+    const mes=asisMesActual();
+    const inp=$('pe-asis-mes'); if(inp && !inp.value) inp.value=mes;
+    const lista=(asis||[]).filter(x=>String(x.fecha||'').slice(0,7)===mes)
+      .sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha)));
+    const res=asisResumenMes(asis, mes);
+    const elR=$('pe-asis-resumen');
+    if(elR) elR.innerHTML = !lista.length ? 'Sin incumplimientos cargados en este mes.'
+      : lista.length+' incumplimiento'+(lista.length>1?'s':'')+' en el mes: '+res.map(r=>
+          '<b>'+esc(r.persona)+'</b> '+[ r.tardes ? r.tardes+' tarde'+(r.tardes>1?'s':'')+(r.min?' ('+nf(r.min)+' min)':'') : '',
+                                          r.ausentes ? r.ausentes+' sin aviso' : '' ].filter(Boolean).join(' · ')).join(' · ');
+    const t=$('pe-tabla-asis'); if(!t) return;
+    t.innerHTML='<thead><tr><th>Fecha</th><th>Persona</th><th>Qué pasó</th><th>Entrada</th><th>Llegó</th><th>Min. tarde</th><th>Nota</th><th>Cargó</th><th></th></tr></thead><tbody>'+
+      (lista.length ? lista.map(x=> '<tr><td>'+esc(fmtFecha(x.fecha))+'</td><td>'+esc(x.persona)+'</td>'+
+          '<td>'+(x.tipo==='ausente' ? '<span class="badge red">No vino</span>' : '<span class="badge amber">Llegó tarde</span>')+'</td>'+
+          '<td>'+esc(x.horaEntrada||'—')+'</td><td>'+esc(x.horaLlegada||'—')+'</td>'+
+          '<td style="text-align:right">'+(x.tipo==='ausente'?'—':nf(x.minutos||0))+'</td>'+
+          '<td>'+esc(x.nota||'')+'</td><td style="font-size:11px">'+esc(x.usuario||'')+'</td>'+
+          '<td><button class="cmp-btn" data-asis-del="'+esc(x._uid)+'" title="Borrar este registro">🗑</button></td></tr>').join('')
+        : '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Ningún incumplimiento cargado en este mes.</td></tr>')+'</tbody>';
+    t.querySelectorAll('button[data-asis-del]').forEach(b=> b.onclick=()=>borrarAsis(b.dataset.asisDel));
+  }
+
+  function borrarAsis(uid){
+    const x=asis.find(a=>a._uid===uid); if(!x) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    if(!confirm('¿Borrar el registro de '+x.persona+' del '+fmtFecha(x.fecha)+'?')) return;
+    c.FS.deleteDoc(c.FS.doc(c.db,'vph_asistencia',uid)).catch(e=>alert('No se pudo borrar: '+((e&&e.message)||e)));
+  }
+
+  function openAsis(){
+    const nombres=[...new Set((asis||[]).map(x=>String(x.persona||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+    const entrada=String(asisParam('asisHoraEntrada','07:00')||'').trim();
+    const tol=asisParam('asisTolerancia',5);
+    $('pe-form-asis').innerHTML =
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+        '<div class="cmp-field" style="margin:0"><label>¿Qué día?</label><input type="date" id="pe-asis-fecha" value="'+hoyISO+'" style="max-width:190px"></div>'+
+        '<div class="cmp-field" style="margin:0;flex:1;min-width:220px"><label>¿Qué pasó?</label><select id="pe-asis-tipo"><option value="tarde">Llegó tarde</option><option value="ausente">No vino (sin aviso)</option></select></div>'+
+      '</div>'+
+      '<div class="cmp-field"><label>Persona</label><input type="text" id="pe-asis-persona" list="pe-asis-personas" placeholder="Nombre y apellido" autocomplete="off">'+
+        '<datalist id="pe-asis-personas">'+nombres.map(n=>'<option value="'+esc(n)+'"></option>').join('')+'</datalist></div>'+
+      '<div class="cmp-field" id="pe-asis-hora-box"><label>¿A qué hora llegó?</label><input type="time" id="pe-asis-hora" style="max-width:150px"></div>'+
+      '<div class="cmp-field"><label>Nota (opcional)</label><input type="text" id="pe-asis-nota" placeholder="ej: avisó que el colectivo no llegó"></div>'+
+      '<div id="pe-asis-tot" class="note" style="margin:0 0 10px"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-asis-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-asis-save">Registrar</button></div>';
+    if(window.__tarjetas) window.__tarjetas('pe-asis-tipo',{mini:1});
+    function updTot(){
+      const tipo=$('pe-asis-tipo').value, hora=$('pe-asis-hora').value, out=$('pe-asis-tot');
+      $('pe-asis-hora-box').style.display = tipo==='tarde' ? '' : 'none';
+      if(tipo!=='tarde'){ out.innerHTML='Se registra como <b>ausencia</b>: no vino y no avisó.'; return; }
+      if(!asisHoraMin(entrada)){ out.innerHTML='<span style="color:var(--red)">Falta la hora de entrada en ⚙️ Parámetros (Producción).</span>'; return; }
+      if(!hora){ out.textContent=''; return; }
+      const min=asisMinTarde(entrada,hora,tol);
+      out.innerHTML = min>0 ? 'Entrada '+esc(entrada)+' → llegó '+esc(hora)+': <b>'+min+' min tarde</b>.'
+        : 'Llegó dentro de la tolerancia ('+tol+' min): <b>no cuenta</b> como llegada tarde.';
+    }
+    $('pe-asis-tipo').addEventListener('change',updTot);
+    $('pe-asis-hora').addEventListener('input',updTot);
+    updTot();
+    $('pe-asis-cancel').onclick=()=>$('pe-modal-asis').classList.remove('open');
+    $('pe-asis-save').onclick=()=>{
+      const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      const fecha=$('pe-asis-fecha').value;
+      const persona=String($('pe-asis-persona').value||'').replace(/\s+/g,' ').trim();
+      const tipo=$('pe-asis-tipo').value;
+      const hora=tipo==='tarde' ? $('pe-asis-hora').value : '';
+      const nota=String($('pe-asis-nota').value||'').trim();
+      if(!fecha){ alert('Falta el día.'); return; }
+      if(!persona){ alert('Falta el nombre de la persona.'); return; }
+      if(!asisHoraMin(entrada)){ alert('Falta la hora de entrada en ⚙️ Parámetros (Producción).'); return; }
+      let min=0;
+      if(tipo==='tarde'){
+        if(!asisHoraMin(hora)){ alert('Poné a qué hora llegó.'); return; }
+        min=asisMinTarde(entrada,hora,tol);
+        if(!min){ alert('Llegó dentro de la tolerancia ('+tol+' min): no es un incumplimiento, no se registra.'); return; }
+      }
+      const id=asisId(fecha,persona), previo=(asis||[]).find(a=>a._uid===id);
+      if(previo && !confirm('Ya hay un registro de '+previo.persona+' el '+fmtFecha(fecha)+' ('+
+          (previo.tipo==='ausente' ? 'no vino' : 'llegó '+(previo.horaLlegada||'')+' · '+(previo.minutos||0)+' min tarde')+').\n\n¿Lo reemplazo por este?')) return;
+      const resumen = fmtFecha(fecha)+': '+persona+(tipo==='ausente' ? ' no vino' : ' llegó '+hora+' ('+min+' min tarde)');
+      // Si la escritura falla, el formulario NO se cierra: un fallo silencioso es plata/horas perdidas.
+      c.FS.setDoc(c.FS.doc(c.db,'vph_asistencia',id), {fecha, persona, tipo, horaEntrada:entrada, horaLlegada:hora,
+          minutos:min, nota, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)})
+        .then(()=>{ $('pe-modal-asis').classList.remove('open'); if(!previo) registrarUltimaCarga('vph_asistencia',[id],resumen); })
+        .catch(e=>alert('No se guardó: '+((e&&e.message)||e)+'\n\nRevisá la conexión y volvé a intentar.'));
+    };
+    $('pe-modal-asis').classList.add('open');
   }
 
   // Merma del mes en curso: unidades, kilos y plata, y en qué etapa se pierde
@@ -21760,13 +21900,14 @@ function buildFilterTable(cfg){
     sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar();
       if(window.__cajaRefresh) window.__cajaRefresh(); });   // la fecha de cobro de cada venta (Caja) sale de la entrega
     sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a);
+    sub('vph_asistencia',a=>asis=a);   // llegadas tarde y ausencias (⏰ Asistencia): lo carga Gustavo
     // Los feriados los consumen OTROS módulos (e-cheqs, VIUMI, tarjeta) a través de __esFeriado, así
     // que al llegar la lista hay que avisarles: si no, la primera pantalla que se abra calcula sin
     // feriados y propone una fecha de pago 1 o 2 días antes de la real.
     sub('vph_feriados',a=>{ feriados=a; if(window.__refreshAlertas) window.__refreshAlertas(); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[];asis=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
@@ -21792,6 +21933,9 @@ function buildFilterTable(cfg){
     return A; });
   $('pe-btn-prod').onclick=openProd;
   $('pe-btn-rotura').onclick=openRotura;
+  $('pe-btn-asis').onclick=openAsis;
+  $('pe-asis-mes').onchange=e=>{ asisMes=e.target.value||null; renderAsis(); };
+  $('pe-asis-cerrar').onclick=()=>$('pe-modal-asis').classList.remove('open');
   $('pe-btn-ent').onclick=openEnt;
   $('pe-btn-deshacer').onclick=deshacerUltimaCarga;
   $('pe-btn-conteo-prod').onclick=openConteoProd;

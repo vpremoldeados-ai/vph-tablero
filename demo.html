@@ -1770,6 +1770,25 @@ window.__demoSeed = function () {
         <div class="tbl-wrap" style="overflow-x:auto"><table id="pe-tabla-mensual" class="pe-tbl-matriz" style="font-size:12px"></table></div>
         <p class="note">Filas = productos con movimiento en el mes. Columnas = días agrupados por semana. La columna <b>Total mes</b> y la fila <b>TOTAL kg</b> resumen el período.</p>
       </section>
+
+      
+      <section id="pe-view-asis" style="display:none">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <button class="cmp-btn cmp-btn-primary" id="pe-btn-asis">＋ Llegada tarde o ausencia</button>
+          <input type="month" id="pe-asis-mes" class="cmp-select" style="max-width:170px;margin-left:auto">
+        </div>
+        <div id="pe-asis-resumen" class="note" style="margin:0 0 10px"></div>
+        <div class="tbl-wrap"><table id="pe-tabla-asis"></table></div>
+        <p class="note">Un registro por persona y por día. La tardanza se cuenta desde la hora de entrada de ⚙️ Parámetros (Producción), pasada la tolerancia. Si el nombre aparece dos veces con otra grafía, cuenta como dos personas: elegirlo de la lista cuando ya figura.</p>
+      </section>
+    </div>
+  </div>
+
+  
+  <div class="cmp-overlay" id="pe-modal-asis">
+    <div class="cmp-dialog" style="max-width:560px">
+      <div class="cmp-dialog-head"><h3>⏰ Llegada tarde o ausencia</h3><button class="cmp-x" id="pe-asis-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-asis"></div>
     </div>
   </div>
 
@@ -1978,6 +1997,20 @@ window.__demoSeed = function () {
   </div>
 
   
+  <div class="page" id="page-igbandeja">
+    <div class="kpis" id="igb-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="margin:0"><span class="dot" style="background:#d6249f"></span>Bandeja Instagram</h2>
+        <span class="result-count" id="igb-count" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="filter-bar" id="igb-filtros"></div>
+      <div id="igb-lista"></div>
+      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
+    </section>
+  </div>
+
+  
   <div class="cmp-overlay" id="wab-conv-modal">
     <div class="cmp-dialog" style="max-width:640px">
       <div class="cmp-dialog-head">
@@ -2125,7 +2158,14 @@ window.__demoSeed = function () {
             <option value="brio">6 Brio</option>
             <option value="otsenre">7 OTSENRE</option>
             <option value="maygran">8 Mayorista Gran Córdoba / Sierras Chicas</option>
+            <option value="cotizar">9 Transporte externo (a cotizar)</option>
           </select>
+        </div>
+        <div class="cmp-field" id="pre-comp-flete-man" style="display:none">
+          <label>Flete cotizado por el transporte</label>
+          <input id="pre-comp-flete-dest" placeholder="Destino (ej. Catamarca)" style="margin-bottom:4px">
+          <div style="display:flex;gap:6px"><input id="pre-comp-flete-precio" inputmode="decimal" placeholder="$ por pallet, con IVA" style="flex:1"><input id="pre-comp-flete-pallets" inputmode="decimal" placeholder="Pallets (vacío = auto)" style="flex:1"></div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">Precio FINAL por pallet (flete + seguro + IVA + tramo hasta el depósito de carga). El PDF aclara que la descarga NO está incluida.</div>
         </div>
         <div class="cmp-field" id="pre-comp-fin-wrap">
           <label>Financiación con tarjeta (solo Minorista)</label>
@@ -2769,6 +2809,7 @@ const PAGES = [
   { id:'prodent', nombre:'Producción y Logística', ico:'🏭' },
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
   { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
+  { id:'igbandeja', nombre:'Bandeja Instagram', ico:'📸' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'remitos', nombre:'Remitos', ico:'🚚' },
@@ -11345,6 +11386,12 @@ function buildFilterTable(cfg){
    
   function renderTarjeta(){
     const sec=$('caj-sec-tarjeta'); if(!sec) return;
+     
+     
+    const aliasResumenHtml=nombre=>{
+      const k=String(nombre||'').trim().toLowerCase();
+      const f=(window.__catalogoProveedores?window.__catalogoProveedores():[]).find(p=>String(p.nombre||'').trim().toLowerCase()===k);
+      return f && f.aliasResumen ? ' <span style="font-size:11px;color:var(--muted)">· en el resumen: '+esc(f.aliasResumen)+'</span>' : ''; };
     const pend = window.__tarjetaPendientes ? window.__tarjetaPendientes() : [];
      
      
@@ -11372,7 +11419,7 @@ function buildFilterTable(cfg){
         '<td colspan="2" style="text-align:right"><button class="cmp-rowbtn" data-tjmes="'+esc(m)+'">✓ Se debitó todo el resumen</button></td></tr>';
       arr.forEach(x=>{ h+='<tr'+(x.fecha<hoyISO?' style="color:var(--amber)"':'')+'>'+
         '<td data-label="Débito">'+fmtFecha(x.fecha)+(x.cuotas>1?' <span style="font-size:11px;color:var(--muted)">cuota '+x.cuotaN+'/'+x.cuotas+'</span>':'')+'</td>'+
-        '<td data-label="Proveedor"><b>'+esc(x.proveedor)+'</b>'+(x.nroFactura?' <span style="font-size:11px;color:var(--muted)">'+esc(x.nroFactura)+'</span>':'')+'</td>'+
+        '<td data-label="Proveedor"><b>'+esc(x.proveedor)+'</b>'+(x.nroFactura?' <span style="font-size:11px;color:var(--muted)">'+esc(x.nroFactura)+'</span>':'')+aliasResumenHtml(x.proveedor)+'</td>'+
         '<td class="num" data-label="Monto">'+money(x.monto)+'</td>'+
         '<td data-label="Cuenta">'+esc(x.cuenta||'—')+'</td>'+
         '<td><button class="cmp-rowbtn" data-tjdeb="'+esc(x.compraUid)+'|'+esc(x.pagoId)+'|'+x.idx+'">✓ Ya se debitó</button></td></tr>'; }); });
@@ -11775,21 +11822,37 @@ function buildFilterTable(cfg){
     $('caj-form').innerHTML =
       '<p class="note" style="margin-top:0">Solo para lo que <b>no</b> pasa por Ventas ni Compras: un retiro, un ingreso de plata, un gasto de caja chica. Los cobros y pagos normales ya se cuentan solos.</p>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
-        fld('Tipo','','<select id="caj-m-signo"><option value="1">Entra plata (+)</option><option value="-1">Sale plata (−)</option></select>')+
+        fld('Tipo','','<select id="caj-m-signo"><option value="1">Entra plata (+)</option><option value="-1">Sale plata (−)</option><option value="0">Traspaso entre cuentas</option></select>')+
         fld('Fecha','','<input type="date" id="caj-m-fecha" value="'+hoyISO+'">')+
         fld('Monto $','','<input id="caj-m-monto" value="0">')+
-        fld('Concepto','','<input id="caj-m-concepto" placeholder="Retiro, gasto...">')+
-        fld('Cuenta','col2','<select id="caj-m-cuenta">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+
+        fld('Concepto','','<input id="caj-m-concepto" placeholder="Retiro, gasto... (en un traspaso es opcional)">')+
+        '<div id="caj-m-cta-box" style="grid-column:1/-1">'+fld('Cuenta','','<select id="caj-m-cuenta">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+'</div>'+
+         
+        '<div id="caj-m-tr-box" style="grid-column:1/-1;display:none"><div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
+          fld('Sale de','','<select id="caj-m-de">'+cuentasDe(ancla()).map(c=>'<option>'+esc(c.nombre)+'</option>').join('')+'</select>')+
+          fld('Ingresa a','','<select id="caj-m-a">'+cuentasDe(ancla()).map((c,i)=>'<option'+(i===1?' selected':'')+'>'+esc(c.nombre)+'</option>').join('')+'</select>')+
+        '</div></div>'+
       '</div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="caj-m-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="caj-m-save">Guardar movimiento</button></div>';
      
      
     if(window.__tarjetas){
-      window.__tarjetas('caj-m-signo', {color:v=> String(v)==='1'?'var(--green)':'var(--red)'});
+      window.__tarjetas('caj-m-signo', {color:v=> String(v)==='1'?'var(--green)':String(v)==='0'?'var(--blue,#2563eb)':'var(--red)'});
       window.__tarjetas('caj-m-cuenta');
     }
+    const mostrarTraspaso=()=>{ const tr=$('caj-m-signo').value==='0';
+      $('caj-m-cta-box').style.display=tr?'none':''; $('caj-m-tr-box').style.display=tr?'':'none'; };
+    $('caj-m-signo').addEventListener('change',mostrarTraspaso);
     $('caj-m-cancel').onclick=cerrar;
     $('caj-m-save').onclick=()=>{ const monto=num($('caj-m-monto').value); if(monto<=0){ alert('El monto tiene que ser mayor a 0.'); return; }
+      if($('caj-m-signo').value==='0'){
+        const de=$('caj-m-de').value, a=$('caj-m-a').value, f=$('caj-m-fecha').value||hoyISO;
+        if(!de||!a||de===a){ alert('Elegí dos cuentas distintas: de cuál sale la plata y a cuál ingresa.'); return; }
+        const id='cajtr_'+f.replace(/-/g,'')+'_'+Date.now().toString(36), ts=hoyISO+'T'+new Date().toTimeString().slice(0,8);
+        const nota=($('caj-m-concepto').value||'').trim();
+        persist({_uid:id+'_o', tipo:'mov', signo:-1, fecha:f, monto, cuenta:de, concepto:'Traspaso a '+a+(nota?' · '+nota:''), origen:'traspaso', traspasoId:id, ts});
+        persist({_uid:id+'_d', tipo:'mov', signo:1, fecha:f, monto, cuenta:a, concepto:'Traspaso desde '+de+(nota?' · '+nota:''), origen:'traspaso', traspasoId:id, ts});
+        cerrar(); return; }
       persist({tipo:'mov', signo:num($('caj-m-signo').value)>=0?1:-1, fecha:$('caj-m-fecha').value||hoyISO, monto, concepto:$('caj-m-concepto').value||'Movimiento manual', cuenta:($('caj-m-cuenta')?$('caj-m-cuenta').value:''), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8)}); cerrar(); };
     $('caj-modal').classList.add('open');
   }
@@ -12738,7 +12801,8 @@ function buildFilterTable(cfg){
      
      
      
-    {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true}
+    {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true},
+    {k:'cotizar', l:'9 Transporte externo (a cotizar)', par:null, def:0}    
   ];
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
    
@@ -13076,8 +13140,8 @@ function buildFilterTable(cfg){
     if(n.esComparativo===true){
       const perfil=n.finPerfil || (((window.__financiacionPerfiles?window.__financiacionPerfiles():[]).find(x=>x.l===n.finPerfilLabel))||{}).k || '';
       (n.adicionales||[]).forEach(a=>{ const pr=matchProducto(a.codigo)||matchProducto(a.desc); if(pr){ const d=a.desc; aplicarProducto(a,pr,n.listaPrecios); a.desc=d; } else sinPrecio.push(a.desc||a.codigo); });
-      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[], n.adicionales||[]));
-      n.zonaTexto=zonaLabel(n.zona); n.totalRef=calcComparativo(n).total;
+      n.items=base; n.items.forEach(it=>fleteYFinModelo(it, n.zona, perfil, perfil?(n.finPlanes||[]):[], n.adicionales||[], n.fleteManual));
+      n.zonaTexto=zonaTextoComp(n.zona, n.fleteManual); n.totalRef=calcComparativo(n).total;
     } else if(n.zona){ n.items=base; aplicarFlete(n); }    
     return {nuevo:n, sinPrecio};
   }
@@ -13546,6 +13610,8 @@ function buildFilterTable(cfg){
      
     $('pre-comp-lista').innerHTML=compListasOpts(d.listaPrecios ? normLista(d.listaPrecios) : compListaDefecto($('pre-comp-categoria').value));
     $('pre-comp-zona').value=d.zona||'capital';
+    const fm=d.fleteManual||{}; $('pre-comp-flete-dest').value=fm.destino||''; $('pre-comp-flete-precio').value=fm.precio?String(fm.precio).replace('.',','):''; $('pre-comp-flete-pallets').value=fm.pallets?String(fm.pallets).replace('.',','):'';
+    const verFlete=()=>{ $('pre-comp-flete-man').style.display=($('pre-comp-zona').value==='cotizar')?'':'none'; }; $('pre-comp-zona').onchange=verFlete; verFlete();
     $('pre-comp-fin').innerHTML=compFinOpts();
     sincFinComparativo();
     compAdic=[]; drawCompAdic();
@@ -13564,7 +13630,7 @@ function buildFilterTable(cfg){
   function defaultsDeComparativo(p){
     const its=Array.isArray(p.items)?p.items:[];
     return { editUid:p._uid, numero:p.numero||'', cliente:p.cliente||'', m2:num((its[0]||{}).m2total)||'', categoria:p.categoria||'',
-      listaPrecios:p.listaPrecios||'', zona:p.zona||'', leadUid:p.leadUid||'', cuit:p.cuit||'',
+      listaPrecios:p.listaPrecios||'', zona:p.zona||'', fleteManual:p.fleteManual||null, leadUid:p.leadUid||'', cuit:p.cuit||'',
        
       condIva:String(p.condIva||'').toUpperCase()==='X'?'':(p.condIva||''),
       domicilioFacturacion:p.domicilioFacturacion||'', domicilioEntrega:p.domicilioEntrega||'',
@@ -13627,12 +13693,14 @@ function buildFilterTable(cfg){
    
    
    
-  function fleteYFinModelo(it, zona, finPerfil, finPlanes, adic){
+  function fleteYFinModelo(it, zona, finPerfil, finPlanes, adic, man){
     adic = adic||[];
      
     const f = calcFlete([it].concat(adic), zona);
     it.fletePallets = f.pallets;
     it.fleteCosto = f.costo;
+     
+    if(zona==='cotizar' && man){ const pal=num(man.pallets)>0?num(man.pallets):f.pallets; it.fletePallets=pal; it.fleteCosto=round2(num(man.precio)*pal); }
      
      
      
@@ -13650,6 +13718,7 @@ function buildFilterTable(cfg){
       (finPlanes||[]).forEach(c=>{ it.fin[c] = planesReales.includes(c) ? Math.round(window.__precioFinanciado(contado, c, finPerfil)) : null; });
     } else delete it.fin;
   }
+  function zonaTextoComp(zona, man){ return (zona==='cotizar') ? ('transporte externo'+((man&&man.destino)?' a '+man.destino:'')) : zonaLabel(zona); }
   function generarComparativo(){
     const m2 = num($('pre-comp-m2').value); if(m2<=0){ alert('Ingresá m² positivos.'); return; }
     const zona = $('pre-comp-zona').value; if(!zona){ alert('Elegí una zona de flete.'); return; }
@@ -13669,19 +13738,25 @@ function buildFilterTable(cfg){
      
     const condIva = esSinFacturarPre(lista, categoria) ? 'X' : (compCtx.condIva||'A');
     const adic = armarAdicionales(lista); if(adic===null) return;
+    let fleteMan=null;
+    if(zona==='cotizar'){
+      fleteMan={ destino:($('pre-comp-flete-dest').value||'').trim(), precio:num($('pre-comp-flete-precio').value), pallets:num($('pre-comp-flete-pallets').value) };
+      if(!(fleteMan.precio>0)){ alert('Cargá el precio por pallet que cotizó el transporte.'); return; }
+    }
     const items = modelos.map(idx=>{
       const m = MODELOS_COMP[idx];
       const prod = prods.find(p=>String(p.codigo||'').toUpperCase()===String(m.codigo).toUpperCase()) || matchProducto(m.nombre);
       if(!prod){ alert('Producto "'+m.nombre+'" no está en el catálogo (Base de Datos → Productos). Revisá que el nombre coincida exactamente.'); return null; }
-      const udM2 = num(prod.unidadesPorM2)||1;
+      const udM2 = num(prod.unidadesPorM2)||0;    
        
-      const cant = Math.ceil(m2 * udM2 * 1.05);
+       
+      const cant = udM2>0 ? Math.ceil(m2 * udM2 * 1.05) : Math.ceil(m2);
       const it = { desc: prod.nombre||m.nombre, codigo: prod.codigo||m.codigo, cant: cant, precioUnit: 0, descPct: 0, iva: '21', m2total: m2, udM2: udM2 };
       aplicarProducto(it, prod, lista);    
        
        
        
-      fleteYFinModelo(it, zona, finPerfil, finPlanes, adic);
+      fleteYFinModelo(it, zona, finPerfil, finPlanes, adic, fleteMan);
       return it;
     }).filter(Boolean);
     if(items.length===0) return;
@@ -13700,7 +13775,8 @@ function buildFilterTable(cfg){
       leadUid: compCtx.leadUid||'',
       adicionales: adic,
       zona: zona,
-      zonaTexto: zonaLabel(zona),    
+      fleteManual: fleteMan,
+      zonaTexto: zonaTextoComp(zona, fleteMan),    
       palletsFlete: 0,
       items: items,
       finPlanes: finPlanes,
@@ -13802,7 +13878,7 @@ function buildFilterTable(cfg){
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'categoria',h:'Categoría'},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','email','telefono'] },
     proveedores: { col:'vph_proveedores', label:'Proveedores', sing:'Proveedor', origen:'vph_compras', campoOrigen:'proveedor',
-      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'plazoPagoDias',l:'Vence la factura a los … días de su fecha (ej. 30. Vacío = contado / contra entrega)',t:'number'},{k:'plazoEcheqDias',l:'El e-cheq se fecha a los … días de la FACTURA (ej. MAPEI 60. Vacío = igual que el vencimiento)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
+      fields:[ {k:'nombre',l:'Nombre / Razón social',t:'text',col2:1},{k:'cuit',l:'CUIT / DNI',t:'text'},{k:'condIva',l:'Cond. IVA',t:'select',opts:COND,cards:1},{k:'rubro',l:'Rubro',t:'text'},{k:'aliasResumen',l:'Cómo figura en el resumen de la tarjeta (ej. MERCADOPAGO*YPF). Solo para reconocerlo al cotejar',t:'text',col2:1},{k:'plazoPagoDias',l:'Vence la factura a los … días de su fecha (ej. 30. Vacío = contado / contra entrega)',t:'number'},{k:'plazoEcheqDias',l:'El e-cheq se fecha a los … días de la FACTURA (ej. MAPEI 60. Vacío = igual que el vencimiento)',t:'number'},{k:'email',l:'Email',t:'text'},{k:'telefono',l:'Teléfono',t:'text'},{k:'direccion',l:'Dirección',t:'text',col2:1},{k:'nota',l:'Notas',t:'textarea',col2:1} ],
       cols:[ {k:'nombre',h:'Nombre',b:1},{k:'cuit',h:'CUIT/DNI'},{k:'condIva',h:'IVA'},{k:'rubro',h:'Rubro'},{k:'plazoPagoDias',h:'Vto. días',num:1},{k:'plazoEcheqDias',h:'E-cheq días',num:1},{k:'telefono',h:'Teléfono'} ],
       search:['nombre','cuit','rubro','email'] },
     productos: { col:'vph_productos', label:'Productos', sing:'Producto',
@@ -14277,7 +14353,7 @@ function buildFilterTable(cfg){
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
     'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
-    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_topes_prospectos'];
+    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_asistencia','vph_topes_prospectos','vph_ig_mensajes'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -14431,6 +14507,8 @@ function buildFilterTable(cfg){
     {g:'Producción', k:'diasCurado',   l:'Días de secado por defecto',                 def:10,   t:'num', hint:'Se puede sobreescribir por producto en su ficha.'},
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
+    {g:'Producción', k:'asisHoraEntrada', l:'Hora de entrada a fábrica (hh:mm)',           def:'07:00', t:'txt', hint:'Desde esta hora se cuenta la llegada tarde en ⏰ Asistencia. ⚠️ Confirmar el horario real: el 07:00 es el valor de partida.'},
+    {g:'Producción', k:'asisTolerancia',  l:'Tolerancia de llegada (minutos)',              def:5,      t:'num', hint:'Llegar hasta estos minutos después de la entrada NO cuenta como llegada tarde.'},
     {g:'Presupuestos', k:'presupAvisoVence', l:'Avisar presupuestos por vencer (días antes)', def:2, t:'num', hint:'Un presupuesto ENVIADO y todavía abierto que vence dentro de estos días aparece como alerta en la Vista Diaria, con el mensaje de recordatorio listo. En 0 no avisa.'},
     {g:'Presupuestos', k:'validezPresup', l:'Validez del presupuesto (días)',          def:15,   t:'num', hint:'Se aplica a los presupuestos nuevos.'},
      
@@ -14457,6 +14535,8 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:39000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
+    {g:'Flete', k:'fleteSeguroPct', l:'Seguro del transporte externo (% del valor declarado)', def:1.2, t:'num', hint:'Lo usa la calculadora de flete del lead (Transporte externo a cotizar).'},
+    {g:'Flete', k:'fleteTrasladoDeposito', l:'Traslado fábrica → depósito del transporte externo (por viaje, sin IVA)', def:20000, t:'num', hint:'Lo que cuesta llevar el pallet desde la fábrica al depósito del transportista en Córdoba Capital. Lo usa la calculadora de flete del lead.'},
     {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = un camión de 8 pallets a $210.000.'},
     {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
@@ -15717,6 +15797,8 @@ function buildFilterTable(cfg){
         listaPrecios: editing.listaPrecios||'', condIva: editing.condIva||'', cuit: editing.cuit||'',
         domicilioFacturacion: editing.domicilioFacturacion||'', domicilioEntrega: editing.lugar||'', leadUid: uid,
          
+        fleteManual: editing.zona==='cotizar' ? { destino: editing.lugar||'', precio: num(editing.precioFlete), pallets: num(editing.palletsFlete) } : null,
+         
         onSaved: ()=>{ const l=uid && DB.leads.find(x=>x._uid===uid); if(l && ((l.estado||'nuevo')==='nuevo'||l.estado==='contactado')){ const prev=l.estado; l.estado='cotizado'; aplicarAutoSeguimiento(l,prev); persist(l); } } });
       closeForm();   
     };
@@ -15834,6 +15916,19 @@ function buildFilterTable(cfg){
    
    
    
+   
+   
+   
+  function fleteExternoCalc(o){
+    const pal=Math.max(1, Math.round(num(o.pallets))||1);
+    const tarifa = o.porPallet===false ? num(o.tarifa) : num(o.tarifa)*pal;
+    const seguro = num(o.valorDecl)*num(o.seguroPct)/100;
+    const traslado = num(o.traslado);
+    const neto = tarifa+seguro+traslado;
+    const iva = neto*(o.iva==null?21:num(o.iva))/100;
+    const total = neto+iva;
+    return { pallets:pal, tarifa, seguro, traslado, neto, iva, total, precioPallet:Math.round(total/pal) };
+  }
   function drawFleteBox(){
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
@@ -15846,6 +15941,26 @@ function buildFilterTable(cfg){
     if(!items.some(it=>it.cant>0)){ box.innerHTML=cab+' · <span style="color:var(--muted)">cargá productos con cantidad para calcular el flete</span>'; return; }
     const totItems=(editing.items||[]).reduce((a,it)=>a+itemBase(it)*(1+itemAlic(it)/100),0);
     const inpSt='padding:5px 8px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700';
+    const fc=editing.fleteCalc||{};
+    const pSeg=num(window.__param('fleteSeguroPct',1.2)), pTras=num(window.__param('fleteTrasladoDeposito',20000));
+    const vv=x=>(x==null||x==='')?'':esc(String(x).replace('.',','));
+    function fleteExternoHtml(){
+      const st='padding:4px 7px;border:1px solid var(--border);border-radius:7px;text-align:center;font-weight:700;';
+      return '<div style="margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px">'+
+        '<div style="font-size:11.5px;font-weight:700;color:var(--muted);margin-bottom:6px">🧮 Calculadora: del presupuesto del transportista al precio por pallet</div>'+
+        '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;font-size:11.5px">'+
+          '<label for="cf-fx-tarifa" style="color:var(--muted);font-weight:700">Tarifa del transportista (sin IVA)</label>'+
+          '<div><input id="cf-fx-tarifa" inputmode="decimal" value="'+vv(fc.tarifa)+'" placeholder="ej. 215.200" style="width:110px;'+st+'"> '+
+            '<select id="cf-fx-modo" style="padding:4px;border:1px solid var(--border);border-radius:7px"><option value="pallet"'+(fc.modo!=='total'?' selected':'')+'>por pallet</option><option value="total"'+(fc.modo==='total'?' selected':'')+'>total del viaje</option></select></div>'+
+          '<label for="cf-fx-seg" style="color:var(--muted);font-weight:700">Seguro (% del valor declarado)</label>'+
+          '<div><input id="cf-fx-seg" inputmode="decimal" value="'+vv(fc.seguroPct==null||fc.seguroPct===''?pSeg:fc.seguroPct)+'" style="width:60px;'+st+'"> % de '+
+            '<input id="cf-fx-vd" inputmode="decimal" value="'+vv(fc.valorDecl)+'" placeholder="'+esc(String(Math.round(totItems)))+'" title="Valor declarado de la carga. Vacío = total de la mercadería con IVA" style="width:110px;'+st+'"> <span style="color:var(--muted)">valor declarado (vacío = mercadería con IVA)</span></div>'+
+          '<label for="cf-fx-tras" style="color:var(--muted);font-weight:700">Traslado fábrica → depósito del transporte (por viaje, sin IVA)</label>'+
+          '<div><input id="cf-fx-tras" inputmode="decimal" value="'+vv(fc.traslado==null||fc.traslado===''?pTras:fc.traslado)+'" style="width:110px;'+st+'"></div>'+
+        '</div>'+
+        '<div id="cf-fx-res" style="margin-top:6px;font-size:11.5px;color:var(--muted)"></div>'+
+      '</div>';
+    }
     box.innerHTML=cab+' · <b>Flete por pallet</b>'+
        
        
@@ -15861,12 +15976,30 @@ function buildFilterTable(cfg){
       '</div>'+
       (f.manual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Pallets armados a mano. Por cantidad y peso darían <b>'+f.palletsAuto+'</b>: si cambiás los productos, revisá que este número siga estando bien.</div>':'')+
       (f.precioManual?'<div style="font-size:10.5px;color:var(--amber);margin-top:2px">✎ Precio por pallet cargado a mano para este lead (el de la zona es '+(f.precioZona>0?money(f.precioZona):'$0')+'). Se usa tal cual en el presupuesto y en la venta.</div>':'')+
-      (f.precioPallet<=0?'<div style="font-size:10.5px;color:#c0392b;margin-top:2px"><b>Esta forma de entrega no tiene precio cargado:</b> escribilo en «Precio por pallet» para que se cobre el flete.</div>':'')+
+      (f.precioPallet<=0?'<div style="font-size:10.5px;color:#c0392b;margin-top:2px"><b>Esta forma de entrega no tiene precio cargado:</b> escribilo en «Precio por pallet»'+(zona==='cotizar'?' o usá la calculadora de abajo':'')+' para que se cobre el flete.</div>':'')+
+      (zona==='cotizar' ? fleteExternoHtml() : '')+
       '<div id="cf-flete-total" style="margin-top:6px;font-size:13px">'+(f.costo>0?'Total con flete (con IVA): <b>'+money(totItems+f.costo)+'</b>':'')+'</div>'+
       '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Peso total '+num(f.kg).toLocaleString('es-AR')+' kg · el flete se consolida entre productos (tope '+num(window.__param('kgPorPallet',1500)).toLocaleString('es-AR')+' kg por pallet). Se agrega como renglón al generar el presupuesto.</div>';
      
      
+     
+    const fxSync=()=>{
+      const res=$('cf-fx-res'); if(!res) return;
+      const c=editing.fleteCalc||{};
+      if(!(num(c.tarifa)>0)){ res.textContent='Cargá la tarifa del transportista y el precio por pallet se calcula solo.'; return; }
+      const pl = editing.palletsFlete>0 ? editing.palletsFlete : f.palletsAuto;
+      const r=fleteExternoCalc({ tarifa:num(c.tarifa), porPallet:c.modo!=='total', pallets:pl,
+        seguroPct:(c.seguroPct==null||c.seguroPct==='')?pSeg:num(c.seguroPct),
+        valorDecl:num(c.valorDecl)>0?num(c.valorDecl):totItems,
+        traslado:(c.traslado==null||c.traslado==='')?pTras:num(c.traslado) });
+      editing.precioFlete=r.precioPallet;
+      const pi=$('cf-precio-flete'); if(pi) pi.value=String(r.precioPallet).replace('.',',');
+      res.innerHTML='Tarifa <b>'+money(r.tarifa)+'</b> + seguro <b>'+money(r.seguro)+'</b> + traslado <b>'+money(r.traslado)+'</b> = '+money(r.neto)+
+        ' + IVA '+money(r.iva)+' = <b>'+money(r.total)+'</b> ÷ '+r.pallets+' pallet'+(r.pallets>1?'s':'')+' = <b style="color:var(--blue);font-size:13px">'+money(r.precioPallet)+' por pallet</b> (con IVA)'+
+        '<div style="font-size:10.5px;margin-top:2px">Ya está cargado en «Precio por pallet». Si lo escribís a mano ahí, la próxima vez que toques la calculadora se vuelve a calcular.</div>';
+    };
     const refrescar=()=>{
+      fxSync();
       const pl = editing.palletsFlete>0 ? editing.palletsFlete : f.palletsAuto;
       const pr = num(editing.precioFlete)>0 ? num(editing.precioFlete) : f.precioZona;
       const c=$('cf-flete-costo'), t=$('cf-flete-total');
@@ -15883,6 +16016,12 @@ function buildFilterTable(cfg){
       ip.addEventListener('input',()=>{ editing.precioFlete = num(ip.value)>0 ? num(ip.value) : 0; refrescar(); });
       ip.addEventListener('change', drawFleteBox);
     }
+    [['cf-fx-tarifa','tarifa'],['cf-fx-seg','seguroPct'],['cf-fx-vd','valorDecl'],['cf-fx-tras','traslado']].forEach(([id,k])=>{
+      const el=$(id); if(!el) return;
+      el.addEventListener('input',()=>{ editing.fleteCalc=Object.assign({},editing.fleteCalc,{[k]:el.value.trim()===''?'':num(el.value)}); refrescar(); });
+    });
+    if($('cf-fx-modo')) $('cf-fx-modo').addEventListener('change',e=>{ editing.fleteCalc=Object.assign({},editing.fleteCalc,{modo:e.target.value}); refrescar(); });
+    if(zona==='cotizar') refrescar();
     if($('cf-pallets-auto')) $('cf-pallets-auto').onclick=()=>{ editing.palletsFlete=0; drawFleteBox(); };
     if($('cf-precio-auto')) $('cf-precio-auto').onclick=()=>{ editing.precioFlete=0; drawFleteBox(); };
   }
@@ -17595,6 +17734,17 @@ function buildFilterTable(cfg){
     return (interior?'int':'cba')+(sf?'SF':'Fact');
   }
   function mayPeriodo(){ return hoyISO.slice(0,7); }
+   
+   
+   
+   
+   
+  let MAYLISTA={};
+  const MAY_LISTA_KEY='vph_crm_may_lista_v1';
+  function mayListaClave(){ const d=String((MAYLISTA&&MAYLISTA.desde)||'').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : mayPeriodo(); }
+  function mayClaveLabel(k){ k=String(k||''); return /^\d{4}-\d{2}-\d{2}$/.test(k) ? (k.slice(8,10)+'/'+k.slice(5,7)+'/'+k.slice(0,4)) : mayMesLabel(k); }
+   
+  function mayFechaLarga(k){ k=String(k||''); const M=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']; const m=M[(+k.slice(5,7)||0)-1]; return (+k.slice(8,10))+' de '+(m||''); }
   function mayMesLabel(p){
     const M=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
     const par=String(p||'').split('-'); const n=M[(+par[1]||0)-1];
@@ -17655,7 +17805,14 @@ function buildFilterTable(cfg){
     }
      
      
-    return hola+' Te paso la lista de precios mayorista actualizada, vigente desde '+mayMesLabel(mayPeriodo())+' 👇 Fabricamos a pedido con entrega en 7 días hábiles, así no necesitás stock inmovilizado. ¡Avisame si querés que te reserve producción!';
+     
+     
+    const clave=mayListaClave(), conFecha=/^\d{4}-\d{2}-\d{2}$/.test(clave);
+    const vig = conFecha ? ('el '+mayFechaLarga(clave)) : mayMesLabel(clave);
+    return 'Hola'+(nombre?' '+nombre:'')+'! ¿Cómo estás? Soy '+firma+' de VPH Premoldeados.'+
+      '\n\nTe paso la lista de precios mayorista actualizada, vigente desde '+vig+'. Tiene un pequeño ajuste por la suba de materias primas e insumos.'+
+      '\n\n'+(conFecha?('Lo que ya tenías pedido antes del '+(+clave.slice(8,10))+' se respeta al precio anterior. '):'')+'Entrega en 7 días hábiles, como siempre.'+
+      '\n\nCualquier consulta estoy acá 👌';
   }
    
    
@@ -17725,6 +17882,11 @@ function buildFilterTable(cfg){
   function mayLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function maySaveLocal(){ try{ localStorage.setItem(MAY_KEY, JSON.stringify(MAYW)); }catch(e){} }
   function mayAvisoLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_AVISO_KEY)); if(d && typeof d==='object') return d; }catch(e){} return {}; }
+  function mayListaLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(MAY_LISTA_KEY)); if(d && typeof d==='object') return d; }catch(e){} return {}; }
+  function mayListaSave(li){ MAYLISTA=li||{};
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{lista:MAYLISTA},{merge:true}).catch(e=>alert('Error al guardar la vigencia de la lista: '+e.message)); else alert('Iniciá sesión.'); }
+    else { try{ localStorage.setItem(MAY_LISTA_KEY, JSON.stringify(MAYLISTA)); }catch(e){} }
+  }
   function mayAvisoSave(av){ MAYAVISO=av||{};
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{aviso:MAYAVISO},{merge:true}).catch(e=>alert('Error al guardar el aviso: '+e.message)); else alert('Iniciá sesión.'); }
     else { try{ localStorage.setItem(MAY_AVISO_KEY, JSON.stringify(MAYAVISO)); }catch(e){} }
@@ -17733,10 +17895,10 @@ function buildFilterTable(cfg){
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,MAY_COL,MAY_DOC),{filas:MAYW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
     else maySaveLocal();
   }
-  function mayBtnLabel(){ const per=mayPeriodo(); const env=MAYW.filter(r=>r.listaPeriodo===per).length;
+  function mayBtnLabel(){ const per=mayListaClave(); const env=MAYW.filter(r=>r.listaPeriodo===per).length;
     return '🧱 Mayoristas'+(MAYW.length?(' ('+env+'/'+MAYW.length+')'):''); }
-  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); MAYAVISO=mayAvisoLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
-    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[]; MAYAVISO=(d&&d.aviso&&typeof d.aviso==='object')?d.aviso:{};
+  function maySubscribe(){ if(!window.__usaNube){ MAYW=mayLoadLocal(); MAYAVISO=mayAvisoLoadLocal(); MAYLISTA=mayListaLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(mayUnsub)mayUnsub();
+    mayUnsub=c.FS.onSnapshot(c.FS.doc(c.db,MAY_COL,MAY_DOC), snap=>{ const d=snap.exists()?snap.data():null; MAYW=(d&&Array.isArray(d.filas))?d.filas:[]; MAYAVISO=(d&&d.aviso&&typeof d.aviso==='object')?d.aviso:{}; MAYLISTA=(d&&d.lista&&typeof d.lista==='object')?d.lista:{};
       const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
       const panel=$('crm-may-panel'); if(panel && panel.style.display!=='none') drawMayoristas(); }, err=>console.error('mayoristas:',err)); }
    
@@ -17752,7 +17914,7 @@ function buildFilterTable(cfg){
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
     else if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
-    else mayUpd(p.mi, r=>({...r, listaPeriodo:mayPeriodo(), listaFecha:hoyISO, accionPor:firma}));
+    else mayUpd(p.mi, r=>({...r, listaPeriodo:mayListaClave(), listaFecha:hoyISO, accionPor:firma}));
     const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
     drawMayoristas();
   }
@@ -17810,7 +17972,7 @@ function buildFilterTable(cfg){
    
    
   function mayPendientes(){
-    const per=mayPeriodo();
+    const per=mayListaClave();
     return mayVista().filter(({r})=> r.listaPeriodo!==per && String(r.telefono||'').trim() && topesWaLink(r.telefono) && !maySaltados[mayClave(r)] && !mayListaError(r));
   }
    
@@ -17859,6 +18021,22 @@ function buildFilterTable(cfg){
     r.png.then(b=>{ const u=URL.createObjectURL(b); if(w) w.location.href=u; else window.open(u,'_blank'); })
       .catch(()=>{ if(w) w.close(); alert('No se pudo armar la imagen de la lista.'); });
   }
+   
+   
+  function mayConfigurarLista(){
+    const act=String((MAYLISTA&&MAYLISTA.desde)||'');
+    const def= act ? mayClaveLabel(act) : (hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'/'+hoyISO.slice(0,4));
+    const v=prompt('¿Desde qué día rige la lista nueva? (dd/mm/aaaa)\n\nLos que ya tenían marcada la lista anterior vuelven a quedar pendientes en ▶ Siguiente, y el mensaje dice "vigente desde el …".\n\n(Dejalo vacío para volver a contar por mes.)', def);
+    if(v===null) return;
+    if(!String(v).trim()){ if(confirm('¿Volver a contar la lista por mes calendario?')){ mayListaSave({}); drawMayoristas(); } return; }
+    const m=/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(String(v));
+    if(!m){ alert('Fecha no entendida. Escribila como dd/mm/aaaa, por ejemplo 27/10/2026.'); return; }
+    const iso=m[3]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[1]).slice(-2);
+    if(iso===act) return;
+    const vuelven=MAYW.filter(r=>r.listaPeriodo && r.listaPeriodo!==iso).length;
+    if(!confirm('Lista vigente desde el '+mayClaveLabel(iso)+'.\n\n'+(vuelven?(vuelven+' cliente'+(vuelven>1?'s':'')+' que ya tenían la lista anterior vuelven a quedar pendientes.'):'Nadie tenía la anterior marcada.')+'\n\n¿Confirmás?')) return;
+    mayListaSave({desde:iso}); drawMayoristas();
+  }
   function mayConfigurarAviso(){
     const a=MAYAVISO||{};
     const desde=prompt('¿Desde cuándo rige la lista nueva?\nEj: 1° de noviembre\n\n(Dejalo vacío para BORRAR el aviso.)', a.desde||'');
@@ -17873,7 +18051,7 @@ function buildFilterTable(cfg){
   }
   function drawMayoristas(){
     const cont=$('crm-may-controles'), tabla=$('crm-may-tabla'); if(!cont||!tabla) return;
-    const per=mayPeriodo(), mes=mayMesLabel(per);
+    const per=mayListaClave(), conFecha=/^\d{4}-\d{2}-\d{2}$/.test(per), mes=conFecha?('del '+mayClaveLabel(per)):('de '+mayMesLabel(per));
     const env=MAYW.filter(r=>r.listaPeriodo===per).length;
     const sinTel=MAYW.filter(r=>!String(r.telefono||'').trim()).length;
      
@@ -17887,7 +18065,7 @@ function buildFilterTable(cfg){
         mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
         '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
       return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
-        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista de '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
         '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
@@ -17899,7 +18077,7 @@ function buildFilterTable(cfg){
       cartel+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<button class="cmp-btn" data-may-siguiente'+((pend.length && !cf)?'':' disabled')+' style="background:#1e9e5a;color:#fff;font-weight:800'+((pend.length && !cf)?'':';opacity:.5')+'" title="Abre el WhatsApp del próximo cliente sin la lista de este mes, con el mensaje escrito y su lista copiada para pegar">▶ Siguiente ('+pend.length+')</button>'+
-        '<span style="font-weight:800;font-size:13px">Lista de '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
+        '<span style="font-weight:800;font-size:13px">Lista '+esc(mes)+': '+env+' de '+MAYW.length+' mandadas</span>'+
         (sinTel?('<span style="font-size:12px;color:#c0392b">· '+sinTel+' sin teléfono cargado</span>'):'')+
         (sinLista?('<span style="font-size:12px;color:#b45309" title="Las listas «hasta 100 km» no se generan hasta cargar el flete por pallet de Biletta en Base de Datos → ⚙️ Parámetros">· '+sinLista+' de Interior sin lista (falta el flete)</span>'):'')+
         (nSalt?('<span style="font-size:12px;color:#64748b">· '+nSalt+' salteado'+(nSalt>1?'s':'')+' <button class="cmp-btn" data-may-resaltar title="Vuelve a ofrecerlos en ▶ Siguiente">↺ reintentar</button></span>'):'')+
@@ -17909,6 +18087,7 @@ function buildFilterTable(cfg){
         '</span>'+
       '</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
+        '<button class="cmp-btn" data-may-lista-cfg title="Fija desde qué día rige la lista nueva: los que ya tenían la anterior vuelven a quedar pendientes y el mensaje dice la fecha">🆕 '+(conFecha?'Lista vigente desde '+mayClaveLabel(per):'Lista nueva')+'</button>'+
         '<button class="cmp-btn" data-may-aviso-cfg title="Prepara el aviso de aumento de precios para los revendedores: desde cuándo rige, el % y hasta cuándo se mantiene el precio actual">📣 '+(MAYAVISO.desde?'Editar aviso de aumento':'Aviso de aumento')+'</button>'+
         (MAYAVISO.desde?('<span style="font-size:12px;color:#334155">vigente desde <b>'+esc(MAYAVISO.desde)+'</b>'+(MAYAVISO.pct?(' · '+esc(MAYAVISO.pct)+'%'):'')+' · enviados: <b>'+MAYW.filter(r=>r.avisoClave===String(MAYAVISO.desde)).length+'</b> de '+MAYW.length+'</span>'):'')+
         '<button class="cmp-btn" data-may-actualizar-act title="Cruza esta lista contra vph_ventas: última compra, cuántas y por cuánto en total — clasifica a cada uno en Activo / En atención / Dormido / Nunca compró">🔄 Actualizar actividad</button>'+
@@ -17917,7 +18096,7 @@ function buildFilterTable(cfg){
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista de '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
+    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
     const nCol=MAYAVISO.desde?11:10;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
@@ -17940,7 +18119,7 @@ function buildFilterTable(cfg){
           ' '+(hecho?('<span style="color:#1e9e5a;font-weight:700;font-size:11.5px">'+hecho+'</span>'):'')+(detalle?('<span style="color:#94a3b8;font-size:11px"> '+detalle+'</span>'):'');
       };
       const listaHecha = r.listaPeriodo===per ? '✓ enviada' : '';
-      const listaDet = (!listaHecha && r.listaPeriodo) ? ('últ: '+esc(mayMesLabel(r.listaPeriodo))) : '';
+      const listaDet = (!listaHecha && r.listaPeriodo) ? ('últ: '+esc(mayClaveLabel(r.listaPeriodo))) : '';
       const stockDet = r.stockFecha ? ('últ: '+esc(String(r.stockFecha).slice(8,10)+'/'+String(r.stockFecha).slice(5,7))) : '';
       const actCel = !mayActTs ? '<span style="color:#94a3b8">—</span>' :
         '<span style="color:'+s.c+';font-weight:700;font-size:11.5px">'+esc(s.l)+'</span>'+
@@ -17967,6 +18146,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
     cont.querySelectorAll('[data-may-siguiente]').forEach(b=>b.onclick=()=>maySiguiente());
     cont.querySelectorAll('[data-may-aviso-cfg]').forEach(b=>b.onclick=()=>mayConfigurarAviso());
+    cont.querySelectorAll('[data-may-lista-cfg]').forEach(b=>b.onclick=()=>mayConfigurarLista());
     cont.querySelectorAll('[data-may-resaltar]').forEach(b=>b.onclick=()=>{ maySaltados={}; drawMayoristas(); });
     tabla.querySelectorAll('[data-may-ver]').forEach(b=>b.onclick=()=>mayVerLista(b.dataset.mayVer));
     tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>mayAbrirChat(+b.dataset.mayAbrirChat, b.dataset.mayAccion));
@@ -18000,7 +18180,9 @@ function buildFilterTable(cfg){
    
    
   const BN_COL='vph_config', BN_DOC='crm_basenivel', BN_KEY='vph_crm_basenivel_v1';
-  const BN_FLYER_PNG='BaseNivel/flyer-bnv40.png', BN_FLYER_PDF='BaseNivel/flyer-bnv40.pdf';
+   
+   
+  const BN_FLYER_PNG='BaseNivel/cubos-apoyo.png', BN_FLYER_PDF='BaseNivel/flyer-bnv40.pdf';
   const BN_ESTADOS=[
     {k:'pendiente',   l:'Pendiente',           c:'#64748b'},
     {k:'falta-dato',  l:'Falta dato',          c:'#b45309'},
@@ -18031,34 +18213,39 @@ function buildFilterTable(cfg){
     return n.length>=2 ? n : '';
   }
   function bnSaludo(nombre){ const n=bnNombreSaludo(nombre); return n ? 'Hola, ¿cómo están en '+n+'?' : 'Hola, ¿cómo están?'; }
-  function bnTexto(accion, nombre){
-    const f=bnFirma();
-    if(accion==='seguimiento') return bnSaludo(nombre)+' ¿Pudieron ver el flyer de la Base Nivel? Si quieren, les acercamos una para que la vean y la prueben en un módulo. Quedo atento. '+f+', Vassallo Premoldeados.';
+   
+  function bnTexto(accion, nombre, firmaLinea){
+    const fx=String(firmaLinea||'').trim();
+    const f=fx ? (/^marcelo$/i.test(fx) ? 'Marcelo Vassallo' : fx) : bnFirma();
      
-    const nom=(((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
-    return bnSaludo(nombre)+' Soy '+nom+' de VASSALLO Fábrica de Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
-      'Desarrollamos la *Base Nivel BNV-40*, un apoyo de hormigón regulable para módulos y contenedores. Se apoya en el terreno y se nivela con llave el mismo día (regula de 0 a 100 mm), sin encofrar ni esperar fragüe, y se reajusta si el terreno se asienta.\n\n'+
-      'Les paso la imagen con foto e información técnica.\n\n'+
-      '¿Les interesaría que les acerque una para verla y probarla en uno de sus módulos?';
+    if(accion==='seguimiento') return bnSaludo(nombre)+' ¿Pudieron ver lo que les mandé de las bases para módulos? Si quieren, les paso los precios con el flete hasta su fábrica o depósito, o les acerco una muestra. Quedo atento. '+f+', Vassallo Premoldeados.';
+     
+    const nom=fx || (((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
+    return bnSaludo(nombre)+' Soy '+nom+' de Vassallo Premoldeados (Toledo, Córdoba).\n\n'+
+      'Les escribo porque lanzamos un *producto nuevo* para que sumen a lo que venden: los *Cubos de Apoyo CA-30* (30×30×30 cm, ≈60 kg) y *CA-40* (40×40×40 cm, ≈140 kg). Son de hormigón y traen una chapa de acero arriba para soldar el módulo.\n\n'+
+      'Con 6 cubos por módulo queda separado del suelo y nivelado, sin encofrar ni esperar el fraguado en obra. Los pueden sumar a su presupuesto: un ítem más para vender y un problema menos en cada entrega.\n\n'+
+      '¿Quieren que les pase los precios? Díganme dónde tienen la fábrica o el depósito y se los paso con el flete incluido.';
   }
    
   function bnMail(){
     const f=bnFirma(), nom=(((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
-    return {asunto:'Base regulable de hormigón para instalar sus módulos el mismo día',
+     
+    return {asunto:'Producto nuevo para sus módulos: Cubos de Apoyo de hormigón CA-30 y CA-40',
       cuerpo:'Hola, ¿cómo están?\n\n'+
         'Soy '+nom+' de VASSALLO Fábrica de Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
-        'Desarrollamos la Base Nivel BNV-40, un apoyo de hormigón regulable para módulos habitables, oficinas y contenedores. Se apoya en el terreno y se nivela con llave el mismo día (regula de 0 a 100 mm), sin encofrar ni esperar fragüe, y se reajusta si el terreno se asienta.\n\n'+
-        '- Base de hormigón de 400×400 mm (≈50 kg), varilla roscada de 1" y placas galvanizadas.\n'+
-        '- Se puede reutilizar cuando el módulo se traslada.\n\n'+
-        'Les paso la imagen con foto e información técnica.\n\n'+
-        '¿Les interesaría que les acerque una para verla y probarla en uno de sus módulos?\n\n'+
+        'Lanzamos un producto nuevo para que sumen a lo que venden: los Cubos de Apoyo de hormigón para módulos habitables, oficinas y contenedores.\n\n'+
+        '- CA-30: 30×30×30 cm, ≈60 kg. CA-40: 40×40×40 cm, ≈140 kg.\n'+
+        '- Chapa de acero arriba para soldar el módulo y 8 orificios de izaje.\n'+
+        '- Con 6 cubos por módulo queda separado del suelo y nivelado, sin encofrar ni esperar el fraguado en obra.\n\n'+
+        'Los pueden sumar a su presupuesto: un ítem más para vender y un problema menos en cada entrega.\n\n'+
+        '¿Quieren que les pase los precios? Díganme dónde tienen la fábrica o el depósito y se los paso con el flete incluido.\n\n'+
         'Saludos,\n'+f+'\nVASSALLO Fábrica de Premoldeados de Hormigón\nWhatsApp 351 000-0000 · https://www.vpremoldeados.com'};
   }
   function bnGmailLink(email){
     const m=bnMail();
     return 'https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(String(email||'').trim())+'&su='+encodeURIComponent(m.asunto)+'&body='+encodeURIComponent(m.cuerpo);
   }
-  let BNW=[], bnUnsub=null, bnConfirm=null, bnImg='', bnFiltro='';    
+  let BNW=[], bnUnsub=null, bnConfirm=null, bnImg='', bnFiltro='', bnCargado=false;    
   function bnLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(BN_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function bnSave(list){ BNW=list.slice();
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,BN_COL,BN_DOC),{filas:BNW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
@@ -18067,7 +18254,7 @@ function buildFilterTable(cfg){
   function bnBtnLabel(){ const seg=BNW.filter(bnTocaSeguimiento).length;
     return '📐 Base Nivel'+(BNW.length?(' ('+BNW.length+(seg?(' · '+seg+' a seguir'):'')+')'):''); }
   function bnSubscribe(){ if(!window.__usaNube){ BNW=bnLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(bnUnsub)bnUnsub();
-    bnUnsub=c.FS.onSnapshot(c.FS.doc(c.db,BN_COL,BN_DOC), snap=>{ const d=snap.exists()?snap.data():null; BNW=(d&&Array.isArray(d.filas))?d.filas:[];
+    bnUnsub=c.FS.onSnapshot(c.FS.doc(c.db,BN_COL,BN_DOC), snap=>{ const d=snap.exists()?snap.data():null; BNW=(d&&Array.isArray(d.filas))?d.filas:[]; bnCargado=true;
       const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
       const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); }, err=>console.error('basenivel:',err)); }
   function bnUpd(bi, fn){ const l=BNW.slice(); if(!l[bi]) return; l[bi]=fn({...l[bi]}); bnSave(l); }
@@ -18120,55 +18307,190 @@ function buildFilterTable(cfg){
    
   const BN_RESERVA_MS=30*60000;
   function bnAutoOn(){ try{ return localStorage.getItem('vph_bn_auto_v1')==='1'; }catch(e){ return false; } }
-  function bnAutoCandidatos(ahora){
-    const pc=topesPcId(), seg=[], cont=[];
+   
+   
+   
+   
+   
+   
+  function bnLineaPc(linea){ return linea==='web' ? topesPcId()+'-web' : topesPcId(); }
+  function bnWebLs(k, d){ try{ const v=localStorage.getItem('vph_bnweb_'+k+'_v1'); return v==null ? d : v; }catch(e){ return d; } }
+  function bnWebLsSet(k, v){ try{ localStorage.setItem('vph_bnweb_'+k+'_v1', String(v)); }catch(e){} }
+  function bnWebOn(){ return bnWebLs('on','0')==='1'; }
+  function bnWebFirma(){ return String(bnWebLs('firma','Sofía')).trim(); }
+  function bnWebNum(k, d){ const n=Number(bnWebLs(k, d)); return isFinite(n) && n>=0 ? Math.round(n) : d; }
+  function bnLineaFirma(linea){ return linea==='web' ? bnWebFirma() : (((typeof topesFirma==='function') && topesFirma()) || ''); }
+  function bnAutoCandidatos(ahora, linea){
+    const pc=bnLineaPc(linea), seg=[], cont=[];
     BNW.forEach((r,bi)=>{
       if(!r || !String(r.telefono||'').trim() || !topesWaLink(r.telefono)) return;
       if(r.abiertoPc && r.abiertoPc!==pc && ahora-(Number(r.abiertoTs)||0)<BN_RESERVA_MS) return;    
-      if(bnTocaSeguimiento(r)) seg.push({bi, accion:'seguimiento'});
+      if(bnTocaSeguimiento(r)){
+         
+         
+        const dueño=r.ultimoEnvioPc||topesPcId();
+        if(dueño===pc) seg.push({bi, accion:'seguimiento'});
+      }
       else if((r.estado||'pendiente')==='pendiente' && !r.contactoFecha) cont.push({bi, accion:'contacto'});
     });
      
     return cont.concat(seg);
   }
    
-  function bnAutoPedido(ahora){
-    if(!bnAutoOn()) return null;
-    const c=bnAutoCandidatos(ahora)[0]; if(!c) return null;
+  function bnAutoPedido(ahora, linea){
+    if(linea==='web' ? !bnWebOn() : !bnAutoOn()) return null;
+    const c=bnAutoCandidatos(ahora, linea)[0]; if(!c) return null;
     const r=BNW[c.bi];
     const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
     const wa=nro(topesWaLink(r.telefono)), wa2=nro(topesWaLink(r.telefono, true));
     if(!wa) return null;
-    bnUpd(c.bi, x=>({...x, abiertoPc:topesPcId(), abiertoTs:ahora}));
+    bnUpd(c.bi, x=>({...x, abiertoPc:bnLineaPc(linea), abiertoTs:ahora}));
     return {origen:'basenivel', accion:c.accion, nombre:r.nombre||'', bnTel:String(r.telefono||''), tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '',
-      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion, r.nombre)};
+      tipo:(c.accion==='seguimiento' ? 'base-nivel-seg' : 'base-nivel'), texto:bnTexto(c.accion, r.nombre, bnLineaFirma(linea))};
   }
    
    
-  function bnAutoRegistrar(b){
+  function bnAutoRegistrar(b, linea){
     let bi=BNW.findIndex(r=>r && (r.nombre||'')===(b.nombre||'') && String(r.telefono||'')===String(b.bnTel||''));
     if(bi<0) bi=BNW.findIndex(r=>r && (r.nombre||'')===(b.nombre||''));
-    if(bi<0) return;
-    if(b.estado==='enviado') bnUpd(bi, r=>bnSinReserva(bnAplicarEnvio(r, b.accion, bnFirma(), topesPcId(), Number(b.enviadoTs)||Date.now())));
+    if(bi<0) return false;
+    const firma=bnLineaFirma(linea) || bnFirma();
+    if(b.estado==='enviado') bnUpd(bi, r=>bnSinReserva(bnAplicarEnvio(r, b.accion, firma, bnLineaPc(linea), Number(b.enviadoTs)||Date.now())));
     else if(b.estado==='sinwa') bnUpd(bi, r=>bnSinReserva(bnSinWa(r)));
+     
+    else if(b.estado==='repetido') bnUpd(bi, r=>bnSinReserva({...r, estado:(r.estado||'pendiente')==='pendiente'?'contactado':r.estado, contactoFecha:(r.contactoFecha||hoyISO), ultimoEnvioPc:(r.ultimoEnvioPc||bnLineaPc(linea)), notas:('(ya tenía el mensaje en el chat) '+(r.notas||'')).trim()}));
     else bnUpd(bi, r=>bnSinReserva({...r}));
     const btn=$('crm-tab-basenivel'); if(btn) btn.textContent=bnBtnLabel();
+    return true;
   }
    
-  function bnEnviosHoy(){ const pc=topesPcId(); return BNW.filter(r=>r && r.ultimoEnvioFecha===hoyISO && (!r.ultimoEnvioPc || r.ultimoEnvioPc===pc)).length; }
-  function bnUltimoEnvioTs(){ const pc=topesPcId(); return BNW.reduce((m,r)=> r && r.ultimoEnvioFecha===hoyISO && r.ultimoEnvioPc===pc && Number(r.ultimoEnvioTs)>m ? Number(r.ultimoEnvioTs) : m, 0); }
+  function bnEnviosHoy(pc){ pc=pc||topesPcId(); return BNW.filter(r=>r && r.ultimoEnvioFecha===hoyISO && (r.ultimoEnvioPc ? r.ultimoEnvioPc===pc : pc===topesPcId())).length; }
+  function bnUltimoEnvioTs(pc){ pc=pc||topesPcId(); return BNW.reduce((m,r)=> r && r.ultimoEnvioFecha===hoyISO && r.ultimoEnvioPc===pc && Number(r.ultimoEnvioTs)>m ? Number(r.ultimoEnvioTs) : m, 0); }
+   
+   
+   
+   
+   
+  const BNWEB_ESPERA_MAX=5*60000;
+  let bnWebExtTs=0, bnWebPend=null, bnWebTimer=null;
+  function bnWebNota(){ return String(bnWebLs('nota','')); }
+  function bnWebSet(on, nota){ bnWebLsSet('on', on?'1':'0'); if(nota!=null) bnWebLsSet('nota', nota); }
+  function bnWebTope(){ return bnWebNum('tope', 15); }
+  function bnWebEspera(ahoraMs){
+    const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
+    const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
+    const desde=P('topesHoraDesde',8), hasta=P('topesHoraHasta',19), min=bnWebNum('min', 15);
+    const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
+    if(ahora<aHora(desde)) return {ms:aHora(desde)-ahora, motivo:'antes', min, desde, hasta};
+    if(ahora>=aHora(hasta)) return {ms:Infinity, motivo:'despues', min, desde, hasta};
+    const ult=bnUltimoEnvioTs(bnLineaPc('web')); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
+    const ms=Math.min(min*60000, Math.max(0, ult+min*60000-ahora));
+    return {ms, motivo:ms>0?'espacio':'', min, desde, hasta};
+  }
+  function bnWebPausar(motivo){
+    const h=new Date(), p=n=>String(n).padStart(2,'0');
+    bnWebSet(false, '⚠️ WhatsApp Web en pausa ('+p(h.getHours())+':'+p(h.getMinutes())+'): '+motivo);
+    const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
+  }
+  function bnWebOnMensaje(ev){
+    const d=ev && ev.data; if(!d || d.vphWa!==1 || ev.source!==window) return;
+    if(d.tipo==='hola'){ const antes=Date.now()-bnWebExtTs>60000; bnWebExtTs=Date.now(); if(antes){ const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); } return; }
+    if(d.tipo==='resultado' && bnWebPend && d.id===bnWebPend.id){
+      const p=bnWebPend; bnWebPend=null;
+      const fin=['enviado','sinwa','repetido'].includes(d.estado);
+      const ok=bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
+       
+      if(ok && d.estado==='enviado' && /^imagen:/.test(String(d.detalle||''))){
+        const bi=BNW.findIndex(r=>r && (r.nombre||'')===(p.nombre||'') && String(r.telefono||'')===String(p.bnTel||''));
+        if(bi>=0) bnUpd(bi, r=>({...r, notas:('⚠️ '+String(d.detalle)+' ('+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'). '+(r.notas||'')).trim()}));
+      }
+      if(!fin) bnWebPausar((d.detalle||d.estado||'error de la extensión')+' (con '+p.nombre+')');
+      else if(!ok) bnWebPausar('no encontré la ficha de '+(p.nombre||'?')+' para anotar el envío');
+      const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
+    }
+  }
+  function bnWebTick(){
+    if(!bnWebOn()) return;
+    if(window.__usaNube && !bnCargado) return;
+    const ahora=Date.now();
+    const d=new Date(), p=n=>String(n).padStart(2,'0');
+    if(d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())!==hoyISO){ location.reload(); return; }
+    if(bnWebPend){
+      if(ahora-bnWebPend.ts > BNWEB_ESPERA_MAX){
+        const x=bnWebPend; bnWebPend=null;
+        bnAutoRegistrar({...x, estado:'liberar'}, 'web');
+        bnWebPausar('la extensión no contestó el envío a '+x.nombre+'. Mirá WhatsApp Web: si salió, marcalo Contactado a mano.');
+      }
+      return;
+    }
+    try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
+    const panel=$('crm-bn-panel'), redraw=()=>{ if(panel && panel.style.display!=='none') drawBaseNivel(); };
+    if(ahora-bnWebExtTs > 60000){ redraw(); return; }    
+    const tope=bnWebTope();
+    if(tope && bnEnviosHoy(bnLineaPc('web'))>=tope){ redraw(); return; }
+    if(bnWebEspera(ahora).ms>0){ redraw(); return; }
+    const ped=bnAutoPedido(ahora, 'web'); if(!ped){ redraw(); return; }
+    bnWebPend={...ped, id:'wa'+ahora.toString(36), ts:ahora};
+    const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : '';
+    window.postMessage({vphWa:1, tipo:'enviar', id:bnWebPend.id, tel:ped.tel, tel2:ped.tel2, texto:ped.texto, imagen:img, familia:ped.tipo}, '*');
+    redraw();
+  }
+  function bnWebArrancarReloj(){
+    if(bnWebTimer) return;
+    bnWebTimer=setInterval(bnWebTick, 30000);
+    setTimeout(bnWebTick, 3000);
+  }
+  try{ window.addEventListener('message', bnWebOnMensaje); }catch(e){}
+  function bnWebCambiar(on){
+    if(on){
+      if(!bnWebFirma()){ alert('Escribí con qué nombre firma la línea de WhatsApp Web.'); drawBaseNivel(); return; }
+      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, el mensaje de los Cubos de Apoyo (con la imagen) firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
+      bnWebSet(true, ''); bnWebArrancarReloj();
+      try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
+    } else bnWebSet(false, '');
+    drawBaseNivel();
+  }
   function bnAutoHtml(){
-    const on=bnAutoOn(), c=bnAutoCandidatos(Date.now());
-    const nSeg=c.filter(x=>x.accion==='seguimiento').length, nCont=c.length-nSeg;
-    const b=(typeof topesAutoBuzon!=='undefined' && topesAutoBuzon) || {};
+    const ahora=Date.now();
+    const cola=l=>{ const c=bnAutoCandidatos(ahora, l), s=c.filter(x=>x.accion==='seguimiento').length; return '<b>'+(c.length-s)+'</b> primeros · <b>'+s+'</b> seguimientos'; };
+    const caja='display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-size:12.5px';
+    const inp=(id,v,w,t)=>'<input type="number" min="0" id="'+id+'" value="'+esc(String(v))+'" style="width:'+w+'px" title="'+esc(t)+'">';
+     
+    const on=bnAutoOn(), b=(typeof topesAutoBuzon!=='undefined' && topesAutoBuzon) || {};
+    const minApp=(typeof topesMinutosPc==='function' && topesMinutosPc()!=null) ? topesMinutosPc() : Math.round(Number(window.__param ? window.__param('topesMinutosEntre',15) : 15));
     let nota='';
-    if(on && !topesAutoOn()) nota='<span style="color:#b45309;font-weight:600">⚠️ Falta prender <b>🔁 Automático</b> en la pestaña Topes (es el mismo ayudante).</span>';
+    if(on && !topesAutoOn()) nota='<span style="color:#b45309;font-weight:600">⚠️ Falta prender <b>🔁 Automático</b> en la pestaña Topes (es el que arranca el ayudante de la app).</span>';
     else if(on && b.origen==='basenivel' && (b.estado==='pedido'||b.estado==='enviando')) nota='📤 Mandando a <b>'+esc(b.nombre||'')+'</b>…';
-    else if(on) nota='En cola: <b>'+nCont+'</b> primeros contactos · <b>'+nSeg+'</b> seguimientos. Salen antes que los de Topes, con la misma espera, horario y tope del día.';
-    return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-size:12.5px">'+
-      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="El ayudante de Topes manda también estos: el mensaje con el flyer y, a los '+BN_SEGUI_DIAS+' días, el seguimiento. Necesita 🔁 Automático prendido en Topes.">'+
-      '<input type="checkbox" id="bn-auto-chk"'+(on?' checked':'')+'> 🤖 Que el ayudante los mande solo</label>'+
+    else if(on) nota='En cola: '+cola('app')+'.';
+    const app='<div style="'+caja+'">'+
+      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="El ayudante de la app de WhatsApp (el de Topes) manda el mensaje de los cubos con la imagen y, a los '+BN_SEGUI_DIAS+' días, el seguimiento. Necesita 🔁 Automático prendido en Topes.">'+
+      '<input type="checkbox" id="bn-auto-chk"'+(on?' checked':'')+'> 📱 App de WhatsApp</label>'+
+      '<span>firma <b>'+esc(bnLineaFirma('app')||'(escribila en Topes → ✍️ Firmo como)')+'</b></span>'+
+      '<span>cada '+inp('bn-app-min', minApp, 52, 'Minutos entre mensajes de la app (vale también para Topes en esta PC)')+' min</span>'+
       (nota?('<span>'+nota+'</span>'):'')+'</div>';
+     
+    const won=bnWebOn(), ext=(ahora-bnWebExtTs)<=60000, wnota=bnWebNota(), wtope=bnWebTope(), wenv=bnEnviosHoy(bnLineaPc('web'));
+    let st='';
+    if(won){
+      const esp=bnWebEspera(ahora);
+      if(bnWebPend) st='📤 Mandando a <b>'+esc(bnWebPend.nombre)+'</b>…';
+      else if(!ext) st='<span style="color:#b45309">⏳ No encuentro la extensión <b>Ayudante WhatsApp Web VPH</b> en este Chrome (o recargá esta página)</span>';
+      else if(wtope && wenv>=wtope) st='Tope de hoy alcanzado ('+wenv+'), sigue mañana';
+      else if(esp.motivo==='antes') st='Arranca a las '+topesFmtHora(esp.desde);
+      else if(esp.motivo==='despues') st='Terminó el horario de hoy';
+      else if(esp.ms>0) st='Próximo en '+Math.ceil(esp.ms/60000)+' min';
+      else st='Listo para el próximo';
+      st+=' · hoy '+wenv+(wtope?(' de '+wtope):'')+' · en cola: '+cola('web');
+    }
+    const web='<div style="'+caja+'">'+
+      '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="La extensión Ayudante WhatsApp Web VPH manda desde el WhatsApp Web de este Chrome, con su firma, su espera y su tope.">'+
+      '<input type="checkbox" id="bn-web-chk"'+(won?' checked':'')+'> 🌐 WhatsApp Web</label>'+
+      '<span>firma <input id="bn-web-firma" value="'+esc(bnWebFirma())+'" style="width:80px"></span>'+
+      '<span>cada '+inp('bn-web-min', bnWebNum('min',15), 52, 'Minutos entre mensajes de WhatsApp Web')+' min</span>'+
+      '<span>tope '+inp('bn-web-tope', wtope, 52, 'Máximo de mensajes por día de WhatsApp Web (0 = sin tope)')+' por día</span>'+
+      (st?('<span>'+st+'</span>'):'')+
+      (!won && wnota ? '<span style="color:#b45309;font-weight:600">'+esc(wnota)+'</span>' : '')+'</div>';
+    return '<div style="font-size:12px;color:#475569;margin-bottom:4px"><b>🤖 Envío automático</b> — dos líneas separadas: cada una firma con su nombre, tiene su espera y no repite los prospectos de la otra. El seguimiento lo manda la misma línea que hizo el primer contacto.</div>'+app+web;
   }
   function drawBaseNivel(){
     const cont=$('crm-bn-controles'), tabla=$('crm-bn-tabla'); if(!cont||!tabla) return;
@@ -18230,6 +18552,12 @@ function buildFilterTable(cfg){
     if(chkAuto) chkAuto.onchange=()=>{ try{ localStorage.setItem('vph_bn_auto_v1', chkAuto.checked?'1':'0'); }catch(e){}
       if(chkAuto.checked && topesAutoOn()) topesAutoArrancarReloj();
       drawBaseNivel(); };
+     
+    const appMin=cont.querySelector('#bn-app-min');
+    if(appMin) appMin.onchange=()=>{ const n=Math.max(0, Math.round(Number(appMin.value)||0)); try{ localStorage.setItem('vph_topes_min_v1', String(n)); }catch(e){} drawBaseNivel(); };
+    const webChk=cont.querySelector('#bn-web-chk'); if(webChk) webChk.onchange=()=>bnWebCambiar(webChk.checked);
+    const webFirma=cont.querySelector('#bn-web-firma'); if(webFirma) webFirma.onchange=()=>{ bnWebLsSet('firma', String(webFirma.value||'').trim()); drawBaseNivel(); };
+    ['min','tope'].forEach(k=>{ const el=cont.querySelector('#bn-web-'+k); if(el) el.onchange=()=>{ bnWebLsSet(k, Math.max(0, Math.round(Number(el.value)||0))); drawBaseNivel(); }; });
     cont.querySelectorAll('[data-bn-si]').forEach(b=>b.onclick=()=>bnConfirmar(true));
     cont.querySelectorAll('[data-bn-no]').forEach(b=>b.onclick=()=>bnConfirmar(false));
     cont.querySelectorAll('[data-bn-sinwa]').forEach(b=>b.onclick=()=>bnConfirmar(false, true));
@@ -18289,7 +18617,7 @@ function buildFilterTable(cfg){
 
    
   $('crm-tab-basenivel').onclick=()=>setCrmTab('basenivel');
-  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>bnSubscribe()); }
+  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>{ bnSubscribe(); if(bnWebOn()) bnWebArrancarReloj(); }); }
   else bnSubscribe();
 
   boot();
@@ -18658,6 +18986,103 @@ function buildFilterTable(cfg){
 (function(){
   'use strict';
   const $ = id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fb=()=>window.__fbctx;
+  const COL='vph_ig_mensajes', DIAS=30, PAUSA_MS=12*3600000;
+  const tsMs=t=>{ const n=Date.parse(t||''); return isNaN(n)?0:n; };
+  const fmt=t=>{ const n=tsMs(t); return n?new Date(n).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'; };
+  const igLink=u=>{ const x=String(u||'').replace(/^@/,''); return x?'https://ig.me/m/'+encodeURIComponent(x):'https://www.instagram.com/direct/inbox/'; };
+
+  let MSGS=[], filtro='', unsub=null;
+  const abiertas=new Set();
+
+   
+  function charlas(msgs, ahoraMs){
+    const g=new Map();
+    (msgs||[]).forEach(m=>{ const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
+    const out=[];
+    g.forEach((lista,k)=>{
+      lista.sort((a,b)=>tsMs(a.ts)-tsMs(b.ts));
+      const ult=lista[lista.length-1];
+      const conNombre=lista.slice().reverse().find(m=>m.usuario||m.nombre)||{};
+      const leadUid=(lista.slice().reverse().find(m=>m.leadUid)||{}).leadUid||'';
+      const ultPersona=lista.filter(m=>m.autor==='persona').map(m=>tsMs(m.ts)).sort((a,b)=>b-a)[0]||0;
+      out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid,
+        ultimoMs:tsMs(ult.ts), entrantes:lista.filter(m=>m.dir==='in').length,
+        persona: !!ultPersona && (ahoraMs-ultPersona)<PAUSA_MS,
+        sinRespuesta: ult.dir==='in' });
+    });
+    return out.sort((a,b)=>b.ultimoMs-a.ultimoMs);
+  }
+  window.__igCharlas=charlas;
+
+  function burbuja(m){
+    if(m.dir==='comentario') return '<div style="margin:8px 0;padding:8px 10px;border-radius:10px;border:1px dashed '+(m.autor==='sombra'?'#c98a06':'#d6249f')+';white-space:pre-wrap"><div style="font-size:11px;color:var(--muted);margin-bottom:2px">'+(m.autor==='sombra'?'💬 Comentario · 🕶️ modo sombra (no se publicó nada)':'💬 Comentario · respondido por el asistente')+' · '+fmt(m.ts)+'</div>'+esc(m.texto)+'</div>';
+    if(m.dir==='evento') return '<div style="text-align:center;margin:8px 0"><span class="badge green">'+esc(m.texto)+' · '+fmt(m.ts)+'</span></div>';
+    const sale=m.dir==='out';
+    const quien=m.autor==='persona'?'👤 Persona':(m.autor==='agente'?'🤖 Asistente':'Cliente');
+    return '<div style="display:flex;justify-content:'+(sale?'flex-end':'flex-start')+';margin-top:6px">'+
+      '<div style="max-width:78%;padding:7px 10px;border-radius:12px;white-space:pre-wrap;'+
+        (sale?'background:rgba(214,36,159,.10);border:1px solid rgba(214,36,159,.25)':'background:var(--panel2,rgba(127,127,127,.08));border:1px solid var(--border)')+'">'+
+        '<div style="font-size:11px;color:var(--muted);margin-bottom:2px">'+quien+' · '+fmt(m.ts)+'</div>'+esc(m.texto)+'</div></div>';
+  }
+
+  function render(){
+    if(!$('igb-lista')) return;
+    const todas=charlas(MSGS, Date.now());
+    const hoy=new Date(); hoy.setHours(0,0,0,0);
+    $('igb-kpis').innerHTML=
+      '<div class="kpi info"><div class="label">Charlas ('+DIAS+' días)</div><div class="value">'+todas.length+'</div><div class="sub">Personas que escribieron por DM</div></div>'+
+      '<div class="kpi good"><div class="label">Con lead en el CRM</div><div class="value">'+todas.filter(c=>c.leadUid).length+'</div><div class="sub">Dejaron su WhatsApp</div></div>'+
+      '<div class="kpi warn"><div class="label">Sin WhatsApp todavía</div><div class="value">'+todas.filter(c=>!c.leadUid).length+'</div><div class="sub">Solo consultaron</div></div>'+
+      '<div class="kpi"><div class="label">Hoy</div><div class="value">'+todas.filter(c=>c.ultimoMs>=hoy.getTime()).length+'</div><div class="sub">Charlas con actividad hoy</div></div>';
+    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios']];
+    $('igb-filtros').innerHTML=F.map(([k,l])=>'<button class="filter-btn'+(filtro===k?' active':'')+'" data-f="'+k+'">'+l+'</button>').join('');
+    $('igb-filtros').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
+    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')));
+    $('igb-count').textContent=lista.length+' charla'+(lista.length!==1?'s':'');
+    $('igb-lista').innerHTML=lista.length?lista.map(c=>{
+      const abierta=abiertas.has(c.k);
+      const vis=(abierta||c.msgs.length<=4)?c.msgs:c.msgs.slice(-3);
+      const ocultos=c.msgs.length-vis.length;
+      const lead=c.leadUid && window.__leadPorUid ? window.__leadPorUid(c.leadUid) : null;
+      return '<div class="kb-card" style="margin-bottom:8px">'+
+        '<div class="cli">'+esc(c.nombre||c.usuario||'Usuario de Instagram')+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
+          (c.leadUid?' <span class="badge green" title="Dejó su WhatsApp: ya está en el CRM">🎯 Lead'+(lead&&lead.estado?' · '+esc(lead.estado):'')+'</span>':' <span class="badge amber">Sin WhatsApp</span>')+
+          (c.persona?' <span class="badge" title="Una persona respondió desde Instagram: el asistente está en pausa en esta charla">👤 Atendida a mano</span>':'')+'</div>'+
+        '<div class="meta">'+c.entrantes+' mensaje'+(c.entrantes!==1?'s':'')+' del cliente · último: '+fmt(c.msgs[c.msgs.length-1].ts)+'</div>'+
+        (ocultos>0?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&c.msgs.length>4?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▴ Ver menos</button>':''))+
+        vis.map(burbuja).join('')+
+        '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
+          '<a class="kb-wa" href="'+igLink(c.usuario)+'" target="_blank" rel="noopener" style="background:#d6249f;border-color:#d6249f">📸 Abrir en Instagram</a>'+
+          (c.leadUid?'<button class="kb-move" data-crm="1">🎯 Ver en el CRM</button>':'')+
+        '</div></div>';
+    }).join(''):'<div class="kb-empty">No hay charlas'+(filtro?' con este filtro':' en los últimos '+DIAS+' días')+'.</div>';
+    $('igb-lista').querySelectorAll('button[data-x]').forEach(b=>b.onclick=()=>{ const k=b.dataset.x; if(abiertas.has(k)) abiertas.delete(k); else abiertas.add(k); render(); });
+    $('igb-lista').querySelectorAll('button[data-crm]').forEach(b=>b.onclick=()=>{ if(typeof irAPagina==='function') irAPagina('CRM / Leads'); });
+  }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; stopSync();
+    const desde=new Date(Date.now()-DIAS*86400000).toISOString();
+    unsub=c.FS.onSnapshot(c.FS.query(c.FS.collection(c.db,COL), c.FS.where('ts','>=',desde)),
+      snap=>{ MSGS=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); },
+      err=>console.error('ig_mensajes:',err));
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  window.__afterLogin.push(startSync);
+  window.__afterLogout.push(()=>{ stopSync(); MSGS=[]; render(); });
+  if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+  render();
+})();
+</script>
+
+
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
   const money = n=>'$ '+(Math.round((n||0)*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const nf = n=>Math.round(n||0).toLocaleString('es-AR');
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
@@ -18677,7 +19102,8 @@ function buildFilterTable(cfg){
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[];
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[];
+  let asisMes=null;    
   let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
@@ -19170,15 +19596,16 @@ function buildFilterTable(cfg){
     
 
     const aPedir=insPedibles().length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual'],['asis','⏰ Asistencia'+(asisLlegadasMes(asisMesActual())?' ('+asisLlegadasMes(asisMesActual())+')':'')]].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
     $('pe-view-entregado').style.display = tab==='entregado'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
+    $('pe-view-asis').style.display = tab==='asis'?'':'none';
     renderKpis();
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else if(tab==='asis') renderAsis(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -19596,6 +20023,122 @@ function buildFilterTable(cfg){
       $('pe-modal-rot').classList.remove('open');
     };
     $('pe-modal-rot').classList.add('open');
+  }
+
+   
+   
+   
+   
+   
+   
+  const asisParam=(k,d)=> (window.__param? window.__param(k,d) : d);
+   
+  function asisHoraMin(s){ const m=/^(\d{1,2}):(\d{2})$/.exec(String(s||'').trim()); if(!m) return null;
+    const h=+m[1], mi=+m[2]; return (h<24 && mi<60) ? h*60+mi : null; }
+   
+  function asisMinTarde(entrada, llegada, tolerancia){
+    const e=asisHoraMin(entrada), l=asisHoraMin(llegada); if(e==null||l==null) return 0;
+    const d=l-e; return d>(Number(tolerancia)||0) ? d : 0; }
+   
+  function asisClave(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); }
+  function asisId(fecha, persona){ return 'asi_'+fecha+'_'+asisClave(persona).replace(/[^A-Z0-9]+/g,'-'); }
+   
+  function asisResumenMes(lista, mes){
+    const out={};
+    (lista||[]).forEach(x=>{ if(!x || String(x.fecha||'').slice(0,7)!==mes) return;
+      const k=asisClave(x.persona); if(!out[k]) out[k]={persona:x.persona, tardes:0, min:0, ausentes:0};
+      if(x.tipo==='ausente') out[k].ausentes++; else { out[k].tardes++; out[k].min+=Number(x.minutos)||0; } });
+    return Object.values(out).sort((a,b)=>((b.tardes+b.ausentes)-(a.tardes+a.ausentes)) || (b.min-a.min)); }
+  const asisMesActual=()=> asisMes || hoyISO.slice(0,7);
+  const asisLlegadasMes=mes=> (asis||[]).filter(x=>String(x.fecha||'').slice(0,7)===mes).length;
+
+  function renderAsis(){
+    const mes=asisMesActual();
+    const inp=$('pe-asis-mes'); if(inp && !inp.value) inp.value=mes;
+    const lista=(asis||[]).filter(x=>String(x.fecha||'').slice(0,7)===mes)
+      .sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha)));
+    const res=asisResumenMes(asis, mes);
+    const elR=$('pe-asis-resumen');
+    if(elR) elR.innerHTML = !lista.length ? 'Sin incumplimientos cargados en este mes.'
+      : lista.length+' incumplimiento'+(lista.length>1?'s':'')+' en el mes: '+res.map(r=>
+          '<b>'+esc(r.persona)+'</b> '+[ r.tardes ? r.tardes+' tarde'+(r.tardes>1?'s':'')+(r.min?' ('+nf(r.min)+' min)':'') : '',
+                                          r.ausentes ? r.ausentes+' sin aviso' : '' ].filter(Boolean).join(' · ')).join(' · ');
+    const t=$('pe-tabla-asis'); if(!t) return;
+    t.innerHTML='<thead><tr><th>Fecha</th><th>Persona</th><th>Qué pasó</th><th>Entrada</th><th>Llegó</th><th>Min. tarde</th><th>Nota</th><th>Cargó</th><th></th></tr></thead><tbody>'+
+      (lista.length ? lista.map(x=> '<tr><td>'+esc(fmtFecha(x.fecha))+'</td><td>'+esc(x.persona)+'</td>'+
+          '<td>'+(x.tipo==='ausente' ? '<span class="badge red">No vino</span>' : '<span class="badge amber">Llegó tarde</span>')+'</td>'+
+          '<td>'+esc(x.horaEntrada||'—')+'</td><td>'+esc(x.horaLlegada||'—')+'</td>'+
+          '<td style="text-align:right">'+(x.tipo==='ausente'?'—':nf(x.minutos||0))+'</td>'+
+          '<td>'+esc(x.nota||'')+'</td><td style="font-size:11px">'+esc(x.usuario||'')+'</td>'+
+          '<td><button class="cmp-btn" data-asis-del="'+esc(x._uid)+'" title="Borrar este registro">🗑</button></td></tr>').join('')
+        : '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Ningún incumplimiento cargado en este mes.</td></tr>')+'</tbody>';
+    t.querySelectorAll('button[data-asis-del]').forEach(b=> b.onclick=()=>borrarAsis(b.dataset.asisDel));
+  }
+
+  function borrarAsis(uid){
+    const x=asis.find(a=>a._uid===uid); if(!x) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    if(!confirm('¿Borrar el registro de '+x.persona+' del '+fmtFecha(x.fecha)+'?')) return;
+    c.FS.deleteDoc(c.FS.doc(c.db,'vph_asistencia',uid)).catch(e=>alert('No se pudo borrar: '+((e&&e.message)||e)));
+  }
+
+  function openAsis(){
+    const nombres=[...new Set((asis||[]).map(x=>String(x.persona||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+    const entrada=String(asisParam('asisHoraEntrada','07:00')||'').trim();
+    const tol=asisParam('asisTolerancia',5);
+    $('pe-form-asis').innerHTML =
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+        '<div class="cmp-field" style="margin:0"><label>¿Qué día?</label><input type="date" id="pe-asis-fecha" value="'+hoyISO+'" style="max-width:190px"></div>'+
+        '<div class="cmp-field" style="margin:0;flex:1;min-width:220px"><label>¿Qué pasó?</label><select id="pe-asis-tipo"><option value="tarde">Llegó tarde</option><option value="ausente">No vino (sin aviso)</option></select></div>'+
+      '</div>'+
+      '<div class="cmp-field"><label>Persona</label><input type="text" id="pe-asis-persona" list="pe-asis-personas" placeholder="Nombre y apellido" autocomplete="off">'+
+        '<datalist id="pe-asis-personas">'+nombres.map(n=>'<option value="'+esc(n)+'"></option>').join('')+'</datalist></div>'+
+      '<div class="cmp-field" id="pe-asis-hora-box"><label>¿A qué hora llegó?</label><input type="time" id="pe-asis-hora" style="max-width:150px"></div>'+
+      '<div class="cmp-field"><label>Nota (opcional)</label><input type="text" id="pe-asis-nota" placeholder="ej: avisó que el colectivo no llegó"></div>'+
+      '<div id="pe-asis-tot" class="note" style="margin:0 0 10px"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-asis-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-asis-save">Registrar</button></div>';
+    if(window.__tarjetas) window.__tarjetas('pe-asis-tipo',{mini:1});
+    function updTot(){
+      const tipo=$('pe-asis-tipo').value, hora=$('pe-asis-hora').value, out=$('pe-asis-tot');
+      $('pe-asis-hora-box').style.display = tipo==='tarde' ? '' : 'none';
+      if(tipo!=='tarde'){ out.innerHTML='Se registra como <b>ausencia</b>: no vino y no avisó.'; return; }
+      if(!asisHoraMin(entrada)){ out.innerHTML='<span style="color:var(--red)">Falta la hora de entrada en ⚙️ Parámetros (Producción).</span>'; return; }
+      if(!hora){ out.textContent=''; return; }
+      const min=asisMinTarde(entrada,hora,tol);
+      out.innerHTML = min>0 ? 'Entrada '+esc(entrada)+' → llegó '+esc(hora)+': <b>'+min+' min tarde</b>.'
+        : 'Llegó dentro de la tolerancia ('+tol+' min): <b>no cuenta</b> como llegada tarde.';
+    }
+    $('pe-asis-tipo').addEventListener('change',updTot);
+    $('pe-asis-hora').addEventListener('input',updTot);
+    updTot();
+    $('pe-asis-cancel').onclick=()=>$('pe-modal-asis').classList.remove('open');
+    $('pe-asis-save').onclick=()=>{
+      const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      const fecha=$('pe-asis-fecha').value;
+      const persona=String($('pe-asis-persona').value||'').replace(/\s+/g,' ').trim();
+      const tipo=$('pe-asis-tipo').value;
+      const hora=tipo==='tarde' ? $('pe-asis-hora').value : '';
+      const nota=String($('pe-asis-nota').value||'').trim();
+      if(!fecha){ alert('Falta el día.'); return; }
+      if(!persona){ alert('Falta el nombre de la persona.'); return; }
+      if(!asisHoraMin(entrada)){ alert('Falta la hora de entrada en ⚙️ Parámetros (Producción).'); return; }
+      let min=0;
+      if(tipo==='tarde'){
+        if(!asisHoraMin(hora)){ alert('Poné a qué hora llegó.'); return; }
+        min=asisMinTarde(entrada,hora,tol);
+        if(!min){ alert('Llegó dentro de la tolerancia ('+tol+' min): no es un incumplimiento, no se registra.'); return; }
+      }
+      const id=asisId(fecha,persona), previo=(asis||[]).find(a=>a._uid===id);
+      if(previo && !confirm('Ya hay un registro de '+previo.persona+' el '+fmtFecha(fecha)+' ('+
+          (previo.tipo==='ausente' ? 'no vino' : 'llegó '+(previo.horaLlegada||'')+' · '+(previo.minutos||0)+' min tarde')+').\n\n¿Lo reemplazo por este?')) return;
+      const resumen = fmtFecha(fecha)+': '+persona+(tipo==='ausente' ? ' no vino' : ' llegó '+hora+' ('+min+' min tarde)');
+       
+      c.FS.setDoc(c.FS.doc(c.db,'vph_asistencia',id), {fecha, persona, tipo, horaEntrada:entrada, horaLlegada:hora,
+          minutos:min, nota, usuario:usuario(), ts:fecha+'T'+new Date().toTimeString().slice(0,8)})
+        .then(()=>{ $('pe-modal-asis').classList.remove('open'); if(!previo) registrarUltimaCarga('vph_asistencia',[id],resumen); })
+        .catch(e=>alert('No se guardó: '+((e&&e.message)||e)+'\n\nRevisá la conexión y volvé a intentar.'));
+    };
+    $('pe-modal-asis').classList.add('open');
   }
 
    
@@ -21561,13 +22104,14 @@ function buildFilterTable(cfg){
     sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar();
       if(window.__cajaRefresh) window.__cajaRefresh(); });    
     sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a);
+    sub('vph_asistencia',a=>asis=a);    
      
      
      
     sub('vph_feriados',a=>{ feriados=a; if(window.__refreshAlertas) window.__refreshAlertas(); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[];asis=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
@@ -21593,6 +22137,9 @@ function buildFilterTable(cfg){
     return A; });
   $('pe-btn-prod').onclick=openProd;
   $('pe-btn-rotura').onclick=openRotura;
+  $('pe-btn-asis').onclick=openAsis;
+  $('pe-asis-mes').onchange=e=>{ asisMes=e.target.value||null; renderAsis(); };
+  $('pe-asis-cerrar').onclick=()=>$('pe-modal-asis').classList.remove('open');
   $('pe-btn-ent').onclick=openEnt;
   $('pe-btn-deshacer').onclick=deshacerUltimaCarga;
   $('pe-btn-conteo-prod').onclick=openConteoProd;
@@ -22322,8 +22869,9 @@ function buildFilterTable(cfg){
     const RETIRO = '<b>Retiro en fábrica:</b> Bolívar 381, Toledo. De lunes a viernes de 6:00 a 13:30 hs. '+
       'Avisar con 24 hs de anticipación al 351 000-0000.';
      
-    const ENVIO_MAYO = '<b>Métodos de Envíos:</b> Servicio de Entrega en su depósito o corralón para revendedores de '+
-      'Córdoba y Gran Córdoba hasta 30 km de Circunvalación. '+FECHAS;
+     
+    const ENVIO_MAYO = '<b>Métodos de Envíos:</b> Servicio de Entrega en su depósito o corralón para revendedores dentro de la '+
+      'ciudad de Córdoba. Fuera de la ciudad (Gran Córdoba y Sierras Chicas) el envío tiene un costo por pallet que se cotiza con el pedido. '+FECHAS;
     const ENVIO_MINO = '<b>Métodos de Envíos:</b> Servicio de Entrega en obra incluido con descarga a pie del camión con hidrogrúa '+
       '(únicamente en la Provincia de Córdoba, para el resto de las Provincias, el cliente deberá contratar un autoelevador para realizar la descarga). '+FECHAS;
      
@@ -22331,7 +22879,8 @@ function buildFilterTable(cfg){
      
      
      
-    const entrega = mayorista
+    const ENVIO_EXT = '<b>Métodos de Envíos:</b> Envío '+((v&&v.fleteManual&&v.fleteManual.destino)?'a '+esc(v.fleteManual.destino)+' ':'')+'por transporte de carga, puesto en destino. <b>El flete no incluye la descarga del material</b>: el cliente debe contar con los medios (autoelevador, hidrogrúa o personal) para descargar al llegar el camión. '+FECHAS;
+    const entrega = String((v&&v.zona)||'')==='cotizar' ? ENVIO_EXT : mayorista
       ? (ENVIO_MAYO + (retira ? '<div style="margin-top:3px">'+RETIRO+'</div>' : ''))
       : (retira ? RETIRO : ENVIO_MINO);
      
@@ -22440,10 +22989,10 @@ function buildFilterTable(cfg){
         (adics.length ? '<div style="font-size:10px;margin:-4px 0 12px;padding:6px 8px;background:#f7faf8;border:1px solid #d8e8dd;border-radius:4px"><b>➕ Adicionales incluidos en cada opción:</b> '+
           adics.map(a=>esc(nf(a.cant))+' × '+esc(a.desc)+' a '+money(a.precioUnit)+' = <b>'+money(a.subtotal)+'</b>').join(' · ')+'</div>' : '');
       const footerHTML = '<div style="font-size:10px;color:#666;margin-top:12px;padding:8px;border:1px dashed #ddd">'+
-        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+
+        '<b>📌 Instrucciones:</b> Elegí la opción que mejor se adapte a tu proyecto. Todos los precios incluyen el flete a '+esc(v.zonaTexto||'la zona seleccionada')+'.'+(String(v.zona||'')==='cotizar'?' <b>El flete NO incluye la descarga del material.</b>':'')+
          
          
-        '<br><b>📐 Cantidad:</b> las unidades incluyen un 5% adicional por recortes.'+
+        ((v.items||[]).some(x=>num(x.udM2)>0) ? '<br><b>📐 Cantidad:</b> las unidades incluyen un 5% adicional por recortes.' : '')+
         '<br><b style="color:#1a7c3f">Para cotizar o hacer pedido:</b> Contactate con Sofía (Ventas) indicando el modelo elegido.'+
         (finPlanes.length ? '<br><b>💳 Financiado:</b> precio total con tarjeta de crédito en '+finPlanes.join('/')+' cuotas — '+esc(v.finPerfilLabel||'')+' (Contado es el que compite; "—" es un plan sin tasa cargada para esa tarjeta).' : '')+
         '</div>'+
@@ -23115,7 +23664,10 @@ function buildFilterTable(cfg){
     TET100:'Tope Trapecio 15×12×100', UCC10:'Cordón de Confinamiento 40×9×10'
   };
   const nombreLista = p => NOMBRE_LISTA[String(p.codigo||'').trim().toUpperCase()] || String(p.nombre||'');
-  const LP_CBA='Entrega sin costo en su depósito o corralón (Córdoba y Gran Córdoba hasta 30 km de Circunvalación).',
+   
+   
+   
+  const LP_CBA='Entrega sin cargo en su depósito o corralón dentro de la ciudad de Córdoba. Fuera de la ciudad (Gran Córdoba y Sierras Chicas) el envío tiene un costo por pallet que se cotiza con el pedido.',
         LP_100='Entrega sin costo hasta 100 km de Córdoba Capital (flete incluido en el precio).',
          
         LP_COMUN='Pedidos por pallets enteros. Plazo de entrega: 7 días hábiles desde la confirmación.',
@@ -23178,8 +23730,14 @@ function buildFilterTable(cfg){
       if(L.lpTablero && window.__precioDeLista) return Math.round(window.__precioDeLista(p, L.lpTablero));
       return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
-      return { codigo:p.codigo, nombre:nombreLista(p), pu:pu, sugerido:Math.round(pu*(1+margen/100)),
-        uxm2:uxm2, m2:Math.round(pu*uxm2), peso:num(p.pesoUnit), ud:ud, pallet:pu*ud }; });
+       
+       
+       
+       
+       
+      const sug=Math.round(pu*(1+margen/100));
+      return { codigo:p.codigo, nombre:nombreLista(p), pu:pu, sugerido:sug,
+        uxm2:uxm2, m2:Math.round(pu*uxm2), sugM2:Math.round(sug*uxm2), peso:num(p.pesoUnit), ud:ud, pallet:pu*ud }; });
     return { L:L, margen:margen, hoy:hoy, hoyISO:hoyISO, conM2:filas.some(f=>f.uxm2>0), filas:filas };
   }
   function listaPrecios(o){
@@ -23189,22 +23747,33 @@ function buildFilterTable(cfg){
      
      
     const filas=D.filas.map(f=>{ const pu=f.pu, uxm2=f.uxm2, ud=f.ud;
+       
+       
+      const celM2 = v => '<td class="n">'+(uxm2>0?'<span style="white-space:nowrap">'+money(v)+'</span><br><span style="color:#666;font-size:9px;white-space:nowrap">'+pct(uxm2)+' u/m²</span>':'—')+'</td>';
       return '<tr><td style="white-space:nowrap">'+celdaCodigo(f.codigo)+'</td><td>'+esc(f.nombre)+'</td>'+
+         
+         
         '<td class="n"><b>'+money(pu)+'</b></td>'+
-        (L.may?('<td class="n">'+money(f.sugerido)+'</td>'):'')+
-         
-         
-        (conM2?('<td class="n">'+(uxm2>0?'<span style="white-space:nowrap">'+money(f.m2)+'</span><br><span style="color:#666;font-size:9px;white-space:nowrap">'+pct(uxm2)+' u/m²</span>':'—')+'</td>'):'')+
+        (conM2?celM2(f.m2):'')+
+        (L.may?('<td class="n">'+money(f.sugerido)+'</td>'+(conM2?celM2(f.sugM2):'')):'')+
         '<td class="n">'+(f.peso>0?pct(f.peso)+' kg':'—')+'</td>'+
         '<td class="n">'+(ud>0?nf(ud):'—')+'</td>'+
         (L.may?('<td class="n">'+(ud>0?money(f.pallet):'—')+'</td>'):'')+
         '</tr>'; }).join('');
     const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
       (L.may?'<div class="doc-obs" style="margin-bottom:6px"><b>Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.</b></div>':'')+
-      '<table class="doc-tab"><thead><tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+
-      (L.may?('<th class="n">Sugerido reventa +'+pct(margen)+'%</th>'):'')+
-      (conM2?'<th class="n">Precio x m²</th>':'')+'<th class="n">Peso x unidad</th>'+'<th class="n">Unid. x pallet</th>'+
-      (L.may?'<th class="n">Precio x pallet</th>':'')+'</tr></thead><tbody>'+filas+'</tbody></table>'+
+      '<table class="doc-tab"><thead>'+
+      (L.may
+         
+         
+        ? ('<tr><th rowspan="2">Código</th><th rowspan="2">Producto</th>'+
+           '<th colspan="'+(conM2?2:1)+'" style="text-align:center;background:#eef6f1">Precio de costo</th>'+
+           '<th colspan="'+(conM2?2:1)+'" style="text-align:center">Sugerido de reventa +'+pct(margen)+'%</th>'+
+           '<th rowspan="2" class="n">Peso x unidad</th><th rowspan="2" class="n">Unid. x pallet</th><th rowspan="2" class="n">Precio x pallet</th></tr>'+
+           '<tr><th class="n">x unidad</th>'+(conM2?'<th class="n">x m²</th>':'')+'<th class="n">x unidad</th>'+(conM2?'<th class="n">x m²</th>':'')+'</tr>')
+        : ('<tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+(conM2?'<th class="n">Precio x m²</th>':'')+
+           '<th class="n">Peso x unidad</th><th class="n">Unid. x pallet</th></tr>'))+
+      '</thead><tbody>'+filas+'</tbody></table>'+
       '<div class="doc-obs"><b>Condiciones:</b> '+esc(L.cond)+'<br>'+
       'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
       '<div class="doc-foot"><span>'+esc(EMPRESA.razon)+' · '+esc(EMPRESA.web)+'</span><span>Lista '+esc(L.nombre)+' — vigente desde '+esc(hoy)+'</span></div>';
@@ -23226,13 +23795,18 @@ function buildFilterTable(cfg){
       titulo:'LISTA DE PRECIOS', sub:L.nombre, vigente:'Vigente desde '+D.hoy,
       lema: L.may ? 'Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.' : '',
       filas: D.filas.map(f=>{
-        const det=[];
-        if(L.may) det.push('Reventa sugerida '+lpPlata(f.sugerido));
-        if(f.uxm2>0) det.push('m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
-        if(f.peso>0) det.push(pct(f.peso)+' kg');
-        if(f.ud>0) det.push(nf(f.ud)+' u/pallet');
+         
+         
+         
+        const det=[], det2=[];
+        if(L.may){ det.push('Reventa sugerida '+lpPlata(f.sugerido)+' x unidad'+(f.uxm2>0?(' · '+lpPlata(f.sugM2)+' x m²'):''));
+          if(f.uxm2>0) det2.push('Costo x m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)'); }
+        else if(f.uxm2>0) det.push('m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
+        const resto = L.may ? det2 : det;
+        if(f.peso>0) resto.push(pct(f.peso)+' kg');
+        if(f.ud>0) resto.push(nf(f.ud)+' u/pallet');
         const img=IMG_PRODUCTO[String(f.codigo||'').trim().toUpperCase()];
-        return { codigo:String(f.codigo||''), nombre:String(f.nombre||''), precio:lpPlata(f.pu), det:det.join(' · '),
+        return { codigo:String(f.codigo||''), nombre:String(f.nombre||''), precio:lpPlata(f.pu), det:det.join(' · '), det2:det2.join(' · '),
           pallet:(L.may && f.ud>0) ? ('Pallet '+lpPlata(f.pallet)) : '', foto: img ? ('Productos/'+img) : '' };
       }),
       cond:'Condiciones: '+L.cond+' Precios sujetos a modificación sin previo aviso.',
@@ -23262,7 +23836,9 @@ function buildFilterTable(cfg){
         while(p>(min||14) && x.measureText(texto).width>ancho){ p--; fuente(p,peso); } };
        
       fuente(22); const condL=lpPartir(x, M.cond, W-2*PAD);
-      const H_CAB=150, H_LEMA=M.lema?54:0, H_TH=40, H_FILA=100, H_COND=30+condL.length*31+50, H_PIE=60;
+       
+      const dosDet=M.filas.some(f=>f.det2);
+      const H_CAB=150, H_LEMA=M.lema?54:0, H_TH=40, H_FILA=dosDet?126:100, H_COND=30+condL.length*31+50, H_PIE=60;
       const H=H_CAB+H_LEMA+H_TH+M.filas.length*H_FILA+H_COND+H_PIE;
       cv.width=W; cv.height=H;
       x.fillStyle='#ffffff'; x.fillRect(0,0,W,H); x.textBaseline='alphabetic';
@@ -23281,7 +23857,7 @@ function buildFilterTable(cfg){
       x.fillStyle='#f1f5f9'; x.fillRect(0,y,W,H_TH);
       x.fillStyle='#64748b'; fuente(16,700);
       x.textAlign='left'; x.fillText('PRODUCTO', PAD, y+26);
-      x.textAlign='right'; x.fillText('PRECIO POR UNIDAD', W-PAD, y+26);
+      x.textAlign='right'; x.fillText(dosDet?'SU PRECIO DE COSTO x UNIDAD':'PRECIO POR UNIDAD', W-PAD, y+26);
       y+=H_TH;
        
       const IZQ=PAD+92, ANCHO_TXT=W-PAD-250-IZQ;
@@ -23289,16 +23865,17 @@ function buildFilterTable(cfg){
         if(i%2){ x.fillStyle='#f8fafc'; x.fillRect(0,y,W,H_FILA); }
         const im=imgs[i+1];
         if(im && im.width && im.height){ const L=76, r=Math.min(im.width, im.height);    
-          x.drawImage(im, (im.width-r)/2, (im.height-r)/2, r, r, PAD, y+12, L, L); }
+          x.drawImage(im, (im.width-r)/2, (im.height-r)/2, r, r, PAD, y+(dosDet?25:12), L, L); }
         x.textAlign='left';
         x.fillStyle='#0f172a'; ajustar(f.nombre, ANCHO_TXT, 28, 700, 17); x.fillText(f.nombre, IZQ, y+40);
         const wNom=x.measureText(f.nombre).width;
         fuente(16,600);
         if(f.codigo && wNom+14+x.measureText(f.codigo).width<=ANCHO_TXT){ x.fillStyle='#94a3b8'; x.fillText(f.codigo, IZQ+wNom+14, y+40); }
-        if(f.det){ x.fillStyle='#475569'; ajustar(f.det, W-PAD-250-IZQ+40, 21, 400, 14); x.fillText(f.det, IZQ, y+73); }
+        if(f.det){ x.fillStyle='#1e7a4a'; ajustar(f.det, W-PAD-250-IZQ+40, 21, dosDet?600:400, 14); x.fillText(f.det, IZQ, y+73); }
+        if(f.det2){ x.fillStyle='#475569'; ajustar(f.det2, W-PAD-250-IZQ+40, 21, 400, 14); x.fillText(f.det2, IZQ, y+103); }
         x.textAlign='right';
-        x.fillStyle='#0f172a'; fuente(38,800); x.fillText(f.precio, W-PAD, f.pallet ? y+46 : y+62);
-        if(f.pallet){ x.fillStyle='#1e7a4a'; fuente(21,600); x.fillText(f.pallet, W-PAD, y+78); }
+        x.fillStyle='#0f172a'; fuente(38,800); x.fillText(f.precio, W-PAD, f.pallet ? y+(dosDet?56:46) : y+62);
+        if(f.pallet){ x.fillStyle='#1e7a4a'; fuente(21,600); x.fillText(f.pallet, W-PAD, y+(dosDet?92:78)); }
         x.fillStyle='#e2e8f0'; x.fillRect(PAD, y+H_FILA-1, W-2*PAD, 1);
         y+=H_FILA;
       });
