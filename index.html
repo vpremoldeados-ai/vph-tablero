@@ -318,7 +318,7 @@
   /* ---------- PRODUCCIÓN / ENTREGAS (mobile-first) ---------- */
   .pe-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
   .pe-bigbtn{flex:1;min-width:200px;border:none;border-radius:14px;padding:20px 18px;font-size:18px;font-weight:800;cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;justify-content:center;box-shadow:var(--shadow)}
-  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)} .pe-bigbtn.rot{background:var(--red)}
+  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)} .pe-bigbtn.rot{background:var(--red)} .pe-bigbtn.sol{background:var(--amber)}
   .pe-bigbtn:active{transform:scale(.98)}
   .pe-qty{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--card)}
   .pe-qty .nm{font-weight:700;font-size:14px;flex:1}
@@ -1260,6 +1260,18 @@
       </section>
     </div>
 
+    <!-- Sub-vista: PEDIDOS DE COMPRA (lo que Gustavo pide que se compre) -->
+    <div id="pe-view-solic" style="display:none">
+      <div class="pe-actions">
+        <button class="pe-bigbtn sol" id="pe-btn-solic">📝 Pedir un insumo</button>
+      </div>
+      <section>
+        <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--amber)"></span>Pedidos de compra</h2>
+        <div class="asof" id="pe-sol-asof"></div>
+        <div id="pe-sol-lista"></div>
+        <p class="note">Acá <b>Gustavo anota lo que hace falta comprar</b>, con la fecha del día. Marcelo y Sofía lo ven, lo compran y marcan <b>📦 Entregado en fábrica</b>. Tres estados: <b style="color:var(--amber)">pendiente</b> (hay que comprarlo) → <b style="color:#6d28d9">comprado</b> (ya se compró, falta llevarlo) → <b style="color:var(--green)">entregado</b>.<br>🔴 Si el pedido está <b>vinculado a un insumo de la lista</b> (lo elegís del autocompletado), al marcarlo entregado <b>suma al stock</b> por el mismo camino que el 📦 Ingreso a fábrica — igual que si hubiera llegado un pedido al proveedor. Si es algo suelto (un repuesto, una herramienta), solo queda registrado.<br>Es para lo que hace falta <b>ahora</b>: lo que se repone solo por mínimo ya aparece en 📋 Conteo semanal.</p>
+      </section>
+    </div>
     <!-- Sub-vista: COORDINAR ENTREGAS -->
     <div id="pe-view-coord" style="display:none">
       <section>
@@ -1364,6 +1376,13 @@
     <div class="cmp-dialog" style="max-width:560px">
       <div class="cmp-dialog-head"><h3>💥 Rotura o descarte</h3><button class="cmp-x" id="pe-rot-cerrar">✕</button></div>
       <div class="cmp-dialog-body" id="pe-form-rot"></div>
+    </div>
+  </div>
+  <!-- Overlay: pedir un insumo (lo carga Gustavo desde la fábrica) -->
+  <div class="cmp-overlay" id="pe-modal-solic">
+    <div class="cmp-dialog" style="max-width:520px">
+      <div class="cmp-dialog-head"><h3>📝 Pedir un insumo</h3><button class="cmp-x" id="pe-sol-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-solic"></div>
     </div>
   </div>
   <!-- Overlay: conteo de productos (teórico vs real) -->
@@ -14086,7 +14105,7 @@ function buildFilterTable(cfg){
   // Se agregan también config (parámetros que tunea Marcelo), reportes (la foto del cierre de la que
   // todavía salen el débito VISA y el margen histórico) y roles (para poder reconstruir los permisos).
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
-    'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
+    'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes','vph_solicitudes',
     'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
     'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_asistencia','vph_topes_prospectos','vph_ig_mensajes'];
   const BACKUP_KEY='vph_ultimo_backup';
@@ -18873,7 +18892,7 @@ function buildFilterTable(cfg){
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[];
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[], solicitudes=[];
   let asisMes=null;   // 'AAAA-MM' que muestra la pestaña ⏰ Asistencia; null = mes en curso
   let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
@@ -19371,16 +19390,17 @@ function buildFilterTable(cfg){
        lado. También suma ahora los urgentes por demora (stock arriba del mínimo pero que no llega
        hasta que el proveedor entrega), que antes no aparecían acá. */
     const aPedir=insPedibles().length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['solic','🛒 Pedidos de compra'+(solPend().length?' ('+solPend().length+')':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
+    $('pe-view-solic').style.display = tab==='solic'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
     $('pe-view-entregado').style.display = tab==='entregado'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
     renderKpis();
     renderAsis();   // página ⏰ Asistencia: se repinta con cada cambio de datos
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='solic') renderSolic(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -19958,6 +19978,152 @@ function buildFilterTable(cfg){
       (m.unidades===0?'<div>Este mes todavía no se cargó ninguna rotura.</div>':'')+'</div></div>';
   }
 
+  /* ---------- PEDIDOS DE COMPRA (04/11) ----------
+     Gustavo anota lo que hace falta comprar, con la fecha; Marcelo y Sofía lo compran y registran
+     la entrega. Es el camino para lo que hace falta AHORA: lo que se repone solo por mínimo ya lo
+     marca `insEstado` en el Conteo semanal.
+     Estados: 'pendiente' (hay que comprarlo) → 'comprado' (está en la camioneta) → 'entregado'.
+     🔴 El stock sube SOLO al entregar y SOLO si la solicitud quedó vinculada a un insumo del maestro
+     (`insumoUid`), y pasa por `insEntregaUpd` — el MISMO camino que el 📦 Ingreso a fábrica. Nunca se
+     escribe `stock` desde acá: si hubiera dos cuentas distintas, el conteo de Gustavo dejaría de cerrar. */
+  const SOL_COL = 'vph_solicitudes';
+  const solPend  = ()=> solicitudes.filter(s=> (s.estado||'pendiente')==='pendiente');
+  const solComp  = ()=> solicitudes.filter(s=> s.estado==='comprado');
+  const solEntr  = ()=> solicitudes.filter(s=> s.estado==='entregado');
+  // Orden de atención: primero lo urgente, después lo que hace más tiempo que espera.
+  function solOrden(a,b){ return (b.urgente?1:0)-(a.urgente?1:0) || String(a.fecha||'').localeCompare(String(b.fecha||'')); }
+  function solDias(s){ const f=parseISO(s&&s.fecha); if(!f) return 0; return Math.max(0, Math.round((HOY-f)/86400000)); }
+  function solGuardar(s){
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return null; }
+    const uid = s._uid || ('sol_'+uniq());
+    const doc = {...s, _uid:uid};
+    const i = solicitudes.findIndex(x=>x._uid===uid);
+    if(i>=0) solicitudes[i]=doc; else solicitudes.push(doc);   // copia local ANTES del setDoc (§3)
+    c.FS.setDoc(c.FS.doc(c.db, SOL_COL, uid), doc).catch(e=>{ console.error('solicitud:',e); alert('No se pudo guardar el pedido: '+e.message); });
+    return doc;
+  }
+  function openSolic(){
+    const lista = insumos.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+    $('pe-form-solic').innerHTML =
+      '<div class="cmp-field"><label>¿Qué día lo pedís?</label><input type="date" id="pe-sol-fecha" value="'+hoyISO+'" style="max-width:200px"></div>'+
+      '<div class="cmp-field"><label>¿Qué hace falta comprar?</label>'+
+        '<input type="text" id="pe-sol-item" list="pe-sol-dl" placeholder="Empezá a escribir: cemento, hierro, guantes..." autocomplete="off">'+
+        '<datalist id="pe-sol-dl">'+lista.map(x=>'<option value="'+esc(x.nombre||'')+'">').join('')+'</datalist>'+
+        '<div id="pe-sol-vinc" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div></div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
+        '<div class="cmp-field" style="margin:0"><label>Cantidad</label><input type="text" id="pe-sol-cant" inputmode="decimal" placeholder="ej: 10" style="max-width:120px"></div>'+
+        '<div class="cmp-field" style="margin:0"><label>Unidad</label><input type="text" id="pe-sol-unidad" placeholder="bolsas, kg, u" style="max-width:140px"></div>'+
+      '</div>'+
+      '<label style="display:flex;align-items:center;gap:9px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:14px">'+
+        '<input type="checkbox" id="pe-sol-urg" style="width:20px;height:20px;margin:0;flex:none"><span>🔥 <b>Es urgente</b> — hace falta para la producción de esta semana</span></label>'+
+      '<div class="cmp-field"><label>Para qué / dónde conseguirlo (opcional)</label><input type="text" id="pe-sol-nota" placeholder="ej: para la mezcladora chica, lo tiene Ferretería Toledo"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-sol-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-sol-save">Anotar el pedido</button></div>';
+    // Vincular con el maestro de insumos: así al entregarlo suma al stock por el camino de siempre.
+    function vincular(){
+      const x = insumoPorNombre($('pe-sol-item').value);
+      const box = $('pe-sol-vinc');
+      if(x){ box.innerHTML='✅ Es <b>'+esc(x.nombre)+'</b> de la lista'+(provDe(x)!=='Sin proveedor'?(' ('+esc(provDe(x))+')'):'')+': al entregarlo <b>suma al stock</b>.';
+        box.style.color='var(--green)';
+        const u=$('pe-sol-unidad'); if(!u.value.trim() && x.unidad) u.value=x.unidad; }
+      else if(String($('pe-sol-item').value||'').trim()){ box.innerHTML='Queda como pedido suelto (no está en la lista de insumos): se registra, pero <b>no mueve stock</b>.'; box.style.color='var(--muted)'; }
+      else box.textContent='';
+    }
+    $('pe-sol-item').addEventListener('input', vincular);
+    $('pe-sol-cancel').onclick=()=>$('pe-modal-solic').classList.remove('open');
+    $('pe-sol-save').onclick=()=>{
+      const item=String($('pe-sol-item').value||'').trim();
+      if(!item){ alert('Escribí qué hace falta comprar.'); return; }
+      const x=insumoPorNombre(item);
+      const s={ fecha:$('pe-sol-fecha').value||hoyISO, item: x? (x.nombre||item) : item, insumoUid: x? x._uid : '',
+        cantidad:num($('pe-sol-cant').value), unidad:String($('pe-sol-unidad').value||'').trim(),
+        urgente: !!$('pe-sol-urg').checked, nota:String($('pe-sol-nota').value||'').trim(),
+        estado:'pendiente', pidio:usuario(), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8) };
+      if(!solGuardar(s)) return;
+      $('pe-modal-solic').classList.remove('open');
+      render();
+      if(window.__refreshAlertas) window.__refreshAlertas();
+    };
+    $('pe-modal-solic').classList.add('open');
+  }
+  // Un insumo del maestro por nombre exacto (sin tildes ni mayúsculas), igual que el resto del módulo.
+  function insumoPorNombre(nom){ const n=norm(nom); if(!n) return null; return insumos.find(x=>norm(x.nombre)===n)||null; }
+
+  function solMarcarComprado(s){
+    const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva){ alert('Ese pedido ya no está.'); return; }
+    if(viva.estado!=='pendiente'){ alert('Ese pedido ya estaba '+esc(viva.estado)+'.'); return; }
+    if(!confirm('¿Marcar como COMPRADO?\n\n'+viva.item+'\n\nTodavía no suma al stock: eso pasa al marcarlo entregado en fábrica.')) return;
+    solGuardar({...viva, estado:'comprado', compraFechaSol:hoyISO, compraPor:usuario()});
+    render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+  function solMarcarEntregado(s){
+    const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva){ alert('Ese pedido ya no está.'); return; }
+    // Guarda contra el doble descuento/suma: entregar dos veces sumaría el stock dos veces.
+    if(viva.estado==='entregado'){ alert('Ese pedido ya figura entregado.'); return; }
+    const ins = viva.insumoUid ? insumos.find(x=>x._uid===viva.insumoUid) : null;
+    const cant = num(viva.cantidad);
+    const sumaStock = !!(ins && cant>0);
+    if(!confirm('¿Registrar que ya se entregó en fábrica?\n\n'+viva.item+(cant>0?(' · '+nf(cant)+(viva.unidad?' '+viva.unidad:'')):'')+
+      '\n\n'+(sumaStock ? ('Suma '+nf(cant)+(viva.unidad?' '+viva.unidad:'')+' al stock de '+ins.nombre+'.')
+        : (ins ? 'No se le cargó cantidad, así que NO mueve stock.' : 'Es un pedido suelto: no mueve stock.')))) return;
+    // El stock sube por insEntregaUpd, el MISMO camino que el 📦 Ingreso a fábrica. Nunca se escribe `stock` acá.
+    if(sumaStock){
+      const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      const cur = insumos.find(z=>z._uid===ins._uid) || ins;   // doc vivo al momento del click (§3)
+      const upd = insEntregaUpd(cur, cant, hoyISO);
+      Object.assign(cur, upd);
+      c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), upd, {merge:true})
+        .catch(e=>{ console.error('ingreso insumo:',e); alert('No se pudo sumar al stock: '+e.message); });
+    }
+    solGuardar({...viva, estado:'entregado', entregaFecha:hoyISO, entregaPor:usuario(), sumoStock:sumaStock});
+    render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+  function solBorrar(s){
+    const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva) return;
+    if(!confirm('¿Borrar este pedido?\n\n'+viva.item+'\n\n'+(viva.estado==='entregado'?'Ya figura entregado: el stock que sumó NO se descuenta.':'No se compró todavía.'))) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    solicitudes = solicitudes.filter(x=>x._uid!==viva._uid);
+    c.FS.deleteDoc(c.FS.doc(c.db, SOL_COL, viva._uid)).catch(e=>console.error('borrar solicitud:',e));
+    render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+
+  function renderSolic(){
+    const cont=$('pe-sol-lista'); if(!cont) return;
+    const pend=solPend().sort(solOrden), comp=solComp().sort(solOrden);
+    const entr=solEntr().sort((a,b)=>String(b.entregaFecha||b.fecha||'').localeCompare(String(a.entregaFecha||a.fecha||''))).slice(0,20);
+    const fila = (s,acc)=>{
+      const cant = num(s.cantidad)>0 ? (nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):'')) : '';
+      const dias = solDias(s);
+      return '<div class="pe-qty" style="align-items:flex-start'+(s.urgente&&s.estado!=='entregado'?';border-color:var(--red)':'')+'">'+
+        '<div style="flex:1;min-width:150px"><div class="nm">'+(s.urgente&&s.estado!=='entregado'?'🔥 ':'')+esc(s.item||'')+(cant?(' <span style="color:var(--blue)">· '+cant+'</span>'):'')+'</div>'+
+        '<div class="cd">pedido el '+fmtFecha(s.fecha)+(dias>0&&s.estado!=='entregado'?(' · hace '+dias+' día'+(dias!==1?'s':'')):'')+
+          (s.insumoUid?' · <span style="color:var(--green)">suma al stock</span>':'')+'</div>'+
+        (s.nota?('<div class="cd">'+esc(s.nota)+'</div>'):'')+
+        (s.estado==='comprado'&&s.compraFechaSol?('<div class="cd" style="color:#6d28d9;font-weight:700">comprado el '+fmtFecha(s.compraFechaSol)+' — falta llevarlo a la fábrica</div>'):'')+
+        (s.estado==='entregado'?('<div class="cd" style="color:var(--green);font-weight:700">entregado el '+fmtFecha(s.entregaFecha)+(s.sumoStock?' · sumó al stock':'')+'</div>'):'')+
+        '</div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+acc+'</div></div>';
+    };
+    const bloque=(titulo,color,arr,acc,vacio)=> '<div style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;color:'+color+';margin-bottom:6px">'+titulo+'</div>'+
+      (arr.length? arr.map(s=>fila(s,acc(s))).join('') : '<div style="font-size:12.5px;color:var(--muted);padding:6px 2px">'+vacio+'</div>')+'</div>';
+    const bComprar = s=> (esAdmin()? '<button class="cmp-btn" data-solact="comprado" data-soluid="'+esc(s._uid)+'">🛒 Ya lo compré</button>':'')+
+      '<button class="cmp-btn" data-solact="entregado" data-soluid="'+esc(s._uid)+'">📦 Entregado</button>'+
+      '<button class="cmp-btn" data-solact="borrar" data-soluid="'+esc(s._uid)+'" title="Borrar el pedido" style="border-color:var(--red);color:var(--red)">✕</button>';
+    const bEntregar = s=> '<button class="cmp-btn cmp-btn-primary" data-solact="entregado" data-soluid="'+esc(s._uid)+'">📦 Entregado en fábrica</button>'+
+      '<button class="cmp-btn" data-solact="borrar" data-soluid="'+esc(s._uid)+'" style="border-color:var(--red);color:var(--red)">✕</button>';
+    const bHecho = s=> '<button class="cmp-btn" data-solact="borrar" data-soluid="'+esc(s._uid)+'" title="Borrar del historial" style="border-color:var(--red);color:var(--red)">✕</button>';
+    cont.innerHTML =
+      bloque('🛒 Para comprar ('+pend.length+')','var(--amber)',pend,bComprar,'Nada pendiente. Gustavo anota acá lo que haga falta con 📝 Pedir un insumo.')+
+      bloque('🛻 Comprado, falta entregarlo en fábrica ('+comp.length+')','#6d28d9',comp,bEntregar,'Nada en la camioneta.')+
+      bloque('✅ Entregados (últimos '+entr.length+')','var(--green)',entr,bHecho,'Todavía no se entregó ningún pedido.');
+    cont.querySelectorAll('button[data-solact]').forEach(b=> b.onclick=()=>{
+      const s=solicitudes.find(x=>x._uid===b.dataset.soluid); if(!s) return;
+      const a=b.dataset.solact;
+      if(a==='comprado') solMarcarComprado(s); else if(a==='entregado') solMarcarEntregado(s); else solBorrar(s);
+    });
+    const urg=pend.filter(s=>s.urgente).length;
+    $('pe-sol-asof').textContent = pend.length
+      ? (pend.length+' pedido'+(pend.length!==1?'s':'')+' para comprar'+(urg?(' · 🔥 '+urg+' urgente'+(urg!==1?'s':'')):'')+(comp.length?(' · '+comp.length+' comprado'+(comp.length!==1?'s':'')+' sin entregar'):''))
+      : (comp.length? (comp.length+' comprado'+(comp.length!==1?'s':'')+' sin entregar') : 'Sin pedidos pendientes');
+  }
   // Conteo de PRODUCTOS: teórico (físico) vs contado → ajuste por la diferencia
   function openConteoProd(){
     const act=activos();
@@ -22005,7 +22171,7 @@ function buildFilterTable(cfg){
     // pasó a Producción, y sin este aviso seguiría marcando como pendiente una que ya se pasó.
     sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar();
       if(window.__cajaRefresh) window.__cajaRefresh(); });   // la fecha de cobro de cada venta (Caja) sale de la entrega
-    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a);
+    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); sub('vph_solicitudes',a=>solicitudes=a);
     sub('vph_asistencia',a=>asis=a);   // llegadas tarde y ausencias (⏰ Asistencia): lo carga Gustavo
     // Los feriados los consumen OTROS módulos (e-cheqs, VIUMI, tarjeta) a través de __esFeriado, así
     // que al llegar la lista hay que avisarles: si no, la primera pantalla que se abra calcula sin
@@ -22013,7 +22179,7 @@ function buildFilterTable(cfg){
     sub('vph_feriados',a=>{ feriados=a; if(window.__refreshAlertas) window.__refreshAlertas(); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[];asis=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[];asis=[];solicitudes=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
@@ -22035,10 +22201,18 @@ function buildFilterTable(cfg){
     // registre el ingreso, el stock sigue mostrando el faltante y Gustavo no lo puede usar.
     const insComp=insComprados();
     if(insComp.length) A.push({sev:'warn', area:'Logística', t:'🛻 '+insComp.length+' insumo'+(insComp.length>1?'s':'')+' comprado'+(insComp.length>1?'s':'')+' sin entregar en fábrica: '+insComp.slice(0,3).map(x=>x.nombre).join(', ')+(insComp.length>3?'…':''), act:'Descargarlo y registrarlo con 📦 Ingreso a fábrica — recién ahí entra al stock.', go:{page:'Producción y Logística'}});
+    // Pedidos de compra que anotó Gustavo (04/11): es lo que pidió a mano, no lo que dispara el mínimo.
+    // Va como alerta porque Marcelo y Sofía no entran al módulo de Producción todos los días.
+    const solP=solPend(), solU=solP.filter(s=>s.urgente), solC=solComp();
+    if(solU.length) A.push({sev:'bad', area:'Logística', t:'🔥 '+solU.length+' pedido'+(solU.length>1?'s':'')+' URGENTE'+(solU.length>1?'S':'')+' de Gustavo sin comprar: '+solU.slice(0,3).map(s=>s.item).join(', ')+(solU.length>3?'…':''), act:'Comprarlo hoy (🛒 Pedidos de compra en Producción y Logística).', go:{page:'Producción y Logística'}});
+    const solN=solP.filter(s=>!s.urgente);
+    if(solN.length) A.push({sev:'warn', area:'Logística', t:solN.length+' pedido'+(solN.length>1?'s':'')+' de compra de Gustavo sin comprar: '+solN.slice(0,3).map(s=>s.item).join(', ')+(solN.length>3?'…':''), act:'Revisarlo en 🛒 Pedidos de compra.', go:{page:'Producción y Logística'}});
+    if(solC.length) A.push({sev:'warn', area:'Logística', t:'🛻 '+solC.length+' pedido'+(solC.length>1?'s':'')+' comprado'+(solC.length>1?'s':'')+' sin entregar en fábrica: '+solC.slice(0,3).map(s=>s.item).join(', ')+(solC.length>3?'…':''), act:'Llevarlo y marcar 📦 Entregado — recién ahí suma al stock.', go:{page:'Producción y Logística'}});
     const sem=semanaKg(); if(sem.kg>0 && sem.prom<OBJ()) A.push({sev:'warn', area:'Producción', t:'Producción por debajo del objetivo: '+nf(sem.prom)+' kg/día vs '+nf(OBJ())+' objetivo (semana en curso)', act:'Revisar con Gustavo cuellos de botella: mesas, moldes, cuadrilla.', go:{page:'Producción y Logística'}});
     return A; });
   $('pe-btn-prod').onclick=openProd;
   $('pe-btn-rotura').onclick=openRotura;
+  $('pe-btn-solic').onclick=openSolic;
   $('pe-btn-asis').onclick=openAsis;
   $('pe-asis-mes').onchange=e=>{ asisMes=e.target.value||null; renderAsis(); };
   $('pe-asis-cerrar').onclick=()=>$('pe-modal-asis').classList.remove('open');
@@ -22054,6 +22228,7 @@ function buildFilterTable(cfg){
   { const fc=$('pe-fer-cerrar'); if(fc) fc.onclick=()=>$('pe-modal-fer').classList.remove('open'); }
   $('pe-prod-cerrar').onclick=()=>$('pe-modal-prod').classList.remove('open');
   $('pe-rot-cerrar').onclick=()=>$('pe-modal-rot').classList.remove('open');
+  $('pe-sol-cerrar').onclick=()=>$('pe-modal-solic').classList.remove('open');
   $('pe-ent-cerrar').onclick=()=>$('pe-modal-ent').classList.remove('open');
   $('pe-conteo-cerrar').onclick=()=>$('pe-modal-conteo').classList.remove('open');
   $('pe-ins-cerrar').onclick=()=>$('pe-modal-ins').classList.remove('open');
@@ -22063,7 +22238,7 @@ function buildFilterTable(cfg){
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   if($('pe-m2-consulta')) $('pe-m2-consulta').addEventListener('input',()=>render());
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
-  [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+  [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-solic'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
 })();
 </script>
