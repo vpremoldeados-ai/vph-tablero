@@ -280,7 +280,7 @@
   
   .pe-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
   .pe-bigbtn{flex:1;min-width:200px;border:none;border-radius:14px;padding:20px 18px;font-size:18px;font-weight:800;cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;justify-content:center;box-shadow:var(--shadow)}
-  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)} .pe-bigbtn.rot{background:var(--red)}
+  .pe-bigbtn.prod{background:var(--blue)} .pe-bigbtn.ent{background:var(--accent)} .pe-bigbtn.rot{background:var(--red)} .pe-bigbtn.sol{background:var(--amber)}
   .pe-bigbtn:active{transform:scale(.98)}
   .pe-qty{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--card)}
   .pe-qty .nm{font-weight:700;font-size:14px;flex:1}
@@ -1731,6 +1731,18 @@ window.__demoSeed = function () {
     </div>
 
     
+    <div id="pe-view-solic" style="display:none">
+      <div class="pe-actions">
+        <button class="pe-bigbtn sol" id="pe-btn-solic">📝 Pedir un insumo</button>
+      </div>
+      <section>
+        <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--amber)"></span>Pedidos de compra</h2>
+        <div class="asof" id="pe-sol-asof"></div>
+        <div id="pe-sol-lista"></div>
+        <p class="note">Acá <b>Gustavo anota lo que hace falta comprar</b>, con la fecha del día. Marcelo y Sofía lo ven, lo compran y marcan <b>📦 Entregado en fábrica</b>. Tres estados: <b style="color:var(--amber)">pendiente</b> (hay que comprarlo) → <b style="color:#6d28d9">comprado</b> (ya se compró, falta llevarlo) → <b style="color:var(--green)">entregado</b>.<br>🔴 Si el pedido está <b>vinculado a un insumo de la lista</b> (lo elegís del autocompletado), al marcarlo entregado <b>suma al stock</b> por el mismo camino que el 📦 Ingreso a fábrica — igual que si hubiera llegado un pedido al proveedor. Si es algo suelto (un repuesto, una herramienta), solo queda registrado.<br>Es para lo que hace falta <b>ahora</b>: lo que se repone solo por mínimo ya aparece en 📋 Conteo semanal.</p>
+      </section>
+    </div>
+    
     <div id="pe-view-coord" style="display:none">
       <section>
         <h2 style="margin:0 0 2px"><span class="dot" style="background:var(--blue)"></span>Viajes armados — carga por camión</h2>
@@ -1834,6 +1846,13 @@ window.__demoSeed = function () {
     <div class="cmp-dialog" style="max-width:560px">
       <div class="cmp-dialog-head"><h3>💥 Rotura o descarte</h3><button class="cmp-x" id="pe-rot-cerrar">✕</button></div>
       <div class="cmp-dialog-body" id="pe-form-rot"></div>
+    </div>
+  </div>
+  
+  <div class="cmp-overlay" id="pe-modal-solic">
+    <div class="cmp-dialog" style="max-width:520px">
+      <div class="cmp-dialog-head"><h3>📝 Pedir un insumo</h3><button class="cmp-x" id="pe-sol-cerrar">✕</button></div>
+      <div class="cmp-dialog-body" id="pe-form-solic"></div>
     </div>
   </div>
   
@@ -14467,7 +14486,7 @@ function buildFilterTable(cfg){
    
    
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
-    'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes',
+    'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes','vph_solicitudes',
     'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
     'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_asistencia','vph_topes_prospectos','vph_ig_mensajes'];
   const BACKUP_KEY='vph_ultimo_backup';
@@ -19221,7 +19240,7 @@ function buildFilterTable(cfg){
   window.__transportes = ()=> TRANSPORTES.slice();
   const EST_PED=[{k:'pendiente',l:'Pendiente',c:'#c98a06'},{k:'programado',l:'Programado',c:'#2f6fb2'},{k:'entregado',l:'Entregado',c:'#1e9e5a'}];
 
-  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[];
+  let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[], solicitudes=[];
   let asisMes=null;    
   let tab='stock', q='', qPed='', filtroPed='activos';
   const unsub={}; let seq=0;
@@ -19715,16 +19734,17 @@ function buildFilterTable(cfg){
     
 
     const aPedir=insPedibles().length;
-    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
+    $('pe-tabs').innerHTML = [['stock','📦 Stock y faltantes'],['conteo','📋 Conteo semanal'+(aPedir?' ('+aPedir+' a pedir)':'')],['solic','🛒 Pedidos de compra'+(solPend().length?' ('+solPend().length+')':'')],['coord','🚚 Coordinar entregas ('+pedidos.filter(p=>p.estado!=='entregado').length+')'],['entregado','📋 Entregas realizadas ('+pedidos.filter(p=>p.estado==='entregado').length+')'],['mensual','📅 Producción mensual']].map(([k,l])=>'<button class="filter-btn'+(tab===k?' active':'')+'" data-petab="'+k+'">'+l+'</button>').join('');
     $('pe-tabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ tab=b.dataset.petab; render(); });
     $('pe-view-stock').style.display = tab==='stock'?'':'none';
     $('pe-view-conteo').style.display = tab==='conteo'?'':'none';
+    $('pe-view-solic').style.display = tab==='solic'?'':'none';
     $('pe-view-coord').style.display = tab==='coord'?'':'none';
     $('pe-view-entregado').style.display = tab==='entregado'?'':'none';
     $('pe-view-mensual').style.display = tab==='mensual'?'':'none';
     renderKpis();
     renderAsis();    
-    if(tab==='stock') renderStock(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
+    if(tab==='stock') renderStock(); else if(tab==='solic') renderSolic(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
   function renderKpis(){
@@ -20261,6 +20281,187 @@ function buildFilterTable(cfg){
       (m.unidades===0?'<div>Este mes todavía no se cargó ninguna rotura.</div>':'')+'</div></div>';
   }
 
+  
+
+  const SOL_COL = 'vph_solicitudes';
+  const solPend  = ()=> solicitudes.filter(s=> (s.estado||'pendiente')==='pendiente');
+  const solComp  = ()=> solicitudes.filter(s=> s.estado==='comprado');
+  const solEntr  = ()=> solicitudes.filter(s=> s.estado==='entregado');
+   
+   
+   
+   
+  const solEnRuta = ()=> solicitudes.filter(s=> (s.estado||'pendiente')==='pendiente' && s.rutaFecha);
+  const solParaRuta = ()=> solicitudes.filter(s=> (s.estado||'pendiente')==='pendiente' && !s.rutaFecha);
+  const solCompradas = ()=> solicitudes.filter(s=> s.estado==='comprado');
+   
+  const SIN_PROV = 'Sin proveedor';
+  function provDeSol(s){
+    const p = String((s&&s.proveedor)||'').trim();
+    if(p) return p;
+    const ins = s&&s.insumoUid ? insumos.find(x=>x._uid===s.insumoUid) : null;
+    return ins ? provDe(ins) : SIN_PROV;
+  }
+  function solOrden(a,b){ return (b.urgente?1:0)-(a.urgente?1:0) || String(a.fecha||'').localeCompare(String(b.fecha||'')); }
+  function solDias(s){ const f=parseISO(s&&s.fecha); if(!f) return 0; return Math.max(0, Math.round((HOY-f)/86400000)); }
+  function solGuardar(s){
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return null; }
+    const uid = s._uid || ('sol_'+uniq());
+    const doc = {...s, _uid:uid};
+    const i = solicitudes.findIndex(x=>x._uid===uid);
+    if(i>=0) solicitudes[i]=doc; else solicitudes.push(doc);    
+    c.FS.setDoc(c.FS.doc(c.db, SOL_COL, uid), doc).catch(e=>{ console.error('solicitud:',e); alert('No se pudo guardar el pedido: '+e.message); });
+    return doc;
+  }
+  function openSolic(){
+    const lista = insumos.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+    $('pe-form-solic').innerHTML =
+      '<div class="cmp-field"><label>¿Qué día lo pedís?</label><input type="date" id="pe-sol-fecha" value="'+hoyISO+'" style="max-width:200px"></div>'+
+      '<div class="cmp-field"><label>¿Qué hace falta comprar?</label>'+
+        '<input type="text" id="pe-sol-item" list="pe-sol-dl" placeholder="Empezá a escribir: cemento, hierro, guantes..." autocomplete="off">'+
+        '<datalist id="pe-sol-dl">'+lista.map(x=>'<option value="'+esc(x.nombre||'')+'">').join('')+'</datalist>'+
+        '<div id="pe-sol-vinc" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div></div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
+        '<div class="cmp-field" style="margin:0"><label>Cantidad</label><input type="text" id="pe-sol-cant" inputmode="decimal" placeholder="ej: 10" style="max-width:120px"></div>'+
+        '<div class="cmp-field" style="margin:0"><label>Unidad</label><input type="text" id="pe-sol-unidad" placeholder="bolsas, kg, u" style="max-width:140px"></div>'+
+      '</div>'+
+      '<label style="display:flex;align-items:center;gap:9px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:14px">'+
+        '<input type="checkbox" id="pe-sol-urg" style="width:20px;height:20px;margin:0;flex:none"><span>🔥 <b>Es urgente</b> — hace falta para la producción de esta semana</span></label>'+
+      '<div class="cmp-field"><label>¿Dónde se compra? (opcional)</label>'+
+        '<input type="text" id="pe-sol-prov" list="pe-sol-dlprov" placeholder="ej: Ferretería Toledo" autocomplete="off">'+
+        '<datalist id="pe-sol-dlprov">'+provsConocidos().map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>'+
+        '<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Con el proveedor cargado, el pedido se suma solo a la <b>🚚 Ruta de compra</b>, en la parada de ese negocio.</div></div>'+
+      '<div class="cmp-field"><label>Para qué (opcional)</label><input type="text" id="pe-sol-nota" placeholder="ej: para la mezcladora chica"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-sol-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-sol-save">Anotar el pedido</button></div>';
+     
+    function vincular(){
+      const x = insumoPorNombre($('pe-sol-item').value);
+      const box = $('pe-sol-vinc');
+      if(x){ box.innerHTML='✅ Es <b>'+esc(x.nombre)+'</b> de la lista'+(provDe(x)!=='Sin proveedor'?(' ('+esc(provDe(x))+')'):'')+': al entregarlo <b>suma al stock</b>.';
+        box.style.color='var(--green)';
+        const u=$('pe-sol-unidad'); if(!u.value.trim() && x.unidad) u.value=x.unidad;
+        const pv=$('pe-sol-prov'); if(pv && !pv.value.trim() && provDe(x)!==SIN_PROV) pv.value=provDe(x); }
+      else if(String($('pe-sol-item').value||'').trim()){ box.innerHTML='Queda como pedido suelto (no está en la lista de insumos): se registra, pero <b>no mueve stock</b>.'; box.style.color='var(--muted)'; }
+      else box.textContent='';
+    }
+    $('pe-sol-item').addEventListener('input', vincular);
+    $('pe-sol-cancel').onclick=()=>$('pe-modal-solic').classList.remove('open');
+    $('pe-sol-save').onclick=()=>{
+      const item=String($('pe-sol-item').value||'').trim();
+      if(!item){ alert('Escribí qué hace falta comprar.'); return; }
+      const x=insumoPorNombre(item);
+      const s={ fecha:$('pe-sol-fecha').value||hoyISO, item: x? (x.nombre||item) : item, insumoUid: x? x._uid : '',
+        proveedor:String($('pe-sol-prov').value||'').trim(),
+        cantidad:num($('pe-sol-cant').value), unidad:String($('pe-sol-unidad').value||'').trim(),
+        urgente: !!$('pe-sol-urg').checked, nota:String($('pe-sol-nota').value||'').trim(),
+        estado:'pendiente', pidio:usuario(), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8) };
+      if(!solGuardar(s)) return;
+      $('pe-modal-solic').classList.remove('open');
+      render();
+      if(window.__refreshAlertas) window.__refreshAlertas();
+    };
+    $('pe-modal-solic').classList.add('open');
+  }
+   
+   
+   
+  function provsConocidos(){
+    const set={};
+    insumos.forEach(x=>{ const p=provDe(x); if(p && p!==SIN_PROV) set[p]=1; });
+    solicitudes.forEach(s=>{ const p=String(s.proveedor||'').trim(); if(p) set[p]=1; });
+    return Object.keys(set).sort((a,b)=>a.localeCompare(b));
+  }
+  function insumoPorNombre(nom){ const n=norm(nom); if(!n) return null; return insumos.find(x=>norm(x.nombre)===n)||null; }
+
+  function solMarcarComprado(s){
+    const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva){ alert('Ese pedido ya no está.'); return; }
+    if(viva.estado!=='pendiente'){ alert('Ese pedido ya estaba '+esc(viva.estado)+'.'); return; }
+    if(!confirm('¿Marcar como COMPRADO?\n\n'+viva.item+'\n\nTodavía no suma al stock: eso pasa al marcarlo entregado en fábrica.')) return;
+    solGuardar({...viva, estado:'comprado', compraFechaSol:hoyISO, compraPor:usuario()});
+    render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+   
+   
+  function solEntregar(viva, c, cantReal){
+    if(!viva || viva.estado==='entregado') return false;
+    const ins = viva.insumoUid ? insumos.find(x=>x._uid===viva.insumoUid) : null;
+    const cant = num(cantReal!=null ? cantReal : viva.cantidad);
+     
+     
+    const sumaStock = !!(ins && cant>0 && !viva.stockPorInsumo);
+    if(sumaStock){
+      const cur = insumos.find(z=>z._uid===ins._uid) || ins;    
+      const upd = insEntregaUpd(cur, cant, hoyISO);
+      Object.assign(cur, upd);
+      c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), upd, {merge:true})
+        .catch(e=>{ console.error('ingreso insumo:',e); alert('No se pudo sumar al stock: '+e.message); });
+    }
+    solGuardar({...viva, estado:'entregado', entregaFecha:hoyISO, entregaPor:usuario(), sumoStock:sumaStock,
+      cantidad: cantReal!=null ? cant : viva.cantidad, rutaFecha:'', rutaOrden:''});
+    return true;
+  }
+  function solMarcarEntregado(s){
+    const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva){ alert('Ese pedido ya no está.'); return; }
+     
+    if(viva.estado==='entregado'){ alert('Ese pedido ya figura entregado.'); return; }
+    const ins = viva.insumoUid ? insumos.find(x=>x._uid===viva.insumoUid) : null;
+    const cant = num(viva.cantidad);
+    const sumaStock = !!(ins && cant>0);
+    if(!confirm('¿Registrar que ya se entregó en fábrica?\n\n'+viva.item+(cant>0?(' · '+nf(cant)+(viva.unidad?' '+viva.unidad:'')):'')+
+      '\n\n'+(sumaStock ? ('Suma '+nf(cant)+(viva.unidad?' '+viva.unidad:'')+' al stock de '+ins.nombre+'.')
+        : (ins ? 'No se le cargó cantidad, así que NO mueve stock.' : 'Es un pedido suelto: no mueve stock.')))) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    solEntregar(viva, c);    
+    render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+  function solBorrar(s){
+    const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva) return;
+    if(!confirm('¿Borrar este pedido?\n\n'+viva.item+'\n\n'+(viva.estado==='entregado'?'Ya figura entregado: el stock que sumó NO se descuenta.':'No se compró todavía.'))) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    solicitudes = solicitudes.filter(x=>x._uid!==viva._uid);
+    c.FS.deleteDoc(c.FS.doc(c.db, SOL_COL, viva._uid)).catch(e=>console.error('borrar solicitud:',e));
+    render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+
+  function renderSolic(){
+    const cont=$('pe-sol-lista'); if(!cont) return;
+    const pend=solPend().sort(solOrden), comp=solComp().sort(solOrden);
+    const entr=solEntr().sort((a,b)=>String(b.entregaFecha||b.fecha||'').localeCompare(String(a.entregaFecha||a.fecha||''))).slice(0,20);
+    const fila = (s,acc)=>{
+      const cant = num(s.cantidad)>0 ? (nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):'')) : '';
+      const dias = solDias(s);
+      return '<div class="pe-qty" style="align-items:flex-start'+(s.urgente&&s.estado!=='entregado'?';border-color:var(--red)':'')+'">'+
+        '<div style="flex:1;min-width:150px"><div class="nm">'+(s.urgente&&s.estado!=='entregado'?'🔥 ':'')+esc(s.item||'')+(cant?(' <span style="color:var(--blue)">· '+cant+'</span>'):'')+'</div>'+
+        '<div class="cd">pedido el '+fmtFecha(s.fecha)+(dias>0&&s.estado!=='entregado'?(' · hace '+dias+' día'+(dias!==1?'s':'')):'')+
+          (provDeSol(s)!==SIN_PROV?(' · 🏪 '+esc(provDeSol(s))):'')+(s.rutaFecha&&s.estado==='pendiente'?' · <span style="color:var(--blue)">🧭 en la ruta</span>':'')+
+          (s.insumoUid?' · <span style="color:var(--green)">suma al stock</span>':'')+'</div>'+
+        (s.nota?('<div class="cd">'+esc(s.nota)+'</div>'):'')+
+        (s.estado==='comprado'&&s.compraFechaSol?('<div class="cd" style="color:#6d28d9;font-weight:700">comprado el '+fmtFecha(s.compraFechaSol)+' — falta llevarlo a la fábrica</div>'):'')+
+        (s.estado==='entregado'?('<div class="cd" style="color:var(--green);font-weight:700">entregado el '+fmtFecha(s.entregaFecha)+(s.sumoStock?' · sumó al stock':'')+'</div>'):'')+
+        '</div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+acc+'</div></div>';
+    };
+    const bloque=(titulo,color,arr,acc,vacio)=> '<div style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;color:'+color+';margin-bottom:6px">'+titulo+'</div>'+
+      (arr.length? arr.map(s=>fila(s,acc(s))).join('') : '<div style="font-size:12.5px;color:var(--muted);padding:6px 2px">'+vacio+'</div>')+'</div>';
+    const bComprar = s=> (esAdmin()? '<button class="cmp-btn" data-solact="comprado" data-soluid="'+esc(s._uid)+'">🛒 Ya lo compré</button>':'')+
+      '<button class="cmp-btn" data-solact="entregado" data-soluid="'+esc(s._uid)+'">📦 Entregado</button>'+
+      '<button class="cmp-btn" data-solact="borrar" data-soluid="'+esc(s._uid)+'" title="Borrar el pedido" style="border-color:var(--red);color:var(--red)">✕</button>';
+    const bEntregar = s=> '<button class="cmp-btn cmp-btn-primary" data-solact="entregado" data-soluid="'+esc(s._uid)+'">📦 Entregado en fábrica</button>'+
+      '<button class="cmp-btn" data-solact="borrar" data-soluid="'+esc(s._uid)+'" style="border-color:var(--red);color:var(--red)">✕</button>';
+    const bHecho = s=> '<button class="cmp-btn" data-solact="borrar" data-soluid="'+esc(s._uid)+'" title="Borrar del historial" style="border-color:var(--red);color:var(--red)">✕</button>';
+    cont.innerHTML =
+      bloque('🛒 Para comprar ('+pend.length+')','var(--amber)',pend,bComprar,'Nada pendiente. Gustavo anota acá lo que haga falta con 📝 Pedir un insumo.')+
+      bloque('🛻 Comprado, falta entregarlo en fábrica ('+comp.length+')','#6d28d9',comp,bEntregar,'Nada en la camioneta.')+
+      bloque('✅ Entregados (últimos '+entr.length+')','var(--green)',entr,bHecho,'Todavía no se entregó ningún pedido.');
+    cont.querySelectorAll('button[data-solact]').forEach(b=> b.onclick=()=>{
+      const s=solicitudes.find(x=>x._uid===b.dataset.soluid); if(!s) return;
+      const a=b.dataset.solact;
+      if(a==='comprado') solMarcarComprado(s); else if(a==='entregado') solMarcarEntregado(s); else solBorrar(s);
+    });
+    const urg=pend.filter(s=>s.urgente).length;
+    $('pe-sol-asof').textContent = pend.length
+      ? (pend.length+' pedido'+(pend.length!==1?'s':'')+' para comprar'+(urg?(' · 🔥 '+urg+' urgente'+(urg!==1?'s':'')):'')+(comp.length?(' · '+comp.length+' comprado'+(comp.length!==1?'s':'')+' sin entregar'):''))
+      : (comp.length? (comp.length+' comprado'+(comp.length!==1?'s':'')+' sin entregar') : 'Sin pedidos pendientes');
+  }
    
   function openConteoProd(){
     const act=activos();
@@ -20450,6 +20651,19 @@ function buildFilterTable(cfg){
      
     const wr=(x,campos)=>{ const cur=vivo(x); Object.assign(cur,campos);
       c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), campos, {merge:true}).catch(e=>alert('No se pudo guardar: '+e.message)); };
+     
+    const wrSol=(s,campos)=>{ const viva=solicitudes.find(z=>z._uid===s._uid)||s; solGuardar({...viva, ...campos}); };
+     
+     
+     
+     
+     
+    const solRow=(s, ins)=>
+      '<div class="pe-qty"><div><div class="nm">📝 '+esc(s.item||'')+(s.urgente?' <span style="color:var(--red);font-size:11px">🔥</span>':'')+'</div>'+
+        '<div class="cd">lo pidió '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+' el '+fmtFecha(s.fecha)+
+          (ins? (' · stock '+nf(num(ins.stock))+(num(ins.stockMinimo)>0?' de '+nf(num(ins.stockMinimo))+' mín':'')+' · sugerido '+nf(insPedirSugerido(ins))) : '')+
+          (s.insumoUid?' · suma al stock':'')+(s.nota?' · '+esc(s.nota):'')+'</div></div>'+
+        '<input data-rs="'+esc(s._uid)+'" inputmode="decimal"'+(num(s.cantidad)>0?' value="'+nf(num(s.cantidad))+'"':'')+' placeholder="cant." style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>';
     const qtyRow=(x,val,extra)=>
       '<div class="pe-qty"><div><div class="nm">'+esc(x.nombre||'')+(insEstado(x)==='urgente'?' <span style="color:var(--red);font-size:11px">🔴</span>':'')+'</div>'+
         '<div class="cd">'+(x.unidad?esc(x.unidad)+' · ':'')+'stock '+nf(num(x.stock))+(num(x.stockMinimo)>0?' de '+nf(num(x.stockMinimo))+' mín':'')+(extra||'')+'</div></div>'+
@@ -20458,12 +20672,19 @@ function buildFilterTable(cfg){
     function pintar(){
        
       const gr={}; insEnRuta().forEach(x=>{ const p=provDe(x); (gr[p]=gr[p]||[]).push(x); });
-      const paradas=Object.keys(gr).sort((a,b)=> ordParada(gr[a])-ordParada(gr[b]) || a.localeCompare(b));
+      const grS={}; solEnRuta().forEach(s=>{ const p=provDeSol(s); (grS[p]=grS[p]||[]).push(s); });
+      const paradas=[...new Set([...Object.keys(gr), ...Object.keys(grS)])]
+        .sort((a,b)=> ordParada(gr[a]||grS[a]||[])-ordParada(gr[b]||grS[b]||[]) || a.localeCompare(b));
        
        
       const pend={}; insPedibles().forEach(x=>{ const p=provDe(x); (pend[p]=pend[p]||[]).push(x); });
-      const provPend=Object.keys(pend).sort((a,b)=>
-        (pend[b].some(x=>insEstado(x)==='urgente')?1:0)-(pend[a].some(x=>insEstado(x)==='urgente')?1:0) || a.localeCompare(b));
+       
+       
+      const pendS={}; solParaRuta().forEach(s=>{ const p=provDeSol(s); (pendS[p]=pendS[p]||[]).push(s); });
+      const provPend=[...new Set([...Object.keys(pend), ...Object.keys(pendS)])].sort((a,b)=>{
+        const ua=(pend[a]||[]).some(x=>insEstado(x)==='urgente')||(pendS[a]||[]).some(s=>s.urgente);
+        const ub=(pend[b]||[]).some(x=>insEstado(x)==='urgente')||(pendS[b]||[]).some(s=>s.urgente);
+        return (ub?1:0)-(ua?1:0) || (a===SIN_PROV?1:0)-(b===SIN_PROV?1:0) || a.localeCompare(b); });
       const camioneta=insComprados();
 
       let h='<h3 style="margin:0 0 4px;font-size:15px">🚚 Ruta de compra</h3>'+
@@ -20474,18 +20695,21 @@ function buildFilterTable(cfg){
       if(paradas.length){
         h+='<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">🧭 Tu ruta ('+paradas.length+' parada'+(paradas.length!==1?'s':'')+')</div>';
         paradas.forEach((p,i)=>{
-          const items=gr[p].slice().sort(ordenIns);
+          const items=(gr[p]||[]).slice().sort(ordenIns);
+          const sols=(grS[p]||[]).slice().sort(solOrden);
           const otros=insumos.filter(z=> provDe(z)===p && !z.rutaFecha && !z.compraFecha).sort(ordenIns);
-          const urg=items.filter(x=>insEstado(x)==='urgente').length;
+          const urg=items.filter(x=>insEstado(x)==='urgente'&&!sols.some(s=>s.insumoUid===x._uid)).length + sols.filter(s=>s.urgente).length;
           h+='<div class="pe-ruta" data-parada="'+esc(p)+'">'+
             '<div class="pe-ruta-h"><span class="pe-ruta-n">'+(i+1)+'</span><span style="flex:1">🏪 '+esc(p)+
-              ' <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+              ' <span style="font-weight:400;color:var(--muted)">· '+(items.filter(x=>!sols.some(s=>s.insumoUid===x._uid)).length+sols.length)+' ítem'+((items.filter(x=>!sols.some(s=>s.insumoUid===x._uid)).length+sols.length)!==1?'s':'')+'</span>'+
               (urg?' <span style="color:var(--red)">· '+urg+' urgente'+(urg!==1?'s':'')+'</span>':'')+'</span>'+
               '<span class="pe-qty-move"><button data-up="'+i+'"'+(i===0?' disabled':'')+' title="Ir antes">▲</button>'+
               '<button data-down="'+i+'"'+(i===paradas.length-1?' disabled':'')+' title="Ir después">▼</button></span>'+
               '<button class="cmp-rowbtn" data-quitar="'+esc(p)+'" title="Sacar esta parada de la ruta">✕</button></div>'+
             '<div class="pe-ruta-body">'+
-              items.map(x=> qtyRow(x, nf(insPedirSugerido(x)), ' · sugerido '+nf(insPedirSugerido(x)))).join('')+
+              sols.map(s=> solRow(s, s.insumoUid? items.find(x=>x._uid===s.insumoUid) : null)).join('')+
+              items.filter(x=> !sols.some(s=>s.insumoUid===x._uid))
+                   .map(x=> qtyRow(x, nf(insPedirSugerido(x)), ' · sugerido '+nf(insPedirSugerido(x)))).join('')+
               (otros.length? '<details style="margin:2px 0 8px"><summary style="font-size:11.5px;color:var(--muted);cursor:pointer">＋ Otros '+otros.length+' ítem'+(otros.length!==1?'s':'')+' de este proveedor (por si aprovechás el viaje)</summary><div style="margin-top:6px">'+
                 otros.map(x=> qtyRow(x,'')).join('')+'</div></details>' : '')+
               '<button class="cmp-btn cmp-btn-primary" data-comprar="'+esc(p)+'" style="width:100%">✅ Ya compré en '+esc(p)+'</button>'+
@@ -20496,29 +20720,37 @@ function buildFilterTable(cfg){
        
       if(provPend.length){
         h+='<div style="font-size:12.5px;font-weight:800;margin:14px 0 6px">'+(paradas.length?'＋ Agregar otra parada':'¿A qué proveedores hay que ir?')+'</div>';
-        provPend.forEach((p,i)=>{ const items=pend[p].slice().sort(ordenIns); const urg=items.filter(x=>insEstado(x)==='urgente').length;
+        provPend.forEach((p,i)=>{ const items=(pend[p]||[]).slice().sort(ordenIns);
+          const sols=(pendS[p]||[]).slice().sort(solOrden);
+          const urg=items.filter(x=>insEstado(x)==='urgente'&&!sols.some(s=>s.insumoUid===x._uid)).length + sols.filter(s=>s.urgente).length;
           h+='<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;flex-wrap:nowrap">'+
             '<button class="cmp-btn" data-add="'+esc(p)+'" style="flex:1;min-width:0;text-align:left;display:block'+(urg?';border-color:var(--red)':'')+'">'+
-              '<div>🚗 <b>'+esc(p)+'</b> <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+              '<div>'+(p===SIN_PROV?'📝':'🚗')+' <b>'+esc(p===SIN_PROV?'Pedidos sin proveedor':p)+'</b> <span style="font-weight:400;color:var(--muted)">· '+(items.length+sols.length)+' ítem'+((items.length+sols.length)!==1?'s':'')+'</span>'+
                 (urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+'</div>'+
                
                
-              '<div class="pe-prov-items">'+items.map(x=>
+              '<div class="pe-prov-items">'+
+                sols.map(s=>'<div>'+(s.urgente?'<span style="color:var(--red)">🔥</span> ':'📝 ')+esc(s.item||'')+
+                  (num(s.cantidad)>0?' <b>'+nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):'')+'</b>':'')+'</div>').join('')+
+                items.filter(x=> !sols.some(s=>s.insumoUid===x._uid)).map(x=>
                 '<div>'+(insEstado(x)==='urgente'?'<span style="color:var(--red)">🔴</span> ':'• ')+esc(x.nombre||'')+
                 ' <b>'+nf(insPedirSugerido(x))+(x.unidad?' '+esc(x.unidad):'')+'</b></div>').join('')+'</div>'+
             '</button>'+
-            '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp" style="flex:none">📱</button></div>'; });
+            ((pend[p]||[]).length? '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp" style="flex:none">📱</button>':'')+'</div>'; });
         h+='<div style="font-size:11px;color:var(--muted);margin:-2px 0 4px">🚗 = lo vas a buscar vos · 📱 = se lo pedís por WhatsApp para que lo entreguen.</div>';
-      } else if(!paradas.length && !camioneta.length){
+      } else if(!paradas.length && !camioneta.length && !solCompradas().length){
         h+='<p style="color:var(--green);font-size:13px;padding:10px 0">✅ No hay nada para comprar: ningún insumo está bajo el mínimo ni urgente.</p>';
       }
 
        
-      if(camioneta.length){
-        h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px;color:#6d28d9">🛻 En la camioneta — comprado y sin entregar ('+camioneta.length+')</div>'+
+      const camSol=solCompradas();
+      if(camioneta.length || camSol.length){
+        h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px;color:#6d28d9">🛻 En la camioneta — comprado y sin entregar ('+(camioneta.length+camSol.length)+')</div>'+
           '<div style="border:1px solid #ddd6fe;background:#faf5ff;border-radius:12px;padding:10px">'+
           camioneta.map(x=>'<div style="font-size:12.5px;padding:3px 0"><b>'+esc(x.nombre||'')+'</b> · '+nf(num(x.compraCant))+(x.unidad?' '+esc(x.unidad):'')+
             ' <span style="color:var(--muted)">— comprado el '+fmtFecha(x.compraFecha)+' en '+esc(provDe(x))+'</span></div>').join('')+
+          camSol.map(s=>'<div style="font-size:12.5px;padding:3px 0">📝 <b>'+esc(s.item||'')+'</b>'+(num(s.cantidad)>0?' · '+nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):''):'')+
+            ' <span style="color:var(--muted)">— lo pidió '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+(s.insumoUid?', suma al stock':'')+'</span></div>').join('')+
           '<button class="cmp-btn cmp-btn-primary" id="pe-ruta-entregar" style="width:100%;margin-top:8px">📦 Entregar en fábrica (suma al stock)</button>'+
           '<div style="font-size:11px;color:var(--muted);margin-top:5px">Esto es lo que le dejás a Gustavo. Recién ahí entra al stock y deja de figurar como faltante.</div></div>';
       }
@@ -20529,15 +20761,24 @@ function buildFilterTable(cfg){
        
       box.querySelectorAll('button[data-add]').forEach(b=> b.onclick=()=>{
         const p=b.dataset.add; const orden=(paradas.length+1)*10;
-        pend[p].forEach(x=> wr(x,{rutaFecha:hoyISO, rutaOrden:orden})); setTimeout(pintar,120); });
+        (pend[p]||[]).forEach(x=> wr(x,{rutaFecha:hoyISO, rutaOrden:orden}));
+        (pendS[p]||[]).forEach(s=> wrSol(s,{rutaFecha:hoyISO, rutaOrden:orden}));
+        setTimeout(pintar,120); });
       box.querySelectorAll('button[data-quitar]').forEach(b=> b.onclick=()=>{
-        const p=b.dataset.quitar; gr[p].forEach(x=> wr(x,{rutaFecha:'', rutaOrden:''})); setTimeout(pintar,120); });
+        const p=b.dataset.quitar;
+        (gr[p]||[]).forEach(x=> wr(x,{rutaFecha:'', rutaOrden:''}));
+        (grS[p]||[]).forEach(s=> wrSol(s,{rutaFecha:'', rutaOrden:''}));    
+        setTimeout(pintar,120); });
       box.querySelectorAll('button[data-wa]').forEach(b=> b.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); pedidoCompra(b.dataset.wa); });
        
        
       const mover=(i,j)=>{ if(j<0||j>=paradas.length) return;
-        const a=gr[paradas[i]], b2=gr[paradas[j]], oa=ordParada(a), ob=ordParada(b2);
-        a.forEach(x=> wr(x,{rutaOrden:ob})); b2.forEach(x=> wr(x,{rutaOrden:oa})); setTimeout(pintar,120); };
+        const pa=paradas[i], pb=paradas[j];
+        const a=gr[pa]||[], b2=gr[pb]||[], sa=grS[pa]||[], sb=grS[pb]||[];
+        const oa=ordParada(a.length?a:sa), ob=ordParada(b2.length?b2:sb);
+        a.forEach(x=> wr(x,{rutaOrden:ob})); sa.forEach(s=> wrSol(s,{rutaOrden:ob}));
+        b2.forEach(x=> wr(x,{rutaOrden:oa})); sb.forEach(s=> wrSol(s,{rutaOrden:oa}));
+        setTimeout(pintar,120); };
       box.querySelectorAll('button[data-up]').forEach(b=> b.onclick=()=> mover(+b.dataset.up, +b.dataset.up-1));
       box.querySelectorAll('button[data-down]').forEach(b=> b.onclick=()=> mover(+b.dataset.down, +b.dataset.down+1));
        
@@ -20547,6 +20788,15 @@ function buildFilterTable(cfg){
         cont.querySelectorAll('input[data-ri]').forEach(el=>{ const v=num(el.value); if(!(v>0)) return;
           const x=insumos.find(z=>z._uid===el.dataset.ri); if(!x) return;
           wr(x,{compraFecha:hoyISO, compraCant:v, rutaFecha:'', rutaOrden:''}); n++; });
+         
+        cont.querySelectorAll('input[data-rs]').forEach(el=>{ const v=num(el.value); if(!(v>0)) return;
+          const s=solicitudes.find(z=>z._uid===el.dataset.rs); if(!s) return;
+           
+           
+          const insV = s.insumoUid ? insumos.find(z=>z._uid===s.insumoUid) : null;
+          if(insV) wr(insV,{compraFecha:hoyISO, compraCant:v, rutaFecha:'', rutaOrden:''});
+          wrSol(s,{estado:'comprado', cantidad:v, compraFechaSol:hoyISO, compraPor:usuario(),
+            rutaFecha:'', rutaOrden:'', stockPorInsumo: !!insV}); n++; });
         if(!n){ alert('Cargá la cantidad de lo que compraste en al menos un ítem.'); return; }
         setTimeout(pintar,150); });
       const ent=$('pe-ruta-entregar'); if(ent) ent.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); openRecepcion(); };
@@ -20601,16 +20851,27 @@ function buildFilterTable(cfg){
      
      
     const enCamino=insumos.filter(x=> x.pedidoFecha || x.compraFecha);
-    if(!enCamino.length){ alert('No hay nada para ingresar: ni pedidos en camino ni compras sin entregar.\nArmá un pedido con 🛒 o una salida a comprar con 🚚.'); return; }
+    const solCam=solCompradas();    
+    if(!enCamino.length && !solCam.length){ alert('No hay nada para ingresar: ni pedidos en camino ni compras sin entregar.\nArmá un pedido con 🛒 o una salida a comprar con 🚚.'); return; }
     const grupos={};
     enCamino.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
      
     const provs=Object.keys(grupos).sort((a,b)=>
       (grupos[b].some(x=>x.compraFecha)?1:0)-(grupos[a].some(x=>x.compraFecha)?1:0) || a.localeCompare(b));
+     
     const list=[]; provs.forEach(p=> grupos[p].forEach(x=>list.push(x)));
+     
+    const grS={}; solCam.forEach(s=>{ const p=provDeSol(s); (grS[p]=grS[p]||[]).push(s); });
+    Object.keys(grS).forEach(p=>{ if(provs.indexOf(p)<0) provs.push(p); });
     let cuerpo='';
-    provs.forEach(p=>{ cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p)+'</div>';
-      grupos[p].forEach(x=>{ const i=list.indexOf(x); const cant=num(x.compraCant)||num(x.pedidoCant);
+    provs.forEach(p=>{ cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p===SIN_PROV?'Pedidos sin proveedor':p)+'</div>';
+      (grS[p]||[]).forEach(s=>{
+        if(s.stockPorInsumo){    
+          cuerpo+='<div class="pe-qty"><div><div class="nm">📝 '+esc(s.item||'')+'</div><div class="cd">lo pidió '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+' · entra con <b>'+esc((insumos.find(z=>z._uid===s.insumoUid)||{}).nombre||'el insumo')+'</b></div></div></div>'; return; }
+        cuerpo+='<div class="pe-qty"><div><div class="nm">📝 '+esc(s.item||'')+'</div><div class="cd"><span style="color:#6d28d9;font-weight:700">🛻 pedido de '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+'</span>'+
+          (num(s.cantidad)>0?' · '+nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):''):'')+(s.insumoUid?' · suma al stock':' · no mueve stock')+'</div></div>'+
+          '<input data-rcs="'+esc(s._uid)+'" inputmode="decimal"'+(num(s.cantidad)>0?' value="'+nf(num(s.cantidad))+'"':'')+' placeholder="cant." style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>'; });
+      (grupos[p]||[]).forEach(x=>{ const i=list.indexOf(x); const cant=num(x.compraCant)||num(x.pedidoCant);
         const orig = x.compraFecha ? '<span style="color:#6d28d9;font-weight:700">🛻 comprado el '+fmtFecha(x.compraFecha)+'</span>'
                                    : 'pedido el '+fmtFecha(x.pedidoFecha);
         cuerpo+='<div class="pe-qty"><div><div class="nm">'+esc(x.nombre)+'</div><div class="cd">'+orig+(cant>0?' · '+nf(cant)+(x.unidad?' '+esc(x.unidad):''):'')+' · stock actual '+nf(num(x.stock))+'</div></div>'+
@@ -20626,10 +20887,21 @@ function buildFilterTable(cfg){
       let n=0;
       list.forEach((x,i)=>{ const el=$('pe-form-ins').querySelector('input[data-rci="'+i+'"]'); if(!el||el.value.trim()==='') return;
         const lleg=num(el.value); if(lleg<0){ return; }
+         
+        solCompradas().filter(s=> s.stockPorInsumo && s.insumoUid===x._uid)
+          .forEach(s=>{ const viva=solicitudes.find(z=>z._uid===s._uid);
+            if(viva) solEntregar(viva, c); });    
         const cur=insumos.find(z=>z._uid===x._uid)||x;
         const upd=insEntregaUpd(cur, lleg, hoyISO); upd.usuario=usuario();
         Object.assign(cur, upd);    
         c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), upd, {merge:true}).catch(e=>alert('No se pudo guardar: '+e.message)); n++; });
+       
+       
+      solCam.forEach(s=>{ const el=$('pe-form-ins').querySelector('input[data-rcs="'+s._uid+'"]');
+        if(!el || el.value.trim()==='') return;
+        const lleg=num(el.value); if(!(lleg>0)) return;
+        const viva=solicitudes.find(z=>z._uid===s._uid); if(!viva) return;
+        if(solEntregar(viva, c, lleg)) n++; });
       $('pe-modal-ins').classList.remove('open');
       alert(n? ('Ingreso registrado: '+n+' ítem'+(n!==1?'s':'')+'. El stock ya se actualizó.') : 'No cargaste ninguna cantidad.');
     };
@@ -22210,7 +22482,7 @@ function buildFilterTable(cfg){
      
     sub('vph_pedidos',a=>{ pedidos=a; pedidosCargados=true; if(window.__ventasRefrescar) window.__ventasRefrescar();
       if(window.__cajaRefresh) window.__cajaRefresh(); });    
-    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a);
+    sub('vph_ajustes',a=>ajustes=a); sub('vph_insumos',a=>insumos=a); sub('vph_solicitudes',a=>solicitudes=a);
     sub('vph_asistencia',a=>asis=a);    
      
      
@@ -22218,7 +22490,7 @@ function buildFilterTable(cfg){
     sub('vph_feriados',a=>{ feriados=a; if(window.__refreshAlertas) window.__refreshAlertas(); }); }
   function stopSync(){ Object.keys(unsub).forEach(k=>{ if(unsub[k]){unsub[k]();unsub[k]=null;} }); }
   function boot(){ if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
-      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[];asis=[]; render(); });
+      window.__afterLogin.push(()=>startSync()); window.__afterLogout.push(()=>{ stopSync(); prods=[];prod=[];ent=[];pedidos=[];ajustes=[];insumos=[];feriados=[];asis=[];solicitudes=[]; render(); });
       if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync(); render();
     } else { render(); } }
 
@@ -22240,10 +22512,18 @@ function buildFilterTable(cfg){
      
     const insComp=insComprados();
     if(insComp.length) A.push({sev:'warn', area:'Logística', t:'🛻 '+insComp.length+' insumo'+(insComp.length>1?'s':'')+' comprado'+(insComp.length>1?'s':'')+' sin entregar en fábrica: '+insComp.slice(0,3).map(x=>x.nombre).join(', ')+(insComp.length>3?'…':''), act:'Descargarlo y registrarlo con 📦 Ingreso a fábrica — recién ahí entra al stock.', go:{page:'Producción y Logística'}});
+     
+     
+    const solP=solPend(), solU=solP.filter(s=>s.urgente), solC=solComp();
+    if(solU.length) A.push({sev:'bad', area:'Logística', t:'🔥 '+solU.length+' pedido'+(solU.length>1?'s':'')+' URGENTE'+(solU.length>1?'S':'')+' de Gustavo sin comprar: '+solU.slice(0,3).map(s=>s.item).join(', ')+(solU.length>3?'…':''), act:'Comprarlo hoy (🛒 Pedidos de compra en Producción y Logística).', go:{page:'Producción y Logística'}});
+    const solN=solP.filter(s=>!s.urgente);
+    if(solN.length) A.push({sev:'warn', area:'Logística', t:solN.length+' pedido'+(solN.length>1?'s':'')+' de compra de Gustavo sin comprar: '+solN.slice(0,3).map(s=>s.item).join(', ')+(solN.length>3?'…':''), act:'Revisarlo en 🛒 Pedidos de compra.', go:{page:'Producción y Logística'}});
+    if(solC.length) A.push({sev:'warn', area:'Logística', t:'🛻 '+solC.length+' pedido'+(solC.length>1?'s':'')+' comprado'+(solC.length>1?'s':'')+' sin entregar en fábrica: '+solC.slice(0,3).map(s=>s.item).join(', ')+(solC.length>3?'…':''), act:'Llevarlo y marcar 📦 Entregado — recién ahí suma al stock.', go:{page:'Producción y Logística'}});
     const sem=semanaKg(); if(sem.kg>0 && sem.prom<OBJ()) A.push({sev:'warn', area:'Producción', t:'Producción por debajo del objetivo: '+nf(sem.prom)+' kg/día vs '+nf(OBJ())+' objetivo (semana en curso)', act:'Revisar con Gustavo cuellos de botella: mesas, moldes, cuadrilla.', go:{page:'Producción y Logística'}});
     return A; });
   $('pe-btn-prod').onclick=openProd;
   $('pe-btn-rotura').onclick=openRotura;
+  $('pe-btn-solic').onclick=openSolic;
   $('pe-btn-asis').onclick=openAsis;
   $('pe-asis-mes').onchange=e=>{ asisMes=e.target.value||null; renderAsis(); };
   $('pe-asis-cerrar').onclick=()=>$('pe-modal-asis').classList.remove('open');
@@ -22259,6 +22539,7 @@ function buildFilterTable(cfg){
   { const fc=$('pe-fer-cerrar'); if(fc) fc.onclick=()=>$('pe-modal-fer').classList.remove('open'); }
   $('pe-prod-cerrar').onclick=()=>$('pe-modal-prod').classList.remove('open');
   $('pe-rot-cerrar').onclick=()=>$('pe-modal-rot').classList.remove('open');
+  $('pe-sol-cerrar').onclick=()=>$('pe-modal-solic').classList.remove('open');
   $('pe-ent-cerrar').onclick=()=>$('pe-modal-ent').classList.remove('open');
   $('pe-conteo-cerrar').onclick=()=>$('pe-modal-conteo').classList.remove('open');
   $('pe-ins-cerrar').onclick=()=>$('pe-modal-ins').classList.remove('open');
@@ -22268,7 +22549,7 @@ function buildFilterTable(cfg){
   $('pe-buscar').addEventListener('input',e=>{ q=e.target.value.trim(); render(); });
   if($('pe-m2-consulta')) $('pe-m2-consulta').addEventListener('input',()=>render());
   $('pe-ped-buscar').addEventListener('input',e=>{ qPed=e.target.value.trim(); render(); });
-  [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
+  [$('pe-modal-prod'),$('pe-modal-rot'),$('pe-modal-solic'),$('pe-modal-ent'),$('pe-modal-conteo'),$('pe-modal-ins'),$('pe-modal-ped'),$('pe-modal-fer')].forEach(ov=> ov && ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); }));
   boot();
 })();
 </script>
@@ -22963,6 +23244,50 @@ function buildFilterTable(cfg){
     '</div>';
   }
 
+   
+   
+   
+   
+   
+   
+   
+  function bloquePalletDestino(v){
+    if(!v || String(v.zona||'')!=='cotizar') return '';
+    const items=(v.items||[]).filter(it=>it&&(it.desc||it.codigo));
+    const esFle=it=>/^flete/i.test(String(it.desc||''));
+    const fl=items.find(esFle); if(!fl) return '';
+    const cIva=it=>{ const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); return num(it.precioUnit)*(1-num(it.descPct)/100)*(1+al/100); };
+    const fletePallet=cIva(fl); if(!(fletePallet>0)) return '';
+    const prods=(window.__catalogoProductos?window.__catalogoProductos():[]);
+    const prodDe=it=>{ const c=normc(it.codigo); return (c&&prods.find(p=>normc(p.codigo)===c)) || prods.find(p=>normc(p.nombre)===normc(it.desc)) || null; };
+    const cajita=it=>!!(window.__enCajita && window.__enCajita(it.codigo, it.desc));
+    let kitsTot=0;
+    items.forEach(it=>{ if(!esFle(it) && cajita(it)) kitsTot+=num(it.cant)*cIva(it); });
+    const filas=[];
+    items.forEach(it=>{
+      if(esFle(it) || cajita(it) || num(it.cant)<=0) return;
+      const pr=prodDe(it); if(!pr || String(pr.tipo||'')==='Servicio') return;
+      const ud=num(pr.udPorPallet); if(!(ud>0)) return;
+      filas.push({ it, pr, ud, kit:0 });
+    });
+    if(!filas.length) return '';
+    const bnv=filas.filter(f=>/^BNV/i.test(String(f.it.codigo||f.pr.codigo||'')));
+    if(kitsTot>0 && bnv.length===1) bnv[0].kit = kitsTot/num(bnv[0].it.cant);    
+    const th='style="text-align:right;padding:4px 6px"', td='style="text-align:right;padding:4px 6px;white-space:nowrap"';
+    const cuerpo=filas.map(f=>{
+      const merc=f.ud*(cIva(f.it)+f.kit);
+      return '<tr style="border-top:1px solid #e2e8f0"><td style="padding:4px 6px">'+esc(f.it.desc||f.pr.nombre)+(f.kit>0?' <span style="color:#666">(con kit)</span>':'')+'</td>'+
+        '<td '+td+'>'+nf(f.ud)+' u.</td><td '+td+'>'+money(merc)+'</td><td '+td+'>'+money(fletePallet)+'</td>'+
+        '<td '+td+'><b>'+money(merc+fletePallet)+'</b></td></tr>';
+    }).join('');
+    const dest=(v.fleteManual&&v.fleteManual.destino)?' a '+esc(v.fleteManual.destino):'';
+    return '<div style="margin-top:10px;border:1.5px solid #157A3D;border-radius:6px;overflow:hidden;font-size:10.5px">'+
+      '<div style="background:#157A3D;color:#fff;font-weight:800;font-size:10.5px;letter-spacing:.06em;padding:4px 10px">PRECIO DE CADA PALLET PUESTO EN DESTINO'+dest.toUpperCase()+' · IVA INCLUIDO</div>'+
+      '<table style="width:100%;border-collapse:collapse"><tr style="background:#e7fbf1"><th style="text-align:left;padding:4px 6px">Pallet</th>'+
+      '<th '+th+'>Unidades</th><th '+th+'>Mercadería</th><th '+th+'>Flete</th><th '+th+'>Puesto en destino</th></tr>'+cuerpo+'</table></div>';
+  }
+  window.__bloquePalletDestino = bloquePalletDestino;
+
   function condicionesPresup(v, opt){
      
      
@@ -23225,7 +23550,7 @@ function buildFilterTable(cfg){
     const qp=!esPresupuesto?qrPayload(v):null;
     const codigoFac = qp && qp.tipoCmp!=null ? String(qp.tipoCmp).padStart(2,'0') : '';
     return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer, undefined, codigoFac)+
-      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+escBlock+obs+caeBlock+pie(v);
+      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+(esPresupuesto?bloquePalletDestino(v):'')+escBlock+obs+caeBlock+pie(v);
   }
 
    
