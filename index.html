@@ -19991,6 +19991,20 @@ function buildFilterTable(cfg){
   const solComp  = ()=> solicitudes.filter(s=> s.estado==='comprado');
   const solEntr  = ()=> solicitudes.filter(s=> s.estado==='entregado');
   // Orden de atención: primero lo urgente, después lo que hace más tiempo que espera.
+  // Un pedido de Gustavo entra a la RUTA DE COMPRA igual que un insumo bajo mínimo: mismas paradas,
+  // mismo 'Ya compré acá', misma camioneta. `rutaFecha`/`rutaOrden` son los mismos campos que usan
+  // los insumos — el número de parada vive en cada renglón, no hay documento de 'ruta' aparte.
+  const solEnRuta = ()=> solicitudes.filter(s=> (s.estado||'pendiente')==='pendiente' && s.rutaFecha);
+  const solParaRuta = ()=> solicitudes.filter(s=> (s.estado||'pendiente')==='pendiente' && !s.rutaFecha);
+  const solCompradas = ()=> solicitudes.filter(s=> s.estado==='comprado');
+  // De quién se compra: lo que cargó Gustavo, o el proveedor del insumo si quedó vinculado.
+  const SIN_PROV = 'Sin proveedor';
+  function provDeSol(s){
+    const p = String((s&&s.proveedor)||'').trim();
+    if(p) return p;
+    const ins = s&&s.insumoUid ? insumos.find(x=>x._uid===s.insumoUid) : null;
+    return ins ? provDe(ins) : SIN_PROV;
+  }
   function solOrden(a,b){ return (b.urgente?1:0)-(a.urgente?1:0) || String(a.fecha||'').localeCompare(String(b.fecha||'')); }
   function solDias(s){ const f=parseISO(s&&s.fecha); if(!f) return 0; return Math.max(0, Math.round((HOY-f)/86400000)); }
   function solGuardar(s){
@@ -20016,7 +20030,11 @@ function buildFilterTable(cfg){
       '</div>'+
       '<label style="display:flex;align-items:center;gap:9px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:14px">'+
         '<input type="checkbox" id="pe-sol-urg" style="width:20px;height:20px;margin:0;flex:none"><span>🔥 <b>Es urgente</b> — hace falta para la producción de esta semana</span></label>'+
-      '<div class="cmp-field"><label>Para qué / dónde conseguirlo (opcional)</label><input type="text" id="pe-sol-nota" placeholder="ej: para la mezcladora chica, lo tiene Ferretería Toledo"></div>'+
+      '<div class="cmp-field"><label>¿Dónde se compra? (opcional)</label>'+
+        '<input type="text" id="pe-sol-prov" list="pe-sol-dlprov" placeholder="ej: Ferretería Toledo" autocomplete="off">'+
+        '<datalist id="pe-sol-dlprov">'+provsConocidos().map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>'+
+        '<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Con el proveedor cargado, el pedido se suma solo a la <b>🚚 Ruta de compra</b>, en la parada de ese negocio.</div></div>'+
+      '<div class="cmp-field"><label>Para qué (opcional)</label><input type="text" id="pe-sol-nota" placeholder="ej: para la mezcladora chica"></div>'+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pe-sol-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pe-sol-save">Anotar el pedido</button></div>';
     // Vincular con el maestro de insumos: así al entregarlo suma al stock por el camino de siempre.
     function vincular(){
@@ -20024,7 +20042,8 @@ function buildFilterTable(cfg){
       const box = $('pe-sol-vinc');
       if(x){ box.innerHTML='✅ Es <b>'+esc(x.nombre)+'</b> de la lista'+(provDe(x)!=='Sin proveedor'?(' ('+esc(provDe(x))+')'):'')+': al entregarlo <b>suma al stock</b>.';
         box.style.color='var(--green)';
-        const u=$('pe-sol-unidad'); if(!u.value.trim() && x.unidad) u.value=x.unidad; }
+        const u=$('pe-sol-unidad'); if(!u.value.trim() && x.unidad) u.value=x.unidad;
+        const pv=$('pe-sol-prov'); if(pv && !pv.value.trim() && provDe(x)!==SIN_PROV) pv.value=provDe(x); }
       else if(String($('pe-sol-item').value||'').trim()){ box.innerHTML='Queda como pedido suelto (no está en la lista de insumos): se registra, pero <b>no mueve stock</b>.'; box.style.color='var(--muted)'; }
       else box.textContent='';
     }
@@ -20035,6 +20054,7 @@ function buildFilterTable(cfg){
       if(!item){ alert('Escribí qué hace falta comprar.'); return; }
       const x=insumoPorNombre(item);
       const s={ fecha:$('pe-sol-fecha').value||hoyISO, item: x? (x.nombre||item) : item, insumoUid: x? x._uid : '',
+        proveedor:String($('pe-sol-prov').value||'').trim(),
         cantidad:num($('pe-sol-cant').value), unidad:String($('pe-sol-unidad').value||'').trim(),
         urgente: !!$('pe-sol-urg').checked, nota:String($('pe-sol-nota').value||'').trim(),
         estado:'pendiente', pidio:usuario(), ts:hoyISO+'T'+new Date().toTimeString().slice(0,8) };
@@ -20046,6 +20066,14 @@ function buildFilterTable(cfg){
     $('pe-modal-solic').classList.add('open');
   }
   // Un insumo del maestro por nombre exacto (sin tildes ni mayúsculas), igual que el resto del módulo.
+  // Proveedores que ya se usan, para el autocompletado del pedido: los del maestro de insumos
+  // más los que se hayan tipeado en pedidos anteriores.
+  function provsConocidos(){
+    const set={};
+    insumos.forEach(x=>{ const p=provDe(x); if(p && p!==SIN_PROV) set[p]=1; });
+    solicitudes.forEach(s=>{ const p=String(s.proveedor||'').trim(); if(p) set[p]=1; });
+    return Object.keys(set).sort((a,b)=>a.localeCompare(b));
+  }
   function insumoPorNombre(nom){ const n=norm(nom); if(!n) return null; return insumos.find(x=>norm(x.nombre)===n)||null; }
 
   function solMarcarComprado(s){
@@ -20054,6 +20082,26 @@ function buildFilterTable(cfg){
     if(!confirm('¿Marcar como COMPRADO?\n\n'+viva.item+'\n\nTodavía no suma al stock: eso pasa al marcarlo entregado en fábrica.')) return;
     solGuardar({...viva, estado:'comprado', compraFechaSol:hoyISO, compraPor:usuario()});
     render(); if(window.__refreshAlertas) window.__refreshAlertas();
+  }
+  // El trabajo de entregar, SIN confirm: lo usan el botón de la pestaña y el 📦 Ingreso a fábrica.
+  // Mismo patrón que detalleEntrega/entregarPedido (06/10): un solo camino que mueve stock.
+  function solEntregar(viva, c, cantReal){
+    if(!viva || viva.estado==='entregado') return false;
+    const ins = viva.insumoUid ? insumos.find(x=>x._uid===viva.insumoUid) : null;
+    const cant = num(cantReal!=null ? cantReal : viva.cantidad);
+    // `stockPorInsumo`: se compró desde la 🚚 Ruta junto con el insumo, que es el que suma. Sumar
+    // acá también sería contar la misma mercadería dos veces.
+    const sumaStock = !!(ins && cant>0 && !viva.stockPorInsumo);
+    if(sumaStock){
+      const cur = insumos.find(z=>z._uid===ins._uid) || ins;   // doc vivo al momento del click (§3)
+      const upd = insEntregaUpd(cur, cant, hoyISO);
+      Object.assign(cur, upd);
+      c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), upd, {merge:true})
+        .catch(e=>{ console.error('ingreso insumo:',e); alert('No se pudo sumar al stock: '+e.message); });
+    }
+    solGuardar({...viva, estado:'entregado', entregaFecha:hoyISO, entregaPor:usuario(), sumoStock:sumaStock,
+      cantidad: cantReal!=null ? cant : viva.cantidad, rutaFecha:'', rutaOrden:''});
+    return true;
   }
   function solMarcarEntregado(s){
     const viva = solicitudes.find(x=>x._uid===s._uid); if(!viva){ alert('Ese pedido ya no está.'); return; }
@@ -20065,16 +20113,8 @@ function buildFilterTable(cfg){
     if(!confirm('¿Registrar que ya se entregó en fábrica?\n\n'+viva.item+(cant>0?(' · '+nf(cant)+(viva.unidad?' '+viva.unidad:'')):'')+
       '\n\n'+(sumaStock ? ('Suma '+nf(cant)+(viva.unidad?' '+viva.unidad:'')+' al stock de '+ins.nombre+'.')
         : (ins ? 'No se le cargó cantidad, así que NO mueve stock.' : 'Es un pedido suelto: no mueve stock.')))) return;
-    // El stock sube por insEntregaUpd, el MISMO camino que el 📦 Ingreso a fábrica. Nunca se escribe `stock` acá.
-    if(sumaStock){
-      const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
-      const cur = insumos.find(z=>z._uid===ins._uid) || ins;   // doc vivo al momento del click (§3)
-      const upd = insEntregaUpd(cur, cant, hoyISO);
-      Object.assign(cur, upd);
-      c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), upd, {merge:true})
-        .catch(e=>{ console.error('ingreso insumo:',e); alert('No se pudo sumar al stock: '+e.message); });
-    }
-    solGuardar({...viva, estado:'entregado', entregaFecha:hoyISO, entregaPor:usuario(), sumoStock:sumaStock});
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    solEntregar(viva, c);   // un solo camino de stock: el mismo que usa el 📦 Ingreso a fábrica
     render(); if(window.__refreshAlertas) window.__refreshAlertas();
   }
   function solBorrar(s){
@@ -20096,6 +20136,7 @@ function buildFilterTable(cfg){
       return '<div class="pe-qty" style="align-items:flex-start'+(s.urgente&&s.estado!=='entregado'?';border-color:var(--red)':'')+'">'+
         '<div style="flex:1;min-width:150px"><div class="nm">'+(s.urgente&&s.estado!=='entregado'?'🔥 ':'')+esc(s.item||'')+(cant?(' <span style="color:var(--blue)">· '+cant+'</span>'):'')+'</div>'+
         '<div class="cd">pedido el '+fmtFecha(s.fecha)+(dias>0&&s.estado!=='entregado'?(' · hace '+dias+' día'+(dias!==1?'s':'')):'')+
+          (provDeSol(s)!==SIN_PROV?(' · 🏪 '+esc(provDeSol(s))):'')+(s.rutaFecha&&s.estado==='pendiente'?' · <span style="color:var(--blue)">🧭 en la ruta</span>':'')+
           (s.insumoUid?' · <span style="color:var(--green)">suma al stock</span>':'')+'</div>'+
         (s.nota?('<div class="cd">'+esc(s.nota)+'</div>'):'')+
         (s.estado==='comprado'&&s.compraFechaSol?('<div class="cd" style="color:#6d28d9;font-weight:700">comprado el '+fmtFecha(s.compraFechaSol)+' — falta llevarlo a la fábrica</div>'):'')+
@@ -20326,20 +20367,40 @@ function buildFilterTable(cfg){
     // snapshot la reconfirma enseguida con lo mismo (§ escritura asíncrona del CLAUDE.md).
     const wr=(x,campos)=>{ const cur=vivo(x); Object.assign(cur,campos);
       c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',cur._uid), campos, {merge:true}).catch(e=>alert('No se pudo guardar: '+e.message)); };
+    // Espejo de `wr` para los pedidos de Gustavo: mismo merge de solo los campos que cambian.
+    const wrSol=(s,campos)=>{ const viva=solicitudes.find(z=>z._uid===s._uid)||s; solGuardar({...viva, ...campos}); };
+    // Un pedido de Gustavo se dibuja como un renglón más de la parada, con el 📝 que lo distingue
+    // de un insumo bajo mínimo. La cantidad viene precargada con lo que pidió.
+    // 🔴 UN producto, UN solo campo de cantidad en la parada. Si Gustavo pidió algo que además
+    // está bajo mínimo, manda SU renglón y el insumo no dibuja el suyo: con dos campos se podía
+    // cargar 40 en uno y 165 en el otro, y al entregar el stock sumaba los dos.
+    const solRow=(s, ins)=>
+      '<div class="pe-qty"><div><div class="nm">📝 '+esc(s.item||'')+(s.urgente?' <span style="color:var(--red);font-size:11px">🔥</span>':'')+'</div>'+
+        '<div class="cd">lo pidió '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+' el '+fmtFecha(s.fecha)+
+          (ins? (' · stock '+nf(num(ins.stock))+(num(ins.stockMinimo)>0?' de '+nf(num(ins.stockMinimo))+' mín':'')+' · sugerido '+nf(insPedirSugerido(ins))) : '')+
+          (s.insumoUid?' · suma al stock':'')+(s.nota?' · '+esc(s.nota):'')+'</div></div>'+
+        '<input data-rs="'+esc(s._uid)+'" inputmode="decimal"'+(num(s.cantidad)>0?' value="'+nf(num(s.cantidad))+'"':'')+' placeholder="cant." style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>';
     const qtyRow=(x,val,extra)=>
       '<div class="pe-qty"><div><div class="nm">'+esc(x.nombre||'')+(insEstado(x)==='urgente'?' <span style="color:var(--red);font-size:11px">🔴</span>':'')+'</div>'+
         '<div class="cd">'+(x.unidad?esc(x.unidad)+' · ':'')+'stock '+nf(num(x.stock))+(num(x.stockMinimo)>0?' de '+nf(num(x.stockMinimo))+' mín':'')+(extra||'')+'</div></div>'+
         '<input data-ri="'+esc(x._uid)+'" inputmode="decimal"'+(val?' value="'+val+'"':'')+' placeholder="cant." style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>';
 
     function pintar(){
-      // A) paradas ya armadas
+      // A) paradas ya armadas — insumos bajo mínimo Y pedidos de Gustavo, en la misma parada
       const gr={}; insEnRuta().forEach(x=>{ const p=provDe(x); (gr[p]=gr[p]||[]).push(x); });
-      const paradas=Object.keys(gr).sort((a,b)=> ordParada(gr[a])-ordParada(gr[b]) || a.localeCompare(b));
+      const grS={}; solEnRuta().forEach(s=>{ const p=provDeSol(s); (grS[p]=grS[p]||[]).push(s); });
+      const paradas=[...new Set([...Object.keys(gr), ...Object.keys(grS)])]
+        .sort((a,b)=> ordParada(gr[a]||grS[a]||[])-ordParada(gr[b]||grS[b]||[]) || a.localeCompare(b));
       // B) proveedores con algo para pedir que todavía no están en la ruta (insPedibles ya excluye
       //    lo que está en ruta, comprado o pedido: esos estados pisan a PEDIR/PEDIR YA)
       const pend={}; insPedibles().forEach(x=>{ const p=provDe(x); (pend[p]=pend[p]||[]).push(x); });
-      const provPend=Object.keys(pend).sort((a,b)=>
-        (pend[b].some(x=>insEstado(x)==='urgente')?1:0)-(pend[a].some(x=>insEstado(x)==='urgente')?1:0) || a.localeCompare(b));
+      // Un pedido de Gustavo propone la parada por sí solo, aunque no haya ningún insumo bajo mínimo
+      // en ese proveedor. Los que no tienen dónde comprarse caen en 'Sin proveedor' y se agregan igual.
+      const pendS={}; solParaRuta().forEach(s=>{ const p=provDeSol(s); (pendS[p]=pendS[p]||[]).push(s); });
+      const provPend=[...new Set([...Object.keys(pend), ...Object.keys(pendS)])].sort((a,b)=>{
+        const ua=(pend[a]||[]).some(x=>insEstado(x)==='urgente')||(pendS[a]||[]).some(s=>s.urgente);
+        const ub=(pend[b]||[]).some(x=>insEstado(x)==='urgente')||(pendS[b]||[]).some(s=>s.urgente);
+        return (ub?1:0)-(ua?1:0) || (a===SIN_PROV?1:0)-(b===SIN_PROV?1:0) || a.localeCompare(b); });
       const camioneta=insComprados();
 
       let h='<h3 style="margin:0 0 4px;font-size:15px">🚚 Ruta de compra</h3>'+
@@ -20350,18 +20411,21 @@ function buildFilterTable(cfg){
       if(paradas.length){
         h+='<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">🧭 Tu ruta ('+paradas.length+' parada'+(paradas.length!==1?'s':'')+')</div>';
         paradas.forEach((p,i)=>{
-          const items=gr[p].slice().sort(ordenIns);
+          const items=(gr[p]||[]).slice().sort(ordenIns);
+          const sols=(grS[p]||[]).slice().sort(solOrden);
           const otros=insumos.filter(z=> provDe(z)===p && !z.rutaFecha && !z.compraFecha).sort(ordenIns);
-          const urg=items.filter(x=>insEstado(x)==='urgente').length;
+          const urg=items.filter(x=>insEstado(x)==='urgente'&&!sols.some(s=>s.insumoUid===x._uid)).length + sols.filter(s=>s.urgente).length;
           h+='<div class="pe-ruta" data-parada="'+esc(p)+'">'+
             '<div class="pe-ruta-h"><span class="pe-ruta-n">'+(i+1)+'</span><span style="flex:1">🏪 '+esc(p)+
-              ' <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+              ' <span style="font-weight:400;color:var(--muted)">· '+(items.filter(x=>!sols.some(s=>s.insumoUid===x._uid)).length+sols.length)+' ítem'+((items.filter(x=>!sols.some(s=>s.insumoUid===x._uid)).length+sols.length)!==1?'s':'')+'</span>'+
               (urg?' <span style="color:var(--red)">· '+urg+' urgente'+(urg!==1?'s':'')+'</span>':'')+'</span>'+
               '<span class="pe-qty-move"><button data-up="'+i+'"'+(i===0?' disabled':'')+' title="Ir antes">▲</button>'+
               '<button data-down="'+i+'"'+(i===paradas.length-1?' disabled':'')+' title="Ir después">▼</button></span>'+
               '<button class="cmp-rowbtn" data-quitar="'+esc(p)+'" title="Sacar esta parada de la ruta">✕</button></div>'+
             '<div class="pe-ruta-body">'+
-              items.map(x=> qtyRow(x, nf(insPedirSugerido(x)), ' · sugerido '+nf(insPedirSugerido(x)))).join('')+
+              sols.map(s=> solRow(s, s.insumoUid? items.find(x=>x._uid===s.insumoUid) : null)).join('')+
+              items.filter(x=> !sols.some(s=>s.insumoUid===x._uid))
+                   .map(x=> qtyRow(x, nf(insPedirSugerido(x)), ' · sugerido '+nf(insPedirSugerido(x)))).join('')+
               (otros.length? '<details style="margin:2px 0 8px"><summary style="font-size:11.5px;color:var(--muted);cursor:pointer">＋ Otros '+otros.length+' ítem'+(otros.length!==1?'s':'')+' de este proveedor (por si aprovechás el viaje)</summary><div style="margin-top:6px">'+
                 otros.map(x=> qtyRow(x,'')).join('')+'</div></details>' : '')+
               '<button class="cmp-btn cmp-btn-primary" data-comprar="'+esc(p)+'" style="width:100%">✅ Ya compré en '+esc(p)+'</button>'+
@@ -20372,29 +20436,37 @@ function buildFilterTable(cfg){
       // ---- B) Agregar paradas
       if(provPend.length){
         h+='<div style="font-size:12.5px;font-weight:800;margin:14px 0 6px">'+(paradas.length?'＋ Agregar otra parada':'¿A qué proveedores hay que ir?')+'</div>';
-        provPend.forEach((p,i)=>{ const items=pend[p].slice().sort(ordenIns); const urg=items.filter(x=>insEstado(x)==='urgente').length;
+        provPend.forEach((p,i)=>{ const items=(pend[p]||[]).slice().sort(ordenIns);
+          const sols=(pendS[p]||[]).slice().sort(solOrden);
+          const urg=items.filter(x=>insEstado(x)==='urgente'&&!sols.some(s=>s.insumoUid===x._uid)).length + sols.filter(s=>s.urgente).length;
           h+='<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;flex-wrap:nowrap">'+
             '<button class="cmp-btn" data-add="'+esc(p)+'" style="flex:1;min-width:0;text-align:left;display:block'+(urg?';border-color:var(--red)':'')+'">'+
-              '<div>🚗 <b>'+esc(p)+'</b> <span style="font-weight:400;color:var(--muted)">· '+items.length+' ítem'+(items.length!==1?'s':'')+'</span>'+
+              '<div>'+(p===SIN_PROV?'📝':'🚗')+' <b>'+esc(p===SIN_PROV?'Pedidos sin proveedor':p)+'</b> <span style="font-weight:400;color:var(--muted)">· '+(items.length+sols.length)+' ítem'+((items.length+sols.length)!==1?'s':'')+'</span>'+
                 (urg?' <span style="color:var(--red);font-weight:800">· '+urg+' URGENTE'+(urg!==1?'S':'')+'</span>':'')+'</div>'+
               // Qué hay que comprar, no solo a quién (19/08, pedido de Marcelo): con el nombre y la
               // cantidad sugerida se decide si vale el viaje sin tener que abrir nada.
-              '<div class="pe-prov-items">'+items.map(x=>
+              '<div class="pe-prov-items">'+
+                sols.map(s=>'<div>'+(s.urgente?'<span style="color:var(--red)">🔥</span> ':'📝 ')+esc(s.item||'')+
+                  (num(s.cantidad)>0?' <b>'+nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):'')+'</b>':'')+'</div>').join('')+
+                items.filter(x=> !sols.some(s=>s.insumoUid===x._uid)).map(x=>
                 '<div>'+(insEstado(x)==='urgente'?'<span style="color:var(--red)">🔴</span> ':'• ')+esc(x.nombre||'')+
                 ' <b>'+nf(insPedirSugerido(x))+(x.unidad?' '+esc(x.unidad):'')+'</b></div>').join('')+'</div>'+
             '</button>'+
-            '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp" style="flex:none">📱</button></div>'; });
+            ((pend[p]||[]).length? '<button class="cmp-btn" data-wa="'+esc(p)+'" title="Que lo entregue el proveedor: manda el pedido por WhatsApp" style="flex:none">📱</button>':'')+'</div>'; });
         h+='<div style="font-size:11px;color:var(--muted);margin:-2px 0 4px">🚗 = lo vas a buscar vos · 📱 = se lo pedís por WhatsApp para que lo entreguen.</div>';
-      } else if(!paradas.length && !camioneta.length){
+      } else if(!paradas.length && !camioneta.length && !solCompradas().length){
         h+='<p style="color:var(--green);font-size:13px;padding:10px 0">✅ No hay nada para comprar: ningún insumo está bajo el mínimo ni urgente.</p>';
       }
 
       // ---- C) En la camioneta
-      if(camioneta.length){
-        h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px;color:#6d28d9">🛻 En la camioneta — comprado y sin entregar ('+camioneta.length+')</div>'+
+      const camSol=solCompradas();
+      if(camioneta.length || camSol.length){
+        h+='<div style="font-size:12.5px;font-weight:800;margin:16px 0 6px;color:#6d28d9">🛻 En la camioneta — comprado y sin entregar ('+(camioneta.length+camSol.length)+')</div>'+
           '<div style="border:1px solid #ddd6fe;background:#faf5ff;border-radius:12px;padding:10px">'+
           camioneta.map(x=>'<div style="font-size:12.5px;padding:3px 0"><b>'+esc(x.nombre||'')+'</b> · '+nf(num(x.compraCant))+(x.unidad?' '+esc(x.unidad):'')+
             ' <span style="color:var(--muted)">— comprado el '+fmtFecha(x.compraFecha)+' en '+esc(provDe(x))+'</span></div>').join('')+
+          camSol.map(s=>'<div style="font-size:12.5px;padding:3px 0">📝 <b>'+esc(s.item||'')+'</b>'+(num(s.cantidad)>0?' · '+nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):''):'')+
+            ' <span style="color:var(--muted)">— lo pidió '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+(s.insumoUid?', suma al stock':'')+'</span></div>').join('')+
           '<button class="cmp-btn cmp-btn-primary" id="pe-ruta-entregar" style="width:100%;margin-top:8px">📦 Entregar en fábrica (suma al stock)</button>'+
           '<div style="font-size:11px;color:var(--muted);margin-top:5px">Esto es lo que le dejás a Gustavo. Recién ahí entra al stock y deja de figurar como faltante.</div></div>';
       }
@@ -20405,15 +20477,24 @@ function buildFilterTable(cfg){
       // ---- acciones
       box.querySelectorAll('button[data-add]').forEach(b=> b.onclick=()=>{
         const p=b.dataset.add; const orden=(paradas.length+1)*10;
-        pend[p].forEach(x=> wr(x,{rutaFecha:hoyISO, rutaOrden:orden})); setTimeout(pintar,120); });
+        (pend[p]||[]).forEach(x=> wr(x,{rutaFecha:hoyISO, rutaOrden:orden}));
+        (pendS[p]||[]).forEach(s=> wrSol(s,{rutaFecha:hoyISO, rutaOrden:orden}));
+        setTimeout(pintar,120); });
       box.querySelectorAll('button[data-quitar]').forEach(b=> b.onclick=()=>{
-        const p=b.dataset.quitar; gr[p].forEach(x=> wr(x,{rutaFecha:'', rutaOrden:''})); setTimeout(pintar,120); });
+        const p=b.dataset.quitar;
+        (gr[p]||[]).forEach(x=> wr(x,{rutaFecha:'', rutaOrden:''}));
+        (grS[p]||[]).forEach(s=> wrSol(s,{rutaFecha:'', rutaOrden:''}));   // el pedido vuelve a la lista, no se borra
+        setTimeout(pintar,120); });
       box.querySelectorAll('button[data-wa]').forEach(b=> b.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); pedidoCompra(b.dataset.wa); });
       // ▲▼: se intercambia el nº de parada entre las dos, y se reescribe en TODOS los ítems de cada
       // una (el número vive en cada insumo, no hay documento de "ruta" aparte).
       const mover=(i,j)=>{ if(j<0||j>=paradas.length) return;
-        const a=gr[paradas[i]], b2=gr[paradas[j]], oa=ordParada(a), ob=ordParada(b2);
-        a.forEach(x=> wr(x,{rutaOrden:ob})); b2.forEach(x=> wr(x,{rutaOrden:oa})); setTimeout(pintar,120); };
+        const pa=paradas[i], pb=paradas[j];
+        const a=gr[pa]||[], b2=gr[pb]||[], sa=grS[pa]||[], sb=grS[pb]||[];
+        const oa=ordParada(a.length?a:sa), ob=ordParada(b2.length?b2:sb);
+        a.forEach(x=> wr(x,{rutaOrden:ob})); sa.forEach(s=> wrSol(s,{rutaOrden:ob}));
+        b2.forEach(x=> wr(x,{rutaOrden:oa})); sb.forEach(s=> wrSol(s,{rutaOrden:oa}));
+        setTimeout(pintar,120); };
       box.querySelectorAll('button[data-up]').forEach(b=> b.onclick=()=> mover(+b.dataset.up, +b.dataset.up-1));
       box.querySelectorAll('button[data-down]').forEach(b=> b.onclick=()=> mover(+b.dataset.down, +b.dataset.down+1));
       // "Ya compré acá": pasa a 🛻 COMPRADO lo que tenga cantidad. NO toca el stock — eso pasa al
@@ -20423,6 +20504,15 @@ function buildFilterTable(cfg){
         cont.querySelectorAll('input[data-ri]').forEach(el=>{ const v=num(el.value); if(!(v>0)) return;
           const x=insumos.find(z=>z._uid===el.dataset.ri); if(!x) return;
           wr(x,{compraFecha:hoyISO, compraCant:v, rutaFecha:'', rutaOrden:''}); n++; });
+        // Los pedidos de Gustavo pasan a 🛻 comprado por el MISMO botón: tampoco mueven stock todavía.
+        cont.querySelectorAll('input[data-rs]').forEach(el=>{ const v=num(el.value); if(!(v>0)) return;
+          const s=solicitudes.find(z=>z._uid===el.dataset.rs); if(!s) return;
+          // Si el pedido es de un insumo del maestro, el que mueve el stock es el INSUMO (el camino
+          // de siempre). La solicitud queda con `stockPorInsumo` para no volver a sumar al entregar.
+          const insV = s.insumoUid ? insumos.find(z=>z._uid===s.insumoUid) : null;
+          if(insV) wr(insV,{compraFecha:hoyISO, compraCant:v, rutaFecha:'', rutaOrden:''});
+          wrSol(s,{estado:'comprado', cantidad:v, compraFechaSol:hoyISO, compraPor:usuario(),
+            rutaFecha:'', rutaOrden:'', stockPorInsumo: !!insV}); n++; });
         if(!n){ alert('Cargá la cantidad de lo que compraste en al menos un ítem.'); return; }
         setTimeout(pintar,150); });
       const ent=$('pe-ruta-entregar'); if(ent) ent.onclick=()=>{ $('pe-modal-ins').classList.remove('open'); openRecepcion(); };
@@ -20483,16 +20573,27 @@ function buildFilterTable(cfg){
     // Las DOS puertas de entrada a la fábrica: lo que trae el proveedor (pedidoFecha) y lo que
     // Marcelo fue a buscar y entrega en mano (compraFecha). Terminan igual: suma al stock.
     const enCamino=insumos.filter(x=> x.pedidoFecha || x.compraFecha);
-    if(!enCamino.length){ alert('No hay nada para ingresar: ni pedidos en camino ni compras sin entregar.\nArmá un pedido con 🛒 o una salida a comprar con 🚚.'); return; }
+    const solCam=solCompradas();   // pedidos de Gustavo ya comprados: entran por la misma puerta
+    if(!enCamino.length && !solCam.length){ alert('No hay nada para ingresar: ni pedidos en camino ni compras sin entregar.\nArmá un pedido con 🛒 o una salida a comprar con 🚚.'); return; }
     const grupos={};
     enCamino.forEach(x=>{ const p=provDe(x); (grupos[p]=grupos[p]||[]).push(x); });
     // Lo comprado por Marcelo va primero: está en la camioneta esperando que alguien lo descargue.
     const provs=Object.keys(grupos).sort((a,b)=>
       (grupos[b].some(x=>x.compraFecha)?1:0)-(grupos[a].some(x=>x.compraFecha)?1:0) || a.localeCompare(b));
+    // (se le suman más abajo los proveedores que solo tienen pedidos de Gustavo)
     const list=[]; provs.forEach(p=> grupos[p].forEach(x=>list.push(x)));
+    // Los pedidos de Gustavo se agrupan por su mismo proveedor, para descargar la camioneta de una.
+    const grS={}; solCam.forEach(s=>{ const p=provDeSol(s); (grS[p]=grS[p]||[]).push(s); });
+    Object.keys(grS).forEach(p=>{ if(provs.indexOf(p)<0) provs.push(p); });
     let cuerpo='';
-    provs.forEach(p=>{ cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p)+'</div>';
-      grupos[p].forEach(x=>{ const i=list.indexOf(x); const cant=num(x.compraCant)||num(x.pedidoCant);
+    provs.forEach(p=>{ cuerpo+='<div class="pe-ins-provh">🏪 '+esc(p===SIN_PROV?'Pedidos sin proveedor':p)+'</div>';
+      (grS[p]||[]).forEach(s=>{
+        if(s.stockPorInsumo){   // su insumo ya está en esta lista con su campo: no se duplica
+          cuerpo+='<div class="pe-qty"><div><div class="nm">📝 '+esc(s.item||'')+'</div><div class="cd">lo pidió '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+' · entra con <b>'+esc((insumos.find(z=>z._uid===s.insumoUid)||{}).nombre||'el insumo')+'</b></div></div></div>'; return; }
+        cuerpo+='<div class="pe-qty"><div><div class="nm">📝 '+esc(s.item||'')+'</div><div class="cd"><span style="color:#6d28d9;font-weight:700">🛻 pedido de '+esc(String(s.pidio||'').split('@')[0]||'la fábrica')+'</span>'+
+          (num(s.cantidad)>0?' · '+nf(num(s.cantidad))+(s.unidad?' '+esc(s.unidad):''):'')+(s.insumoUid?' · suma al stock':' · no mueve stock')+'</div></div>'+
+          '<input data-rcs="'+esc(s._uid)+'" inputmode="decimal"'+(num(s.cantidad)>0?' value="'+nf(num(s.cantidad))+'"':'')+' placeholder="cant." style="width:86px;padding:9px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:15px;font-weight:700"></div>'; });
+      (grupos[p]||[]).forEach(x=>{ const i=list.indexOf(x); const cant=num(x.compraCant)||num(x.pedidoCant);
         const orig = x.compraFecha ? '<span style="color:#6d28d9;font-weight:700">🛻 comprado el '+fmtFecha(x.compraFecha)+'</span>'
                                    : 'pedido el '+fmtFecha(x.pedidoFecha);
         cuerpo+='<div class="pe-qty"><div><div class="nm">'+esc(x.nombre)+'</div><div class="cd">'+orig+(cant>0?' · '+nf(cant)+(x.unidad?' '+esc(x.unidad):''):'')+' · stock actual '+nf(num(x.stock))+'</div></div>'+
@@ -20508,10 +20609,21 @@ function buildFilterTable(cfg){
       let n=0;
       list.forEach((x,i)=>{ const el=$('pe-form-ins').querySelector('input[data-rci="'+i+'"]'); if(!el||el.value.trim()==='') return;
         const lleg=num(el.value); if(lleg<0){ return; }
+        // El pedido que viajaba pegado a este insumo se cierra con él (su stock ya lo sumó el insumo).
+        solCompradas().filter(s=> s.stockPorInsumo && s.insumoUid===x._uid)
+          .forEach(s=>{ const viva=solicitudes.find(z=>z._uid===s._uid);
+            if(viva) solEntregar(viva, c); });   // sin cantidad: conserva la que se compró, y no suma stock
         const cur=insumos.find(z=>z._uid===x._uid)||x;
         const upd=insEntregaUpd(cur, lleg, hoyISO); upd.usuario=usuario();
         Object.assign(cur, upd);   // copia optimista (la escritura es asíncrona: el snapshot la reconfirma)
         c.FS.setDoc(c.FS.doc(c.db,'vph_insumos',x._uid), upd, {merge:true}).catch(e=>alert('No se pudo guardar: '+e.message)); n++; });
+      // Los pedidos de Gustavo se entregan por el MISMO botón y el mismo camino de stock
+      // (solEntregar -> insEntregaUpd). Un pedido suelto queda entregado sin mover stock.
+      solCam.forEach(s=>{ const el=$('pe-form-ins').querySelector('input[data-rcs="'+s._uid+'"]');
+        if(!el || el.value.trim()==='') return;
+        const lleg=num(el.value); if(!(lleg>0)) return;
+        const viva=solicitudes.find(z=>z._uid===s._uid); if(!viva) return;
+        if(solEntregar(viva, c, lleg)) n++; });
       $('pe-modal-ins').classList.remove('open');
       alert(n? ('Ingreso registrado: '+n+' ítem'+(n!==1?'s':'')+'. El stock ya se actualizó.') : 'No cargaste ninguna cantidad.');
     };
