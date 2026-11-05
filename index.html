@@ -23056,50 +23056,6 @@ function buildFilterTable(cfg){
     '</div>';
   }
 
-  // 04/11 (pedido de Marcelo): presupuestos de BASES con transporte externo. El cliente quiere saber cuánto
-  // sale CADA PALLET puesto en su destino: mercadería del pallet + flete por pallet. Solo con la zona
-  // "9 Transporte externo (a cotizar)" y un renglón de flete cargado (el precio por pallet lo edita el
-  // usuario en el presupuesto). NO recalcula nada: sale de los mismos renglones que el total del papel
-  // (precio con IVA de cada renglón, unidades por pallet del catálogo, y el flete del renglón "Flete").
-  // Los kits/anclajes (van en una cajita sobre el pallet, no ocupan lugar) se suman a la fila de la base
-  // BNV, así el pallet de bases dice el precio COMPLETO (base + kit) y no el de la base sola.
-  function bloquePalletDestino(v){
-    if(!v || String(v.zona||'')!=='cotizar') return '';
-    const items=(v.items||[]).filter(it=>it&&(it.desc||it.codigo));
-    const esFle=it=>/^flete/i.test(String(it.desc||''));
-    const fl=items.find(esFle); if(!fl) return '';
-    const cIva=it=>{ const al=(it.iva==='exento'||it.iva==='nogravado')?0:num(it.iva); return num(it.precioUnit)*(1-num(it.descPct)/100)*(1+al/100); };
-    const fletePallet=cIva(fl); if(!(fletePallet>0)) return '';
-    const prods=(window.__catalogoProductos?window.__catalogoProductos():[]);
-    const prodDe=it=>{ const c=normc(it.codigo); return (c&&prods.find(p=>normc(p.codigo)===c)) || prods.find(p=>normc(p.nombre)===normc(it.desc)) || null; };
-    const cajita=it=>!!(window.__enCajita && window.__enCajita(it.codigo, it.desc));
-    let kitsTot=0;
-    items.forEach(it=>{ if(!esFle(it) && cajita(it)) kitsTot+=num(it.cant)*cIva(it); });
-    const filas=[];
-    items.forEach(it=>{
-      if(esFle(it) || cajita(it) || num(it.cant)<=0) return;
-      const pr=prodDe(it); if(!pr || String(pr.tipo||'')==='Servicio') return;
-      const ud=num(pr.udPorPallet); if(!(ud>0)) return;
-      filas.push({ it, pr, ud, kit:0 });
-    });
-    if(!filas.length) return '';
-    const bnv=filas.filter(f=>/^BNV/i.test(String(f.it.codigo||f.pr.codigo||'')));
-    if(kitsTot>0 && bnv.length===1) bnv[0].kit = kitsTot/num(bnv[0].it.cant);   // kit por unidad de base
-    const th='style="text-align:right;padding:4px 6px"', td='style="text-align:right;padding:4px 6px;white-space:nowrap"';
-    const cuerpo=filas.map(f=>{
-      const merc=f.ud*(cIva(f.it)+f.kit);
-      return '<tr style="border-top:1px solid #e2e8f0"><td style="padding:4px 6px">'+esc(f.it.desc||f.pr.nombre)+(f.kit>0?' <span style="color:#666">(con kit)</span>':'')+'</td>'+
-        '<td '+td+'>'+nf(f.ud)+' u.</td><td '+td+'>'+money(merc)+'</td><td '+td+'>'+money(fletePallet)+'</td>'+
-        '<td '+td+'><b>'+money(merc+fletePallet)+'</b></td></tr>';
-    }).join('');
-    const dest=(v.fleteManual&&v.fleteManual.destino)?' a '+esc(v.fleteManual.destino):'';
-    return '<div style="margin-top:10px;border:1.5px solid #157A3D;border-radius:6px;overflow:hidden;font-size:10.5px">'+
-      '<div style="background:#157A3D;color:#fff;font-weight:800;font-size:10.5px;letter-spacing:.06em;padding:4px 10px">PRECIO DE CADA PALLET PUESTO EN DESTINO'+dest.toUpperCase()+' · IVA INCLUIDO</div>'+
-      '<table style="width:100%;border-collapse:collapse"><tr style="background:#e7fbf1"><th style="text-align:left;padding:4px 6px">Pallet</th>'+
-      '<th '+th+'>Unidades</th><th '+th+'>Mercadería</th><th '+th+'>Flete</th><th '+th+'>Puesto en destino</th></tr>'+cuerpo+'</table></div>';
-  }
-  window.__bloquePalletDestino = bloquePalletDestino;
-
   function condicionesPresup(v, opt){
     // Qué trato comercial es. Manda la LISTA DE PRECIOS (la regex toma también los nombres viejos:
     // "1 Mayorista Responsable Inscripto", "2 Mayorista Sin Facturar"); si el documento es viejo y no
@@ -23362,7 +23318,7 @@ function buildFilterTable(cfg){
     const qp=!esPresupuesto?qrPayload(v):null;
     const codigoFac = qp && qp.tipoCmp!=null ? String(qp.tipoCmp).padStart(2,'0') : '';
     return encabezado(esPresupuesto?'X':letraFac, esPresupuesto?'PRESUPUESTO':tituloFac, numero, dmy(v.fecha), extrasDer, undefined, codigoFac)+
-      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+(esPresupuesto?bloquePalletDestino(v):'')+escBlock+obs+caeBlock+pie(v);
+      bloqueCliente(izq,der)+tabla+'<div class="doc-tot">'+tot+'</div>'+escBlock+obs+caeBlock+pie(v);
   }
 
   // ---------- Recibo de Cobranza ----------
