@@ -23140,30 +23140,35 @@ function buildFilterTable(cfg){
     ['Izaje','8 orificios Ø25 (2 por cara)'],['Superficie de apoyo','900 cm²'],['Pallet','24 cubos · 1.440 kg · flejado']];
   // [peso total en kg, cubos en suelo firme, cubos en suelo medio]; null = consultar
   const CA30_GUIA={
-    "20'":{m:'6 metros', filas:[[3000,6,6],[4000,6,6],[5000,6,8],[6000,6,10],[7000,8,10],[8000,8,null],[9000,10,null]]},
-    "40'":{m:'12 metros', filas:[[4000,6,6],[5000,6,8],[6000,6,10],[7000,8,10],[8000,8,12],[9000,10,14],[10000,10,null]]}
+    "20'":{m:'6 m', filas:[[3000,6,6],[4000,6,6],[5000,6,8],[6000,6,10],[7000,8,10],[8000,8,null],[9000,10,null]]},
+    "40'":{m:'12 m', filas:[[4000,6,6],[5000,6,8],[6000,6,10],[7000,8,10],[8000,8,12],[9000,10,14],[10000,10,null]]}
   };
   const llevaCA30=v=>(v&&v.items||[]).some(it=>it && (String(it.codigo||'').trim().toUpperCase()==='CA30' || /\bCA-?30\b/i.test(String(it.desc||''))));
+  // Compacto a propósito (05/11, 2ª vuelta): con la versión grande el presupuesto del CA-30 pasaba a DOS hojas. El tope es el
+  // alto de un A4 (≈1122 px); la hoja ya trae 14 mm de relleno arriba y abajo. Si se agrega texto acá, volver a medir.
   function bloqueFichaCA30(v){
     if(!llevaCA30(v)) return '';
     const kg=n=>n.toLocaleString('es-AR');
-    const tabla=(nom,g)=>'<div style="flex:1 1 0;min-width:0"><table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr>'+
-      '<th colspan="3" style="background:#1d7a46;color:#fff;text-align:left;padding:3px 6px;white-space:normal">Contenedor '+nom+' <span style="font-weight:400">· '+g.m+'</span></th></tr>'+
-      '<tr><th style="text-align:left;padding:2px 6px;background:#f1f5f2;white-space:normal">Peso total (con carga)</th><th style="padding:2px 4px;background:#f1f5f2;white-space:normal">Suelo firme</th><th style="padding:2px 4px;background:#f1f5f2;white-space:normal">Suelo medio</th></tr></thead><tbody>'+
-      g.filas.map(f=>'<tr><td style="padding:2px 6px;border-bottom:1px solid #e5e7eb">'+kg(f[0])+' kg</td>'+
-        '<td style="text-align:center;padding:2px 4px;border-bottom:1px solid #e5e7eb"><b>'+f[1]+'</b> cubos</td>'+
-        '<td style="text-align:center;padding:2px 4px;border-bottom:1px solid #e5e7eb">'+(f[2]==null?'<i>Consultar</i>':'<b>'+f[2]+'</b> cubos')+'</td></tr>').join('')+'</tbody></table></div>';
-    return '<div class="ca30-ficha" style="margin-top:14px;border:1px solid #cbd5e1;border-radius:6px;padding:10px 12px;page-break-inside:avoid;break-inside:avoid">'+
-      '<div style="font-weight:800;font-size:12px;margin-bottom:8px">Cubo de apoyo CA-30 · ficha del producto</div>'+
-      '<div style="display:flex;gap:14px;align-items:center">'+
-        '<img src="Productos/'+IMG_PRODUCTO.CA30+'" alt="" style="width:112px;height:112px;object-fit:cover;border-radius:6px;flex:0 0 auto" onerror="this.remove()">'+
-        '<table style="border-collapse:collapse;font-size:10.5px;flex:1 1 auto"><tbody>'+CA30_DATOS.map(d=>'<tr><td style="padding:2px 8px 2px 0;color:#555;white-space:nowrap;vertical-align:top">'+d[0]+'</td><td style="padding:2px 0;white-space:normal"><b>'+d[1]+'</b></td></tr>').join('')+'</tbody></table>'+
+    const th='padding:2px 4px;background:#1d7a46;color:#fff;white-space:nowrap;font-weight:700';
+    const td='padding:.5px 4px;border-bottom:1px solid #e5e7eb;white-space:nowrap';
+    const tabla=(nom,g)=>'<div style="flex:1 1 0;min-width:0"><table style="width:100%;border-collapse:collapse;font-size:9.5px;line-height:1.25"><thead><tr>'+
+      '<th style="'+th+';text-align:left">Contenedor '+nom+' · '+g.m+'</th><th style="'+th+'">Suelo firme</th><th style="'+th+'">Suelo medio</th></tr></thead><tbody>'+
+      g.filas.map(f=>'<tr><td style="'+td+'">'+kg(f[0])+' kg</td>'+
+        '<td style="'+td+';text-align:center"><b>'+f[1]+'</b> cubos</td>'+
+        '<td style="'+td+';text-align:center">'+(f[2]==null?'<i>Consultar</i>':'<b>'+f[2]+'</b> cubos')+'</td></tr>').join('')+'</tbody></table></div>';
+    const dato=d=>'<tr><td style="padding:0 6px 0 0;color:#555;white-space:nowrap;vertical-align:top">'+d[0]+'</td><td style="padding:0 10px 0 0;white-space:nowrap"><b>'+d[1]+'</b></td></tr>';
+    const mitad=Math.ceil(CA30_DATOS.length/2);
+    const cols=[CA30_DATOS.slice(0,mitad),CA30_DATOS.slice(mitad)].map(c=>'<table style="border-collapse:collapse;font-size:9.5px;line-height:1.35"><tbody>'+c.map(dato).join('')+'</tbody></table>').join('');
+    return '<div class="ca30-ficha" style="margin-top:8px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;page-break-inside:avoid;break-inside:avoid">'+
+      '<div style="display:flex;gap:10px;align-items:center">'+
+        '<img src="Productos/'+IMG_PRODUCTO.CA30+'" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:5px;flex:0 0 auto" onerror="this.remove()">'+
+        '<div style="flex:1 1 auto;min-width:0"><div style="font-weight:800;font-size:11px;margin-bottom:3px">Cubo de apoyo CA-30 · ficha del producto</div><div style="display:flex;gap:6px;flex-wrap:nowrap">'+cols+'</div></div>'+
       '</div>'+
-      '<div style="font-weight:800;font-size:11px;margin:10px 0 4px">¿Cuántos cubos necesito?</div>'+
-      '<div style="display:flex;gap:10px">'+tabla("20'",CA30_GUIA["20'"])+tabla("40'",CA30_GUIA["40'"])+'</div>'+
-      '<div style="font-size:9.5px;color:#555;line-height:1.45;margin-top:6px"><b>Suelo firme</b> (tosca o terreno compactado): cada cubo aguanta ≈ 1.000 kg. <b>Suelo medio</b> (tierra firme o relleno): ≈ 700 kg. '+
-        'Peso total = contenedor vacío + carga (≈ 2,3 t un 20\' y ≈ 3,8 t un 40\'). Cuatro cubos en las esquinas y el resto a igual distancia, sobre una cama de 5 cm de arena o ripio compactado. '+
-        '<b>Es una guía orientativa, no un cálculo estructural:</b> con suelo blando o barro, cargas altas, viento o contenedores apilados, consultanos.</div>'+
+      '<div style="font-weight:800;font-size:10.5px;margin:5px 0 2px">¿Cuántos cubos necesito?</div>'+
+      '<div style="display:flex;gap:8px">'+tabla("20'",CA30_GUIA["20'"])+tabla("40'",CA30_GUIA["40'"])+'</div>'+
+      '<div style="font-size:9px;color:#555;line-height:1.35;margin-top:4px"><b>Suelo firme</b> (tosca o terreno compactado): ≈ 1.000 kg por cubo · <b>suelo medio</b> (tierra firme o relleno): ≈ 700 kg. '+
+        'Peso total = contenedor vacío (≈ 2,3 t el 20\', ≈ 3,8 t el 40\') + carga. '+
+        '<b>Guía orientativa, no un cálculo estructural:</b> con suelo blando, cargas altas, viento o contenedores apilados, consultanos.</div>'+
     '</div>';
   }
   // ---------- fin ficha CA-30 ----------
