@@ -15309,10 +15309,20 @@ function buildFilterTable(cfg){
     const col=venc?'var(--red)':(hoy?'var(--amber)':'var(--blue)');
     const txt=venc?('vencido ('+fmtFecha(l.proximoSeguimiento)+')'):(hoy?'hoy':fmtFecha(l.proximoSeguimiento));
     return '<div style="font-size:11px;font-weight:700;color:'+col+';margin-top:4px">📅 Seguimiento '+txt+'</div>'; }
+  // Foto del primer producto del pedido que tenga una cargada (las mismas del PDF, por código). Si el renglón no
+  // trae código (se escribió el nombre a mano) se busca en el catálogo por nombre. '' si ninguno tiene foto.
+  // Se llama al pintar (no al cargar la página): __fotoProducto la define el módulo Documentos, que va después.
+  function fotoDeLead(l){
+    if(!window.__fotoProducto) return '';
+    for(const it of (l&&l.items)||[]){ if(!it) continue;
+      const cod = it.codigo || ((typeof matchProd==='function' && it.producto) ? ((matchProd(it.producto)||{}).codigo||'') : '');
+      const f = cod ? window.__fotoProducto(cod) : ''; if(f) return f; }
+    return '';
+  }
   function cardHtml(l){
     const wa=waLink(l.telefono);
     return '<div class="kb-card"><div class="cli">'+esc(l.cliente||'(sin nombre)')+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700" title="Ya se hizo el primer contacto">✓ contactado</span>':'')+'</div>'+
-      '<div class="ped">'+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
+      '<div class="ped">'+(fotoDeLead(l)?'<img src="'+esc(fotoDeLead(l))+'" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:6px" onerror="this.remove()">':'')+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
       '<div class="meta">'+(l.lugar?'📍 '+esc(l.lugar)+'<br>':'')+(l.pago?'💳 '+esc(l.pago)+' · ':'')+(l.origen?esc(l.origen):'')+(l.telefono?'<br>📞 '+esc(l.telefono):'')+'</div>'+
       seguiBadge(l)+
       (num(l.monto)?'<div class="monto">'+money(num(l.monto))+'</div>':'')+
@@ -23118,7 +23128,9 @@ function buildFilterTable(cfg){
     TEC50:'TEC50.png', TET50:'TET50.png', UL60:'UL60.png', UCC10:'UCC10.png',
     // TER100 se renombró a TEC100 en el catálogo (06/08); la foto sirve para los dos códigos
     // (TER100 sigue para reimprimir documentos viejos que quedaron con el código anterior).
-    TET100:'TET100.png', TER100:'TER100.png', TEC100:'TER100.png'
+    TET100:'TET100.png', TER100:'TER100.png', TEC100:'TER100.png',
+    // Cubo de Apoyo CA-30 (05/11, pedido de Marcelo): 640 px y ~57 KB, la foto "para cotizaciones" de la carpeta del producto.
+    CA30:'CA30.jpg'
   };
   function celdaCodigo(codigo){
     const img = IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()];
