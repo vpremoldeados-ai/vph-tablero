@@ -1579,7 +1579,7 @@
       </div>
       <div class="filter-bar" id="igb-filtros"></div>
       <div id="igb-lista"></div>
-      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
+      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. También aparecen los <b>comentarios de YouTube</b> del canal (filtro ▶️): el agente los lee cada 15 minutos y responde solo en público (YouTube no tiene mensajes privados), derivando al WhatsApp de ventas. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
     </section>
   </div>
 
@@ -18819,7 +18819,7 @@ function buildFilterTable(cfg){
   // Pura (la prueban los tests): agrupa por persona, ordena y resume cada charla.
   function charlas(msgs, ahoraMs){
     const g=new Map();
-    (msgs||[]).forEach(m=>{ const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
+    (msgs||[]).forEach(m=>{ if(m.dir==='revision'||m.dir==='leccion') return; const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
     const out=[];
     g.forEach((lista,k)=>{
       lista.sort((a,b)=>tsMs(a.ts)-tsMs(b.ts));
@@ -18827,7 +18827,8 @@ function buildFilterTable(cfg){
       const conNombre=lista.slice().reverse().find(m=>m.usuario||m.nombre)||{};
       const leadUid=(lista.slice().reverse().find(m=>m.leadUid)||{}).leadUid||'';
       const ultPersona=lista.filter(m=>m.autor==='persona').map(m=>tsMs(m.ts)).sort((a,b)=>b-a)[0]||0;
-      out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid,
+      const yt=lista.slice().reverse().find(m=>m.canal==='youtube')||null;
+      out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid, canal: yt?'youtube':'instagram', ytUrl: yt&&yt.ytUrl||'',
         ultimoMs:tsMs(ult.ts), entrantes:lista.filter(m=>m.dir==='in').length,
         persona: !!ultPersona && (ahoraMs-ultPersona)<PAUSA_MS,
         sinRespuesta: ult.dir==='in' });
@@ -18856,10 +18857,10 @@ function buildFilterTable(cfg){
       '<div class="kpi good"><div class="label">Con lead en el CRM</div><div class="value">'+todas.filter(c=>c.leadUid).length+'</div><div class="sub">Dejaron su WhatsApp</div></div>'+
       '<div class="kpi warn"><div class="label">Sin WhatsApp todavía</div><div class="value">'+todas.filter(c=>!c.leadUid).length+'</div><div class="sub">Solo consultaron</div></div>'+
       '<div class="kpi"><div class="label">Hoy</div><div class="value">'+todas.filter(c=>c.ultimoMs>=hoy.getTime()).length+'</div><div class="sub">Charlas con actividad hoy</div></div>';
-    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios']];
+    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios'],['yt','▶️ YouTube']];
     $('igb-filtros').innerHTML=F.map(([k,l])=>'<button class="filter-btn'+(filtro===k?' active':'')+'" data-f="'+k+'">'+l+'</button>').join('');
     $('igb-filtros').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
-    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')));
+    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')) || (filtro==='yt'&&c.canal==='youtube'));
     $('igb-count').textContent=lista.length+' charla'+(lista.length!==1?'s':'');
     $('igb-lista').innerHTML=lista.length?lista.map(c=>{
       const abierta=abiertas.has(c.k);
@@ -18867,14 +18868,16 @@ function buildFilterTable(cfg){
       const ocultos=c.msgs.length-vis.length;
       const lead=c.leadUid && window.__leadPorUid ? window.__leadPorUid(c.leadUid) : null;
       return '<div class="kb-card" style="margin-bottom:8px">'+
-        '<div class="cli">'+esc(c.nombre||c.usuario||'Usuario de Instagram')+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
+        '<div class="cli">'+(c.canal==='youtube'?'▶️ ':'')+esc(c.nombre||c.usuario||(c.canal==='youtube'?'Usuario de YouTube':'Usuario de Instagram'))+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
           (c.leadUid?' <span class="badge green" title="Dejó su WhatsApp: ya está en el CRM">🎯 Lead'+(lead&&lead.estado?' · '+esc(lead.estado):'')+'</span>':' <span class="badge amber">Sin WhatsApp</span>')+
           (c.persona?' <span class="badge" title="Una persona respondió desde Instagram: el asistente está en pausa en esta charla">👤 Atendida a mano</span>':'')+'</div>'+
         '<div class="meta">'+c.entrantes+' mensaje'+(c.entrantes!==1?'s':'')+' del cliente · último: '+fmt(c.msgs[c.msgs.length-1].ts)+'</div>'+
         (ocultos>0?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&c.msgs.length>4?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▴ Ver menos</button>':''))+
         vis.map(burbuja).join('')+
         '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
-          '<a class="kb-wa" href="'+igLink(c.usuario)+'" target="_blank" rel="noopener" style="background:#d6249f;border-color:#d6249f">📸 Abrir en Instagram</a>'+
+          (c.canal==='youtube'
+            ? '<a class="kb-wa" href="'+esc(c.ytUrl||'https://studio.youtube.com/')+'" target="_blank" rel="noopener" style="background:#ff0000;border-color:#ff0000">▶️ Abrir en YouTube</a>'
+            : '<a class="kb-wa" href="'+igLink(c.usuario)+'" target="_blank" rel="noopener" style="background:#d6249f;border-color:#d6249f">📸 Abrir en Instagram</a>')+
           (c.leadUid?'<button class="kb-move" data-crm="1">🎯 Ver en el CRM</button>':'')+
         '</div></div>';
     }).join(''):'<div class="kb-empty">No hay charlas'+(filtro?' con este filtro':' en los últimos '+DIAS+' días')+'.</div>';
