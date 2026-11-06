@@ -1583,6 +1583,29 @@
     </section>
   </div>
 
+  <div class="page" id="page-igrevision">
+    <div class="kpis" id="igr-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="margin:0"><span class="dot" style="background:#7c3aed"></span>Revisión del agente</h2>
+        <select id="igr-fecha" style="margin-left:auto"></select>
+      </div>
+      <div id="igr-resumen" class="note"></div>
+      <div id="igr-items"></div>
+    </section>
+    <section>
+      <h2><span class="dot" style="background:var(--amber)"></span>Lecciones propuestas <span class="result-count" id="igr-prop-count"></span></h2>
+      <p class="note">Las propone Claude cada noche al revisar las charlas del día. <b>El agente recién las usa cuando las aprobás.</b> Podés editar el texto antes de aprobar.</p>
+      <div id="igr-propuestas"></div>
+    </section>
+    <section>
+      <h2><span class="dot" style="background:var(--green)"></span>Lecciones activas <span class="result-count" id="igr-act-count"></span></h2>
+      <p class="note">Esto es lo que el agente ya aprendió: se suma a su manual en cada respuesta (Instagram, comentarios y WhatsApp). Si una lección sale mal, quitala y deja de usarla en 15 minutos.</p>
+      <div id="igr-activas"></div>
+    </section>
+    <p class="note">Todas las noches a las 20 h, Claude (la IA de Anthropic) lee las charlas y comentarios del día y califica cada respuesta del asistente virtual: ✅ bien, ⚠️ dudosa o ❌ mal. Explica qué falló y cómo debió responder, y propone lecciones. Cuesta centavos por día y sale del crédito mensual del plan Max. Datos en Firestore <code>vph_ig_mensajes</code> (dir <code>revision</code> y <code>leccion</code>), solo admin.</p>
+  </div>
+
   <!-- ================= CONVERTIR CONVERSACIÓN EN LEAD (Bandeja WhatsApp) ================= -->
   <div class="cmp-overlay" id="wab-conv-modal">
     <div class="cmp-dialog" style="max-width:640px">
@@ -2405,6 +2428,7 @@ const PAGES = [
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
   { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
   { id:'igbandeja', nombre:'Bandeja Instagram', ico:'📸' },
+  { id:'igrevision', nombre:'Revisión del agente', ico:'🧠' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'remitos', nombre:'Remitos', ico:'🚚' },
@@ -18869,6 +18893,106 @@ function buildFilterTable(cfg){
   window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
   window.__afterLogin.push(startSync);
   window.__afterLogout.push(()=>{ stopSync(); MSGS=[]; render(); });
+  if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+  render();
+})();
+</script>
+
+<!-- =====================================================================
+     MÓDULO REVISIÓN DEL AGENTE (06/11) — informe nocturno de Claude sobre las respuestas del
+     asistente virtual + lecciones que Marcelo aprueba. Lee/escribe vph_ig_mensajes:
+       dir:'revision'  {fecha, total, bien, dudosas, mal, resumen, items:[{nota,usuario,respuesta,problema,mejor}]}
+       dir:'leccion'   {texto, porque, estado:'propuesta'|'aprobada'|'descartada'|'quitada', fecha}
+     El Worker (vph-agente-instagram) lee las aprobadas y las suma a su manual (caché 15 min).
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fb=()=>window.__fbctx;
+  const COL='vph_ig_mensajes';
+  const fmtF=f=>{ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(f||''); return m? m[3]+'/'+m[2]+'/'+m[1] : (f||'—'); };
+
+  let REV=[], LEC=[], fechaSel='', unsub=null;
+
+  // Puras (las prueban los tests)
+  function ordenarRevisiones(lista){ return (lista||[]).filter(r=>r&&r.fecha).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))); }
+  function resumen7(lista){
+    const ult=ordenarRevisiones(lista).slice(0,7);
+    const s=ult.reduce((a,r)=>({ total:a.total+(+r.total||0), bien:a.bien+(+r.bien||0), dudosas:a.dudosas+(+r.dudosas||0), mal:a.mal+(+r.mal||0) }),{total:0,bien:0,dudosas:0,mal:0});
+    s.pct = s.total ? Math.round(s.bien*100/s.total) : null;
+    return s;
+  }
+  window.__igrResumen7=resumen7; window.__igrOrdenar=ordenarRevisiones;
+
+  function kpis(){
+    const s=resumen7(REV), act=LEC.filter(l=>l.estado==='aprobada').length, prop=LEC.filter(l=>l.estado==='propuesta').length;
+    $('igr-kpis').innerHTML=
+      '<div class="kpi '+(s.pct==null?'':s.pct>=85?'good':s.pct>=65?'warn':'bad')+'"><div class="label">Respuestas bien (7 días)</div><div class="value">'+(s.pct==null?'—':s.pct+'%')+'</div><div class="sub">'+s.bien+' de '+s.total+' respuestas revisadas</div></div>'+
+      '<div class="kpi bad"><div class="label">Errores (7 días)</div><div class="value">'+s.mal+'</div><div class="sub">'+s.dudosas+' dudosas</div></div>'+
+      '<div class="kpi '+(prop?'warn':'')+'"><div class="label">Lecciones por aprobar</div><div class="value">'+prop+'</div><div class="sub">Esperan tu OK</div></div>'+
+      '<div class="kpi good"><div class="label">Lecciones activas</div><div class="value">'+act+'</div><div class="sub">El agente ya las aplica</div></div>';
+  }
+
+  function renderInforme(){
+    const lista=ordenarRevisiones(REV);
+    const sel=$('igr-fecha');
+    sel.innerHTML=lista.length?lista.map(r=>'<option value="'+esc(r.fecha)+'">'+fmtF(r.fecha)+' · '+(+r.bien||0)+' bien · '+(+r.dudosas||0)+' dudosas · '+(+r.mal||0)+' mal</option>').join(''):'<option value="">Sin revisiones todavía</option>';
+    if(!lista.some(r=>r.fecha===fechaSel)) fechaSel=lista.length?lista[0].fecha:'';
+    sel.value=fechaSel; sel.onchange=()=>{ fechaSel=sel.value; renderInforme(); };
+    const r=lista.find(x=>x.fecha===fechaSel);
+    if(!r){ $('igr-resumen').textContent='La primera revisión corre esta noche a las 20 h.'; $('igr-items').innerHTML=''; return; }
+    $('igr-resumen').innerHTML='<b>Resumen de Claude ('+fmtF(r.fecha)+', '+(+r.charlas||0)+' charlas):</b> '+esc(r.resumen||'');
+    const items=Array.isArray(r.items)?r.items:[];
+    $('igr-items').innerHTML=items.length?items.map(it=>
+      '<div class="kb-card" style="margin-bottom:8px;border-left:4px solid '+(it.nota==='mal'?'var(--red)':'var(--amber)')+'">'+
+        '<div class="cli">'+(it.nota==='mal'?'<span class="badge red">❌ Mal</span>':'<span class="badge amber">⚠️ Dudosa</span>')+(it.usuario?' <span class="badge">'+esc(it.usuario)+'</span>':'')+'</div>'+
+        (it.respuesta?'<div class="meta" style="margin-top:6px"><b>El agente dijo:</b> “'+esc(it.respuesta)+'”</div>':'')+
+        '<div style="margin-top:6px"><b>Problema:</b> '+esc(it.problema)+'</div>'+
+        '<div style="margin-top:6px;color:var(--green)"><b>Mejor:</b> '+esc(it.mejor)+'</div>'+
+      '</div>').join('')
+      :'<div class="kb-empty">'+((+r.total||0)?'Todas las respuestas estuvieron bien. ✅':'Sin respuestas del agente ese día.')+'</div>';
+  }
+
+  function tarjetaLeccion(l, propuesta){
+    return '<div class="kb-card" style="margin-bottom:8px" data-uid="'+esc(l._uid)+'">'+
+      (propuesta
+        ? '<textarea class="igr-txt" style="width:100%;min-height:64px;font:inherit;padding:7px;border:1px solid var(--border);border-radius:8px;box-sizing:border-box">'+esc(l.texto)+'</textarea>'
+        : '<div style="white-space:pre-wrap">'+esc(l.texto)+'</div>')+
+      '<div class="meta" style="margin-top:6px">'+(l.porque?'Por qué: '+esc(l.porque)+' · ':'')+'Propuesta el '+fmtF(l.fecha)+(l.aprobadaEl?' · Aprobada el '+fmtF(l.aprobadaEl):'')+'</div>'+
+      '<div class="acts" style="margin-top:7px">'+(propuesta
+        ? '<button class="kb-move" data-act="aprobar">✅ Aprobar</button><button class="filter-btn" data-act="descartar">Descartar</button>'
+        : '<button class="filter-btn" data-act="quitar">Quitar (dejar de usar)</button>')+'</div></div>';
+  }
+  function renderLecciones(){
+    const prop=LEC.filter(l=>l.estado==='propuesta').sort((a,b)=>String(b.ts).localeCompare(String(a.ts)));
+    const act=LEC.filter(l=>l.estado==='aprobada').sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
+    $('igr-prop-count').textContent=prop.length?prop.length+' pendiente'+(prop.length!==1?'s':''):'';
+    $('igr-act-count').textContent=act.length?act.length+' activa'+(act.length!==1?'s':''):'';
+    $('igr-propuestas').innerHTML=prop.length?prop.map(l=>tarjetaLeccion(l,true)).join(''):'<div class="kb-empty">No hay lecciones esperando tu aprobación.</div>';
+    $('igr-activas').innerHTML=act.length?act.map(l=>tarjetaLeccion(l,false)).join(''):'<div class="kb-empty">Todavía no aprobaste ninguna lección.</div>';
+    document.querySelectorAll('#page-igrevision button[data-act]').forEach(b=>b.onclick=()=>{
+      const card=b.closest('[data-uid]'), uid=card.dataset.uid, c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      const act=b.dataset.act, campos={};
+      if(act==='aprobar'){ const t=(card.querySelector('.igr-txt')||{}).value||''; if(!t.trim()){ alert('La lección está vacía.'); return; } Object.assign(campos,{estado:'aprobada', texto:t.trim(), aprobadaEl:new Date().toISOString().slice(0,10)}); }
+      else if(act==='descartar'){ campos.estado='descartada'; }
+      else if(act==='quitar'){ if(!confirm('¿Quitar esta lección? El agente deja de aplicarla en 15 minutos.')) return; campos.estado='quitada'; }
+      c.FS.updateDoc(c.FS.doc(c.db,COL,uid), campos).catch(e=>alert('No se pudo guardar: '+e.message));
+    });
+  }
+  function render(){ if(!$('igr-kpis')) return; kpis(); renderInforme(); renderLecciones(); }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; stopSync();
+    unsub=c.FS.onSnapshot(c.FS.query(c.FS.collection(c.db,COL), c.FS.where('igsid','==','__agente')),
+      snap=>{ const d=snap.docs.map(x=>({...x.data(),_uid:x.id})); REV=d.filter(x=>x.dir==='revision'); LEC=d.filter(x=>x.dir==='leccion'); render(); },
+      err=>console.error('ig_revision:',err));
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  window.__afterLogin.push(startSync);
+  window.__afterLogout.push(()=>{ stopSync(); REV=[]; LEC=[]; render(); });
   if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
   render();
 })();
