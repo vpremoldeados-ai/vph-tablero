@@ -2032,8 +2032,90 @@ window.__demoSeed = function () {
       </div>
       <div class="filter-bar" id="igb-filtros"></div>
       <div id="igb-lista"></div>
-      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
+      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. También aparecen los <b>comentarios de YouTube</b> del canal (filtro ▶️): el agente los lee cada 15 minutos y responde solo en público (YouTube no tiene mensajes privados), derivando al WhatsApp de ventas. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
     </section>
+  </div>
+
+  <div class="page" id="page-transportes">
+    <div class="kpis" id="tra-kpis"></div>
+    <section>
+      <h2><span class="dot" style="background:#0e7490"></span>¿Llega? ¿Cuánto sale el envío?</h2>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+        <div class="cmp-field" style="flex:2;min-width:200px"><label>Localidad del cliente</label><input id="tra-q-loc" placeholder="p. ej. Río Ceballos, Los Reartes, Bahía Blanca"></div>
+        <div class="cmp-field" style="width:120px"><label>Pallets</label><input id="tra-q-pal" type="number" min="1" step="1" value="1"></div>
+      </div>
+      <div id="tra-res"></div>
+      <div class="note" style="margin-top:10px">Es la MISMA cuenta que usa el agente de WhatsApp para cotizar el envío en el presupuesto: una tarifa <b>revisada</b> se da como precio firme; una <b>a revisar</b> se dice como estimada; si no hay ninguna que llegue, el agente dice que Sofía lo cotiza (no inventa).</div>
+    </section>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="margin:0"><span class="dot" style="background:#0e7490"></span>Transportes y tarifas</h2>
+        <input id="tra-filtro" placeholder="Buscar transporte, destino o localidad" style="margin-left:auto;min-width:220px">
+        <button class="cmp-btn" id="tra-seed" style="display:none">📥 Cargar las tarifas conocidas</button>
+        <button class="cmp-btn cmp-btn-primary" id="tra-nuevo">➕ Agregar</button>
+      </div>
+      <div class="tbl-wrap"><table id="tra-tabla"></table></div>
+      <div class="meta" style="margin-top:8px">Una fila por transporte + destino. <b>Localidades</b>: separadas por coma (las tildes no importan, se normalizan). Precio <b>por pallet</b> o <b>por viaje</b> (con cuántos pallets lleva el camión), final con IVA. <b>Paga</b>: VPH en origen (va dentro del precio) o el cliente al transporte en destino.</div>
+    </section>
+  </div>
+  
+  <div class="cmp-overlay" id="tra-modal">
+    <div class="cmp-dialog" style="max-width:760px">
+      <div class="cmp-dialog-head"><h3 id="tra-f-titulo">➕ Nuevo transporte / destino</h3><button class="cmp-x" id="tra-f-x">✕</button></div>
+      <div class="cmp-dialog-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+          <div class="cmp-field"><label>Transporte</label><input id="tra-f-transporte" placeholder="Sánchez, Brío, Expreso Biletta…"></div>
+          <div class="cmp-field"><label>Tipo</label><select id="tra-f-tipo"><option value="tercero">Tercero (fletero / expreso)</option><option value="propio">Propio (Marcelo / Mati)</option></select></div>
+          <div class="cmp-field"><label>Contacto</label><input id="tra-f-contacto" placeholder="Nombre de quien atiende"></div>
+          <div class="cmp-field"><label>Teléfono</label><input id="tra-f-telefono" placeholder="351 …"></div>
+          <div class="cmp-field"><label>Destino (texto)</label><input id="tra-f-destino" placeholder="Río Cuarto · Hasta 30 km de Circunvalación"></div>
+          <div class="cmp-field"><label>Provincia</label><input id="tra-f-provincia" placeholder="Córdoba"></div>
+          <div class="cmp-field"><label>Zona</label><select id="tra-f-zona"></select></div>
+          <div class="cmp-field"><label>Fecha de la cotización</label><input id="tra-f-fechaCotizacion" type="date"></div>
+        </div>
+        <div class="cmp-field" style="margin-top:10px"><label>Localidades que cubre (separadas por coma)</label><textarea id="tra-f-localidades" rows="2" placeholder="rio ceballos, unquillo, mendiolaza"></textarea></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px">
+          <div class="cmp-field"><label>Precio por pallet ($ final)</label><input id="tra-f-precioPallet" inputmode="decimal" placeholder="39.000"></div>
+          <div class="cmp-field"><label>o precio por viaje ($ final)</label><input id="tra-f-precioViaje" inputmode="decimal" placeholder="260.000"></div>
+          <div class="cmp-field"><label>Pallets por viaje (capacidad)</label><input id="tra-f-pallets" type="number" min="0" step="1" placeholder="8"></div>
+          <div class="cmp-field"><label>Mínimo de pallets</label><input id="tra-f-minPallets" type="number" min="0" step="1" placeholder="1"></div>
+          <div class="cmp-field"><label>Plazo (días)</label><input id="tra-f-plazoDias" type="number" min="0" step="1" placeholder="7"></div>
+          <div class="cmp-field"><label>¿Quién paga el flete?</label><select id="tra-f-pagoEn"></select></div>
+          <div class="cmp-field"><label>Descarga</label><select id="tra-f-descarga"></select></div>
+          <div class="cmp-field"><label>Fuente</label><input id="tra-f-fuente" placeholder="Cotización por WhatsApp del 15/10"></div>
+        </div>
+        <div class="cmp-field" style="margin-top:10px"><label>Condiciones / notas</label><textarea id="tra-f-condiciones" rows="3" placeholder="Seguro por valor declarado, retira en Bolívar 381, cobra el viaje completo aunque vaya un pallet…"></textarea></div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin:10px 0 0">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="tra-f-activo"> Activa (se usa para cotizar)</label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="tra-f-confirmado"> Revisada por Sofía (precio firme)</label>
+        </div>
+        <div id="tra-f-err" style="color:var(--red);min-height:18px;margin-top:6px"></div>
+        <div class="cmp-form-foot"><button class="cmp-btn" id="tra-f-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="tra-f-save">Guardar</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-igrevision">
+    <div class="kpis" id="igr-kpis"></div>
+    <section>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="margin:0"><span class="dot" style="background:#7c3aed"></span>Revisión del agente</h2>
+        <select id="igr-fecha" style="margin-left:auto"></select>
+      </div>
+      <div id="igr-resumen" class="note"></div>
+      <div id="igr-items"></div>
+    </section>
+    <section>
+      <h2><span class="dot" style="background:var(--amber)"></span>Lecciones propuestas <span class="result-count" id="igr-prop-count"></span></h2>
+      <p class="note">Las propone Claude cada noche al revisar las charlas del día. <b>El agente recién las usa cuando las aprobás.</b> Podés editar el texto antes de aprobar.</p>
+      <div id="igr-propuestas"></div>
+    </section>
+    <section>
+      <h2><span class="dot" style="background:var(--green)"></span>Lecciones activas <span class="result-count" id="igr-act-count"></span></h2>
+      <p class="note">Esto es lo que el agente ya aprendió: se suma a su manual en cada respuesta (Instagram, comentarios y WhatsApp). Si una lección sale mal, quitala y deja de usarla en 15 minutos.</p>
+      <div id="igr-activas"></div>
+    </section>
+    <p class="note">Todas las noches a las 20 h, Claude (la IA de Anthropic) lee las charlas y comentarios del día y califica cada respuesta del asistente virtual: ✅ bien, ⚠️ dudosa o ❌ mal. Explica qué falló y cómo debió responder, y propone lecciones. Cuesta centavos por día y sale del crédito mensual del plan Max. Datos en Firestore <code>vph_ig_mensajes</code> (dir <code>revision</code> y <code>leccion</code>), solo admin.</p>
   </div>
 
   
@@ -2837,6 +2919,8 @@ const PAGES = [
   { id:'crm', nombre:'CRM / Leads', ico:'🎯' },
   { id:'wabandeja', nombre:'Bandeja WhatsApp', ico:'💬' },
   { id:'igbandeja', nombre:'Bandeja Instagram', ico:'📸' },
+  { id:'igrevision', nombre:'Revisión del agente', ico:'🧠' },
+  { id:'transportes', nombre:'Transportes', ico:'🚛' },
   { id:'presupuestos', nombre:'Presupuestos', ico:'📝' },
   { id:'ventas', nombre:'Ventas', ico:'💰' },
   { id:'remitos', nombre:'Remitos', ico:'🚚' },
@@ -14488,7 +14572,7 @@ function buildFilterTable(cfg){
   const BACKUP_COLS=['vph_clientes','vph_proveedores','vph_productos','vph_ventas','vph_compras','vph_leads',
     'vph_presupuestos','vph_pedidos','vph_produccion','vph_entregas','vph_insumos','vph_ajustes','vph_solicitudes',
     'vph_cheques','vph_caja','vph_costosfijos','vph_config','vph_reportes','vph_roles',
-    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_asistencia','vph_topes_prospectos','vph_ig_mensajes'];
+    'vph_feriados','vph_wa_pendientes','vph_remitos','vph_empleados','vph_liquidaciones','vph_adjuntos','vph_asistencia','vph_topes_prospectos','vph_ig_mensajes','vph_wa_salientes','vph_transportes'];
   const BACKUP_KEY='vph_ultimo_backup';
   function pintarBackupAsof(){ const el=$('bd-backup-asof'); if(!el) return;
     const u=localStorage.getItem(BACKUP_KEY);
@@ -15669,10 +15753,20 @@ function buildFilterTable(cfg){
     const col=venc?'var(--red)':(hoy?'var(--amber)':'var(--blue)');
     const txt=venc?('vencido ('+fmtFecha(l.proximoSeguimiento)+')'):(hoy?'hoy':fmtFecha(l.proximoSeguimiento));
     return '<div style="font-size:11px;font-weight:700;color:'+col+';margin-top:4px">📅 Seguimiento '+txt+'</div>'; }
+   
+   
+   
+  function fotoDeLead(l){
+    if(!window.__fotoProducto) return '';
+    for(const it of (l&&l.items)||[]){ if(!it) continue;
+      const cod = it.codigo || ((typeof matchProd==='function' && it.producto) ? ((matchProd(it.producto)||{}).codigo||'') : '');
+      const f = cod ? window.__fotoProducto(cod) : ''; if(f) return f; }
+    return '';
+  }
   function cardHtml(l){
     const wa=waLink(l.telefono);
     return '<div class="kb-card"><div class="cli">'+esc(l.cliente||'(sin nombre)')+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700" title="Ya se hizo el primer contacto">✓ contactado</span>':'')+'</div>'+
-      '<div class="ped">'+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
+      '<div class="ped">'+(fotoDeLead(l)?'<img src="'+esc(fotoDeLead(l))+'" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:6px" onerror="this.remove()">':'')+esc(resumenPedido(l))+(totalM2(l)?' · <b>'+totalM2(l).toLocaleString('es-AR')+' m²</b>':'')+'</div>'+
       '<div class="meta">'+(l.lugar?'📍 '+esc(l.lugar)+'<br>':'')+(l.pago?'💳 '+esc(l.pago)+' · ':'')+(l.origen?esc(l.origen):'')+(l.telefono?'<br>📞 '+esc(l.telefono):'')+'</div>'+
       seguiBadge(l)+
       (num(l.monto)?'<div class="monto">'+money(num(l.monto))+'</div>':'')+
@@ -18356,27 +18450,27 @@ function buildFilterTable(cfg){
     const fx=String(firmaLinea||'').trim();
     const f=fx ? (/^marcelo$/i.test(fx) ? 'Marcelo Vassallo' : fx) : bnFirma();
      
-    if(accion==='seguimiento') return bnSaludo(nombre)+' ¿Pudieron ver lo que les mandé de las bases para módulos? Si quieren, les paso los precios con el flete hasta su fábrica o depósito, o les acerco una muestra. Quedo atento. '+f+', Vassallo Premoldeados.';
+    if(accion==='seguimiento') return bnSaludo(nombre)+' ¿Pudieron ver lo que les mandé de las bases para módulos? Les recuerdo: el Cubo de Apoyo de 30×30×30 cm lo mueve un operario sin máquina y trae la chapa para soldar la parte inferior del contenedor. Si quieren, les paso los precios con el flete hasta su fábrica o depósito. Quedo atento. '+f+', Vassallo Premoldeados.';
      
     const nom=fx || (((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
     return bnSaludo(nombre)+' Soy '+nom+' de Vassallo Premoldeados (Toledo, Córdoba).\n\n'+
-      'Les escribo porque lanzamos un *producto nuevo* para que sumen a lo que venden: los *Cubos de Apoyo CA-30* (30×30×30 cm, ≈60 kg) y *CA-40* (40×40×40 cm, ≈140 kg). Son de hormigón y traen una chapa de acero arriba para soldar el módulo.\n\n'+
-      'Con 6 cubos por módulo queda separado del suelo y nivelado, sin encofrar ni esperar el fraguado en obra. Los pueden sumar a su presupuesto: un ítem más para vender y un problema menos en cada entrega.\n\n'+
-      '¿Quieren que les pase los precios? Díganme dónde tienen la fábrica o el depósito y se los paso con el flete incluido.';
+       
+       
+      'Después de hablar con varios instaladores de contenedores empezamos a fabricar los *Cubos de Apoyo de 30×30×30 cm* (60 kg): un operario los mueve sin máquina y se colocan rápido en obra. Traen una chapa de acero arriba para soldar la parte inferior del contenedor. En la imagen va cuántos lleva cada contenedor según el peso y el suelo.\n\n'+
+      'Los pueden sumar a lo que venden. ¿Quieren que les pase los precios? Díganme dónde tienen la fábrica o el depósito y se los paso con el flete incluido.';
   }
    
   function bnMail(){
     const f=bnFirma(), nom=(((typeof topesFirma==='function') && topesFirma()) || 'Marcelo').trim();
      
-    return {asunto:'Producto nuevo para sus módulos: Cubos de Apoyo de hormigón CA-30 y CA-40',
+    return {asunto:'Cubos de Apoyo de hormigón CA-30 para sus contenedores y módulos',
       cuerpo:'Hola, ¿cómo están?\n\n'+
         'Soy '+nom+' de VASSALLO Fábrica de Premoldeados de Hormigón (Toledo, Córdoba).\n\n'+
-        'Lanzamos un producto nuevo para que sumen a lo que venden: los Cubos de Apoyo de hormigón para módulos habitables, oficinas y contenedores.\n\n'+
-        '- CA-30: 30×30×30 cm, ≈60 kg. CA-40: 40×40×40 cm, ≈140 kg.\n'+
-        '- Chapa de acero arriba para soldar el módulo y 8 orificios de izaje.\n'+
-        '- Con 6 cubos por módulo queda separado del suelo y nivelado, sin encofrar ni esperar el fraguado en obra.\n\n'+
-        'Los pueden sumar a su presupuesto: un ítem más para vender y un problema menos en cada entrega.\n\n'+
-        '¿Quieren que les pase los precios? Díganme dónde tienen la fábrica o el depósito y se los paso con el flete incluido.\n\n'+
+        'Después de hablar con varios instaladores de contenedores empezamos a fabricar los Cubos de Apoyo de hormigón de 30×30×30 cm, para contenedores, módulos habitables y oficinas.\n\n'+
+        '- 30×30×30 cm y 60 kg: un operario lo mueve sin máquina y se coloca rápido en obra.\n'+
+        '- Chapa de acero de 200×200×5 mm arriba para soldar la parte inferior del contenedor, y 8 orificios de izaje.\n'+
+        '- Sin encofrar ni esperar el fraguado en obra. En la imagen va cuántos lleva cada contenedor según el peso y el suelo.\n\n'+
+        'Los pueden sumar a lo que venden. ¿Quieren que les pase los precios? Díganme dónde tienen la fábrica o el depósito y se los paso con el flete incluido.\n\n'+
         'Saludos,\n'+f+'\nVASSALLO Fábrica de Premoldeados de Hormigón\nWhatsApp 351 000-0000 · https://www.vpremoldeados.com'};
   }
   function bnGmailLink(email){
@@ -18793,6 +18887,74 @@ function buildFilterTable(cfg){
    
    
    
+   
+   
+  const COL_SAL='vph_wa_salientes';
+  const ESTADO_SUG={ aprobada:['⏳ Enviando…','amber'], enviada:['✓ Enviada por el asistente','green'], error:['✗ No se pudo enviar — mandala vos por WhatsApp','red'],
+                     descartada:['Sugerencia descartada',''], respondio_sofia:['Respondiste vos',''], sin:['',''] };
+  let editandoSug=null;             
+  const borradores=new Map();       
+  const aprobando=new Set();        
+  function sugTexto(m){ const s=Array.isArray(m.sugerencias)&&m.sugerencias[0]; return (s&&s.texto)||''; }
+   
+   
+  function sugFotosHTML(m){
+    const fs=Array.isArray(m&&m.sugFotos)?m.sugFotos.filter(f=>f&&String(f.url||'').startsWith('https://')):[];
+    if(!fs.length) return '';
+    return '<div class="meta" style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--muted)">📎 Se manda con la imagen:</span>'+
+      fs.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.clave||'')+'"><img src="'+esc(f.url)+'" alt="'+esc(f.clave||'foto')+'" style="height:56px;border-radius:6px;border:1px solid var(--line)"></a>').join('')+'</div>';
+  }
+  function sugAccionesHTML(m, editando, borrador){
+    if(!m||!m.agenteSugerir) return '';
+    const st=m.sugerenciaEstado||'sin';
+    if(st!=='pendiente'){ const e=ESTADO_SUG[st]||[st,'']; return sugFotosHTML(m)+(e[0]?'<div class="meta" style="margin-top:4px"><span class="badge'+(e[1]?' '+e[1]:'')+'">'+esc(e[0])+'</span></div>':''); }
+    if(aprobando.has(m._uid)) return '<div class="meta" style="margin-top:4px"><span class="badge amber">⏳ Enviando…</span></div>';
+    if(editando){
+      const txt=borrador!=null?borrador:sugTexto(m);
+      return '<div style="margin-top:6px"><textarea class="wab-sug-ed" data-sug-ta="'+esc(m._uid)+'" rows="4" style="width:100%;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--blue);border-radius:8px;resize:vertical">'+esc(txt)+'</textarea>'+
+        '<div class="acts" style="margin-top:5px"><button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'+
+        '<button class="kb-move" data-sug-canc="'+esc(m._uid)+'">Cancelar</button></div></div>';
+    }
+    return sugFotosHTML(m)+'<div class="acts" style="margin-top:5px">'+
+      '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-env="'+esc(m._uid)+'">📤 Enviar así</button>'+
+      '<button class="kb-move" data-sug-edit="'+esc(m._uid)+'">✏️ Editar y enviar</button>'+
+      '<button class="kb-move" data-sug-desc="'+esc(m._uid)+'" style="opacity:.8">✕ Descartar</button></div>';
+  }
+  async function aprobarSugerencia(uid, texto, editada){
+    const c=fb(); if(!c||!c.db) return;
+    const m=DB.pendientes.find(x=>x._uid===uid); if(!m){ alert('No encuentro ese mensaje (¿se actualizó la Bandeja?).'); return; }
+    if(aprobando.has(uid)||(m.sugerenciaEstado&&m.sugerenciaEstado!=='pendiente')) return;    
+    const to=String(m.waFrom||'').replace(/\D/g,''); texto=String(texto||'').trim();
+    if(!to){ alert('Este mensaje no tiene el número del destinatario: mandalo vos desde WhatsApp.'); return; }
+    if(!texto){ alert('El texto está vacío.'); return; }
+    if(!confirm('¿Mandar por WhatsApp a '+(m.nombre||m.telefono||to)+'?\n\n'+texto)) return;
+    aprobando.add(uid); render();
+    try{
+      const quien=(c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||'';
+      await c.FS.setDoc(c.FS.doc(c.db,COL_SAL,'sal_'+uid), { to, texto, pendienteUid:uid, estado:'aprobado', editada:!!editada,
+        fotos:(Array.isArray(m.sugFotos)?m.sugFotos:[]).map(f=>f&&f.url).filter(Boolean),    
+        sugerenciaOriginal:sugTexto(m), aprobadoPor:quien, aprobadoEn:new Date().toISOString(), creadoEn:new Date().toISOString() });
+      await c.FS.updateDoc(c.FS.doc(c.db,COL,uid), { sugerenciaEstado:'aprobada', textoAprobado:texto, aprobadoPor:quien });
+      if(editandoSug===uid) editandoSug=null; borradores.delete(uid);
+    }catch(e){ aprobando.delete(uid); alert('No se pudo aprobar: '+e.message+'\n\nSi dice "permission", faltan publicar las reglas de Firestore de vph_wa_salientes.'); render(); }
+  }
+  function descartarSugerencia(uid){
+    const c=fb(); if(!c||!c.db) return;
+    c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {sugerenciaEstado:'descartada'}).catch(e=>alert('Error: '+e.message));
+  }
+  function bindSugerencias(cont){
+    cont.querySelectorAll('button[data-sug-env]').forEach(b=> b.onclick=()=>{ const m=DB.pendientes.find(x=>x._uid===b.dataset.sugEnv); if(m) aprobarSugerencia(m._uid, sugTexto(m), false); });
+    cont.querySelectorAll('button[data-sug-edit]').forEach(b=> b.onclick=()=>{ editandoSug=b.dataset.sugEdit; render(); const ta=cont.querySelector('textarea[data-sug-ta="'+b.dataset.sugEdit+'"]'); if(ta){ ta.focus(); } });
+    cont.querySelectorAll('button[data-sug-canc]').forEach(b=> b.onclick=()=>{ editandoSug=null; borradores.delete(b.dataset.sugCanc); render(); });
+    cont.querySelectorAll('button[data-sug-envc]').forEach(b=> b.onclick=()=>{ const uid=b.dataset.sugEnvc; const ta=cont.querySelector('textarea[data-sug-ta="'+uid+'"]'); aprobarSugerencia(uid, ta?ta.value:borradores.get(uid), true); });
+    cont.querySelectorAll('textarea[data-sug-ta]').forEach(ta=> ta.oninput=()=>borradores.set(ta.dataset.sugTa, ta.value));
+    cont.querySelectorAll('button[data-sug-desc]').forEach(b=> b.onclick=()=>descartarSugerencia(b.dataset.sugDesc));
+  }
+
+   
+   
+   
+   
   const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
   let convCtx=null;    
 
@@ -18936,11 +19098,16 @@ function buildFilterTable(cfg){
       const filas=(ocultos>0?'<button class="filter-btn" data-x="'+esc(k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&cron.length>3?'<button class="filter-btn" data-x="'+esc(k)+'" style="margin:6px 0 0">▴ Mostrar solo los últimos</button>':''))+
         visibles.map(m=>{
           const res=(m.estado||'pendiente')==='resuelto';
+           
+          if(m.deSofia) return '<div style="border-top:1px solid var(--border);padding:7px 0 3px;margin-top:7px">'+
+            '<div class="ped" style="border-left:3px solid var(--green);padding-left:8px;background:rgba(30,158,90,.06);border-radius:0 8px 8px 0"><b style="font-size:11px;color:var(--green)">Sofía</b><br>'+esc(m.mensaje||'')+'</div>'+
+            '<div class="meta">'+fmtFecha(m.creadoEn)+'</div></div>';
           return '<div style="border-top:1px solid var(--border);padding:7px 0 3px;margin-top:7px'+(res&&!todoResuelto?';opacity:.55':'')+'">'+
             '<div class="ped">'+esc(m.mensaje||'')+'</div>'+
              
             sugerenciasHTML(Array.isArray(m.sugerencias)&&m.sugerencias.length ? m.sugerencias
                             : (m.respuestaPropuesta?[{titulo:'💬 Respuesta guardada',texto:m.respuestaPropuesta}]:null))+
+            sugAccionesHTML(m, editandoSug===m._uid, borradores.get(m._uid))+
             '<div class="meta">'+fmtFecha(m.creadoEn)+
               (m.fueraDeHorario?' · <span class="badge amber">Fuera de horario</span>':'')+
                
@@ -18979,6 +19146,7 @@ function buildFilterTable(cfg){
     $('wab-lista').querySelectorAll('button[data-x]').forEach(b=> b.onclick=()=>{ const k=b.dataset.x; if(expandidos.has(k)) expandidos.delete(k); else expandidos.add(k); render(); });
     $('wab-lista').querySelectorAll('button[data-rg]').forEach(b=> b.onclick=()=>resolverVarios(b.dataset.rg.split(',').filter(Boolean)));
     $('wab-lista').querySelectorAll('button[data-cl]').forEach(b=> b.onclick=()=>abrirConvertir(b.dataset.cl));
+    bindSugerencias($('wab-lista'));
   }
 
    
@@ -19137,7 +19305,7 @@ function buildFilterTable(cfg){
    
   function charlas(msgs, ahoraMs){
     const g=new Map();
-    (msgs||[]).forEach(m=>{ const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
+    (msgs||[]).forEach(m=>{ if(m.dir==='revision'||m.dir==='leccion') return; const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
     const out=[];
     g.forEach((lista,k)=>{
       lista.sort((a,b)=>tsMs(a.ts)-tsMs(b.ts));
@@ -19145,7 +19313,8 @@ function buildFilterTable(cfg){
       const conNombre=lista.slice().reverse().find(m=>m.usuario||m.nombre)||{};
       const leadUid=(lista.slice().reverse().find(m=>m.leadUid)||{}).leadUid||'';
       const ultPersona=lista.filter(m=>m.autor==='persona').map(m=>tsMs(m.ts)).sort((a,b)=>b-a)[0]||0;
-      out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid,
+      const yt=lista.slice().reverse().find(m=>m.canal==='youtube')||null;
+      out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid, canal: yt?'youtube':'instagram', ytUrl: yt&&yt.ytUrl||'',
         ultimoMs:tsMs(ult.ts), entrantes:lista.filter(m=>m.dir==='in').length,
         persona: !!ultPersona && (ahoraMs-ultPersona)<PAUSA_MS,
         sinRespuesta: ult.dir==='in' });
@@ -19174,10 +19343,10 @@ function buildFilterTable(cfg){
       '<div class="kpi good"><div class="label">Con lead en el CRM</div><div class="value">'+todas.filter(c=>c.leadUid).length+'</div><div class="sub">Dejaron su WhatsApp</div></div>'+
       '<div class="kpi warn"><div class="label">Sin WhatsApp todavía</div><div class="value">'+todas.filter(c=>!c.leadUid).length+'</div><div class="sub">Solo consultaron</div></div>'+
       '<div class="kpi"><div class="label">Hoy</div><div class="value">'+todas.filter(c=>c.ultimoMs>=hoy.getTime()).length+'</div><div class="sub">Charlas con actividad hoy</div></div>';
-    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios']];
+    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios'],['yt','▶️ YouTube']];
     $('igb-filtros').innerHTML=F.map(([k,l])=>'<button class="filter-btn'+(filtro===k?' active':'')+'" data-f="'+k+'">'+l+'</button>').join('');
     $('igb-filtros').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
-    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')));
+    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')) || (filtro==='yt'&&c.canal==='youtube'));
     $('igb-count').textContent=lista.length+' charla'+(lista.length!==1?'s':'');
     $('igb-lista').innerHTML=lista.length?lista.map(c=>{
       const abierta=abiertas.has(c.k);
@@ -19185,14 +19354,16 @@ function buildFilterTable(cfg){
       const ocultos=c.msgs.length-vis.length;
       const lead=c.leadUid && window.__leadPorUid ? window.__leadPorUid(c.leadUid) : null;
       return '<div class="kb-card" style="margin-bottom:8px">'+
-        '<div class="cli">'+esc(c.nombre||c.usuario||'Usuario de Instagram')+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
+        '<div class="cli">'+(c.canal==='youtube'?'▶️ ':'')+esc(c.nombre||c.usuario||(c.canal==='youtube'?'Usuario de YouTube':'Usuario de Instagram'))+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
           (c.leadUid?' <span class="badge green" title="Dejó su WhatsApp: ya está en el CRM">🎯 Lead'+(lead&&lead.estado?' · '+esc(lead.estado):'')+'</span>':' <span class="badge amber">Sin WhatsApp</span>')+
           (c.persona?' <span class="badge" title="Una persona respondió desde Instagram: el asistente está en pausa en esta charla">👤 Atendida a mano</span>':'')+'</div>'+
         '<div class="meta">'+c.entrantes+' mensaje'+(c.entrantes!==1?'s':'')+' del cliente · último: '+fmt(c.msgs[c.msgs.length-1].ts)+'</div>'+
         (ocultos>0?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&c.msgs.length>4?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▴ Ver menos</button>':''))+
         vis.map(burbuja).join('')+
         '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
-          '<a class="kb-wa" href="'+igLink(c.usuario)+'" target="_blank" rel="noopener" style="background:#d6249f;border-color:#d6249f">📸 Abrir en Instagram</a>'+
+          (c.canal==='youtube'
+            ? '<a class="kb-wa" href="'+esc(c.ytUrl||'https://studio.youtube.com/')+'" target="_blank" rel="noopener" style="background:#ff0000;border-color:#ff0000">▶️ Abrir en YouTube</a>'
+            : '<a class="kb-wa" href="'+igLink(c.usuario)+'" target="_blank" rel="noopener" style="background:#d6249f;border-color:#d6249f">📸 Abrir en Instagram</a>')+
           (c.leadUid?'<button class="kb-move" data-crm="1">🎯 Ver en el CRM</button>':'')+
         '</div></div>';
     }).join(''):'<div class="kb-empty">No hay charlas'+(filtro?' con este filtro':' en los últimos '+DIAS+' días')+'.</div>';
@@ -19213,6 +19384,324 @@ function buildFilterTable(cfg){
   window.__afterLogout.push(()=>{ stopSync(); MSGS=[]; render(); });
   if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
   render();
+})();
+</script>
+
+
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fb=()=>window.__fbctx;
+  const COL='vph_ig_mensajes';
+  const fmtF=f=>{ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(f||''); return m? m[3]+'/'+m[2]+'/'+m[1] : (f||'—'); };
+
+  let REV=[], LEC=[], fechaSel='', unsub=null;
+
+   
+  function ordenarRevisiones(lista){ return (lista||[]).filter(r=>r&&r.fecha).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))); }
+  function resumen7(lista){
+    const ult=ordenarRevisiones(lista).slice(0,7);
+    const s=ult.reduce((a,r)=>({ total:a.total+(+r.total||0), bien:a.bien+(+r.bien||0), dudosas:a.dudosas+(+r.dudosas||0), mal:a.mal+(+r.mal||0) }),{total:0,bien:0,dudosas:0,mal:0});
+    s.pct = s.total ? Math.round(s.bien*100/s.total) : null;
+    return s;
+  }
+  window.__igrResumen7=resumen7; window.__igrOrdenar=ordenarRevisiones;
+
+  function kpis(){
+    const s=resumen7(REV), act=LEC.filter(l=>l.estado==='aprobada').length, prop=LEC.filter(l=>l.estado==='propuesta').length;
+    $('igr-kpis').innerHTML=
+      '<div class="kpi '+(s.pct==null?'':s.pct>=85?'good':s.pct>=65?'warn':'bad')+'"><div class="label">Respuestas bien (7 días)</div><div class="value">'+(s.pct==null?'—':s.pct+'%')+'</div><div class="sub">'+s.bien+' de '+s.total+' respuestas revisadas</div></div>'+
+      '<div class="kpi bad"><div class="label">Errores (7 días)</div><div class="value">'+s.mal+'</div><div class="sub">'+s.dudosas+' dudosas</div></div>'+
+      '<div class="kpi '+(prop?'warn':'')+'"><div class="label">Lecciones por aprobar</div><div class="value">'+prop+'</div><div class="sub">Esperan tu OK</div></div>'+
+      '<div class="kpi good"><div class="label">Lecciones activas</div><div class="value">'+act+'</div><div class="sub">El agente ya las aplica</div></div>';
+  }
+
+  function renderInforme(){
+    const lista=ordenarRevisiones(REV);
+    const sel=$('igr-fecha');
+    sel.innerHTML=lista.length?lista.map(r=>'<option value="'+esc(r.fecha)+'">'+fmtF(r.fecha)+' · '+(+r.bien||0)+' bien · '+(+r.dudosas||0)+' dudosas · '+(+r.mal||0)+' mal</option>').join(''):'<option value="">Sin revisiones todavía</option>';
+    if(!lista.some(r=>r.fecha===fechaSel)) fechaSel=lista.length?lista[0].fecha:'';
+    sel.value=fechaSel; sel.onchange=()=>{ fechaSel=sel.value; renderInforme(); };
+    const r=lista.find(x=>x.fecha===fechaSel);
+    if(!r){ $('igr-resumen').textContent='La primera revisión corre esta noche a las 20 h.'; $('igr-items').innerHTML=''; return; }
+    $('igr-resumen').innerHTML='<b>Resumen de Claude ('+fmtF(r.fecha)+', '+(+r.charlas||0)+' charlas):</b> '+esc(r.resumen||'');
+    const items=Array.isArray(r.items)?r.items:[];
+    $('igr-items').innerHTML=items.length?items.map(it=>
+      '<div class="kb-card" style="margin-bottom:8px;border-left:4px solid '+(it.nota==='mal'?'var(--red)':'var(--amber)')+'">'+
+        '<div class="cli">'+(it.nota==='mal'?'<span class="badge red">❌ Mal</span>':'<span class="badge amber">⚠️ Dudosa</span>')+(it.usuario?' <span class="badge">'+esc(it.usuario)+'</span>':'')+'</div>'+
+        (it.respuesta?'<div class="meta" style="margin-top:6px"><b>El agente dijo:</b> “'+esc(it.respuesta)+'”</div>':'')+
+        '<div style="margin-top:6px"><b>Problema:</b> '+esc(it.problema)+'</div>'+
+        '<div style="margin-top:6px;color:var(--green)"><b>Mejor:</b> '+esc(it.mejor)+'</div>'+
+      '</div>').join('')
+      :'<div class="kb-empty">'+((+r.total||0)?'Todas las respuestas estuvieron bien. ✅':'Sin respuestas del agente ese día.')+'</div>';
+  }
+
+  function tarjetaLeccion(l, propuesta){
+    return '<div class="kb-card" style="margin-bottom:8px" data-uid="'+esc(l._uid)+'">'+
+      (propuesta
+        ? '<textarea class="igr-txt" style="width:100%;min-height:64px;font:inherit;padding:7px;border:1px solid var(--border);border-radius:8px;box-sizing:border-box">'+esc(l.texto)+'</textarea>'
+        : '<div style="white-space:pre-wrap">'+esc(l.texto)+'</div>')+
+      '<div class="meta" style="margin-top:6px">'+(l.porque?'Por qué: '+esc(l.porque)+' · ':'')+'Propuesta el '+fmtF(l.fecha)+(l.aprobadaEl?' · Aprobada el '+fmtF(l.aprobadaEl):'')+'</div>'+
+      '<div class="acts" style="margin-top:7px">'+(propuesta
+        ? '<button class="kb-move" data-act="aprobar">✅ Aprobar</button><button class="filter-btn" data-act="descartar">Descartar</button>'
+        : '<button class="filter-btn" data-act="quitar">Quitar (dejar de usar)</button>')+'</div></div>';
+  }
+  function renderLecciones(){
+    const prop=LEC.filter(l=>l.estado==='propuesta').sort((a,b)=>String(b.ts).localeCompare(String(a.ts)));
+    const act=LEC.filter(l=>l.estado==='aprobada').sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
+    $('igr-prop-count').textContent=prop.length?prop.length+' pendiente'+(prop.length!==1?'s':''):'';
+    $('igr-act-count').textContent=act.length?act.length+' activa'+(act.length!==1?'s':''):'';
+    $('igr-propuestas').innerHTML=prop.length?prop.map(l=>tarjetaLeccion(l,true)).join(''):'<div class="kb-empty">No hay lecciones esperando tu aprobación.</div>';
+    $('igr-activas').innerHTML=act.length?act.map(l=>tarjetaLeccion(l,false)).join(''):'<div class="kb-empty">Todavía no aprobaste ninguna lección.</div>';
+    document.querySelectorAll('#page-igrevision button[data-act]').forEach(b=>b.onclick=()=>{
+      const card=b.closest('[data-uid]'), uid=card.dataset.uid, c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+      const act=b.dataset.act, campos={};
+      if(act==='aprobar'){ const t=(card.querySelector('.igr-txt')||{}).value||''; if(!t.trim()){ alert('La lección está vacía.'); return; } Object.assign(campos,{estado:'aprobada', texto:t.trim(), aprobadaEl:new Date().toISOString().slice(0,10)}); }
+      else if(act==='descartar'){ campos.estado='descartada'; }
+      else if(act==='quitar'){ if(!confirm('¿Quitar esta lección? El agente deja de aplicarla en 15 minutos.')) return; campos.estado='quitada'; }
+      c.FS.updateDoc(c.FS.doc(c.db,COL,uid), campos).catch(e=>alert('No se pudo guardar: '+e.message));
+    });
+  }
+  function render(){ if(!$('igr-kpis')) return; kpis(); renderInforme(); renderLecciones(); }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; stopSync();
+    unsub=c.FS.onSnapshot(c.FS.query(c.FS.collection(c.db,COL), c.FS.where('igsid','==','__agente')),
+      snap=>{ const d=snap.docs.map(x=>({...x.data(),_uid:x.id})); REV=d.filter(x=>x.dir==='revision'); LEC=d.filter(x=>x.dir==='leccion'); render(); },
+      err=>console.error('ig_revision:',err));
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  window.__afterLogin.push(startSync);
+  window.__afterLogout.push(()=>{ stopSync(); REV=[]; LEC=[]; render(); });
+  if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser) startSync();
+  render();
+})();
+</script>
+
+
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
+  const esc = s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const money = n=>'$ '+Math.round(n||0).toLocaleString('es-AR');
+  const num = v => { if(typeof v==='number') return isNaN(v)?0:v; let s=String(v==null?'':v).trim().replace(/\s/g,''); if(!s) return 0; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,''); const n=parseFloat(s); return isNaN(n)?0:n; };
+  const fb=()=>window.__fbctx;
+  const COL='vph_transportes';
+  const ZONAS_TRA=[['capital','Córdoba Capital'],['cercanas','Hasta 30 km de Circunvalación'],['granCba','Gran Córdoba / Sierras Chicas'],['interior','Interior de Córdoba'],['otraProvincia','Otra provincia']];
+  const PAGO=[['origen','Lo paga VPH (en origen)'],['destino','Lo paga el cliente al transporte (en destino)'],['','Sin definir']];
+  const DESCARGA=[['','Sin dato'],['manual','Descarga manual'],['hidrogrua','Con hidrogrúa'],['autoelevador','Con autoelevador del cliente']];
+
+  let TRA=[], unsub=null, editUid=null;
+
+   
+  const normLoc = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9ñ ]/g,' ').replace(/\s+/g,' ').trim();
+  function cubre(t, localidad){
+    const l=normLoc(localidad); if(!l) return false;
+    const locs=(t.localidades||[]).map(normLoc).filter(Boolean);
+    if(locs.some(x=>x===l||l.includes(x)||x.includes(l))) return true;
+    const d=normLoc(t.destino);
+    return !!d && d.length>3 && (d===l||l.includes(d)||d.includes(l));
+  }
+  function costoEnvio(t, pallets){
+    const n=Math.max(1, Number(pallets)||1);
+    if(Number(t.minPallets)>0 && n<Number(t.minPallets)) return null;
+    if(Number(t.precioPallet)>0) return Math.round(Number(t.precioPallet)*n);
+    if(Number(t.precioViaje)>0){ const cap=Number(t.pallets)>0?Number(t.pallets):8; return Math.round(Number(t.precioViaje)*Math.ceil(n/cap)); }
+    return null;
+  }
+  function resolverEnvio(localidad, pallets, tarifas){
+    const lista=(tarifas||[]).filter(t=>t&&t.activo!==false&&cubre(t,localidad));
+    const conPrecio=lista.map(t=>({t, flete:costoEnvio(t,pallets)})).filter(x=>x.flete!==null)
+      .sort((a,b)=>a.flete-b.flete||(b.t.confirmado?1:0)-(a.t.confirmado?1:0));
+    if(!conPrecio.length) return lista.length?{transporte:null, flete:null, sinPrecio:lista.map(t=>t.transporte)}:null;
+    const {t,flete}=conPrecio[0]; const n=Math.max(1, Number(pallets)||1);
+    return {transporte:t.transporte, flete, porPallet:Math.round(flete/n), plazoDias:Number(t.plazoDias)||0, pagoEn:t.pagoEn||'', descarga:t.descarga||'', confirmado:!!t.confirmado, condiciones:t.condiciones||'', fechaCotizacion:t.fechaCotizacion||'', destino:t.destino||'', _uid:t._uid};
+  }
+   
+  function tarifaLabel(t){
+    if(Number(t.precioPallet)>0) return money(t.precioPallet)+' por pallet'+(Number(t.minPallets)>1?' (mín. '+t.minPallets+')':'');
+    if(Number(t.precioViaje)>0) return money(t.precioViaje)+' el viaje (hasta '+(Number(t.pallets)||8)+' pallets)';
+    return 'SIN TARIFA';
+  }
+  function estadoDe(t){ if(t.activo===false) return ['inactiva','Inactiva','']; if(!(Number(t.precioPallet)>0||Number(t.precioViaje)>0)) return ['sinprecio','Falta el precio','red']; return t.confirmado?['ok','✓ Revisada','green']:['revisar','⚠ A revisar','amber']; }
+   
+  window.__traNormLoc=normLoc; window.__traCubre=cubre; window.__traCosto=costoEnvio; window.__traResolver=resolverEnvio;
+  window.__envioCotizar=(localidad,pallets)=>resolverEnvio(localidad,pallets,TRA);
+  window.__transportesTarifas=()=>TRA.slice();
+
+   
+   
+   
+  const SEMILLA=[
+    { _uid:'tra_sanchez_capital', transporte:'Sánchez', tipo:'tercero', destino:'Córdoba Capital', provincia:'Córdoba', zona:'capital',
+      localidades:['cordoba','cordoba capital','ciudad de cordoba'], precioPallet:28000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
+      condiciones:'Camión de 8 pallets. Entrega en 7 días hábiles. Precio final con IVA (parámetro fleteCapital).', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteCapital)', activo:true, confirmado:true },
+    { _uid:'tra_sanchez_cercanas', transporte:'Sánchez', tipo:'tercero', destino:'Hasta 30 km de Av. de Circunvalación', provincia:'Córdoba', zona:'cercanas',
+      localidades:['villa allende','mendiolaza','unquillo','rio ceballos','saldan','la calera','malagueño','toledo','malvinas argentinas','montecristo','juarez celman','estacion juarez celman','villa esquiu','guiñazu','villa retiro','bouwer','villa del rosario de la calera'],
+      precioPallet:39000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
+      condiciones:'Precio final con IVA (parámetro fleteCercanas). REVISAR la lista de localidades: la armó Claude por distancia, no la confirmó nadie.', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteCercanas)', activo:true, confirmado:false },
+    { _uid:'tra_sanchez_interior_mati', transporte:'Sánchez', tipo:'tercero', destino:'Interior con Mati (viaje a cotizar)', provincia:'Córdoba', zona:'interior',
+      localidades:[], precioViaje:140000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
+      condiciones:'Referencia del parámetro fleteMati: $140.000 el viaje. Sin localidades cargadas a propósito: cada destino del interior se cotiza y se agrega como fila propia.', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteMati)', activo:true, confirmado:false },
+    { _uid:'tra_brio_interior', transporte:'Brío', tipo:'tercero', destino:'Interior / otras provincias (flete en destino)', provincia:'', zona:'otraProvincia',
+      localidades:[], precioViaje:0, pallets:0, plazoDias:0, pagoEn:'destino', descarga:'',
+      condiciones:'Mati lleva el pedido hasta el depósito de Brío en Córdoba; Brío lo despacha y el cliente paga el flete en destino. Sin tarifa por destino: Sofía la pide a Brío y la carga como fila propia (destino + localidades + precio).', fechaCotizacion:'', fuente:'Operatoria actual (despacho en otro transporte)', activo:true, confirmado:false },
+    { _uid:'tra_biletta_calamuchita', transporte:'Expreso Biletta', tipo:'tercero', destino:'Santa Rosa de Calamuchita / Los Reartes', provincia:'Córdoba', zona:'interior',
+      localidades:['santa rosa de calamuchita','los reartes','villa general belgrano','villa rumipal','embalse'], precioPallet:92171, minPallets:1, pallets:0, plazoDias:5, pagoEn:'origen', descarga:'manual',
+      condiciones:'Cotización del 15/10: flete $74.174,14 + seguro $2.000 + IVA = $92.170,71 por pallet. Más el traslado de Matías hasta el depósito de Biletta ($20.000 el viaje, se reparte entre los pallets). Villa General Belgrano, Rumipal y Embalse están puestas por cercanía: CONFIRMAR con Biletta.', fechaCotizacion:'2026-10-15', fuente:'Cotización de Biletta (listas Hasta 100 km)', activo:true, confirmado:false },
+    { _uid:'tra_fletero_hidrogrua_la_granja', transporte:'Fletero con hidrogrúa', tipo:'tercero', destino:'La Granja (Sierras Chicas)', provincia:'Córdoba', zona:'granCba',
+      localidades:['la granja','ascochinga','agua de oro','el manzano','villa ani mi'], precioViaje:260000, pallets:2, plazoDias:3, pagoEn:'origen', descarga:'hidrogrua',
+      condiciones:'Cotización que pasó por el WhatsApp de Sofía (ago 2026): $260.000 el viaje con hidrogrúa, 2 pallets. Falta el nombre y el teléfono del fletero. Las localidades vecinas las sumó Claude: CONFIRMAR.', fechaCotizacion:'2026-08-07', fuente:'Chat de WhatsApp de Sofía', activo:true, confirmado:false },
+  ];
+
+  function pc(){ return window.__rol==='admin'; }
+
+   
+  function renderBuscar(){
+    const out=$('tra-res'); if(!out) return;
+    const loc=($('tra-q-loc')||{}).value||'', pal=Math.max(1, Math.round(num(($('tra-q-pal')||{}).value))||1);
+    if(!loc.trim()){ out.innerHTML='<div class="kb-empty">Escribí la localidad del cliente y cuántos pallets lleva el pedido.</div>'; return; }
+    const r=resolverEnvio(loc, pal, TRA);
+    const cubren=TRA.filter(t=>t.activo!==false&&cubre(t,loc));
+    let h='';
+    if(!r){ h='<div class="note" style="border-left:4px solid var(--red)"><b>No hay ningún transporte cargado que llegue a “'+esc(loc)+'”.</b> Hay que cotizarlo (Brío / Biletta / un fletero) y cargarlo acá para la próxima vez.</div>'; }
+    else if(r.flete===null){ h='<div class="note" style="border-left:4px solid var(--amber)"><b>Llega con '+esc(r.sinPrecio.join(' / '))+'</b>, pero falta cargar la tarifa. Completala con ✎ en la fila.</div>'; }
+    else {
+      h='<div class="note" style="border-left:4px solid var(--'+(r.confirmado?'green':'amber')+')"><b>'+esc(r.transporte)+'</b> · '+pal+' pallet'+(pal>1?'s':'')+' · <b>'+money(r.flete)+'</b> ('+money(r.porPallet)+' por pallet)'+
+        (r.plazoDias?' · '+r.plazoDias+' días':'')+(r.pagoEn==='destino'?' · <b>lo paga el cliente en destino</b>':'')+(r.descarga==='hidrogrua'?' · descarga con hidrogrúa':'')+
+        (r.confirmado?'':' · <span class="badge amber">tarifa ESTIMADA'+(r.fechaCotizacion?', cotización del '+esc(r.fechaCotizacion):'')+'</span>')+
+        (r.condiciones?'<div class="meta" style="margin-top:6px">'+esc(r.condiciones)+'</div>':'')+'</div>';
+    }
+    if(cubren.length>1) h+='<div class="meta" style="margin-top:6px">También llegan: '+cubren.filter(t=>t._uid!==(r&&r._uid)).map(t=>esc(t.transporte)+' ('+esc(tarifaLabel(t))+')').join(' · ')+'</div>';
+    out.innerHTML=h;
+  }
+
+   
+  function renderTabla(){
+    const tb=$('tra-tabla'); if(!tb) return;
+    const q=normLoc(($('tra-filtro')||{}).value||'');
+    const lista=TRA.filter(t=>!q||normLoc(t.transporte+' '+t.destino+' '+(t.localidades||[]).join(' ')+' '+t.provincia).includes(q))
+      .sort((a,b)=>String(a.transporte).localeCompare(String(b.transporte))||String(a.destino).localeCompare(String(b.destino)));
+    const kp=$('tra-kpis'); if(kp){
+      const sin=TRA.filter(t=>t.activo!==false&&estadoDe(t)[0]==='sinprecio').length, rev=TRA.filter(t=>t.activo!==false&&estadoDe(t)[0]==='revisar').length, ok=TRA.filter(t=>estadoDe(t)[0]==='ok').length;
+      kp.innerHTML='<div class="kpi good"><div class="label">Tarifas revisadas</div><div class="value">'+ok+'</div><div class="sub">Se cotizan con el número</div></div>'+
+        '<div class="kpi '+(rev?'warn':'')+'"><div class="label">A revisar</div><div class="value">'+rev+'</div><div class="sub">Estimadas, falta el ✓ de Sofía</div></div>'+
+        '<div class="kpi '+(sin?'bad':'')+'"><div class="label">Sin precio</div><div class="value">'+sin+'</div><div class="sub">Llegan pero no se sabe cuánto</div></div>'+
+        '<div class="kpi"><div class="label">Transportes</div><div class="value">'+new Set(TRA.filter(t=>t.activo!==false).map(t=>normLoc(t.transporte))).size+'</div><div class="sub">'+TRA.length+' filas (transporte + destino)</div></div>';
+    }
+    if(!lista.length){ tb.innerHTML='<tbody><tr><td colspan="8" class="kb-empty">'+(TRA.length?'Nada coincide con la búsqueda.':'Todavía no hay transportes cargados. Tocá “Cargar las tarifas conocidas” para empezar con lo que ya se sabe, o ➕ Agregar.')+'</td></tr></tbody>'; return; }
+    tb.innerHTML='<thead><tr><th>Transporte</th><th>Destino</th><th>Localidades</th><th>Tarifa</th><th>Plazo</th><th>Paga</th><th>Estado</th><th></th></tr></thead><tbody>'+
+      lista.map(t=>{ const [k,lbl,col]=estadoDe(t); const locs=(t.localidades||[]);
+        return '<tr data-uid="'+esc(t._uid)+'"'+(t.activo===false?' style="opacity:.55"':'')+'>'+
+          '<td class="cel-nombre"><b>'+esc(t.transporte)+'</b>'+(t.telefono?'<div class="meta">'+esc(t.contacto?t.contacto+' · ':'')+esc(t.telefono)+'</div>':(t.contacto?'<div class="meta">'+esc(t.contacto)+'</div>':''))+'</td>'+
+          '<td class="cel-envuelve">'+esc(t.destino||'—')+(t.provincia?'<div class="meta">'+esc(t.provincia)+'</div>':'')+'</td>'+
+          '<td class="cel-envuelve" title="'+esc(locs.join(', '))+'">'+(locs.length?esc(locs.slice(0,4).join(', '))+(locs.length>4?' <span class="meta">+'+(locs.length-4)+'</span>':''):'<span class="meta">— (solo por el texto del destino)</span>')+'</td>'+
+          '<td data-sortval="'+(Number(t.precioPallet)||Number(t.precioViaje)||0)+'">'+esc(tarifaLabel(t))+(t.fechaCotizacion?'<div class="meta">cotiz. '+esc(t.fechaCotizacion)+'</div>':'')+'</td>'+
+          '<td>'+(Number(t.plazoDias)>0?t.plazoDias+' d':'—')+'</td>'+
+          '<td>'+(t.pagoEn==='destino'?'Cliente':t.pagoEn==='origen'?'VPH':'—')+(t.descarga==='hidrogrua'?'<div class="meta">hidrogrúa</div>':'')+'</td>'+
+          '<td><span class="badge '+col+'">'+lbl+'</span></td>'+
+          '<td class="cel-acciones">'+(pc()?'<button class="filter-btn" data-act="editar">✎</button>'+(k==='revisar'?'<button class="filter-btn" data-act="confirmar" title="Sofía revisó esta tarifa">✓ Revisada</button>':'')+'<button class="filter-btn" data-act="toggle">'+(t.activo===false?'Activar':'Pausar')+'</button><button class="filter-btn" data-act="borrar">🗑</button>':'')+'</td>'+
+        '</tr>'; }).join('')+'</tbody>';
+    try{ if(window.__ordenable) window.__ordenable(tb); }catch(e){}
+    tb.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>accion(b.dataset.act, b.closest('tr').dataset.uid));
+  }
+  function render(){ if(!$('tra-tabla')) return; renderTabla(); renderBuscar(); const sb=$('tra-seed'); if(sb){ const faltan=SEMILLA.filter(s=>!TRA.some(t=>t._uid===s._uid)).length; sb.style.display=(pc()&&faltan)?'':'none'; sb.textContent='📥 Cargar las tarifas conocidas ('+faltan+')'; } }
+
+   
+  function guardar(uid, datos){
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return Promise.resolve(false); }
+    return c.FS.setDoc(c.FS.doc(c.db,COL,uid), datos, {merge:true}).then(()=>true).catch(e=>{ alert('No se pudo guardar: '+e.message); return false; });
+  }
+  function accion(act, uid){
+    const t=TRA.find(x=>x._uid===uid); if(!t) return;
+    if(act==='editar'){ abrirForm(t); return; }
+    if(act==='confirmar'){ if(!confirm('¿Marcar la tarifa de '+t.transporte+' a '+t.destino+' como revisada? Desde ahí el agente la cotiza como precio firme.')) return; guardar(uid,{confirmado:true, revisadaEl:new Date().toISOString().slice(0,10)}); return; }
+    if(act==='toggle'){ guardar(uid,{activo:t.activo===false}); return; }
+    if(act==='borrar'){ if(!confirm('¿Eliminar '+t.transporte+' → '+t.destino+'? Si solo querés que no se use por ahora, mejor “Pausar”.')) return; const c=fb(); c.FS.deleteDoc(c.FS.doc(c.db,COL,uid)).catch(e=>alert('No se pudo borrar: '+e.message)); }
+  }
+  function slug(s){ return normLoc(s).replace(/ /g,'-').slice(0,40)||'x'; }
+  function nuevoUid(d){ const base='tra_'+slug(d.transporte)+'_'+slug(d.destino); let u=base, i=2; while(TRA.some(t=>t._uid===u)) u=base+'-'+(i++); return u; }
+
+   
+  function opts(arr, val){ return arr.map(([k,l])=>'<option value="'+esc(k)+'"'+(k===(val||'')?' selected':'')+'>'+esc(l)+'</option>').join(''); }
+  function abrirForm(t){
+    editUid=t?t._uid:null; const d=t||{activo:true, confirmado:false, tipo:'tercero', pagoEn:'origen'};
+    $('tra-f-titulo').textContent=t?'✎ Editar tarifa':'➕ Nuevo transporte / destino';
+    $('tra-f-transporte').value=d.transporte||''; $('tra-f-tipo').value=d.tipo||'tercero'; $('tra-f-contacto').value=d.contacto||''; $('tra-f-telefono').value=d.telefono||'';
+    $('tra-f-destino').value=d.destino||''; $('tra-f-provincia').value=d.provincia||'Córdoba'; $('tra-f-zona').innerHTML=opts(ZONAS_TRA,d.zona||'interior');
+    $('tra-f-localidades').value=(d.localidades||[]).join(', ');
+    $('tra-f-precioPallet').value=Number(d.precioPallet)>0?d.precioPallet:''; $('tra-f-precioViaje').value=Number(d.precioViaje)>0?d.precioViaje:'';
+    $('tra-f-pallets').value=Number(d.pallets)>0?d.pallets:''; $('tra-f-minPallets').value=Number(d.minPallets)>0?d.minPallets:''; $('tra-f-plazoDias').value=Number(d.plazoDias)>0?d.plazoDias:'';
+    $('tra-f-pagoEn').innerHTML=opts(PAGO,d.pagoEn||'origen'); $('tra-f-descarga').innerHTML=opts(DESCARGA,d.descarga||'');
+    $('tra-f-condiciones').value=d.condiciones||''; $('tra-f-fechaCotizacion').value=d.fechaCotizacion||''; $('tra-f-fuente').value=d.fuente||'';
+    $('tra-f-activo').checked=d.activo!==false; $('tra-f-confirmado').checked=!!d.confirmado;
+    $('tra-f-err').textContent='';
+    $('tra-modal').classList.add('open');
+  }
+  function cerrarForm(){ $('tra-modal').classList.remove('open'); editUid=null; }
+  function leerForm(){
+    return {
+      transporte:$('tra-f-transporte').value.trim(), tipo:$('tra-f-tipo').value, contacto:$('tra-f-contacto').value.trim(), telefono:$('tra-f-telefono').value.trim(),
+      destino:$('tra-f-destino').value.trim(), provincia:$('tra-f-provincia').value.trim(), zona:$('tra-f-zona').value,
+      localidades:$('tra-f-localidades').value.split(/[,;\n]/).map(normLoc).filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i),
+      precioPallet:num($('tra-f-precioPallet').value), precioViaje:num($('tra-f-precioViaje').value), pallets:Math.round(num($('tra-f-pallets').value)), minPallets:Math.round(num($('tra-f-minPallets').value)), plazoDias:Math.round(num($('tra-f-plazoDias').value)),
+      pagoEn:$('tra-f-pagoEn').value, descarga:$('tra-f-descarga').value, condiciones:$('tra-f-condiciones').value.trim(), fechaCotizacion:$('tra-f-fechaCotizacion').value, fuente:$('tra-f-fuente').value.trim(),
+      activo:$('tra-f-activo').checked, confirmado:$('tra-f-confirmado').checked
+    };
+  }
+   
+  function validarTarifa(d){
+    if(!d.transporte) return 'Falta el nombre del transporte.';
+    if(!d.destino) return 'Falta el destino (p. ej. "Río Cuarto" o "Hasta 30 km de Circunvalación").';
+    if(d.precioPallet>0 && d.precioViaje>0) return 'Cargá el precio por pallet O por viaje, no los dos.';
+    if(d.precioViaje>0 && !(d.pallets>0)) return 'Si el precio es por viaje, decí cuántos pallets lleva el camión.';
+    if(!d.localidades.length && normLoc(d.destino).length<=3) return 'Sin localidades, el destino tiene que ser un nombre reconocible.';
+    return '';
+  }
+  window.__traValidar=validarTarifa;
+  function guardarForm(){
+    const d=leerForm(); const err=validarTarifa(d); if(err){ $('tra-f-err').textContent=err; return; }
+    if(!(d.precioPallet>0||d.precioViaje>0)) d.confirmado=false;      
+    d.actualizadoEl=new Date().toISOString().slice(0,10); d.actualizadoPor=(fb()&&fb().auth&&fb().auth.currentUser&&fb().auth.currentUser.email)||'';
+    const uid=editUid||nuevoUid(d);
+    if(!editUid) d.creadoEl=d.actualizadoEl;
+    guardar(uid,d).then(ok=>{ if(ok) cerrarForm(); });
+  }
+  function cargarSemilla(){
+    const faltan=SEMILLA.filter(s=>!TRA.some(t=>t._uid===s._uid)); if(!faltan.length) return;
+    if(!confirm('Se cargan '+faltan.length+' tarifas con lo que ya se sabe (parámetros de flete + cotizaciones que pasaron por los chats). Las que no salen de un parámetro quedan "A revisar" hasta que Sofía las confirme. ¿Seguimos?')) return;
+    const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
+    const hoy=new Date().toISOString().slice(0,10);
+    Promise.all(faltan.map(s=>{ const {_uid,...d}=s; d.creadoEl=hoy; d.actualizadoEl=hoy; d.actualizadoPor='semilla 07/11'; return c.FS.setDoc(c.FS.doc(c.db,COL,_uid), d, {merge:true}); }))
+      .catch(e=>alert('No se pudieron cargar todas: '+e.message+'\n¿Está publicada la regla de vph_transportes?'));
+  }
+
+  function bind(){
+    const p=$('page-transportes'); if(!p||p.dataset.bound) return; p.dataset.bound='1';
+    $('tra-q-loc').addEventListener('input',renderBuscar); $('tra-q-pal').addEventListener('input',renderBuscar);
+    $('tra-filtro').addEventListener('input',renderTabla);
+    $('tra-nuevo').onclick=()=>{ if(!pc()){ alert('Solo el admin carga transportes.'); return; } abrirForm(null); };
+    $('tra-seed').onclick=cargarSemilla;
+    $("tra-f-save").onclick=guardarForm; $("tra-f-cancel").onclick=cerrarForm; $("tra-f-x").onclick=cerrarForm;
+    $('tra-modal').addEventListener('click',e=>{ if(e.target===$('tra-modal')) cerrarForm(); });
+  }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db) return; if(window.__rol!=='admin') return; stopSync();
+    unsub=c.FS.onSnapshot(c.FS.collection(c.db,COL),
+      snap=>{ TRA=snap.docs.map(x=>({...x.data(),_uid:x.id})); render(); },
+      err=>console.error('transportes:',err));
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } }
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+  window.__afterLogin.push(()=>{ bind(); startSync(); });
+  window.__afterLogout.push(()=>{ stopSync(); TRA=[]; render(); });
+  if(window.__fbctx&&window.__fbctx.auth&&window.__fbctx.auth.currentUser){ bind(); startSync(); }
+  bind(); render();
 })();
 </script>
 
@@ -23111,6 +23600,10 @@ function buildFilterTable(cfg){
            14mm/12mm que se ven en pantalla. Se usa width:auto en vez de 210mm a propósito: fijar el
            ancho exacto puede desbordar por redondeo y hacer que salga una segunda hoja en blanco. */
         .doc-sheet{ width:auto; min-height:auto; box-shadow:none; margin:0; padding:14mm 12mm; }
+        /* Presupuesto con el CA-30 (ficha + guia de cubos): al imprimir, con el relleno de 14 mm no entraba el pie y salia una 2da hoja
+           casi vacia (05/11). Solo para esas hojas se achican el relleno de arriba/abajo y el aire del pie. */
+        .doc-sheet:has(.ca30-ficha){ padding-top:8mm; padding-bottom:6mm; }
+        .doc-sheet:has(.ca30-ficha) .doc-foot{ margin-top:10px; }
         @page{ size:A4; margin:0; }
       }`;
     document.head.appendChild(st);
@@ -23306,8 +23799,50 @@ function buildFilterTable(cfg){
     TEC50:'TEC50.png', TET50:'TET50.png', UL60:'UL60.png', UCC10:'UCC10.png',
      
      
-    TET100:'TET100.png', TER100:'TER100.png', TEC100:'TER100.png'
+    TET100:'TET100.png', TER100:'TER100.png', TEC100:'TER100.png',
+     
+    CA30:'CA30.jpg'
   };
+   
+   
+   
+   
+  const CA30_DATOS=[['Medidas','30 × 30 × 30 cm'],['Peso','≈ 60 kg'],['Chapa superior','Acero 200 × 200 × 5 mm, pintada color aluminio'],
+    ['Izaje','8 orificios Ø25 (2 por cara)'],['Superficie de apoyo','900 cm²'],['Pallet','24 cubos · 1.440 kg · flejado']];
+   
+  const CA30_GUIA={
+    "20'":{m:'6 m', filas:[[3000,6,6],[4000,6,6],[5000,6,8],[6000,6,10],[7000,8,10],[8000,8,null],[9000,10,null]]},
+    "40'":{m:'12 m', filas:[[4000,6,6],[5000,6,8],[6000,6,10],[7000,8,10],[8000,8,12],[9000,10,14],[10000,10,null]]}
+  };
+  const llevaCA30=v=>(v&&v.items||[]).some(it=>it && (String(it.codigo||'').trim().toUpperCase()==='CA30' || /\bCA-?30\b/i.test(String(it.desc||''))));
+   
+   
+  function bloqueFichaCA30(v){
+    if(!llevaCA30(v)) return '';
+    const kg=n=>n.toLocaleString('es-AR');
+    const th='padding:2px 4px;background:#1d7a46;color:#fff;white-space:nowrap;font-weight:700';
+    const td='padding:.5px 4px;border-bottom:1px solid #e5e7eb;white-space:nowrap';
+    const tabla=(nom,g)=>'<div style="flex:1 1 0;min-width:0"><table style="width:100%;border-collapse:collapse;font-size:9.5px;line-height:1.25"><thead><tr>'+
+      '<th style="'+th+';text-align:left">Contenedor '+nom+' · '+g.m+'</th><th style="'+th+'">Suelo firme</th><th style="'+th+'">Suelo medio</th></tr></thead><tbody>'+
+      g.filas.map(f=>'<tr><td style="'+td+'">'+kg(f[0])+' kg</td>'+
+        '<td style="'+td+';text-align:center"><b>'+f[1]+'</b> cubos</td>'+
+        '<td style="'+td+';text-align:center">'+(f[2]==null?'<i>Consultar</i>':'<b>'+f[2]+'</b> cubos')+'</td></tr>').join('')+'</tbody></table></div>';
+    const dato=d=>'<tr><td style="padding:0 6px 0 0;color:#555;white-space:nowrap;vertical-align:top">'+d[0]+'</td><td style="padding:0 10px 0 0;white-space:nowrap"><b>'+d[1]+'</b></td></tr>';
+    const mitad=Math.ceil(CA30_DATOS.length/2);
+    const cols=[CA30_DATOS.slice(0,mitad),CA30_DATOS.slice(mitad)].map(c=>'<table style="border-collapse:collapse;font-size:9.5px;line-height:1.35"><tbody>'+c.map(dato).join('')+'</tbody></table>').join('');
+    return '<div class="ca30-ficha" style="margin-top:8px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;page-break-inside:avoid;break-inside:avoid">'+
+      '<div style="display:flex;gap:10px;align-items:center">'+
+        '<img src="Productos/'+IMG_PRODUCTO.CA30+'" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:5px;flex:0 0 auto" onerror="this.remove()">'+
+        '<div style="flex:1 1 auto;min-width:0"><div style="font-weight:800;font-size:11px;margin-bottom:3px">Cubo de apoyo CA-30 · ficha del producto</div><div style="display:flex;gap:6px;flex-wrap:nowrap">'+cols+'</div></div>'+
+      '</div>'+
+      '<div style="font-weight:800;font-size:10.5px;margin:5px 0 2px">¿Cuántos cubos necesito?</div>'+
+      '<div style="display:flex;gap:8px">'+tabla("20'",CA30_GUIA["20'"])+tabla("40'",CA30_GUIA["40'"])+'</div>'+
+      '<div style="font-size:9px;color:#555;line-height:1.35;margin-top:4px"><b>Suelo firme</b> (tosca o terreno compactado): ≈ 1.000 kg por cubo · <b>suelo medio</b> (tierra firme o relleno): ≈ 700 kg. '+
+        'Peso total = contenedor vacío (≈ 2,3 t el 20\', ≈ 3,8 t el 40\') + carga. '+
+        '<b>Guía orientativa, no un cálculo estructural:</b> con suelo blando, cargas altas, viento o contenedores apilados, consultanos.</div>'+
+    '</div>';
+  }
+   
   function celdaCodigo(codigo){
     const img = IMG_PRODUCTO[String(codigo||'').trim().toUpperCase()];
     return (img?'<img src="Productos/'+img+'" alt="" style="width:24px;height:24px;object-fit:cover;border-radius:3px;vertical-align:middle;margin-right:4px" onerror="this.remove()">':'')+esc(codigo||'');
@@ -23473,7 +24008,7 @@ function buildFilterTable(cfg){
     if(!esPresupuesto){ tot+='<div class="row"><span>Total Cobrado</span><b>'+money(k.cobrado)+'</b></div>'+
       '<div class="row"><span>Total a Cobrar</span><b>'+money(k.saldo)+'</b></div>'; }
     let obs='';
-    if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; obs+=condicionesPresup(v); }
+    if(esPresupuesto){ if(v.notaCliente||v.nota) obs+='<div class="doc-obs"><b>Observaciones:</b> '+esc(v.notaCliente||v.nota)+'</div>'; obs+=bloqueFichaCA30(v); obs+=condicionesPresup(v); }
     else if(v.notaCliente){ obs+='<div class="doc-obs">'+esc(v.notaCliente)+'</div>'; }
      
     let caeBlock='';
