@@ -18910,11 +18910,47 @@ function buildFilterTable(cfg){
     const extLista=window.__waExtListo===true?'<span class="badge green" style="margin-left:4px">Extensión conectada</span>':(c==='web-lenovo'?'<span class="badge red" style="margin-left:4px">Falta la extensión o WA Web</span>':'');
     const puedeLeer=c==='web-lenovo' && window.__waExtListo===true;
     const btnLeer=puedeLeer?'<button class="kb-move" id="wab-leer-chat" style="background:var(--blue);color:#fff;border-color:var(--blue)">📥 Leer el chat abierto en WhatsApp Web</button>':'';
+    const rc=resumenContenido(DB.pendientes||[], Date.now());
+    const btnCont='<button class="kb-move" id="wab-cont-toggle">📸 Contenido que piden ('+rc.total+(rc.hoy?' · '+rc.hoy+' hoy':'')+')</button>';
     return '<div id="wab-canal-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;font-size:12.5px">'+
       '<span style="font-weight:700">Canal de envío:</span><span>'+esc(txt)+'</span>'+extLista+
-      btnLeer+
+      btnLeer+btnCont+
       '<button class="kb-move" id="wab-canal-cambiar" style="margin-left:auto">Cambiar</button>'+
-      '<div style="flex:0 0 100%;color:var(--muted);font-size:11px;margin-top:2px">'+esc(hint)+'</div></div>';
+      '<div style="flex:0 0 100%;color:var(--muted);font-size:11px;margin-top:2px">'+esc(hint)+'</div></div>'+
+      (verContenido?contenidoPanelHTML(rc):'');
+  }
+  // 09/11 (Marcelo: "que vaya aprendiendo lo que solicitan los clientes así se genera el contenido digital a
+  // compartir"). El Worker marca cada mensaje que pide contenido (`contenidoPedido`: tema, producto, cubierto =
+  // el agente tenía una placa para mandar). Acá se junta por tema en los últimos 30 días que ya baja la Bandeja:
+  // lo que más se pide SIN tener qué mandar es lo próximo a producir. Pura salvo el HTML.
+  let verContenido=false;
+  function resumenContenido(pendientes, ahoraMs){
+    const hoyISO=new Date(ahoraMs-3*3600000).toISOString().slice(0,10);
+    const g=new Map(); let total=0, hoy=0;
+    (pendientes||[]).forEach(p=>{
+      const c=p&&p.contenidoPedido; if(!c||!c.tema) return;
+      total++; const ms=tsMs(p.creadoEn)||0; const dia=ms?new Date(ms-3*3600000).toISOString().slice(0,10):'';
+      if(dia===hoyISO) hoy++;
+      if(!g.has(c.tema)) g.set(c.tema,{tema:c.tema, veces:0, sinCubrir:0, hoy:0, ultima:0, productos:new Set(), ejemplos:[]});
+      const x=g.get(c.tema); x.veces++; if(!c.cubierto) x.sinCubrir++; if(dia===hoyISO) x.hoy++; if(ms>x.ultima) x.ultima=ms;
+      if(c.producto) x.productos.add(String(c.producto));
+      x.ejemplos.push({nombre:p.nombre||p.telefono||'', texto:String(c.texto||p.mensaje||'').slice(0,140), ms});
+    });
+    const temas=Array.from(g.values()).map(x=>({...x, productos:Array.from(x.productos).sort(), ejemplos:x.ejemplos.sort((a,b)=>b.ms-a.ms).slice(0,3)}))
+      .sort((a,b)=>b.sinCubrir-a.sinCubrir||b.veces-a.veces||b.ultima-a.ultima);
+    return {total, hoy, temas};
+  }
+  function contenidoPanelHTML(rc){
+    if(!rc.temas.length) return '<div id="wab-cont-panel" class="card" style="padding:12px;margin-bottom:10px;font-size:12.5px;color:var(--muted)">📸 En los últimos 30 días ningún cliente pidió fotos, videos, fichas ni instructivos. Se anota solo cada vez que alguien lo pida.</div>';
+    const filas=rc.temas.map(t=>'<tr><td class="cel-nombre"><b>'+esc(t.tema)+'</b>'+(t.productos.length?'<div style="font-size:11px;color:var(--muted)">'+esc(t.productos.join(', '))+'</div>':'')+'</td>'+
+      '<td style="text-align:right">'+t.veces+(t.hoy?' <span class="badge blue">'+t.hoy+' hoy</span>':'')+'</td>'+
+      '<td>'+(t.sinCubrir?'<span class="badge red">Falta: '+t.sinCubrir+' sin qué mandar</span>':'<span class="badge green">Lo tenemos</span>')+'</td>'+
+      '<td>'+(t.ultima?esc(fmtFecha(t.ultima)):'—')+'</td>'+
+      '<td class="cel-envuelve" style="font-size:11.5px">'+t.ejemplos.map(e=>'«'+esc(e.texto)+'»'+(e.nombre?' <span style="color:var(--muted)">— '+esc(e.nombre)+'</span>':'')).join('<br>')+'</td></tr>').join('');
+    return '<div id="wab-cont-panel" class="card" style="padding:12px;margin-bottom:10px">'+
+      '<div style="font-weight:800;margin-bottom:4px">📸 Contenido que piden los clientes (últimos 30 días)</div>'+
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Arriba, lo que más se pide y el agente no tuvo qué mandar: es el próximo contenido a producir (fotos de obras, videos, fichas, instructivos).</div>'+
+      '<div class="tbl-wrap"><table id="wab-cont-tabla"><thead><tr><th>Qué piden</th><th>Veces</th><th>¿Lo tenemos?</th><th>Último</th><th>Ejemplos</th></tr></thead><tbody>'+filas+'</tbody></table></div></div>';
   }
   // 09/11: puente del Tablero con la extensión para el paso "leer-chat-abierto". Separado del procesador
   // local de salientes para que lo pueda llamar también la barra de canal.
@@ -18973,6 +19009,7 @@ function buildFilterTable(cfg){
       };
     }
     const bL=$('wab-leer-chat'); if(bL&&!bL.__bound){ bL.__bound=true; bL.onclick=leerChatAbiertoYSugerir; }
+    const bK=$('wab-cont-toggle'); if(bK&&!bK.__bound){ bK.__bound=true; bK.onclick=()=>{ verContenido=!verContenido; pintarEstadoBot(); }; }
   }
 
   // 09/11: WATCHER AUTOMÁTICO del inbox de WhatsApp Web.
