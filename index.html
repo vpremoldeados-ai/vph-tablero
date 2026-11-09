@@ -19186,6 +19186,16 @@ function buildFilterTable(cfg){
       if(!reservado){ procesando.delete(s._uid); return; }
 
       const adj=Array.isArray(s.adjuntos)?s.adjuntos.filter(a=>a&&a.b64&&a.nombre&&(a.tipo==='imagen'||a.tipo==='documento')):[];
+      // 09/11: las fotos que eligió el agente ([FOTO_*], urls del Worker) también viajan: se bajan y van como imagen.
+      for(const u of (Array.isArray(s.fotos)?s.fotos:[])){
+        try{
+          if(!/^https:\/\/vph-agente-instagram\.vpremoldeados\.workers\.dev\//.test(String(u))) continue;
+          const resp=await fetch(u); if(!resp.ok) continue;
+          const blob=await resp.blob();
+          const b64=await new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=ko; fr.readAsDataURL(blob); });
+          if(b64) adj.push({ tipo:'imagen', nombre:String(u).split('/').pop()||'foto.jpg', mime:blob.type||'image/jpeg', b64 });
+        }catch(e){ console.warn('no se pudo bajar la foto', u, e&&e.message||e); }
+      }
       try{
         const timeout=120000 + adj.length*90000;
         const r=await pedirExtension({ tel:String(s.to||''), texto:String(s.texto||''), adjuntos:adj, salienteId:s._uid }, timeout);
