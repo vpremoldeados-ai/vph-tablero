@@ -64,6 +64,7 @@ function sinComentariosJS(src, etiqueta) {
 }
 // 3e) identificadores de la infraestructura real
 html = html.split('https://vph-facturacion-arca.vpremoldeados.workers.dev').join('https://demo.invalid')
+  .split('https://vph-agente-instagram.vpremoldeados.workers.dev').join('https://demo.invalid')
   .split('vpremoldeados@gmail.com').join('demo@vph-demo.com')
   .split('finanzas-vassallo').join('demo');
 
