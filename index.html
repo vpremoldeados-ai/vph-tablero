@@ -18983,7 +18983,9 @@ function buildFilterTable(cfg){
   // Guarda en localStorage los (nombre+preview) ya procesados para no repetir.
   const INBOX_MS=30000;
   const procesadosInbox=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_inbox_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
-  function recordarInbox(k){ procesadosInbox.add(k); try{ const arr=Array.from(procesadosInbox); localStorage.setItem('vph_wa_inbox_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
+  // Se recuerda solo el ÚLTIMO mensaje visto de cada chat: si el cliente repite un texto más tarde ("Para autos"),
+  // vuelve a contar (pasó el 09/11: quedó sin respuesta porque ya lo había mandado antes).
+  function recordarInbox(k){ const pre=k.slice(0,k.indexOf('|')+1); for(const x of Array.from(procesadosInbox)) if(x.startsWith(pre)) procesadosInbox.delete(x); procesadosInbox.add(k); try{ const arr=Array.from(procesadosInbox); localStorage.setItem('vph_wa_inbox_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
   const inboxPend=new Map();
   window.addEventListener('message', ev=>{
     const d=ev.data;
