@@ -14441,7 +14441,9 @@ function buildFilterTable(cfg){
     {g:'Sueldos', k:'sueDiaPago1',   l:'Día de pago de la 1ª quincena',                def:15, t:'num', hint:'Del MISMO mes. En VPH se paga del 15 al 17, y acá va el primer día de esa ventana: para saber si alcanza la plata conviene suponer que sale antes, no después.'},
     {g:'Sueldos', k:'sueDiaPago2',   l:'Día de pago de la 2ª quincena',                def:0,  t:'num', hint:'En VPH se paga del 30/31 al 1-2 del mes siguiente. Dejalo en 0 = el ÚLTIMO día del mes que se liquida. Si ponés otro número (ej. 3) se entiende como ese día del mes SIGUIENTE.'},
     {g:'Sueldos', k:'sueDiaPagoMensual', l:'Día de pago de los sueldos MENSUALES',     def:5,  t:'num', hint:'Los mensuales (Marcelo y Sofía) se liquidan a mes vencido: el mes se cierra el 30/31 y se cobra el mes SIGUIENTE. En VPH, del 1 al 10. En agosto se paga lo de julio.'},
-    {g:'CRM',     k:'waCanalEnvio',    l:'Canal de envío de las respuestas de la Bandeja', def:'api', t:'sel', opts:[['api','📡 API oficial (Worker)'],['web-lenovo','🌐 WhatsApp Web en la Lenovo']], hint:'Mientras Sofía no activó la coexistencia API con su número (QR en el Tablero el miércoles), elegir "WhatsApp Web en la Lenovo": lo aprobado sale desde el Chrome de la Lenovo con la sesión de WhatsApp Web de 351 760-5362. Después pasar a "API oficial".'}
+    {g:'CRM',     k:'waCanalEnvio',    l:'Canal de envío de las respuestas de la Bandeja', def:'api', t:'sel', opts:[['api','📡 API oficial (Worker)'],['web-lenovo','🌐 WhatsApp Web en la Lenovo']], hint:'Mientras Sofía no activó la coexistencia API con su número (QR en el Tablero el miércoles), elegir "WhatsApp Web en la Lenovo": lo aprobado sale desde el Chrome de la Lenovo con la sesión de WhatsApp Web de 351 760-5362. Después pasar a "API oficial".'},
+    {g:'CRM',     k:'waWorkerUrl',     l:'URL base del Worker del agente (sin / al final)', def:'https://vph-agente-instagram.vpremoldeados.workers.dev', t:'txt', hint:'El Tablero llama a /wa-leer cuando Sofía toca "Leer el chat abierto" para que el agente arme la sugerencia con el mensaje leído de WhatsApp Web. Dejalo tal cual si no cambiaste el dominio del Worker.'},
+    {g:'CRM',     k:'waLenovoToken',   l:'Token para hablar con /wa-leer del Worker',       def:'', t:'txt', hint:'MISMO valor que el secreto LENOVO_TOKEN del Worker (se setea con npx wrangler secret put LENOVO_TOKEN). Cualquiera que tenga este token puede crear pendientes en la Bandeja, así que solo lo cargan Marcelo/Sofía.'}
   ];
   window.__cfg = window.__cfg || {};
   DEFS.forEach(d=>{ if(window.__cfg[d.k]===undefined) window.__cfg[d.k]=d.def; });   // defaults desde el arranque
@@ -18898,30 +18900,157 @@ function buildFilterTable(cfg){
   //   🌐 WhatsApp Web (Lenovo)  → el Chrome de la Lenovo con WA Web de Sofía (hasta que active el QR).
   // El canal se guarda en vph_config/parametros.waCanalEnvio (lo lee __param) para que todas las pestañas
   // que aprueben desde acá escriban el saliente con el mismo canal.
+  // Con canal web-lenovo + extensión conectada se muestra 📥 Leer el chat abierto: pide a la extensión el
+  // último mensaje del cliente del chat abierto en WA Web y se lo pasa al Worker a /wa-leer para que el
+  // agente genere la sugerencia (el mensaje aparece en la Bandeja como un pendiente más).
   function barraCanalHTML(){
     const c=waCanalEnvio();
     const txt=c==='web-lenovo'?'🌐 WhatsApp Web en la Lenovo (número de Sofía 351 760-5362)':'📡 API oficial de WhatsApp (el Worker manda solo)';
     const hint=c==='web-lenovo'?'Lo aprobado lo manda el Chrome de la Lenovo con la extensión. Sirve hasta que Sofía active el QR.':'El Worker manda solo. Disponible cuando el número de Sofía esté en coexistencia con la API.';
     const extLista=window.__waExtListo===true?'<span class="badge green" style="margin-left:4px">Extensión conectada</span>':(c==='web-lenovo'?'<span class="badge red" style="margin-left:4px">Falta la extensión o WA Web</span>':'');
+    const puedeLeer=c==='web-lenovo' && window.__waExtListo===true;
+    const btnLeer=puedeLeer?'<button class="kb-move" id="wab-leer-chat" style="background:var(--blue);color:#fff;border-color:var(--blue)">📥 Leer el chat abierto en WhatsApp Web</button>':'';
     return '<div id="wab-canal-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;font-size:12.5px">'+
       '<span style="font-weight:700">Canal de envío:</span><span>'+esc(txt)+'</span>'+extLista+
+      btnLeer+
       '<button class="kb-move" id="wab-canal-cambiar" style="margin-left:auto">Cambiar</button>'+
       '<div style="flex:0 0 100%;color:var(--muted);font-size:11px;margin-top:2px">'+esc(hint)+'</div></div>';
   }
-  function bindBarraCanal(){
-    const b=$('wab-canal-cambiar'); if(!b||b.__bound) return; b.__bound=true;
-    b.onclick=async ()=>{
-      const actual=waCanalEnvio();
-      const siguiente=actual==='api'?'web-lenovo':'api';
-      const txt=siguiente==='web-lenovo'?'🌐 WhatsApp Web (Lenovo, número de Sofía)':'📡 API oficial de WhatsApp';
-      if(!confirm('Cambiar el canal a '+txt+'?\n\nTodo lo que aprueben desde ahora va a salir por ese camino.')) return;
-      const c=fb(); if(!c||!c.db){ alert('Firestore no está disponible.'); return; }
-      try{ await c.FS.setDoc(c.FS.doc(c.db,'vph_config','parametros'), { waCanalEnvio: siguiente }, { merge:true }); }
-      catch(e){ alert('No se pudo guardar: '+e.message); return; }
-      // El __param se actualiza con el snapshot de Parámetros; pintamos ya para no esperar.
-      pintarEstadoBot();
-    };
+  // 09/11: puente del Tablero con la extensión para el paso "leer-chat-abierto". Separado del procesador
+  // local de salientes para que lo pueda llamar también la barra de canal.
+  const leerPendExt=new Map();
+  window.addEventListener('message', ev=>{
+    const d=ev.data;
+    if(ev.source!==window||!d||d.vphWa!==1) return;
+    if(d.tipo==='resultado-leer'){ const p=leerPendExt.get(d.id); if(!p) return; leerPendExt.delete(d.id); clearTimeout(p.to); p.ok({nombre:d.nombre||'', tel:d.tel||'', texto:d.texto||'', waId:d.waId||''}); }
+    // Un resultado de error del puente viene como 'resultado' (no 'resultado-leer'): lo captura el handler.
+    if(d.tipo==='resultado'){ const p=leerPendExt.get(d.id); if(!p||d.estado==='enviado') return; leerPendExt.delete(d.id); clearTimeout(p.to); p.err(new Error(d.detalle||d.estado||'error')); }
+  });
+  function pedirLeerChat(){
+    return new Promise((ok,err)=>{
+      const id='leer_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+      const to=setTimeout(()=>{ leerPendExt.delete(id); err(new Error('la extensión no respondió en 15 s')); },15000);
+      leerPendExt.set(id,{ok,err,to});
+      window.postMessage({vphWa:1, tipo:'leer-chat', id},'*');
+    });
   }
+  async function leerChatAbiertoYSugerir(){
+    const url=String(window.__param?window.__param('waWorkerUrl','https://vph-agente-instagram.vpremoldeados.workers.dev'):'').replace(/\/+$/,'');
+    const tk=String(window.__param?window.__param('waLenovoToken',''):'');
+    if(!url){ alert('Falta cargar la URL del Worker en Parámetros → CRM.'); return; }
+    if(!tk){ alert('Falta cargar el token del Worker en Parámetros → CRM → waLenovoToken.\n\nEs el MISMO valor del secreto LENOVO_TOKEN del Worker (se setea con npx wrangler secret put LENOVO_TOKEN).'); return; }
+    let r;
+    try{ r=await pedirLeerChat(); }
+    catch(e){ alert('No se pudo leer el chat: '+e.message); return; }
+    if(!r.texto){ alert('No encontré el mensaje del cliente en el chat abierto.'); return; }
+    let to=String(r.tel||'').replace(/\D/g,'');
+    if(!to){
+      const pedido=prompt('El chat no tenía el número a la vista. Teléfono del cliente (solo dígitos, con 54 adelante):', '549351');
+      if(!pedido) return;
+      to=String(pedido).replace(/\D/g,'');
+      if(to.length<10){ alert('Teléfono muy corto.'); return; }
+    }
+    const preview='Cliente: '+(r.nombre||to)+'\nTeléfono: '+to+'\nMensaje: '+r.texto.slice(0,500)+(r.texto.length>500?'…':'');
+    if(!confirm('¿Pedirle al agente una respuesta para este mensaje?\n\n'+preview)) return;
+    try{
+      const res=await fetch(url+'/wa-leer', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk}, body:JSON.stringify({to, nombre:r.nombre||'', texto:r.texto, waId:r.waId||''}) });
+      const j=await res.json().catch(()=>({}));
+      if(!res.ok){ alert('El Worker respondió '+res.status+': '+(j&&j.error||'')); return; }
+      // Nada más que hacer: el onSnapshot de wa_pendientes ya va a traer el pendiente con la sugerencia.
+    }catch(e){ alert('No se pudo hablar con el Worker: '+e.message+'\n\nMirá que la URL en Parámetros sea correcta y que el Worker esté desplegado.'); }
+  }
+  function bindBarraCanal(){
+    const bC=$('wab-canal-cambiar'); if(bC&&!bC.__bound){ bC.__bound=true;
+      bC.onclick=async ()=>{
+        const actual=waCanalEnvio();
+        const siguiente=actual==='api'?'web-lenovo':'api';
+        const txt=siguiente==='web-lenovo'?'🌐 WhatsApp Web (Lenovo, número de Sofía)':'📡 API oficial de WhatsApp';
+        if(!confirm('Cambiar el canal a '+txt+'?\n\nTodo lo que aprueben desde ahora va a salir por ese camino.')) return;
+        const c=fb(); if(!c||!c.db){ alert('Firestore no está disponible.'); return; }
+        try{ await c.FS.setDoc(c.FS.doc(c.db,'vph_config','parametros'), { waCanalEnvio: siguiente }, { merge:true }); }
+        catch(e){ alert('No se pudo guardar: '+e.message); return; }
+        pintarEstadoBot();
+      };
+    }
+    const bL=$('wab-leer-chat'); if(bL&&!bL.__bound){ bL.__bound=true; bL.onclick=leerChatAbiertoYSugerir; }
+  }
+
+  // 09/11: WATCHER AUTOMÁTICO del inbox de WhatsApp Web.
+  // Cada INBOX_MS (30 s) le pide a la extensión el listado de chats con mensajes no leídos en el aside de
+  // WhatsApp Web (sin abrir nada: la extensión solo mira el DOM de la lista, no marca como leído). Para
+  // cada nuevo, si trae teléfono (jid con @c.us o número en el nombre del contacto) o si el nombre matchea
+  // un cliente/lead del Tablero, llama al Worker a /wa-leer para que el agente genere la sugerencia.
+  // Guarda en localStorage los (nombre+preview) ya procesados para no repetir.
+  const INBOX_MS=30000;
+  const procesadosInbox=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_inbox_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
+  function recordarInbox(k){ procesadosInbox.add(k); try{ const arr=Array.from(procesadosInbox); localStorage.setItem('vph_wa_inbox_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
+  const inboxPend=new Map();
+  window.addEventListener('message', ev=>{
+    const d=ev.data;
+    if(ev.source!==window||!d||d.vphWa!==1) return;
+    if(d.tipo==='resultado-inbox'){ const p=inboxPend.get(d.id); if(!p) return; inboxPend.delete(d.id); clearTimeout(p.to); p.ok({ok:!!d.ok, chats:d.chats||[], error:d.error||''}); }
+    // El 'hola' de la extensión (tablero.js) ya pone window.__waExtListo = true en el procesador local.
+    // Acá lo usamos para arrancar también el watcher del inbox apenas la extensión esté conectada.
+    if(d.tipo==='hola' && waCanalEnvio()==='web-lenovo') arrancarWatcherInbox();
+  });
+  function pedirInbox(){
+    return new Promise((ok,err)=>{
+      const id='ib_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+      const to=setTimeout(()=>{ inboxPend.delete(id); err(new Error('timeout')); },10000);
+      inboxPend.set(id,{ok,err,to});
+      window.postMessage({vphWa:1, tipo:'escanear-inbox', id},'*');
+    });
+  }
+  // Busca el teléfono del contacto por nombre: en clientes, proveedores, leads. Nombre normalizado.
+  function buscarTelPorNombre(nombre){
+    if(!nombre) return '';
+    const norm=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+    const n=norm(nombre); if(!n||n.length<3) return '';
+    const fuentes=[];
+    try{ if(window.__catalogoClientes) fuentes.push(...(window.__catalogoClientes()||[])); }catch(e){}
+    try{ if(window.__catalogoProveedores) fuentes.push(...(window.__catalogoProveedores()||[])); }catch(e){}
+    try{ if(window.__leadsCandidatos){ /* no usamos acá: por cliente, no por fecha */ } }catch(e){}
+    for(const f of fuentes){ const nom=norm(f.nombre||f.razon||''); if(nom===n){ const t=String(f.telefono||f.tel||'').replace(/\D/g,''); if(t.length>=10) return t; } }
+    // Leads: pueden no estar en el catálogo. Tienen __leadPorUid pero no buscador por nombre; dejamos para después.
+    return '';
+  }
+  async function procesarInboxTick(){
+    if(waCanalEnvio()!=='web-lenovo'||window.__waExtListo!==true) return;
+    let r; try{ r=await pedirInbox(); }catch(e){ return; }   // sin ruido si la extensión o WA Web no están
+    if(!r.ok||!Array.isArray(r.chats)||!r.chats.length) return;
+    const url=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,'');
+    const tk=String(window.__param?window.__param('waLenovoToken',''):'');
+    if(!url||!tk) return;   // configuración incompleta: el watcher queda en silencio hasta que se cargue
+    for(const c of r.chats){
+      const texto=String(c.preview||'').trim();
+      if(!texto) continue;
+      const clave=(c.nombre||'')+'|'+texto;
+      if(procesadosInbox.has(clave)) continue;
+      // Teléfono: 1) del jid/nombre si la extensión lo pudo sacar, 2) matcheo por nombre con clientes/leads.
+      let tel=String(c.tel||'').replace(/\D/g,'');
+      if(!tel){ tel=buscarTelPorNombre(c.nombre||''); }
+      if(!tel){
+        // Sin teléfono: lo marcamos como "sin resolver" para avisar en la Bandeja y que Sofía abra el chat
+        // a mano con el botón 📥. No lo marcamos como procesado todavía para que, cuando se agendue el
+        // contacto en Clientes/Leads, la próxima vuelta lo resuelva sola. Avisamos UNA vez por ciclo.
+        if(!procesarInboxTick.__sinTel){ procesarInboxTick.__sinTel=new Set(); }
+        if(!procesarInboxTick.__sinTel.has(clave)){ procesarInboxTick.__sinTel.add(clave); console.warn('[inbox] mensaje de "'+c.nombre+'" sin teléfono: agendá el contacto en Clientes/Leads o abrí el chat con 📥 Leer'); }
+        continue;
+      }
+      // Lo marcamos ANTES de llamar al Worker (evita doble disparo si el tick se solapa).
+      recordarInbox(clave);
+      try{
+        const res=await fetch(url+'/wa-leer', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk}, body:JSON.stringify({to:tel, nombre:c.nombre||'', texto}) });
+        if(!res.ok){ console.warn('[inbox] /wa-leer respondió', res.status, 'para', c.nombre); }
+      }catch(e){ console.warn('[inbox] no se pudo hablar con el Worker:', e&&e.message||e); }
+    }
+  }
+  let inboxReloj=null;
+  function arrancarWatcherInbox(){ if(inboxReloj) return; inboxReloj=setInterval(procesarInboxTick, INBOX_MS); procesarInboxTick(); }
+  function pararWatcherInbox(){ if(inboxReloj){ clearInterval(inboxReloj); inboxReloj=null; } }
+  window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>{ if(window.__waExtListo===true && waCanalEnvio()==='web-lenovo') arrancarWatcherInbox(); });
+  window.__afterLogout=window.__afterLogout||[]; window.__afterLogout.push(pararWatcherInbox);
+  window.addEventListener('vph-params', ()=>{ if(waCanalEnvio()==='web-lenovo' && window.__waExtListo===true) arrancarWatcherInbox(); else pararWatcherInbox(); });
   // ---------- ⏱ Reloj de respuesta (29/09, plan de ventas de Marcelo) ----------
   // En materiales de construcción gana el que contesta primero. El bot no sabe cuándo se respondió, pero
   // sí cuándo llegó cada mensaje y Sofía lo marca ✓ Resuelto al atenderlo: la espera es el tiempo del mensaje
