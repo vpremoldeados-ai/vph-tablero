@@ -19240,6 +19240,12 @@ function buildFilterTable(cfg){
         const timeout=120000 + adj.length*90000;
         const r=await pedirExtension({ tel:String(s.to||''), texto:String(s.texto||''), adjuntos:adj, salienteId:s._uid }, timeout);
         if(r.estado==='enviado'){
+          // 09/11: lo que salió entra a la memoria de la charla del agente (sin esto saludaba y "arrancaba de cero" en
+          // cada mensaje y repetía la foto: el embudo no avanzaba). Si falla no se frena nada.
+          try{
+            const wurl=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,''), wtk=String(window.__param?window.__param('waLenovoToken',''):'');
+            if(wurl&&wtk) await fetch(wurl+'/wa-enviado',{ method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':wtk}, body:JSON.stringify({ to:String(s.to||''), texto:String(s.texto||''), fotos:Array.isArray(s.fotos)?s.fotos:[] }) });
+          }catch(e){ console.warn('[wa-enviado] no se pudo anotar en la charla', e&&e.message||e); }
           await c.FS.updateDoc(ref, { estado:'enviado', enviadoEn:new Date().toISOString(), detalleEnvio:String(r.detalle||'').slice(0,500), pcId:PC_ID });
           if(s.pendienteUid){ try{ await c.FS.updateDoc(c.FS.doc(c.db,COL,s.pendienteUid), { sugerenciaEstado:'enviada', estado:'resuelto', textoEnviado:String(s.texto||'') }); }catch(e){} }
         } else {
