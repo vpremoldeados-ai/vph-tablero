@@ -19148,13 +19148,16 @@ function buildFilterTable(cfg){
     const PC_ID=(()=>{ try{ let x=localStorage.getItem('vph_wa_pc_id_v1'); if(!x){ x='pc_'+Math.random().toString(36).slice(2,10)+'_'+Date.now().toString(36); localStorage.setItem('vph_wa_pc_id_v1',x); } return x; }catch(e){ return 'pc_mem'; } })();
     const pendExt=new Map();        // id → {resolver,reject,timeout}
     const procesando=new Set();     // salienteIds en vuelo en ESTA pestaña
-    let unsubSal=null, extListo=false;
+    let unsubSal=null, extListo=false, ultimoSnapSal=null;
 
     // Puente con la extensión. 'hola' viene de tablero.js; 'resultado' trae el estado del envío.
     window.addEventListener('message', ev=>{
       const d=ev.data;
       if(ev.source!==window||!d||d.vphWa!==1) return;
-      if(d.tipo==='hola'){ extListo=true; window.__waExtListo=true; if(waCanalEnvio()==='web-lenovo') arrancarWatcher(); }
+      if(d.tipo==='hola'){ const antes=extListo; extListo=true; window.__waExtListo=true;
+        if(waCanalEnvio()==='web-lenovo'){ arrancarWatcher();
+          // 09/11: la cola pudo llegar ANTES del saludo y quedar ignorada hasta el próximo cambio: se reprocesa ahora.
+          if(!antes&&ultimoSnapSal) ultimoSnapSal.docs.forEach(x=>{ const s={...x.data(),_uid:x.id}; if(s.canal==='web-lenovo') procesarUno(s); }); } }
       if(d.tipo==='resultado'){ const p=pendExt.get(d.id); if(!p) return; pendExt.delete(d.id); clearTimeout(p.timeout); p.resolver({estado:d.estado,detalle:d.detalle||'',enviadoTs:d.enviadoTs||0}); }
     });
     function pedirExtension(paquete, timeoutMs){
@@ -19220,6 +19223,7 @@ function buildFilterTable(cfg){
         unsubSal=c.FS.onSnapshot(
           c.FS.query(c.FS.collection(c.db,COL_SAL), c.FS.where('estado','==','aprobado')),
           snap=>{
+            ultimoSnapSal=snap;   // si la extensión saluda después, se reprocesa (ver 'hola')
             if(waCanalEnvio()!=='web-lenovo'||!extListo) return;
             snap.docs.forEach(d=>{ const s={...d.data(),_uid:d.id}; if(s.canal==='web-lenovo') procesarUno(s); });
           },
