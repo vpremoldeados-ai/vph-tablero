@@ -17684,8 +17684,15 @@ function buildFilterTable(cfg){
       // A esos se les pregunta por obras/pedidos en danza — habla de sus clientes, no de su depósito —
       // y se les recuerda que no hace falta stock propio porque VPH entrega rápido. Al activo/en
       // atención se lo sigue tratando como reposición: para ellos sí es la pregunta que corresponde.
-      if(seg==='dormido' || seg==='nunca') return holaP+' Te escribo para saber si tenés alguna obra o pedido donde te pueda servir con losetas, green blocks o topes — fabricamos a pedido y entregamos en 7 días hábiles, así no te hace falta tener stock parado. Cualquier consulta estoy acá 👌';
-      return holaP+' ¿Cómo andás de stock de losetas y topes? Si necesitás reponer, pasame cantidades y te agendo la producción — entregamos en 7 días hábiles, pedido mínimo '+(interior?'4 pallets':'1 pallet')+'. Cualquier consulta estoy acá 👌';
+      // 11/11 (pedido de Marcelo, tras revisar las charlas reales de Sofía con compras): el texto largo de
+      // "obra o pedido… así no te hace falta tener stock parado" no obtuvo ni un pedido en 4 envíos del 15/10
+      // ("hoy muy complicado", "gracias!", y dos sin respuesta), mientras que el "Cómo estás de stock?" corto
+      // de Sofía a la semana siguiente se contestó en minutos. Ahora: como ella escribe ("Cómo va?"), UNA sola
+      // pregunta fácil de contestar y sin explicarle al comprador cómo manejar su stock.
+      const hv='Hola'+(pila?' '+pila:'')+'! Cómo va?';
+      if(seg==='nunca') return hv+' Soy '+firma+' de VPH Premoldeados'+((row&&row.listaPeriodo)?', te pasé la lista de precios':'')+'. ¿Tenés alguna obra o pedido para cotizar? Fabricamos a pedido y entregamos en 7 días hábiles 👌';
+      if(seg==='dormido') return hv+' Hace un tiempito que no hablamos 😊 ¿Tenés alguna obra o pedido en el que te pueda dar una mano? Entregamos en 7 días hábiles.';
+      return hv+' Cómo andan de losetas? Si necesitás reponer para esta semana o la que viene, avisame y lo preparo 👌';
     }
     // 28/10 (texto aprobado por Marcelo, para el +10% del 27/10): corto y sin detalle de cuánto subió —
     // "un pequeño ajuste por la suba de materias primas e insumos", para no invitar a comparar. Con una
@@ -17723,6 +17730,15 @@ function buildFilterTable(cfg){
     if(act.dias<=90) return 'atencion';
     return 'dormido';
   }
+  // 11/11: la actividad se cruza con vph_ventas por NOMBRE. Si en las ventas el cliente figura con otro nombre
+  // (RANCO = "RANCO MATERIALES SA"), la fila lleva "nombreVentas" (varios separados con |) y se SUMAN todos:
+  // sin eso un comprador real caía en "nunca compró" y recibía el mensaje equivocado.
+  function mayActDe(r){
+    const nombres=[r&&r.nombre].concat(String((r&&r.nombreVentas)||'').split('|')).map(topesNorm).filter(Boolean);
+    let ult='', cant=0, monto=0, hay=false;
+    nombres.forEach(n=>{ const a=MAY_ACT[n]; if(!a||!a.ultima) return; hay=true; cant+=a.cant; monto+=a.monto; if(a.ultima>ult) ult=a.ultima; });
+    return hay ? {ultima:ult, cant, monto, dias:mayDiasDesde(ult)} : undefined;
+  }
   function mayDiasDesde(fechaISO){
     const p=String(fechaISO||'').slice(0,10).split('-').map(Number);
     if(p.length<3 || !p[0]) return null;
@@ -17757,7 +17773,7 @@ function buildFilterTable(cfg){
   }
   function mayActResumenHtml(){
     const cont={activo:0,atencion:0,dormido:0,nunca:0};
-    MAYW.forEach(r=>{ const seg=maySegmentoDe(MAY_ACT[topesNorm(r.nombre)]); cont[seg]=(cont[seg]||0)+1; });
+    MAYW.forEach(r=>{ const seg=maySegmentoDe(mayActDe(r)); cont[seg]=(cont[seg]||0)+1; });
     return '<div style="font-size:12px;color:#334155;margin-bottom:8px">'+
       MAY_SEG.map(s=>s.l+': <b>'+cont[s.k]+'</b>').join(' &nbsp;·&nbsp; ')+
     '</div>';
@@ -17851,7 +17867,7 @@ function buildFilterTable(cfg){
   // marcha y los que hace más que no compran. data-mi = índice en MAYW (el que usan los guardados).
   function mayVista(){
     const ordenTipo=k=>MAY_TIPOS.findIndex(t=>t.k===k);
-    const segOrd=r=>maySeg(maySegmentoDe(MAY_ACT[topesNorm(r.nombre)])).ord;
+    const segOrd=r=>maySeg(maySegmentoDe(mayActDe(r))).ord;
     return MAYW.map((r,mi)=>({r,mi})).sort((a,b)=> (ordenTipo(a.r.tipo)-ordenTipo(b.r.tipo)) || ((b.r.obra?1:0)-(a.r.obra?1:0)) || (segOrd(b.r)-segOrd(a.r)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
   }
   // A quiénes les falta la lista de este mes Y se les puede mandar ahora (con teléfono, con lista
@@ -17885,7 +17901,7 @@ function buildFilterTable(cfg){
       if(err){ alert('La lista de "'+(r.nombre||'este cliente')+'" ('+mayTipo(r.tipo).l+') todavía no se puede mandar:\n\n'+err); return false; }
       mayCopiarLista(r);
     } else mayImg='';
-    const seg=maySegmentoDe(MAY_ACT[topesNorm(r.nombre)]);
+    const seg=maySegmentoDe(mayActDe(r));
     window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion, seg)), '_blank');
     mayConfirm={mi, accion}; drawMayoristas();
     return true;
@@ -17994,7 +18010,7 @@ function buildFilterTable(cfg){
       const tel=String(r.telefono||'').trim();
       const lk=tel ? topesWaLink(tel) : null;
       const conf = mayConfirm && mayConfirm.mi===mi ? mayConfirm.accion : null;
-      const act=MAY_ACT[topesNorm(r.nombre)]; const segK=maySegmentoDe(act); const s=maySeg(segK);
+      const act=mayActDe(r); const segK=maySegmentoDe(act); const s=maySeg(segK);
       const celda=(accion, hecho, detalle)=>{
         if(conf===accion) return '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> <button class="cmp-btn" data-may-no="'+mi+'">✗ No</button></span>';
         const sinL = accion==='lista' && errTipo[t.k];   // no hay lista que mandar: tampoco el mensaje que la anuncia
@@ -18010,7 +18026,8 @@ function buildFilterTable(cfg){
         '<span style="color:'+s.c+';font-weight:700;font-size:11.5px">'+esc(s.l)+'</span>'+
         (act && act.ultima ? ('<div style="font-size:10.5px;color:#94a3b8">'+(act.dias===0?'hoy':'hace '+act.dias+' d')+' · '+act.cant+' compra'+(act.cant===1?'':'s')+'</div>') : '');
       html+='<tr>'+
-        '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700"></td>'+
+        '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700">'+
+          '<input data-may-alias="'+mi+'" value="'+esc(r.nombreVentas||'')+'" placeholder="nombre en ventas (si es otro)" title="Si en Ventas este cliente figura con otro nombre (ej. RANCO MATERIALES SA), escribilo acá; varios se separan con |. Sirve para calcular su actividad (Activo / Dormido / Nunca compró)" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#94a3b8"></td>'+
         '<td><input data-may-contacto="'+mi+'" value="'+esc(r.contacto||'')+'" placeholder="nombre de pila" title="Con quién se habla: el mensaje de Stock saluda por este nombre" style="width:100px"></td>'+
         '<td>'+selTipo(r,mi)+'</td>'+
         '<td>'+actCel+'</td>'+
@@ -18054,6 +18071,7 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-may-contacto]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayContacto, r=>({...r, contacto:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-alias]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayAlias, r=>({...r, nombreVentas:i.value.trim()})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-cmkt]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayCmkt, r=>({...r, contactoMkt:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tmkt]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTmkt, r=>({...r, telefonoMkt:i.value.trim()})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obra]').forEach(c=>c.onchange=()=>{ mayUpd(+c.dataset.mayObra, r=>({...r, obra:c.checked, obraFecha:c.checked?hoyISO:''})); drawMayoristas(); });
