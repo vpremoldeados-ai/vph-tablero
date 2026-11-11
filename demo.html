@@ -1997,6 +1997,17 @@ window.__demoSeed = function () {
   </div>
 
   
+  <div class="cmp-overlay" id="crm-cot-modal">
+    <div class="cmp-dialog" style="max-width:1060px">
+      <div class="cmp-dialog-head">
+        <h3>💲 Cotización rápida — mayoristas</h3>
+        <button class="cmp-x" id="crm-cot-cerrar">✕</button>
+      </div>
+      <div class="cmp-dialog-body" id="crm-cot-body"></div>
+    </div>
+  </div>
+
+  
   <div class="cmp-overlay" id="crm-cartel-modal">
     <div class="cmp-dialog" style="max-width:720px">
       <div class="cmp-dialog-head">
@@ -13806,6 +13817,45 @@ function buildFilterTable(cfg){
    
    
    
+  window.__presupuestoRapido = function(d, onDone, onError){
+    const err = m=>{ if(typeof onError==='function') onError(m); else alert(m); };
+    d=d||{};
+    const nombre=String(d.cliente||'').trim();
+    if(!nombre) return err('Falta el nombre del cliente.');
+    const p=blank(); p.numero=nextNumero(); p.cliente=nombre; p.categoria='MAYORISTA';
+    p.listaPrecios=normLista(d.listaPrecios) || window.__listaDefecto.mayorista;
+    const sf=esSinFacturarPre(p.listaPrecios,'');
+    const ficha=catClientes().find(c=>String(c.nombre||'').trim().toUpperCase().replace(/\s+/g,' ')===nombre.toUpperCase().replace(/\s+/g,' '));
+    if(ficha && ficha.cuit) p.cuit=ficha.cuit;
+    p.condIva = sf ? 'X' : ((ficha && /^[ABC]$/.test(String(ficha.condIva||''))) ? ficha.condIva : 'A');
+    p.zona=String(d.zona||'');
+    p.nota=String(d.nota||'');
+    const items=[], faltan=[];
+    (d.items||[]).forEach(x=>{
+      const cant=num(x&&x.cant); if(!(cant>0)) return;
+      const pr=matchProducto(x.codigo);
+      if(!pr){ faltan.push(String(x.codigo||'?')); return; }
+      const it={desc:pr.nombre, codigo:pr.codigo||'', cant:cant, precioUnit:0, descPct:0, iva:'21'};
+      aplicarProducto(it, pr, p.listaPrecios);
+      const fin=num(x.precioFinal);
+      if(fin>0){
+        if(sf) it.precioUnit=round2(fin);
+        else { const al=num(it.iva); it.precioUnit=al>0 ? round2(fin/(1+al/100)) : round2(fin); }
+        it.precioContado=it.precioUnit; aplicarFinItem(it);
+      }
+      items.push(it);
+    });
+    if(faltan.length) return err('No encontré en el catálogo: '+faltan.join(', ')+'.');
+    if(!items.length) return err('No hay nada para presupuestar: sumá al menos un producto.');
+    p.items=items;
+    aplicarFlete(p);    
+    asignarNumeroYGuardar(p, pp=>{ if(typeof onDone==='function') onDone(pp); });
+  };
+   
+   
+   
+   
+   
   const normCli = s=>String(s||'').trim().toUpperCase().replace(/\s+/g,' ');
   window.__presupuestoDeLead = function(lead){
     if(!lead || !DB.presupuestos.length) return null;
@@ -18057,6 +18107,21 @@ function buildFilterTable(cfg){
   }
   function mayTexto(row, accion, seg){
     if(accion==='aviso') return mayTextoAviso(row, MAYAVISO);
+    if(accion==='pedidos'){
+       
+       
+       
+       
+       
+      const pilaP=mayNombrePila(row);
+      const tieneMkt=!!String((row&&row.contactoMkt)||'').trim();
+      return 'Hola'+(pilaP?' '+pilaP:'')+'! Cómo va? 👋'+
+        '\n\nTe escribo por '+(tieneMkt?'una cosa rápida':'dos cosas rápidas')+':'+
+        '\n\n'+(tieneMkt?'':'1️⃣ ')+'¿Tenés algún pedido o presupuesto en danza de losetas o topes de estacionamiento? Pasame las cantidades y te lo cotizo hoy mismo.'+
+        (tieneMkt?'':'\n\n2️⃣ Armamos contenido para redes con el logo de ustedes (fotos de producto, carrusel y reel), ya listo para publicar. ¿Me pasás el contacto de quien maneja el marketing o las redes para mandárselo directo?')+
+        '\n\nAdemás, Marcelo va a pasar en estos días a dejarles unos carteles para el mostrador 🪧'+
+        '\n\nCualquier cosa estoy acá 👌';
+    }
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     if(accion==='material'){
        
@@ -18214,6 +18279,7 @@ function buildFilterTable(cfg){
     if(!p || !ok){ drawMayoristas(); return; }
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
     if(p.accion==='material') mayUpd(p.mi, r=>({...r, mktFecha:hoyISO, mktPor:firma}));    
+    else if(p.accion==='pedidos') mayUpd(p.mi, r=>({...r, pedidosFecha:hoyISO, accionPor:firma}));    
     else if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
     else if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
     else mayUpd(p.mi, r=>({...r, listaPeriodo:mayListaClave(), listaFecha:hoyISO, accionPor:firma}));
@@ -18308,8 +18374,8 @@ function buildFilterTable(cfg){
      
      
      
-    const web = mayWaWeb(), url = (web ? lk.replace('whatsapp://send?', 'https://web.whatsapp.com/send?') : lk) + '&text=' + encodeURIComponent(mayTexto(r, accion, seg));
-    window.open(url, web ? 'vph_wa_web' : '_blank');
+    const ch = mayChatUrl(lk, mayTexto(r, accion, seg));
+    window.open(ch.url, ch.web ? 'vph_wa_web' : '_blank');
     mayConfirm={mi, accion}; drawMayoristas();
     return true;
   }
@@ -18373,7 +18439,7 @@ function buildFilterTable(cfg){
         mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
         '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
       return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
-        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : cf.accion==='material' ? ('material para redes y web, a '+esc(r.contactoMkt||'Mkt')) : 'consulta de stock')+'. '+img+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : cf.accion==='material' ? ('material para redes y web, a '+esc(r.contactoMkt||'Mkt')) : cf.accion==='pedidos' ? 'consulta de pedidos + contacto de Mkt' : 'consulta de stock')+'. '+img+
         '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
@@ -18398,6 +18464,8 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn" data-may-lista-cfg title="Fija desde qué día rige la lista nueva: los que ya tenían la anterior vuelven a quedar pendientes y el mensaje dice la fecha">🆕 '+(conFecha?'Lista vigente desde '+mayClaveLabel(per):'Lista nueva')+'</button>'+
         '<button class="cmp-btn" data-may-aviso-cfg title="Prepara el aviso de aumento de precios para los revendedores: desde cuándo rige, el % y hasta cuándo se mantiene el precio actual">📣 '+(MAYAVISO.desde?'Editar aviso de aumento':'Aviso de aumento')+'</button>'+
         (MAYAVISO.desde?('<span style="font-size:12px;color:#334155">vigente desde <b>'+esc(MAYAVISO.desde)+'</b>'+(MAYAVISO.pct?(' · '+esc(MAYAVISO.pct)+'%'):'')+' · enviados: <b>'+MAYW.filter(r=>r.avisoClave===String(MAYAVISO.desde)).length+'</b> de '+MAYW.length+'</span>'):'')+
+        '<button class="cmp-btn" data-may-cotizar-general style="background:#1e9e5a;color:#fff;font-weight:800" title="Cotización rápida: elegís el mayorista, sumás pallets (o unidades o m²) y sale el mensaje listo o el presupuesto con PDF">💲 Cotizar</button>'+
+        '<span style="font-size:12px;color:#334155" title="Mensaje que pregunta por pedidos, pide el contacto de Mkt y avisa de la visita de Marcelo">💬 Pedidos + Mkt: enviados <b>'+MAYW.filter(r=>r.pedidosFecha).length+'</b> de '+MAYW.length+'</span>'+
         '<label style="font-size:12px;color:#334155;display:inline-flex;gap:4px;align-items:center;cursor:pointer" title="Abre los chats en WhatsApp Web (el número que tenga iniciado ESA pestaña, en la Lenovo el de Sofía). Sin tildar abre la app de WhatsApp de escritorio. Se guarda en esta PC."><input type="checkbox" data-may-waweb'+(mayWaWeb()?' checked':'')+'> 🌐 WhatsApp Web</label>'+
         '<button class="cmp-btn" data-may-actualizar-act title="Cruza esta lista contra vph_ventas: última compra, cuántas y por cuánto en total — clasifica a cada uno en Activo / En atención / Dormido / Nunca compró">🔄 Actualizar actividad</button>'+
         (mayActTs ? ('<span style="font-size:11px;color:#94a3b8">actualizado '+mayActTsLabel()+'</span>') : '<span style="font-size:11px;color:#94a3b8">todavía no se actualizó — tocá 🔄 para ver a quién priorizar</span>')+
@@ -18405,8 +18473,8 @@ function buildFilterTable(cfg){
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th title="Otra persona del revendedor que maneja su web y redes: recibe el material digital, nunca la lista ni el stock">🎨 Contacto Mkt</th><th>Notas</th><th></th></tr></thead><tbody>';
-    const nCol=MAYAVISO.desde?12:11;
+    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th><th title="Pregunta si tienen algún pedido o presupuesto de losetas o topes, pide el contacto de Marketing y avisa que Marcelo pasa a dejar carteles">💬 Pedidos<br>+ Mkt</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th title="Otra persona del revendedor que maneja su web y redes: recibe el material digital, nunca la lista ni el stock">🎨 Contacto Mkt</th><th>Notas</th><th></th></tr></thead><tbody>';
+    const nCol=MAYAVISO.desde?13:12;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
@@ -18437,12 +18505,13 @@ function buildFilterTable(cfg){
         '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700">'+
           '<input data-may-alias="'+mi+'" value="'+esc(r.nombreVentas||'')+'" placeholder="nombre en ventas (si es otro)" title="Si en Ventas este cliente figura con otro nombre (ej. LA RAZON SOCIAL SA), escribilo acá; varios se separan con |. Sirve para calcular su actividad (Activo / Dormido / Nunca compró)" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#94a3b8"></td>'+
         '<td><input data-may-contacto="'+mi+'" value="'+esc(r.contacto||'')+'" placeholder="nombre de pila" title="Con quién se habla: el mensaje de Stock saluda por este nombre" style="width:100px"></td>'+
-        '<td>'+selTipo(r,mi)+'</td>'+
+        '<td>'+selTipo(r,mi)+'<div style="margin-top:4px"><button class="cmp-btn" data-may-cotizar="'+mi+'" title="Cotiza al toque con SU lista de precios: sumás pallets (o unidades o m²) y sale el mensaje listo, o el presupuesto con PDF">💲 Cotizar</button>'+(r.cotFecha?('<span style="font-size:10.5px;color:#94a3b8"> cot. '+esc(String(r.cotFecha).slice(8,10)+'/'+String(r.cotFecha).slice(5,7))+'</span>'):'')+'</div></td>'+
         '<td>'+actCel+'</td>'+
         '<td style="white-space:nowrap"><label title="Tiene una obra en marcha: sube al principio de su grupo y el mensaje de la columna Stock pregunta por la obra"><input type="checkbox" data-may-obra="'+mi+'"'+(r.obra?' checked':'')+'></label> <input data-may-obranota="'+mi+'" value="'+esc(r.obraNota||'')+'" placeholder="¿qué obra?" style="width:110px'+(r.obra?'':';opacity:.5')+'"></td>'+
         '<td><input data-may-tel="'+mi+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
         '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
         '<td>'+celda('stock', '', stockDet)+'</td>'+
+        '<td style="white-space:normal;max-width:96px">'+celda('pedidos', r.pedidosFecha?'✓ enviado':'', r.pedidosFecha?('el '+esc(String(r.pedidosFecha).slice(8,10)+'/'+String(r.pedidosFecha).slice(5,7))):'')+'</td>'+
         (MAYAVISO.desde?('<td>'+celda('aviso', r.avisoClave===String(MAYAVISO.desde)?'✓ enviado':'', '')+'</td>'):'')+
         '<td><div style="display:flex;gap:6px;align-items:center"><div style="display:flex;flex-direction:column;gap:2px"><input data-may-cmkt="'+mi+'" value="'+esc(r.contactoMkt||'')+'" placeholder="nombre Mkt" title="Quién maneja la web y las redes de este revendedor" style="width:96px">'+
           '<input data-may-tmkt="'+mi+'" value="'+esc(r.telefonoMkt||'')+'" placeholder="351..." style="width:96px"></div><div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">'+
@@ -18466,6 +18535,8 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('[data-may-lista-cfg]').forEach(b=>b.onclick=()=>mayConfigurarLista());
     cont.querySelectorAll('[data-may-resaltar]').forEach(b=>b.onclick=()=>{ maySaltados={}; drawMayoristas(); });
     tabla.querySelectorAll('[data-may-ver]').forEach(b=>b.onclick=()=>mayVerLista(b.dataset.mayVer));
+    tabla.querySelectorAll('[data-may-cotizar]').forEach(b=>b.onclick=()=>mayCotAbrir(+b.dataset.mayCotizar));
+    cont.querySelectorAll('[data-may-cotizar-general]').forEach(b=>b.onclick=()=>mayCotAbrir(-1));
     tabla.querySelectorAll('[data-may-abrir-chat]').forEach(b=>b.onclick=()=>mayAbrirChat(+b.dataset.mayAbrirChat, b.dataset.mayAccion));
      
     [cont, tabla].forEach(z=>{
@@ -18491,6 +18562,181 @@ function buildFilterTable(cfg){
       if(!confirm('¿Sacar a "'+(r.nombre||'(sin nombre)')+'" de la lista de mayoristas? No toca su ficha ni sus ventas.')) return;
       maySave(MAYW.filter((x,j)=>j!==mi)); drawMayoristas();
     });
+  }
+   
+   
+   
+   
+   
+   
+   
+   
+   
+  let COT=null;    
+  const MAY_LISTA_TABLERO={ cbaFact:'5 Mayorista Facturado', cbaSF:'6 Mayorista Sin Facturar', intFact:'5 Mayorista Facturado',
+    intSF:'6 Mayorista Sin Facturar', fleFact:'7 Mayorista Facturado con Flete', fleSF:'8 Mayorista Sin Facturar con Flete' };
+  function mayPlata(n){ return '$'+String(Math.round(+n||0)).replace(/\B(?=(\d{3})+(?!\d))/g,'.'); }
+  function mayDec(n){ return String(Math.round((+n||0)*10)/10).replace('.',','); }    
+  function mayCotDatos(row){
+    const im=window.__imprimir;
+    if(!im || typeof im.listaPreciosDatos!=='function') return {error:'Documentos todavía no cargó: probá de nuevo en un momento.'};
+    return im.listaPreciosDatos({lista:mayTipo(row&&row.tipo).lp}) || {error:'No se pudo armar la lista.'};
+  }
+   
+   
+  function mayCotUnidades(f, que, valor){
+    const v=+valor; if(!(v>0)) return 0;
+    if(que==='pallets') return f.ud>0 ? Math.round(v*f.ud) : 0;
+    if(que==='m2') return f.uxm2>0 ? Math.ceil(v*f.uxm2-1e-9) : 0;
+    return Math.round(v);
+  }
+  function mayCotLineas(D, cant){
+    return ((D&&D.filas)||[]).map(f=>{ const u=Math.max(0,Math.round(+((cant||{})[f.codigo])||0));
+      return {f, u, sub:u*f.pu, pallets:f.ud>0?u/f.ud:0, m2:f.uxm2>0?u/f.uxm2:0, kg:u*(+f.peso||0)}; }).filter(l=>l.u>0);
+  }
+   
+   
+   
+  function mayCotEnvioPosible(row){ const t=String((row&&row.tipo)||''); return t==='cbaFact' || t==='cbaSF'; }
+  function mayCotEnvio(row, lineas){
+    if(!mayCotEnvioPosible(row) || !lineas.length) return null;
+    const items=lineas.map(l=>({codigo:l.f.codigo, desc:l.f.nombre, cant:l.u}));
+    let pallets=0;
+    if(typeof window.__fleteCotizar==='function'){ const fc=window.__fleteCotizar(items,'maygran'); pallets=(fc&&fc.pallets)||0; }
+    if(!(pallets>0)) pallets=Math.max(1, Math.ceil(lineas.reduce((a,l)=>a+(l.f.ud>0?l.u/l.f.ud:1),0)-1e-9));
+    const neto=num(typeof window.__param==='function' ? window.__param('fleteMayGranCba',29000) : 29000) || 29000;
+    const sf=row.tipo==='cbaSF';
+    const porPallet=Math.round(sf ? neto : neto*1.21);    
+    return {pallets, porPallet, total:pallets*porPallet};
+  }
+  function mayCotTexto(row, D, lineas, envio, modo){
+    if(!lineas.length) return '';
+    const tk=String((row&&row.tipo)||''), sf=/SF$/.test(tk), incluido=/^(int|fle)/.test(tk);
+    const pila=mayNombrePila(row);
+    const out=['Hola'+(pila?' '+pila:'')+'! Te paso el presupuesto:',''];
+    let sub=0;
+    lineas.forEach(l=>{ const f=l.f; sub+=l.sub;
+      const partes=[];
+      if(f.ud>0) partes.push(mayDec(l.pallets)+' pallet'+(l.pallets===1?'':'s'));
+      if(f.uxm2>0 && modo!=='unidad') partes.push(mayDec(l.m2)+' m²');
+      out.push('• '+f.nombre+' — '+l.u+' u'+(partes.length?' ('+partes.join(' · ')+')':''));
+      const pu=mayPlata(f.pu)+' c/u', pm=mayPlata(f.m2)+' el m²';
+      out.push('   '+((f.uxm2>0 && modo==='m2') ? pm : (f.uxm2>0 && modo!=='unidad') ? pu+' · '+pm : pu)+' → '+mayPlata(l.sub));
+    });
+    let total=sub;
+    if(envio){ total+=envio.total; out.push('🚚 Envío a Gran Córdoba / Sierras Chicas: '+envio.pallets+' pallet'+(envio.pallets===1?'':'s')+' × '+mayPlata(envio.porPallet)+' → '+mayPlata(envio.total)); }
+    out.push('','*Total: '+mayPlata(total)+'*'+(sf?'':' (IVA incluido)'),'');
+    out.push(sf ? 'Pago contado.' : 'Formas de pago: contado, débito o e-cheq a 30 días de fecha de factura.');
+    const ent = incluido ? 'El flete va incluido en el precio.' : envio ? '' : 'Entrega sin cargo en su depósito dentro de la ciudad de Córdoba; fuera de la ciudad el envío se cotiza aparte.';
+    if(ent) out.push(ent);
+    out.push('Entrega en 7 días hábiles desde la confirmación. Presupuesto válido por 7 días 👌');
+    return out.join('\n');
+  }
+   
+  function mayChatUrl(lk, texto){
+    const web=mayWaWeb();
+    return {web, url:(web ? lk.replace('whatsapp://send?', 'https://web.whatsapp.com/send?') : lk)+'&text='+encodeURIComponent(texto)};
+  }
+  function mayCotAbrir(mi){
+    const modal=$('crm-cot-modal'); if(!modal) return;
+    COT={mi:(MAYW[mi]?mi:-1), cant:{}, envio:false, modo:'ambos', texto:'', editado:false, aviso:''};
+    mayCotDraw(); modal.classList.add('open');
+  }
+  function mayCotCerrar(){ const modal=$('crm-cot-modal'); if(modal) modal.classList.remove('open'); }
+  function mayCotMarcar(){ if(COT && MAYW[COT.mi]) mayUpd(COT.mi, r=>({...r, cotFecha:hoyISO})); }
+  function mayCotDraw(){
+    const body=$('crm-cot-body'); if(!body || !COT) return;
+    const row=MAYW[COT.mi];
+    const orden=MAYW.map((r,i)=>({r,i})).sort((a,b)=>String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    const selCli='<label style="font-size:12px;font-weight:700">Mayorista <select data-cot-cli style="min-width:230px"><option value="-1">— elegí —</option>'+
+      orden.map(({r,i})=>'<option value="'+i+'"'+(i===COT.mi?' selected':'')+'>'+esc(r.nombre||'(sin nombre)')+'</option>').join('')+'</select></label>';
+    if(!row){ body.innerHTML=selCli+'<div style="margin-top:14px;color:#64748b;font-size:13px">Elegí el mayorista: la cotización sale con SU lista de precios.</div>'; mayCotCablear(body); return; }
+    const t=mayTipo(row.tipo), D=mayCotDatos(row);
+    if(D.error){ body.innerHTML=selCli+'<div style="margin-top:14px;color:#b45309;font-size:13px">⚠️ '+esc(D.error)+'</div>'; mayCotCablear(body); return; }
+    const lineas=mayCotLineas(D, COT.cant);
+    const envio = COT.envio ? mayCotEnvio(row, lineas) : null;
+    const sub=lineas.reduce((a,l)=>a+l.sub,0), total=sub+(envio?envio.total:0);
+    const pallets=lineas.reduce((a,l)=>a+l.pallets,0), kg=lineas.reduce((a,l)=>a+l.kg,0);
+    const minPal=String(row.tipo||'').indexOf('int')===0 ? 4 : 1;
+    if(!COT.editado) COT.texto=mayCotTexto(row, D, lineas, envio, COT.modo);
+    const fila=f=>{ const u=Math.max(0,Math.round(+COT.cant[f.codigo]||0)), cod=esc(f.codigo);
+      const pal = f.ud>0
+        ? '<span style="white-space:nowrap"><button class="cmp-btn" data-cot-menos="'+cod+'" title="Saca 1 pallet ('+f.ud+' u)">−</button> <input type="number" step="any" min="0" data-cot-in="pallets" data-cot-cod="'+cod+'" value="'+(u?Math.round(u/f.ud*100)/100:'')+'" placeholder="0" style="width:62px"> <button class="cmp-btn" data-cot-mas="'+cod+'" style="background:#1e9e5a;color:#fff;font-weight:800" title="Suma 1 pallet ('+f.ud+' u)">+ pallet</button></span><div style="font-size:10.5px;color:#94a3b8">'+f.ud+' u por pallet · '+mayPlata(f.pallet)+'</div>'
+        : '<span style="color:#94a3b8;font-size:11px">sin dato de pallet</span>';
+      return '<tr'+(u?' style="background:#f0fbf4"':'')+'><td><b>'+esc(f.nombre)+'</b> <span style="color:#94a3b8;font-size:11px">'+cod+'</span></td>'+
+        '<td class="n">'+mayPlata(f.pu)+'</td>'+
+        '<td class="n">'+(f.uxm2>0?mayPlata(f.m2)+'<div style="font-size:10.5px;color:#94a3b8">'+mayDec(f.uxm2)+' u/m²</div>':'—')+'</td>'+
+        '<td>'+pal+'</td>'+
+        '<td><input type="number" step="1" min="0" data-cot-in="unidades" data-cot-cod="'+cod+'" value="'+(u||'')+'" placeholder="0" style="width:72px"></td>'+
+        '<td>'+(f.uxm2>0?'<input type="number" step="any" min="0" data-cot-in="m2" data-cot-cod="'+cod+'" value="'+(u?Math.round(u/f.uxm2*10)/10:'')+'" placeholder="0" style="width:72px">':'<span style="color:#94a3b8">—</span>')+'</td>'+
+        '<td class="n"><b>'+(u?mayPlata(u*f.pu):'')+'</b></td></tr>'; };
+    const hayTel=!!topesWaLink(row.telefono), hay=lineas.length>0;
+    const btn=(att,txt,extra)=>'<button class="cmp-btn" '+att+(hay?'':' disabled')+' style="'+(extra||'')+(hay?'':';opacity:.5')+'">'+txt+'</button>';
+    body.innerHTML=
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+selCli+
+        '<span style="font-size:12px;color:#475569">Lista: <b>'+esc(t.pdf)+'</b> <span style="color:#94a3b8">(precios de hoy, los mismos del PDF que recibe)</span></span></div>'+
+      '<div class="tbl-wrap"><table style="width:100%"><thead><tr><th>Producto</th><th class="n">Costo x unidad</th><th class="n">Costo x m²</th><th>Pallets</th><th>Unidades</th><th>m²</th><th class="n">Subtotal</th></tr></thead><tbody>'+D.filas.map(fila).join('')+'</tbody></table></div>'+
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:10px 0;font-size:12.5px">'+
+        (mayCotEnvioPosible(row)
+          ? '<label style="cursor:pointer"><input type="checkbox" data-cot-envio'+(COT.envio?' checked':'')+'> 🚚 Con envío a Gran Córdoba / Sierras Chicas (+ pallets × tarifa)</label>'
+          : '<span style="color:#64748b">🚚 El flete ya va incluido en el precio de esta lista.</span>')+
+        '<label>Precios en el mensaje <select data-cot-modo><option value="ambos"'+(COT.modo==='ambos'?' selected':'')+'>por unidad y por m²</option><option value="unidad"'+(COT.modo==='unidad'?' selected':'')+'>solo por unidad</option><option value="m2"'+(COT.modo==='m2'?' selected':'')+'>solo por m²</option></select></label>'+
+        '<button class="cmp-btn" data-cot-limpiar>↺ Limpiar</button></div>'+
+      '<div style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;font-size:13px;line-height:1.7">'+
+        (hay?('<b>'+mayDec(pallets)+' pallet'+(pallets===1?'':'s')+'</b> · '+Math.round(kg).toLocaleString('es-AR')+' kg · Productos '+mayPlata(sub)+(envio?(' · Envío '+mayPlata(envio.total)):'')+' → <b style="font-size:15px">Total '+mayPlata(total)+'</b>'+(/SF$/.test(String(row.tipo))?'':' <span style="color:#64748b">(IVA incluido)</span>')
+          +(pallets<minPal-1e-9?('<div style="color:#b45309;font-weight:700">⚠️ La compra mínima de esta lista es de '+minPal+' pallet'+(minPal>1?'s':'')+'.</div>'):'')):'<span style="color:#94a3b8">Sumá pallets, unidades o m² de lo que pide.</span>')+'</div>'+
+      '<textarea data-cot-texto rows="'+(hay?Math.min(18,Math.max(8,(COT.texto.match(/\n/g)||[]).length+2)):4)+'" style="width:100%;font-size:12.5px" placeholder="El mensaje aparece acá. Podés ajustarlo antes de mandarlo.">'+esc(COT.texto)+'</textarea>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">'+
+        btn('data-cot-wa'+(hayTel?'':' title="Este mayorista no tiene un teléfono válido cargado"'),'📲 Mandar por WhatsApp','background:#1e9e5a;color:#fff;font-weight:800'+(hayTel?'':';opacity:.5')+'')+
+        btn('data-cot-copiar','📋 Copiar texto')+
+        btn('data-cot-presu','📄 Guardar como presupuesto (P-XXXX) y PDF')+
+        '<span style="font-size:12px;color:#157a1d;font-weight:700">'+esc(COT.aviso||'')+'</span></div>'+
+      '<div style="font-size:11px;color:#94a3b8;margin-top:6px">Mandarlo por WhatsApp o copiarlo NO numera nada. "Guardar como presupuesto" crea el P-XXXX en borrador con estos mismos precios y abre el PDF.</div>';
+    mayCotCablear(body);
+  }
+  function mayCotCablear(body){
+    const cambio=()=>{ COT.editado=false; COT.aviso=''; mayCotDraw(); };
+    const fDe=cod=>{ const D=mayCotDatos(MAYW[COT.mi]); return (D.filas||[]).find(x=>x.codigo===cod); };
+    body.querySelectorAll('[data-cot-cli]').forEach(s=>s.onchange=()=>{ COT.mi=+s.value; COT.cant={}; COT.envio=false; COT.editado=false; COT.aviso=''; mayCotDraw(); });
+    body.querySelectorAll('[data-cot-mas]').forEach(b=>b.onclick=()=>{ const f=fDe(b.dataset.cotMas); if(!f) return; COT.cant[f.codigo]=(+COT.cant[f.codigo]||0)+f.ud; cambio(); });
+    body.querySelectorAll('[data-cot-menos]').forEach(b=>b.onclick=()=>{ const f=fDe(b.dataset.cotMenos); if(!f) return; COT.cant[f.codigo]=Math.max(0,(+COT.cant[f.codigo]||0)-f.ud); cambio(); });
+    body.querySelectorAll('[data-cot-in]').forEach(i=>i.onchange=()=>{ const f=fDe(i.dataset.cotCod); if(!f) return; COT.cant[f.codigo]=mayCotUnidades(f, i.dataset.cotIn, i.value); cambio(); });
+    body.querySelectorAll('[data-cot-envio]').forEach(c=>c.onchange=()=>{ COT.envio=!!c.checked; cambio(); });
+    body.querySelectorAll('[data-cot-modo]').forEach(s=>s.onchange=()=>{ COT.modo=s.value; cambio(); });
+    body.querySelectorAll('[data-cot-limpiar]').forEach(b=>b.onclick=()=>{ COT.cant={}; COT.envio=false; cambio(); });
+    body.querySelectorAll('[data-cot-texto]').forEach(t=>t.oninput=()=>{ COT.texto=t.value; COT.editado=true; });
+    body.querySelectorAll('[data-cot-wa]').forEach(b=>b.onclick=()=>mayCotEnviar());
+    body.querySelectorAll('[data-cot-copiar]').forEach(b=>b.onclick=()=>mayCotCopiar());
+    body.querySelectorAll('[data-cot-presu]').forEach(b=>b.onclick=()=>mayCotPresupuesto());
+  }
+  function mayCotEnviar(){
+    const row=MAYW[COT&&COT.mi]; if(!row || !String(COT.texto||'').trim()) return false;
+    const lk=topesWaLink(row.telefono);
+    if(!lk){ alert('"'+(row.nombre||'Este mayorista')+'" no tiene un teléfono válido cargado: completalo en la tabla.'); return false; }
+    const ch=mayChatUrl(lk, COT.texto);
+    window.open(ch.url, ch.web ? 'vph_wa_web' : '_blank');
+    mayCotMarcar(); drawMayoristas();
+    return true;
+  }
+  function mayCotCopiar(){
+    if(!COT || !String(COT.texto||'').trim()) return false;
+    try{ navigator.clipboard.writeText(COT.texto).then(()=>{ COT.aviso='✓ Texto copiado'; mayCotDraw(); }).catch(()=>{ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }); }
+    catch(e){ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }
+    return true;
+  }
+  function mayCotPresupuesto(){
+    const row=MAYW[COT&&COT.mi]; if(!row) return false;
+    const D=mayCotDatos(row); if(D.error){ alert(D.error); return false; }
+    const lineas=mayCotLineas(D, COT.cant); if(!lineas.length){ alert('Primero sumá lo que pide el cliente.'); return false; }
+    if(typeof window.__presupuestoRapido!=='function'){ alert('El módulo Presupuestos todavía no cargó: probá de nuevo en un momento.'); return false; }
+    const envio=COT.envio ? mayCotEnvio(row, lineas) : null;
+    window.__presupuestoRapido({
+      cliente:row.nombre, listaPrecios:MAY_LISTA_TABLERO[row.tipo]||MAY_LISTA_TABLERO.cbaFact, zona:envio?'maygran':'',
+      items:lineas.map(l=>({codigo:l.f.codigo, cant:l.u, precioFinal:l.f.pu})),
+      nota:'Cotización rápida (CRM Mayoristas)'+(row.telefono?' · Tel: '+row.telefono:'')
+    }, p=>{ mayCotMarcar(); mayCotCerrar(); drawMayoristas(); if(typeof window.__presupuestoImprimir==='function') window.__presupuestoImprimir(p); },
+       msg=>alert(msg));
+    return true;
   }
    
    
@@ -18932,6 +19178,7 @@ function buildFilterTable(cfg){
     if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>maySubscribe()); }
     else maySubscribe();
   }
+  const cotCerrarBtn=$('crm-cot-cerrar'); if(cotCerrarBtn) cotCerrarBtn.onclick=mayCotCerrar;
   const mayCerrarBtn=$('crm-may-cerrar');
   if(mayCerrarBtn) mayCerrarBtn.onclick=()=>$('crm-may-panel').style.display='none';
 
@@ -25457,6 +25704,7 @@ function buildFilterTable(cfg){
      
     listaPreciosImagen: listaPreciosImagen,
     listaPreciosError: o => (listaPreciosDatos(o).error || ''),
+    listaPreciosDatos: listaPreciosDatos,    
     compartirPdf: compartirPdf, puedeCompartirPdf: puedeCompartirPdf,
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
