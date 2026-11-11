@@ -14818,7 +14818,7 @@ function buildFilterTable(cfg){
     {g:'Sueldos', k:'sueDiaPago1',   l:'Día de pago de la 1ª quincena',                def:15, t:'num', hint:'Del MISMO mes. En VPH se paga del 15 al 17, y acá va el primer día de esa ventana: para saber si alcanza la plata conviene suponer que sale antes, no después.'},
     {g:'Sueldos', k:'sueDiaPago2',   l:'Día de pago de la 2ª quincena',                def:0,  t:'num', hint:'En VPH se paga del 30/31 al 1-2 del mes siguiente. Dejalo en 0 = el ÚLTIMO día del mes que se liquida. Si ponés otro número (ej. 3) se entiende como ese día del mes SIGUIENTE.'},
     {g:'Sueldos', k:'sueDiaPagoMensual', l:'Día de pago de los sueldos MENSUALES',     def:5,  t:'num', hint:'Los mensuales (Marcelo y Sofía) se liquidan a mes vencido: el mes se cierra el 30/31 y se cobra el mes SIGUIENTE. En VPH, del 1 al 10. En agosto se paga lo de julio.'},
-    {g:'CRM',     k:'waCanalEnvio',    l:'Canal de envío de las respuestas de la Bandeja', def:'api', t:'sel', opts:[['api','📡 API oficial (Worker)'],['web-lenovo','🌐 WhatsApp Web en la Lenovo']], hint:'Mientras Sofía no activó la coexistencia API con su número (QR en el Tablero el miércoles), elegir "WhatsApp Web en la Lenovo": lo aprobado sale desde el Chrome de la Lenovo con la sesión de WhatsApp Web de 351 000-0000. Después pasar a "API oficial".'},
+    {g:'CRM',     k:'waCanalEnvio',    l:'Canal de envío de las respuestas de la Bandeja', def:'api', t:'sel', opts:[['api','📡 API oficial (Worker)'],['web-lenovo','🌐 WhatsApp Web en la Lenovo'],['cloud','☁️ Bot en la nube (WhatsApp Web, sin PC)']], hint:'"WhatsApp Web en la Lenovo": lo aprobado sale desde el Chrome de la Lenovo con la extensión (depende de esa PC prendida). "Bot en la nube" (11/11): un servidor vinculado como OTRA SESIÓN del WhatsApp de Sofía (no la API oficial), siempre prendido, sin depender de ninguna PC — requiere tener el bot desplegado y con el QR escaneado. "API oficial": requiere la coexistencia del número con Meta.'},
     {g:'CRM',     k:'waWorkerUrl',     l:'URL base del Worker del agente (sin / al final)', def:'https://demo.invalid', t:'txt', hint:'El Tablero llama a /wa-leer cuando Sofía toca "Leer el chat abierto" para que el agente arme la sugerencia con el mensaje leído de WhatsApp Web. Dejalo tal cual si no cambiaste el dominio del Worker.'},
     {g:'CRM',     k:'waLenovoToken',   l:'Token para hablar con /wa-leer del Worker',       def:'', t:'txt', hint:'MISMO valor que el secreto LENOVO_TOKEN del Worker (se setea con npx wrangler secret put LENOVO_TOKEN). Cualquiera que tenga este token puede crear pendientes en la Bandeja, así que solo lo cargan Marcelo/Sofía.'}
   ];
@@ -18394,7 +18394,7 @@ function buildFilterTable(cfg){
         (act && act.ultima ? ('<div style="font-size:10.5px;color:#94a3b8">'+(act.dias===0?'hoy':'hace '+act.dias+' d')+' · '+act.cant+' compra'+(act.cant===1?'':'s')+'</div>') : '');
       html+='<tr>'+
         '<td><input data-may-nombre="'+mi+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;font-weight:700">'+
-          '<input data-may-alias="'+mi+'" value="'+esc(r.nombreVentas||'')+'" placeholder="nombre en ventas (si es otro)" title="Si en Ventas este cliente figura con otro nombre (ej. RANCO MATERIALES SA), escribilo acá; varios se separan con |. Sirve para calcular su actividad (Activo / Dormido / Nunca compró)" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#94a3b8"></td>'+
+          '<input data-may-alias="'+mi+'" value="'+esc(r.nombreVentas||'')+'" placeholder="nombre en ventas (si es otro)" title="Si en Ventas este cliente figura con otro nombre (ej. LA RAZON SOCIAL SA), escribilo acá; varios se separan con |. Sirve para calcular su actividad (Activo / Dormido / Nunca compró)" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#94a3b8"></td>'+
         '<td><input data-may-contacto="'+mi+'" value="'+esc(r.contacto||'')+'" placeholder="nombre de pila" title="Con quién se habla: el mensaje de Stock saluda por este nombre" style="width:100px"></td>'+
         '<td>'+selTipo(r,mi)+'</td>'+
         '<td>'+actCel+'</td>'+
@@ -18945,7 +18945,9 @@ function buildFilterTable(cfg){
   const adjuntosSug=new Map();      
    
    
-  function waCanalEnvio(){ const p=window.__param?String(window.__param('waCanalEnvio','api')||'api'):'api'; return p==='web-lenovo'?'web-lenovo':'api'; }
+   
+   
+  function waCanalEnvio(){ const p=window.__param?String(window.__param('waCanalEnvio','api')||'api'):'api'; return p==='web-lenovo'?'web-lenovo':(p==='cloud'?'cloud':'api'); }
   function sugTexto(m){ const s=Array.isArray(m.sugerencias)&&m.sugerencias[0]; return (s&&s.texto)||''; }
    
    
@@ -18970,7 +18972,7 @@ function buildFilterTable(cfg){
     if(aprobando.has(m._uid)) return '<div class="meta" style="margin-top:4px"><span class="badge amber">⏳ Enviando…</span></div>';
     const adj=adjuntosChipsHTML(m._uid);
     const canal=waCanalEnvio();
-    const chipCanal='<span class="badge" style="font-size:10px;opacity:.75" title="Canal de envío (Bandeja arriba)">'+(canal==='web-lenovo'?'🌐 WhatsApp Web (Lenovo)':'📡 API oficial')+'</span>';
+    const chipCanal='<span class="badge" style="font-size:10px;opacity:.75" title="Canal de envío (Bandeja arriba)">'+(canal==='web-lenovo'?'🌐 WhatsApp Web (Lenovo)':canal==='cloud'?'☁️ Bot en la nube':'📡 API oficial')+'</span>';
     if(editando){
       const txt=borrador!=null?borrador:sugTexto(m);
       return '<div style="margin-top:6px"><textarea class="wab-sug-ed" data-sug-ta="'+esc(m._uid)+'" rows="4" style="width:100%;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--blue);border-radius:8px;resize:vertical">'+esc(txt)+'</textarea>'+
@@ -19025,7 +19027,7 @@ function buildFilterTable(cfg){
    
   function adjuntarAbrir(uid){
     const canal=waCanalEnvio();
-    if(canal!=='web-lenovo'){ if(!confirm('Los adjuntos solo se mandan por el canal 🌐 WhatsApp Web (Lenovo). El canal actual es 📡 API oficial: los adjuntos quedan guardados pero el Worker va a mandar SOLO el texto. ¿Seguir?')) return; }
+    if(canal!=='web-lenovo'&&canal!=='cloud'){ if(!confirm('Los adjuntos solo se mandan por 🌐 WhatsApp Web (Lenovo) o ☁️ Bot en la nube. El canal actual es 📡 API oficial: los adjuntos quedan guardados pero el Worker va a mandar SOLO el texto. ¿Seguir?')) return; }
     const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*,application/pdf'; inp.multiple=true;
     inp.onchange=async ()=>{
       const files=Array.from(inp.files||[]);
@@ -19306,8 +19308,8 @@ function buildFilterTable(cfg){
    
   function barraCanalHTML(){
     const c=waCanalEnvio();
-    const txt=c==='web-lenovo'?'🌐 WhatsApp Web en la Lenovo (número de Sofía 351 000-0000)':'📡 API oficial de WhatsApp (el Worker manda solo)';
-    const hint=c==='web-lenovo'?'Lo aprobado lo manda el Chrome de la Lenovo con la extensión. Sirve hasta que Sofía active el QR.':'El Worker manda solo. Disponible cuando el número de Sofía esté en coexistencia con la API.';
+    const txt=c==='web-lenovo'?'🌐 WhatsApp Web en la Lenovo (número de Sofía 351 000-0000)':c==='cloud'?'☁️ Bot en la nube (otra sesión del mismo WhatsApp, sin depender de ninguna PC)':'📡 API oficial de WhatsApp (el Worker manda solo)';
+    const hint=c==='web-lenovo'?'Lo aprobado lo manda el Chrome de la Lenovo con la extensión. Depende de esa PC prendida.':c==='cloud'?'Lo aprobado lo manda el bot del servidor (GET /wa-cola), vinculado por QR como otra sesión de WhatsApp Web. No depende de ninguna PC de la oficina.':'El Worker manda solo. Disponible cuando el número de Sofía esté en coexistencia con la API.';
     const extLista=window.__waExtListo===true?'<span class="badge green" style="margin-left:4px">Extensión conectada</span>':(c==='web-lenovo'?'<span class="badge red" style="margin-left:4px">Falta la extensión o WA Web</span>':'');
     const puedeLeer=c==='web-lenovo' && window.__waExtListo===true;
     const btnLeer=puedeLeer?'<button class="kb-move" id="wab-leer-chat" style="background:var(--blue);color:#fff;border-color:var(--blue)">📥 Leer el chat abierto en WhatsApp Web</button>':'';
@@ -19400,8 +19402,8 @@ function buildFilterTable(cfg){
     const bC=$('wab-canal-cambiar'); if(bC&&!bC.__bound){ bC.__bound=true;
       bC.onclick=async ()=>{
         const actual=waCanalEnvio();
-        const siguiente=actual==='api'?'web-lenovo':'api';
-        const txt=siguiente==='web-lenovo'?'🌐 WhatsApp Web (Lenovo, número de Sofía)':'📡 API oficial de WhatsApp';
+        const siguiente=actual==='api'?'web-lenovo':(actual==='web-lenovo'?'cloud':'api');
+        const txt=siguiente==='web-lenovo'?'🌐 WhatsApp Web (Lenovo, número de Sofía)':siguiente==='cloud'?'☁️ Bot en la nube (sin PC)':'📡 API oficial de WhatsApp';
         if(!confirm('Cambiar el canal a '+txt+'?\n\nTodo lo que aprueben desde ahora va a salir por ese camino.')) return;
         const c=fb(); if(!c||!c.db){ alert('Firestore no está disponible.'); return; }
         try{ await c.FS.setDoc(c.FS.doc(c.db,'vph_config','parametros'), { waCanalEnvio: siguiente }, { merge:true }); }
