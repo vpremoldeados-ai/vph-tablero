@@ -13854,6 +13854,9 @@ function buildFilterTable(cfg){
     if(faltan.length) return err('No encontré en el catálogo: '+faltan.join(', ')+'.');
     if(!items.length) return err('No hay nada para presupuestar: sumá al menos un producto.');
     p.items=items;
+     
+     
+    p.leadUid=String(typeof d.leadDe==='function' ? (d.leadDe()||'') : (d.leadUid||''));
     aplicarFlete(p);    
     asignarNumeroYGuardar(p, pp=>{ if(typeof onDone==='function') onDone(pp); });
   };
@@ -15267,7 +15270,7 @@ function buildFilterTable(cfg){
    
    
   function normalizarLeads(){ (DB.leads||[]).forEach(l=>{ if(l.estado==='contactado'){ l.estado='nuevo'; if(l.contactado===undefined) l.contactado=true; } }); }
-  const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Instagram','Teléfono','Referido','Manual','Prospección topes'];
+  const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Instagram','Teléfono','Referido','Manual','Prospección topes','Mayorista'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
    
@@ -16402,6 +16405,54 @@ function buildFilterTable(cfg){
      
     if(!map.zona && (datos.destination||datos.destino)){ const z=String(datos.destination||datos.destino); if(['retiro','capital','cercanas','mati','particular','brio','otsenre'].includes(z)) map.zona=z; }
     const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; aplicarAutoSeguimiento(l,null); persist(l); return l; };
+
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+  window.__leadDeCotizacion = function(d){
+    d=d||{};
+    const nombre=String(d.cliente||'').trim(); if(!nombre) return null;
+    const n=normCli(nombre), tel8=String(d.telefono||'').replace(/\D/g,'').slice(-8);
+    const abiertos=(DB.leads||[]).filter(x=>ACTIVOS.includes(x.estado||'nuevo'));
+    let l=abiertos.find(x=>normCli(x.cliente)===n)
+       || (tel8.length>=8 ? abiertos.find(x=>String(x.telefono||'').replace(/\D/g,'').slice(-8)===tel8) : null)
+       || null;
+    const creado=!l;
+    const lead = l ? {...l} : Object.assign(blank(), {cliente:nombre, origen:'Mayorista'});
+    const sf=!!d.sinFactura;
+    lead.categoria='MAYORISTA';
+    if(d.telefono && !String(lead.telefono||'').trim()) lead.telefono=String(d.telefono);
+    if(d.listaPrecios) lead.listaPrecios=normLista(d.listaPrecios);
+    if(d.zona) lead.zona=String(d.zona);
+     
+    lead.items=(d.items||[]).filter(it=>it && num(it.cantidad)>0).map(it=>{ const fin=num(it.precioFinal);
+      return {producto:String(it.nombre||it.codigo||''), codigo:String(it.codigo||''), cantidad:num(it.cantidad), descPct:0,
+        iva: sf?'nogravado':'21', precioUnit: sf ? Math.round(fin*100)/100 : Math.round(fin/1.21*100)/100}; });
+    lead.monto=Math.round(num(d.monto)*100)/100;
+    lead.contactado=true;
+     
+    const seg=(lead.seguimiento||[]).map(a=>(!a.resuelta && a.tipo==='presupuesto') ? {...a, resuelta:true} : a);
+    seg.push({fecha:hoyISO, tipo:'presupuesto', texto:String(d.nota||'Cotización rápida a mayorista'), resuelta:false});
+    lead.seguimiento=seg;
+    lead.estado='cotizado';
+    aplicarAutoSeguimiento(lead, null);    
+    persist(lead);
+     
+    if(!(DB.leads||[]).some(x=>x._uid===lead._uid)) DB.leads=(DB.leads||[]).concat([lead]);
+    return {lead, creado};
+  };
 
    
    
@@ -18645,6 +18696,31 @@ function buildFilterTable(cfg){
    
    
    
+  function mayCotContexto(){
+    const row=MAYW[COT&&COT.mi]; if(!row) return null;
+    const D=mayCotDatos(row); if(D.error) return null;
+    const lineas=mayCotLineas(D, COT.cant); if(!lineas.length) return null;
+    return {row, D, lineas, envio: COT.envio ? mayCotEnvio(row, lineas) : null};
+  }
+  function mayCotLead(cx){
+    if(!cx || typeof window.__leadDeCotizacion!=='function') return null;
+    const {row, lineas, envio}=cx;
+    const total=lineas.reduce((a,l)=>a+l.sub,0)+(envio?envio.total:0);
+    let r=null;
+    try{
+      r=window.__leadDeCotizacion({ cliente:row.nombre, telefono:row.telefono, listaPrecios:MAY_LISTA_TABLERO[row.tipo]||MAY_LISTA_TABLERO.cbaFact,
+        zona:envio?'maygran':'', monto:total, sinFactura:/SF$/.test(String(row.tipo||'')),
+        items:lineas.map(l=>({codigo:l.f.codigo, nombre:l.f.nombre, cantidad:l.u, precioFinal:l.f.pu})),
+        nota:'Cotización rápida (CRM Mayoristas): '+lineas.map(l=>l.u+' '+l.f.codigo).join(', ')+' · '+mayPlata(total) });
+    }catch(e){ console.error('seguimiento de la cotización:', e); }
+    if(!r || !r.lead) return null;
+    const px=String(r.lead.proximoSeguimiento||'');
+    r.msg=(r.creado ? '✓ Lead nuevo en el CRM (Cotizado)' : '✓ Lead del CRM actualizado (Cotizado)')+(px ? ' · próximo contacto '+px.slice(8,10)+'/'+px.slice(5,7) : '');
+    return r;
+  }
+   
+   
+   
   const MAY_COT_CANAL_KEY='vph_may_cot_wa_v1';
   function mayCotCanal(){ try{ return localStorage.getItem(MAY_COT_CANAL_KEY)==='web' ? 'web' : 'app'; }catch(e){ return 'app'; } }
   function mayCotAbrir(mi){
@@ -18727,12 +18803,14 @@ function buildFilterTable(cfg){
     if(!lk){ alert('"'+(row.nombre||'Este mayorista')+'" no tiene un teléfono válido cargado: completalo en la tabla.'); return false; }
     const ch=mayChatUrl(lk, COT.texto, mayCotCanal()==='web');
     window.open(ch.url, ch.web ? 'vph_wa_web' : '_blank');
-    mayCotMarcar(); drawMayoristas();
+    const sg=mayCotLead(mayCotContexto()); if(sg) COT.aviso=sg.msg;
+    mayCotMarcar(); drawMayoristas(); mayCotDraw();
     return true;
   }
   function mayCotCopiar(){
     if(!COT || !String(COT.texto||'').trim()) return false;
-    try{ navigator.clipboard.writeText(COT.texto).then(()=>{ COT.aviso='✓ Texto copiado'; mayCotDraw(); }).catch(()=>{ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }); }
+    const sg=mayCotLead(mayCotContexto()), extra=sg ? ' · '+sg.msg : '';
+    try{ navigator.clipboard.writeText(COT.texto).then(()=>{ COT.aviso='✓ Texto copiado'+extra; mayCotDraw(); }).catch(()=>{ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }); }
     catch(e){ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }
     return true;
   }
@@ -18745,7 +18823,8 @@ function buildFilterTable(cfg){
     window.__presupuestoRapido({
       cliente:row.nombre, listaPrecios:MAY_LISTA_TABLERO[row.tipo]||MAY_LISTA_TABLERO.cbaFact, zona:envio?'maygran':'',
       items:lineas.map(l=>({codigo:l.f.codigo, cant:l.u, precioFinal:l.f.pu})),
-      nota:'Cotización rápida (CRM Mayoristas)'+(row.telefono?' · Tel: '+row.telefono:'')
+      nota:'Cotización rápida (CRM Mayoristas)'+(row.telefono?' · Tel: '+row.telefono:''),
+      leadDe:()=>{ const sg=mayCotLead({row, D, lineas, envio}); return sg ? sg.lead._uid : ''; }
     }, p=>{ mayCotMarcar(); mayCotCerrar(); drawMayoristas(); if(typeof window.__presupuestoImprimir==='function') window.__presupuestoImprimir(p); },
        msg=>alert(msg));
     return true;

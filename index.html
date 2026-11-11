@@ -13469,6 +13469,9 @@ function buildFilterTable(cfg){
     if(faltan.length) return err('No encontré en el catálogo: '+faltan.join(', ')+'.');
     if(!items.length) return err('No hay nada para presupuestar: sumá al menos un producto.');
     p.items=items;
+    // Vínculo con el lead del CRM (el CRM muestra el monto cotizado). leadDe se llama RECIÉN ACÁ, con todo validado: si falta
+    // algo no queda un lead sin presupuesto.
+    p.leadUid=String(typeof d.leadDe==='function' ? (d.leadDe()||'') : (d.leadUid||''));
     aplicarFlete(p);   // el renglón "Flete" según la zona (vacía = sin flete)
     asignarNumeroYGuardar(p, pp=>{ if(typeof onDone==='function') onDone(pp); });
   };
@@ -14907,7 +14910,7 @@ function buildFilterTable(cfg){
   // "Contactado" se quitó como columna del pipeline; ahora es un flag booleano en el lead (l.contactado).
   // Migración perezosa: cualquier lead viejo con estado 'contactado' vuelve a 'nuevo' marcado como contactado.
   function normalizarLeads(){ (DB.leads||[]).forEach(l=>{ if(l.estado==='contactado'){ l.estado='nuevo'; if(l.contactado===undefined) l.contactado=true; } }); }
-  const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Instagram','Teléfono','Referido','Manual','Prospección topes'];
+  const ORIGENES=['Web cotizador','Google Ads','WhatsApp','Instagram','Teléfono','Referido','Manual','Prospección topes','Mayorista'];
   const PAGOS=['Transferencia','Link Viumi','Efectivo','Tarjeta 12 cuotas (Macro)','Tarjeta 3 cuotas','Tarjeta 6 cuotas','A confirmar'];
   const CATS=['MAYORISTA','MAYORISTA Desc 10.5%','MINORISTA','Minorista Descuento 10.5%','MINORISTA TC'];
   // Tipos de actividades para mayoristas — cada uno con un emoji y color
@@ -16042,6 +16045,54 @@ function buildFilterTable(cfg){
     // acá el interior se reparte entre Mati y Brio, así que el lead llega sin forma de entrega y la elige Sofía.
     if(!map.zona && (datos.destination||datos.destino)){ const z=String(datos.destination||datos.destino); if(['retiro','capital','cercanas','mati','particular','brio','otsenre'].includes(z)) map.zona=z; }
     const l=Object.assign(blank(), map); l.estado='nuevo'; l.origen=map.origen||'Web cotizador'; aplicarAutoSeguimiento(l,null); persist(l); return l; };
+
+  // ---------- 💲 Seguimiento de las cotizaciones rápidas a mayoristas (11/11, pedido de Marcelo) ----------
+  // "Cuando realice un presupuesto a un mayorista se me agregue el seguimiento en el CRM." Lo llama el cotizador del panel
+  // Mayoristas cada vez que se cotiza (mandada por WhatsApp, copiada o guardada como presupuesto). Deja al mayorista como
+  // lead COTIZADO con el seguimiento de SIEMPRE: el próximo contacto lo agenda aplicarAutoSeguimiento (los días hábiles del
+  // parámetro crmDiasCotizado; para un mayorista con una actividad "presupuesto" sin resolver, 3 días) y de ahí siguen las
+  // reconsultas 1-2-3, la 🎯 Prioridad de hoy y las alertas de la Vista Diaria. No hay un circuito aparte.
+  // - Si el mayorista YA tiene un lead abierto (mismo nombre, o mismo teléfono) lo ACTUALIZA: vuelve a "Cotizado", con los
+  //   productos y el monto de esta cotización y el seguimiento reprogramado. NO crea un segundo lead.
+  // - Si no, crea uno (origen "Mayorista"). Un lead confirmado o perdido no cuenta: ese cliente ya cerró o se cayó, y esta
+  //   cotización es otra oportunidad.
+  // - 🔴 La escritura es asíncrona: el lead recién creado NO está en DB.leads hasta que vuelve el snapshot (~300 ms). Por eso se
+  //   lo agrega a DB.leads al crearlo: sin eso, dos acciones seguidas (mandar por WhatsApp y después guardar el presupuesto)
+  //   crearían DOS leads.
+  // d = {cliente, telefono, listaPrecios, zona, monto, sinFactura, nota, items:[{codigo, nombre, cantidad, precioFinal}]}
+  // Devuelve {lead, creado} o null si no hay cliente.
+  window.__leadDeCotizacion = function(d){
+    d=d||{};
+    const nombre=String(d.cliente||'').trim(); if(!nombre) return null;
+    const n=normCli(nombre), tel8=String(d.telefono||'').replace(/\D/g,'').slice(-8);
+    const abiertos=(DB.leads||[]).filter(x=>ACTIVOS.includes(x.estado||'nuevo'));
+    let l=abiertos.find(x=>normCli(x.cliente)===n)
+       || (tel8.length>=8 ? abiertos.find(x=>String(x.telefono||'').replace(/\D/g,'').slice(-8)===tel8) : null)
+       || null;
+    const creado=!l;
+    const lead = l ? {...l} : Object.assign(blank(), {cliente:nombre, origen:'Mayorista'});
+    const sf=!!d.sinFactura;
+    lead.categoria='MAYORISTA';
+    if(d.telefono && !String(lead.telefono||'').trim()) lead.telefono=String(d.telefono);
+    if(d.listaPrecios) lead.listaPrecios=normLista(d.listaPrecios);
+    if(d.zona) lead.zona=String(d.zona);
+    // Los renglones con el precio NETO como los carga el CRM (aplicarProducto): si más adelante se toca "→ Presupuesto" del lead sale lo mismo.
+    lead.items=(d.items||[]).filter(it=>it && num(it.cantidad)>0).map(it=>{ const fin=num(it.precioFinal);
+      return {producto:String(it.nombre||it.codigo||''), codigo:String(it.codigo||''), cantidad:num(it.cantidad), descPct:0,
+        iva: sf?'nogravado':'21', precioUnit: sf ? Math.round(fin*100)/100 : Math.round(fin/1.21*100)/100}; });
+    lead.monto=Math.round(num(d.monto)*100)/100;
+    lead.contactado=true;
+    // Una cotización nueva reemplaza a la anterior: las actividades "presupuesto" pendientes quedan resueltas y entra la de hoy.
+    const seg=(lead.seguimiento||[]).map(a=>(!a.resuelta && a.tipo==='presupuesto') ? {...a, resuelta:true} : a);
+    seg.push({fecha:hoyISO, tipo:'presupuesto', texto:String(d.nota||'Cotización rápida a mayorista'), resuelta:false});
+    lead.seguimiento=seg;
+    lead.estado='cotizado';
+    aplicarAutoSeguimiento(lead, null);   // estadoPrevio null: reprograma aunque ya estuviera en "Cotizado"
+    persist(lead);
+    // Copia local ANTES de que vuelva el snapshot (en modo local persist ya lo agregó): la próxima acción lo encuentra y lo actualiza.
+    if(!(DB.leads||[]).some(x=>x._uid===lead._uid)) DB.leads=(DB.leads||[]).concat([lead]);
+    return {lead, creado};
+  };
 
   // Teléfono cargado en el LEAD de un cliente, buscado por nombre. Respaldo para los remitos
   // (pedido de Marcelo, 14/08): la ficha de vph_clientes casi nunca tiene el teléfono (3 de 13 al
@@ -18282,6 +18333,31 @@ function buildFilterTable(cfg){
     const web=(typeof webForzado==='boolean') ? webForzado : mayWaWeb();
     return {web, url:(web ? lk.replace('whatsapp://send?', 'https://web.whatsapp.com/send?') : lk)+'&text='+encodeURIComponent(texto)};
   }
+  // 11/11 (Marcelo: "cuando realice un presupuesto a un mayorista se me agregue el seguimiento en el CRM"): toda cotización
+  // —mandada por WhatsApp, copiada o guardada como presupuesto— deja al mayorista en el CRM como lead COTIZADO con su
+  // seguimiento agendado (window.__leadDeCotizacion, más abajo en el módulo). Si ya tiene un lead abierto lo actualiza.
+  function mayCotContexto(){
+    const row=MAYW[COT&&COT.mi]; if(!row) return null;
+    const D=mayCotDatos(row); if(D.error) return null;
+    const lineas=mayCotLineas(D, COT.cant); if(!lineas.length) return null;
+    return {row, D, lineas, envio: COT.envio ? mayCotEnvio(row, lineas) : null};
+  }
+  function mayCotLead(cx){
+    if(!cx || typeof window.__leadDeCotizacion!=='function') return null;
+    const {row, lineas, envio}=cx;
+    const total=lineas.reduce((a,l)=>a+l.sub,0)+(envio?envio.total:0);
+    let r=null;
+    try{
+      r=window.__leadDeCotizacion({ cliente:row.nombre, telefono:row.telefono, listaPrecios:MAY_LISTA_TABLERO[row.tipo]||MAY_LISTA_TABLERO.cbaFact,
+        zona:envio?'maygran':'', monto:total, sinFactura:/SF$/.test(String(row.tipo||'')),
+        items:lineas.map(l=>({codigo:l.f.codigo, nombre:l.f.nombre, cantidad:l.u, precioFinal:l.f.pu})),
+        nota:'Cotización rápida (CRM Mayoristas): '+lineas.map(l=>l.u+' '+l.f.codigo).join(', ')+' · '+mayPlata(total) });
+    }catch(e){ console.error('seguimiento de la cotización:', e); }
+    if(!r || !r.lead) return null;
+    const px=String(r.lead.proximoSeguimiento||'');
+    r.msg=(r.creado ? '✓ Lead nuevo en el CRM (Cotizado)' : '✓ Lead del CRM actualizado (Cotizado)')+(px ? ' · próximo contacto '+px.slice(8,10)+'/'+px.slice(5,7) : '');
+    return r;
+  }
   // 11/11 (Marcelo: "el mensaje lo quiero mandar a través de la app para Windows"): el mensaje de la cotización tiene SU canal,
   // por PC. Por defecto la APP de WhatsApp de escritorio (whatsapp://); si en esa PC se prefiere WhatsApp Web, se elige acá
   // sin tocar la casilla 🌐 del panel (que sigue gobernando la lista, el stock y el resto de los mensajes).
@@ -18367,12 +18443,14 @@ function buildFilterTable(cfg){
     if(!lk){ alert('"'+(row.nombre||'Este mayorista')+'" no tiene un teléfono válido cargado: completalo en la tabla.'); return false; }
     const ch=mayChatUrl(lk, COT.texto, mayCotCanal()==='web');
     window.open(ch.url, ch.web ? 'vph_wa_web' : '_blank');
-    mayCotMarcar(); drawMayoristas();
+    const sg=mayCotLead(mayCotContexto()); if(sg) COT.aviso=sg.msg;
+    mayCotMarcar(); drawMayoristas(); mayCotDraw();
     return true;
   }
   function mayCotCopiar(){
     if(!COT || !String(COT.texto||'').trim()) return false;
-    try{ navigator.clipboard.writeText(COT.texto).then(()=>{ COT.aviso='✓ Texto copiado'; mayCotDraw(); }).catch(()=>{ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }); }
+    const sg=mayCotLead(mayCotContexto()), extra=sg ? ' · '+sg.msg : '';
+    try{ navigator.clipboard.writeText(COT.texto).then(()=>{ COT.aviso='✓ Texto copiado'+extra; mayCotDraw(); }).catch(()=>{ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }); }
     catch(e){ COT.aviso='No se pudo copiar: seleccioná el texto y copialo a mano'; mayCotDraw(); }
     return true;
   }
@@ -18385,7 +18463,8 @@ function buildFilterTable(cfg){
     window.__presupuestoRapido({
       cliente:row.nombre, listaPrecios:MAY_LISTA_TABLERO[row.tipo]||MAY_LISTA_TABLERO.cbaFact, zona:envio?'maygran':'',
       items:lineas.map(l=>({codigo:l.f.codigo, cant:l.u, precioFinal:l.f.pu})),
-      nota:'Cotización rápida (CRM Mayoristas)'+(row.telefono?' · Tel: '+row.telefono:'')
+      nota:'Cotización rápida (CRM Mayoristas)'+(row.telefono?' · Tel: '+row.telefono:''),
+      leadDe:()=>{ const sg=mayCotLead({row, D, lineas, envio}); return sg ? sg.lead._uid : ''; }
     }, p=>{ mayCotMarcar(); mayCotCerrar(); drawMayoristas(); if(typeof window.__presupuestoImprimir==='function') window.__presupuestoImprimir(p); },
        msg=>alert(msg));
     return true;
