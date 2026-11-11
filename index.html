@@ -19539,10 +19539,36 @@ function buildFilterTable(cfg){
     try{ const m=JSON.parse(localStorage.getItem('vph_wa_nombres_tel_v1')||'{}'); for(const k in m){ if(norm(k)===n){ const t=String(m[k]).replace(/\D/g,''); if(t.length>=10) return t; } } }catch(e){}
     return '';
   }
+  // 11/11: AUTO-RESOLVER lo que ya se leyó de verdad en WhatsApp Web. "Pendiente" en el Tablero es
+  // un check propio (solo se apaga tocando ✓ Resuelto) y NO lo mismo que "no leído" en WhatsApp: con
+  // el tiempo se infla solo con mensajes que Sofía ya atendió por WhatsApp directo y nadie resolvió
+  // acá (pasó: 2.424 pendientes contra 3 no-leídos reales el 11/11 — ver CLAUDE.md, limpieza masiva).
+  // Mismo criterio que esa limpieza, pero corriendo cada 30 s: si el teléfono de un pendiente NO está
+  // en la lista de no-leídos de ESTE ciclo, se asume atendido y se resuelve. Sin `alert()` de por
+  // medio (iría en loop cada 30 s) y sin tocar nada cuyo teléfono no se pudo identificar (evita falsos
+  // positivos: ese caso ya lo avisa aparte procesarInboxTick con el warning "sin teléfono").
+  function resolverLeidosInbox(chats){
+    const c=fb(); if(!c||!c.db) return;
+    const noLeidos=new Set();
+    chats.forEach(ch=>{
+      let tel=String(ch.tel||'').replace(/\D/g,'');
+      if(!tel) tel=buscarTelPorNombre(ch.nombre||'');
+      if(tel) noLeidos.add(tel);
+    });
+    (DB.pendientes||[]).forEach(p=>{
+      if((p.estado||'pendiente')!=='pendiente') return;
+      const tel=String(p.telefono||'').replace(/\D/g,'');
+      if(!tel||noLeidos.has(tel)) return;
+      c.FS.updateDoc(c.FS.doc(c.db,COL,p._uid), {estado:'resuelto'})
+        .catch(e=>console.warn('[inbox] no se pudo auto-resolver', p._uid, e&&e.message||e));
+    });
+  }
   async function procesarInboxTick(){
     if(waCanalEnvio()!=='web-lenovo'||window.__waExtListo!==true) return;
     let r; try{ r=await pedirInbox(); }catch(e){ return; }   // sin ruido si la extensión o WA Web no están
-    if(!r.ok||!Array.isArray(r.chats)||!r.chats.length) return;
+    if(!r.ok||!Array.isArray(r.chats)) return;
+    resolverLeidosInbox(r.chats);   // corre siempre, incluso con 0 no-leídos (ahí resuelve todo lo demás)
+    if(!r.chats.length) return;
     const url=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,'');
     const tk=String(window.__param?window.__param('waLenovoToken',''):'');
     if(!url||!tk) return;   // configuración incompleta: el watcher queda en silencio hasta que se cargue
