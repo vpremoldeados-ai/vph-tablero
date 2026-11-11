@@ -19274,10 +19274,16 @@ function buildFilterTable(cfg){
   // Se juntan por _uid (un pendiente reciente aparece en las dos). Cada una es un filtro sobre UN
   // solo campo, así que no hace falta índice compuesto ni tocar las reglas de Firestore.
   const partes={ pend:[], rec:[] };
-  // Estado del bot (lo escribe el propio bot en vph_config/wa_estado cada 5 min).
-  // Existe porque el bot se cae cada tanto —WhatsApp Web recarga su página y a veces
-  // cierra la sesión— y el problema real era que NADIE se enteraba: el 16/09/2026 se
-  // colgó y estuvo 5 días mudo, sin un solo mensaje llegando a esta Bandeja.
+  // Estado del bot EN LA NUBE (lo escribía el bot viejo de C:/Users/vprem/vph-whatsapp-bot en
+  // vph_config/wa_estado cada 5 min). Existe porque ese bot se caía cada tanto —WhatsApp Web
+  // recarga su página y a veces cierra la sesión— y el problema real era que NADIE se enteraba:
+  // el 16/09/2026 se colgó y estuvo 5 días mudo, sin un solo mensaje llegando a esta Bandeja.
+  // 🔴 11/11/2026: ese bot quedó reemplazado por C:/VPH/vph-whatsapp-bot (canal 'cloud'), que
+  // NUNCA toca Firestore directo (todo pasa por el Worker) — así que ya nadie escribe este
+  // documento y quedó CONGELADO en 'esperando_qr'. Por eso el chequeo de acá abajo solo corre
+  // con canal 'cloud': con 'web-lenovo' (el de hoy) la salud real es la de la extensión
+  // (barraCanalHTML/__waExtListo), no esta. Si el día de mañana se adopta el bot en la nube,
+  // falta volver a cablear un latido de verdad (el Worker puede escribirlo en cada /wa-cola).
   let estadoBot=null;
   const MIN_SIN_SENAL=30;      // más de media hora sin latir = está caído
   const MIN_SIN_CONECTAR=15;   // arrancando o reiniciándose sin llegar a conectar
@@ -19305,7 +19311,7 @@ function buildFilterTable(cfg){
   }
   function pintarEstadoBot(){
     const el=$('wab-estado'); if(!el) return;
-    const p=problemaBot();
+    const p=waCanalEnvio()==='cloud'?problemaBot():null; // ver el comentario de estadoBot más arriba
     const canalHTML=barraCanalHTML();
     if(!p){
       el.innerHTML = canalHTML + (estadoBot
@@ -19586,8 +19592,9 @@ function buildFilterTable(cfg){
   window.__alertSources.push(()=>{ const A=[];
     // Que el bot esté caído es MÁS urgente que cualquier mensaje pendiente: mientras
     // está caído no entra ninguno, y esa es justamente la trampa (parece que no
-    // escribió nadie). Va primero y en rojo.
-    const pb=problemaBot();
+    // escribió nadie). Va primero y en rojo. Solo aplica con canal 'cloud' (ver el
+    // comentario de estadoBot más arriba): con 'web-lenovo' el doc quedó sin dueño.
+    const pb=waCanalEnvio()==='cloud'?problemaBot():null;
     if(pb) A.push({sev:pb.sev, area:'WhatsApp', t:pb.titulo, act:pb.detalle, go:{page:'Bandeja WhatsApp'}});
     const esp=conversacionesEsperando(DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente'));
     if(esp.length){ const u=umbralEspera(); const grave=esp[0].min>u*4;
