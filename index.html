@@ -17657,6 +17657,15 @@ function buildFilterTable(cfg){
   function mayTexto(row, accion, seg){
     if(accion==='aviso') return mayTextoAviso(row, MAYAVISO);
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
+    if(accion==='material'){
+      // 11/11 (pedido de Marcelo): el contacto de MARKETING del revendedor (otra persona que la de compras) recibe
+      // el material para su web y redes — NUNCA la lista ni la consulta de stock. Saluda por SU nombre de pila.
+      const pilaM=String((row&&row.contactoMkt)||'').trim().split(/\s+/)[0];
+      return 'Hola'+(pilaM?' '+pilaM:'')+'! ¿Cómo andás? Soy '+firma+' de VPH Premoldeados.'+
+        '\n\nTe escribo por el material de las losetas para sus redes y su web (carrusel, historias, reel y banners). ¿Pudiste verlo? 😊'+
+        '\n\nSi te resulta más cómodo, te lo reenvío todo junto por acá. Y si querés cambiar algo (colores, textos o formato), decime y lo ajusto.'+
+        '\n\nCualquier cosa estoy acá 👌';
+    }
     const interior=String((row&&row.tipo)||'').indexOf('int')===0;
     const nombre=String((row&&row.nombre)||'').trim();
     const hola='Hola'+(nombre?' '+nombre:'')+'! Soy '+firma+' de VPH Premoldeados.';
@@ -17787,7 +17796,8 @@ function buildFilterTable(cfg){
     if(p && !ok && p.accion==='lista' && MAYW[p.mi]) maySaltados[mayClave(MAYW[p.mi])]=1;
     if(!p || !ok){ drawMayoristas(); return; }
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
-    if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
+    if(p.accion==='material') mayUpd(p.mi, r=>({...r, mktFecha:hoyISO, mktPor:firma}));   // aparte de la lista y el stock: no toca accionPor
+    else if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
     else if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
     else mayUpd(p.mi, r=>({...r, listaPeriodo:mayListaClave(), listaFecha:hoyISO, accionPor:firma}));
     const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
@@ -17869,7 +17879,7 @@ function buildFilterTable(cfg){
   // Abre el chat de UNA fila con su mensaje (lo usan el 📲 de la fila y ▶ Siguiente: un solo camino).
   function mayAbrirChat(mi, accion){
     const r=MAYW[mi]; if(!r) return false;
-    const lk=topesWaLink(r.telefono); if(!lk) return false;
+    const lk=topesWaLink(accion==='material' ? r.telefonoMkt : r.telefono); if(!lk) return false;   // el material va al contacto de Mkt, no al de compras
     if(accion==='lista'){
       const err=mayListaError(r);
       if(err){ alert('La lista de "'+(r.nombre||'este cliente')+'" ('+mayTipo(r.tipo).l+') todavía no se puede mandar:\n\n'+err); return false; }
@@ -17940,7 +17950,7 @@ function buildFilterTable(cfg){
         mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
         '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
       return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
-        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : cf.accion==='material' ? ('material para redes y web, a '+esc(r.contactoMkt||'Mkt')) : 'consulta de stock')+'. '+img+
         '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
@@ -17971,8 +17981,8 @@ function buildFilterTable(cfg){
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
-    const nCol=MAYAVISO.desde?11:10;
+    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th title="Otra persona del revendedor que maneja su web y redes: recibe el material digital, nunca la lista ni el stock">🎨 Contacto Mkt</th><th>Notas</th><th></th></tr></thead><tbody>';
+    const nCol=MAYAVISO.desde?12:11;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
@@ -18009,6 +18019,12 @@ function buildFilterTable(cfg){
         '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
         '<td>'+celda('stock', '', stockDet)+'</td>'+
         (MAYAVISO.desde?('<td>'+celda('aviso', r.avisoClave===String(MAYAVISO.desde)?'✓ enviado':'', '')+'</td>'):'')+
+        '<td><div style="display:flex;gap:6px;align-items:center"><div style="display:flex;flex-direction:column;gap:2px"><input data-may-cmkt="'+mi+'" value="'+esc(r.contactoMkt||'')+'" placeholder="nombre Mkt" title="Quién maneja la web y las redes de este revendedor" style="width:96px">'+
+          '<input data-may-tmkt="'+mi+'" value="'+esc(r.telefonoMkt||'')+'" placeholder="351..." style="width:96px"></div><div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">'+
+          (conf==='material' ? '<span>¿Salió?<br><button class="cmp-btn" data-may-si="'+mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button><br><button class="cmp-btn" data-may-no="'+mi+'">✗ No salió</button></span>'
+            : topesWaLink(r.telefonoMkt||'') ? '<button class="cmp-btn" data-may-abrir-chat="'+mi+'" data-may-accion="material" title="Abre el WhatsApp de Mkt con el mensaje por el material de redes y web (no lleva lista ni consulta de stock)">📲</button>'
+            : (String(r.telefonoMkt||'').trim() ? '<span style="color:#c0392b;font-size:11px">tel. no válido</span>' : ''))+
+          (r.mktFecha ? ('<span style="color:#94a3b8;font-size:11px"> últ: '+esc(String(r.mktFecha).slice(8,10)+'/'+String(r.mktFecha).slice(5,7))+'</span>') : '')+'</div></div></td>'+
         '<td><input data-may-nota="'+mi+'" value="'+esc(r.notas||'')+'" style="width:100%;min-width:120px;border:0;background:transparent;color:#475569"></td>'+
         '<td><button class="cmp-x" data-may-borrar="'+mi+'" title="Sacar de esta lista (no toca la ficha del cliente ni sus ventas)">✕</button></td>'+
       '</tr>';
@@ -18038,6 +18054,8 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-may-contacto]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayContacto, r=>({...r, contacto:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-cmkt]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayCmkt, r=>({...r, contactoMkt:i.value.trim()})));
+    tabla.querySelectorAll('[data-may-tmkt]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTmkt, r=>({...r, telefonoMkt:i.value.trim()})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obra]').forEach(c=>c.onchange=()=>{ mayUpd(+c.dataset.mayObra, r=>({...r, obra:c.checked, obraFecha:c.checked?hoyISO:''})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obranota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayObranota, r=>({...r, obraNota:i.value.trim()})));
     tabla.querySelectorAll('[data-may-nota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNota, r=>({...r, notas:i.value})));

@@ -8462,7 +8462,7 @@ function buildFilterTable(cfg){
       { l:'📣 Aviso al grupo (venta cargada)', run:()=>window.__wa.modal({ titulo:'Aviso al grupo Producción/Entregas', destino:'Copiá y pegá en el grupo "VPH Producción/Entregas"',
           texto:'chicos hicimos una venta de '+resumenVenta(v)+' para '+(v.cliente||'—')+', ya está cargada en el sistema',
           alConfirmar(){ v.tareasHechas=Object.assign({},v.tareasHechas||{},{grupo:hoyISO}); persistVenta(v); } }) },
-      { l:'💬 Enviar presupuesto al cliente', run:()=>window.__wa.modal({ titulo:'Presupuesto → '+(v.cliente||''), telefono:tel, adjunto:'Presupuesto Nº '+(v.nroFactura||'')+'.pdf',
+      { l:'💬 Enviar presupuesto al cliente', run:()=>window.__wa.modal({ titulo:'Presupuesto → '+(v.cliente||''), telefono:tel, adjunto:'Presupuesto Nº '+(v.nroFactura||'')+'.pdf', abrirPdf:()=>window.__imprimir.presupuesto(v),
           texto:'Hola '+(nombre||'')+'! Te paso el presupuesto'+(v.nroFactura?' Nº '+v.nroFactura:'')+'. Total '+money2(k.total)+', válido 7 días. '+((window.__lineaEntrega&&window.__lineaEntrega(v.items))?window.__lineaEntrega(v.items)+' ':'')+'Cualquier duda me decís 😊' }) },
       { l:'💵 Recordatorio de cobro', hide: !(k.saldo>0.5), run:()=>window.__wa.modal({ titulo:'Cobro → '+(v.cliente||''), telefono:tel,
           texto:'Hola '+(nombre||'')+'! Cómo va? Alguna novedad del pago'+(v.nroFactura?' de la factura '+nro:'')+'? Mil gracias!',
@@ -8724,7 +8724,7 @@ function buildFilterTable(cfg){
     if(o){
       $('ec-print').onclick=()=>{ if(!(window.__imprimir&&window.__imprimir.estadoCuenta)){ alert('Módulo de Documentos no disponible.'); return; } window.__imprimir.estadoCuenta(estadoCuentaDe(ecCliente, ecDesde, ecHasta)); };
       $('ec-wa').onclick=()=>{ if(!window.__wa){ alert('Módulo de WhatsApp no disponible.'); return; } const oo=estadoCuentaDe(ecCliente, ecDesde, ecHasta);
-        window.__wa.modal({ titulo:'Estado de cuenta → '+(oo.cliente||''), telefono:window.__wa.telWa(oo.cliente, oo.cuit), adjunto:'Estado de cuenta '+(oo.cliente||'')+'.pdf', texto:textoEstadoCuentaWa(oo) }); };
+        window.__wa.modal({ titulo:'Estado de cuenta → '+(oo.cliente||''), telefono:window.__wa.telWa(oo.cliente, oo.cuit), adjunto:'Estado de cuenta '+(oo.cliente||'')+'.pdf', abrirPdf:()=>window.__imprimir.estadoCuenta(oo), texto:textoEstadoCuentaWa(oo) }); };
     }
   }
 
@@ -13396,7 +13396,7 @@ function buildFilterTable(cfg){
   function paraDoc(p){ return Object.assign({}, p, {tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISO(p)}); }
   function enviarWa(p){ const kk=calc(p);
     if(window.__wa){ const nombre=window.__wa.primerNombre(p.cliente), tel=window.__wa.telWa(p.cliente,p.cuit);
-      window.__wa.modal({ titulo:'Presupuesto → '+(p.cliente||''), telefono:tel, adjunto:'Presupuesto '+(p.numero||'')+'.pdf',
+      window.__wa.modal({ titulo:'Presupuesto → '+(p.cliente||''), telefono:tel, adjunto:'Presupuesto '+(p.numero||'')+'.pdf', abrirPdf:()=>window.__presupuestoImprimir(p),
         texto:(p.estado==='enviado' && porVencer([p]).length) ? mensajeVencimiento(p, nombre) : 'Hola '+(nombre||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(kk.total)+', válido hasta el '+fmtFecha(venceISO(p))+'. '+((window.__lineaEntrega&&window.__lineaEntrega(p.items))?window.__lineaEntrega(p.items)+' ':'')+'Cualquier duda me decís 😊',
         alConfirmar(){ if((p.estado||'borrador')==='borrador'){ p.estado='enviado'; persist(p); } } });
     } else { alert('Módulo de WhatsApp no disponible.'); }
@@ -18017,6 +18017,15 @@ function buildFilterTable(cfg){
   function mayTexto(row, accion, seg){
     if(accion==='aviso') return mayTextoAviso(row, MAYAVISO);
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
+    if(accion==='material'){
+       
+       
+      const pilaM=String((row&&row.contactoMkt)||'').trim().split(/\s+/)[0];
+      return 'Hola'+(pilaM?' '+pilaM:'')+'! ¿Cómo andás? Soy '+firma+' de VPH Premoldeados.'+
+        '\n\nTe escribo por el material de las losetas para sus redes y su web (carrusel, historias, reel y banners). ¿Pudiste verlo? 😊'+
+        '\n\nSi te resulta más cómodo, te lo reenvío todo junto por acá. Y si querés cambiar algo (colores, textos o formato), decime y lo ajusto.'+
+        '\n\nCualquier cosa estoy acá 👌';
+    }
     const interior=String((row&&row.tipo)||'').indexOf('int')===0;
     const nombre=String((row&&row.nombre)||'').trim();
     const hola='Hola'+(nombre?' '+nombre:'')+'! Soy '+firma+' de VPH Premoldeados.';
@@ -18147,7 +18156,8 @@ function buildFilterTable(cfg){
     if(p && !ok && p.accion==='lista' && MAYW[p.mi]) maySaltados[mayClave(MAYW[p.mi])]=1;
     if(!p || !ok){ drawMayoristas(); return; }
     const firma=((typeof topesFirma==='function') && topesFirma()) || 'Sofía';
-    if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
+    if(p.accion==='material') mayUpd(p.mi, r=>({...r, mktFecha:hoyISO, mktPor:firma}));    
+    else if(p.accion==='aviso') mayUpd(p.mi, r=>({...r, avisoClave:String(MAYAVISO.desde||''), avisoFecha:hoyISO, accionPor:firma}));
     else if(p.accion==='stock') mayUpd(p.mi, r=>({...r, stockFecha:hoyISO, accionPor:firma}));
     else mayUpd(p.mi, r=>({...r, listaPeriodo:mayListaClave(), listaFecha:hoyISO, accionPor:firma}));
     const btn=$('crm-may-abrir'); if(btn) btn.textContent=mayBtnLabel();
@@ -18229,7 +18239,7 @@ function buildFilterTable(cfg){
    
   function mayAbrirChat(mi, accion){
     const r=MAYW[mi]; if(!r) return false;
-    const lk=topesWaLink(r.telefono); if(!lk) return false;
+    const lk=topesWaLink(accion==='material' ? r.telefonoMkt : r.telefono); if(!lk) return false;    
     if(accion==='lista'){
       const err=mayListaError(r);
       if(err){ alert('La lista de "'+(r.nombre||'este cliente')+'" ('+mayTipo(r.tipo).l+') todavía no se puede mandar:\n\n'+err); return false; }
@@ -18300,7 +18310,7 @@ function buildFilterTable(cfg){
         mayImg==='copiando' ? '<span style="color:var(--muted)">Copiando la lista… </span>' :
         '<span style="color:#b45309;font-weight:700">⚠️ No se pudo copiar la lista: abrila con «🖼️ Ver lista» y copiala desde ahí (clic derecho → Copiar imagen). </span>';
       return '<div data-may-cartel style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--amber);border-radius:10px;background:#fff8e6;font-size:12.5px;line-height:1.7">'+
-        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : 'consulta de stock')+'. '+img+
+        '📲 Chat abierto: <b>'+esc(r.nombre||'(sin nombre)')+'</b> — '+(cf.accion==='lista' ? ('lista '+esc(mes)) : cf.accion==='aviso' ? 'aviso de aumento' : cf.accion==='material' ? ('material para redes y web, a '+esc(r.contactoMkt||'Mkt')) : 'consulta de stock')+'. '+img+
         '<span style="white-space:nowrap">¿Salió? <button class="cmp-btn" data-may-si="'+cf.mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-may-no="'+cf.mi+'" title="No marca nada'+(cf.accion==='lista'?' y lo saltea en la cola por ahora':'')+'">✗ No salió</button></span></div>'; })();
     cont.innerHTML=
@@ -18331,8 +18341,8 @@ function buildFilterTable(cfg){
       (mayActTs ? mayActResumenHtml() : '');
     const vista=mayVista();
     const selTipo=(r,mi)=>'<select data-may-tipo="'+mi+'">'+MAY_TIPOS.map(t=>'<option value="'+t.k+'"'+(t.k===r.tipo?' selected':'')+'>'+esc(t.l)+'</option>').join('')+'</select>';
-    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th>Notas</th><th></th></tr></thead><tbody>';
-    const nCol=MAYAVISO.desde?11:10;
+    let html='<thead><tr><th>Cliente</th><th>Contacto</th><th>Lista</th><th>Actividad</th><th>🏗️ Obra</th><th>Teléfono</th><th>📄 Lista '+esc(mes)+'</th><th>📦 Stock</th>'+(MAYAVISO.desde?'<th>📣 Aviso</th>':'')+'<th title="Otra persona del revendedor que maneja su web y redes: recibe el material digital, nunca la lista ni el stock">🎨 Contacto Mkt</th><th>Notas</th><th></th></tr></thead><tbody>';
+    const nCol=MAYAVISO.desde?12:11;
     let tipoPrev=null;
     vista.forEach(({r,mi})=>{
       const t=mayTipo(r.tipo);
@@ -18369,6 +18379,12 @@ function buildFilterTable(cfg){
         '<td>'+celda('lista', listaHecha, listaDet)+'</td>'+
         '<td>'+celda('stock', '', stockDet)+'</td>'+
         (MAYAVISO.desde?('<td>'+celda('aviso', r.avisoClave===String(MAYAVISO.desde)?'✓ enviado':'', '')+'</td>'):'')+
+        '<td><div style="display:flex;gap:6px;align-items:center"><div style="display:flex;flex-direction:column;gap:2px"><input data-may-cmkt="'+mi+'" value="'+esc(r.contactoMkt||'')+'" placeholder="nombre Mkt" title="Quién maneja la web y las redes de este revendedor" style="width:96px">'+
+          '<input data-may-tmkt="'+mi+'" value="'+esc(r.telefonoMkt||'')+'" placeholder="351..." style="width:96px"></div><div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">'+
+          (conf==='material' ? '<span>¿Salió?<br><button class="cmp-btn" data-may-si="'+mi+'" style="background:#1e9e5a;color:#fff">✓ Lo mandé</button><br><button class="cmp-btn" data-may-no="'+mi+'">✗ No salió</button></span>'
+            : topesWaLink(r.telefonoMkt||'') ? '<button class="cmp-btn" data-may-abrir-chat="'+mi+'" data-may-accion="material" title="Abre el WhatsApp de Mkt con el mensaje por el material de redes y web (no lleva lista ni consulta de stock)">📲</button>'
+            : (String(r.telefonoMkt||'').trim() ? '<span style="color:#c0392b;font-size:11px">tel. no válido</span>' : ''))+
+          (r.mktFecha ? ('<span style="color:#94a3b8;font-size:11px"> últ: '+esc(String(r.mktFecha).slice(8,10)+'/'+String(r.mktFecha).slice(5,7))+'</span>') : '')+'</div></div></td>'+
         '<td><input data-may-nota="'+mi+'" value="'+esc(r.notas||'')+'" style="width:100%;min-width:120px;border:0;background:transparent;color:#475569"></td>'+
         '<td><button class="cmp-x" data-may-borrar="'+mi+'" title="Sacar de esta lista (no toca la ficha del cliente ni sus ventas)">✕</button></td>'+
       '</tr>';
@@ -18398,6 +18414,8 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-may-nombre]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-may-contacto]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayContacto, r=>({...r, contacto:i.value.trim()})));
     tabla.querySelectorAll('[data-may-tel]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTel, r=>({...r, telefono:i.value.trim()})); drawMayoristas(); });
+    tabla.querySelectorAll('[data-may-cmkt]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayCmkt, r=>({...r, contactoMkt:i.value.trim()})));
+    tabla.querySelectorAll('[data-may-tmkt]').forEach(i=>i.onchange=()=>{ mayUpd(+i.dataset.mayTmkt, r=>({...r, telefonoMkt:i.value.trim()})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obra]').forEach(c=>c.onchange=()=>{ mayUpd(+c.dataset.mayObra, r=>({...r, obra:c.checked, obraFecha:c.checked?hoyISO:''})); drawMayoristas(); });
     tabla.querySelectorAll('[data-may-obranota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayObranota, r=>({...r, obraNota:i.value.trim()})));
     tabla.querySelectorAll('[data-may-nota]').forEach(i=>i.onchange=()=>mayUpd(+i.dataset.mayNota, r=>({...r, notas:i.value})));
@@ -19267,11 +19285,47 @@ function buildFilterTable(cfg){
     const extLista=window.__waExtListo===true?'<span class="badge green" style="margin-left:4px">Extensión conectada</span>':(c==='web-lenovo'?'<span class="badge red" style="margin-left:4px">Falta la extensión o WA Web</span>':'');
     const puedeLeer=c==='web-lenovo' && window.__waExtListo===true;
     const btnLeer=puedeLeer?'<button class="kb-move" id="wab-leer-chat" style="background:var(--blue);color:#fff;border-color:var(--blue)">📥 Leer el chat abierto en WhatsApp Web</button>':'';
+    const rc=resumenContenido(DB.pendientes||[], Date.now());
+    const btnCont='<button class="kb-move" id="wab-cont-toggle">📸 Contenido que piden ('+rc.total+(rc.hoy?' · '+rc.hoy+' hoy':'')+')</button>';
     return '<div id="wab-canal-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;font-size:12.5px">'+
       '<span style="font-weight:700">Canal de envío:</span><span>'+esc(txt)+'</span>'+extLista+
-      btnLeer+
+      btnLeer+btnCont+
       '<button class="kb-move" id="wab-canal-cambiar" style="margin-left:auto">Cambiar</button>'+
-      '<div style="flex:0 0 100%;color:var(--muted);font-size:11px;margin-top:2px">'+esc(hint)+'</div></div>';
+      '<div style="flex:0 0 100%;color:var(--muted);font-size:11px;margin-top:2px">'+esc(hint)+'</div></div>'+
+      (verContenido?contenidoPanelHTML(rc):'');
+  }
+   
+   
+   
+   
+  let verContenido=false;
+  function resumenContenido(pendientes, ahoraMs){
+    const hoyISO=new Date(ahoraMs-3*3600000).toISOString().slice(0,10);
+    const g=new Map(); let total=0, hoy=0;
+    (pendientes||[]).forEach(p=>{
+      const c=p&&p.contenidoPedido; if(!c||!c.tema) return;
+      total++; const ms=tsMs(p.creadoEn)||0; const dia=ms?new Date(ms-3*3600000).toISOString().slice(0,10):'';
+      if(dia===hoyISO) hoy++;
+      if(!g.has(c.tema)) g.set(c.tema,{tema:c.tema, veces:0, sinCubrir:0, hoy:0, ultima:0, productos:new Set(), ejemplos:[]});
+      const x=g.get(c.tema); x.veces++; if(!c.cubierto) x.sinCubrir++; if(dia===hoyISO) x.hoy++; if(ms>x.ultima) x.ultima=ms;
+      if(c.producto) x.productos.add(String(c.producto));
+      x.ejemplos.push({nombre:p.nombre||p.telefono||'', texto:String(c.texto||p.mensaje||'').slice(0,140), ms});
+    });
+    const temas=Array.from(g.values()).map(x=>({...x, productos:Array.from(x.productos).sort(), ejemplos:x.ejemplos.sort((a,b)=>b.ms-a.ms).slice(0,3)}))
+      .sort((a,b)=>b.sinCubrir-a.sinCubrir||b.veces-a.veces||b.ultima-a.ultima);
+    return {total, hoy, temas};
+  }
+  function contenidoPanelHTML(rc){
+    if(!rc.temas.length) return '<div id="wab-cont-panel" class="card" style="padding:12px;margin-bottom:10px;font-size:12.5px;color:var(--muted)">📸 En los últimos 30 días ningún cliente pidió fotos, videos, fichas ni instructivos. Se anota solo cada vez que alguien lo pida.</div>';
+    const filas=rc.temas.map(t=>'<tr><td class="cel-nombre"><b>'+esc(t.tema)+'</b>'+(t.productos.length?'<div style="font-size:11px;color:var(--muted)">'+esc(t.productos.join(', '))+'</div>':'')+'</td>'+
+      '<td style="text-align:right">'+t.veces+(t.hoy?' <span class="badge blue">'+t.hoy+' hoy</span>':'')+'</td>'+
+      '<td>'+(t.sinCubrir?'<span class="badge red">Falta: '+t.sinCubrir+' sin qué mandar</span>':'<span class="badge green">Lo tenemos</span>')+'</td>'+
+      '<td>'+(t.ultima?esc(fmtFecha(t.ultima)):'—')+'</td>'+
+      '<td class="cel-envuelve" style="font-size:11.5px">'+t.ejemplos.map(e=>'«'+esc(e.texto)+'»'+(e.nombre?' <span style="color:var(--muted)">— '+esc(e.nombre)+'</span>':'')).join('<br>')+'</td></tr>').join('');
+    return '<div id="wab-cont-panel" class="card" style="padding:12px;margin-bottom:10px">'+
+      '<div style="font-weight:800;margin-bottom:4px">📸 Contenido que piden los clientes (últimos 30 días)</div>'+
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Arriba, lo que más se pide y el agente no tuvo qué mandar: es el próximo contenido a producir (fotos de obras, videos, fichas, instructivos).</div>'+
+      '<div class="tbl-wrap"><table id="wab-cont-tabla"><thead><tr><th>Qué piden</th><th>Veces</th><th>¿Lo tenemos?</th><th>Último</th><th>Ejemplos</th></tr></thead><tbody>'+filas+'</tbody></table></div></div>';
   }
    
    
@@ -19330,6 +19384,7 @@ function buildFilterTable(cfg){
       };
     }
     const bL=$('wab-leer-chat'); if(bL&&!bL.__bound){ bL.__bound=true; bL.onclick=leerChatAbiertoYSugerir; }
+    const bK=$('wab-cont-toggle'); if(bK&&!bK.__bound){ bK.__bound=true; bK.onclick=()=>{ verContenido=!verContenido; pintarEstadoBot(); }; }
   }
 
    
@@ -19340,7 +19395,9 @@ function buildFilterTable(cfg){
    
   const INBOX_MS=30000;
   const procesadosInbox=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_inbox_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
-  function recordarInbox(k){ procesadosInbox.add(k); try{ const arr=Array.from(procesadosInbox); localStorage.setItem('vph_wa_inbox_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
+   
+   
+  function recordarInbox(k){ const pre=k.slice(0,k.indexOf('|')+1); for(const x of Array.from(procesadosInbox)) if(x.startsWith(pre)) procesadosInbox.delete(x); procesadosInbox.add(k); try{ const arr=Array.from(procesadosInbox); localStorage.setItem('vph_wa_inbox_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
   const inboxPend=new Map();
   window.addEventListener('message', ev=>{
     const d=ev.data;
@@ -19369,6 +19426,9 @@ function buildFilterTable(cfg){
     try{ if(window.__leadsCandidatos){   } }catch(e){}
     for(const f of fuentes){ const nom=norm(f.nombre||f.razon||''); if(nom===n){ const t=String(f.telefono||f.tel||'').replace(/\D/g,''); if(t.length>=10) return t; } }
      
+     
+     
+    try{ const m=JSON.parse(localStorage.getItem('vph_wa_nombres_tel_v1')||'{}'); for(const k in m){ if(norm(k)===n){ const t=String(m[k]).replace(/\D/g,''); if(t.length>=10) return t; } } }catch(e){}
     return '';
   }
   async function procesarInboxTick(){
@@ -19500,13 +19560,16 @@ function buildFilterTable(cfg){
     const PC_ID=(()=>{ try{ let x=localStorage.getItem('vph_wa_pc_id_v1'); if(!x){ x='pc_'+Math.random().toString(36).slice(2,10)+'_'+Date.now().toString(36); localStorage.setItem('vph_wa_pc_id_v1',x); } return x; }catch(e){ return 'pc_mem'; } })();
     const pendExt=new Map();         
     const procesando=new Set();      
-    let unsubSal=null, extListo=false;
+    let unsubSal=null, extListo=false, ultimoSnapSal=null;
 
      
     window.addEventListener('message', ev=>{
       const d=ev.data;
       if(ev.source!==window||!d||d.vphWa!==1) return;
-      if(d.tipo==='hola'){ extListo=true; window.__waExtListo=true; if(waCanalEnvio()==='web-lenovo') arrancarWatcher(); }
+      if(d.tipo==='hola'){ const antes=extListo; extListo=true; window.__waExtListo=true;
+        if(waCanalEnvio()==='web-lenovo'){ arrancarWatcher();
+           
+          if(!antes&&ultimoSnapSal) ultimoSnapSal.docs.forEach(x=>{ const s={...x.data(),_uid:x.id}; if(s.canal==='web-lenovo') procesarUno(s); }); } }
       if(d.tipo==='resultado'){ const p=pendExt.get(d.id); if(!p) return; pendExt.delete(d.id); clearTimeout(p.timeout); p.resolver({estado:d.estado,detalle:d.detalle||'',enviadoTs:d.enviadoTs||0}); }
     });
     function pedirExtension(paquete, timeoutMs){
@@ -19538,10 +19601,26 @@ function buildFilterTable(cfg){
       if(!reservado){ procesando.delete(s._uid); return; }
 
       const adj=Array.isArray(s.adjuntos)?s.adjuntos.filter(a=>a&&a.b64&&a.nombre&&(a.tipo==='imagen'||a.tipo==='documento')):[];
+       
+      for(const u of (Array.isArray(s.fotos)?s.fotos:[])){
+        try{
+          if(!/^https:\/\/vph-agente-instagram\.vpremoldeados\.workers\.dev\//.test(String(u))) continue;
+          const resp=await fetch(u); if(!resp.ok) continue;
+          const blob=await resp.blob();
+          const b64=await new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=ko; fr.readAsDataURL(blob); });
+          if(b64) adj.push({ tipo:'imagen', nombre:String(u).split('/').pop()||'foto.jpg', mime:blob.type||'image/jpeg', b64 });
+        }catch(e){ console.warn('no se pudo bajar la foto', u, e&&e.message||e); }
+      }
       try{
         const timeout=120000 + adj.length*90000;
         const r=await pedirExtension({ tel:String(s.to||''), texto:String(s.texto||''), adjuntos:adj, salienteId:s._uid }, timeout);
         if(r.estado==='enviado'){
+           
+           
+          try{
+            const wurl=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,''), wtk=String(window.__param?window.__param('waLenovoToken',''):'');
+            if(wurl&&wtk) await fetch(wurl+'/wa-enviado',{ method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':wtk}, body:JSON.stringify({ to:String(s.to||''), texto:String(s.texto||''), fotos:Array.isArray(s.fotos)?s.fotos:[] }) });
+          }catch(e){ console.warn('[wa-enviado] no se pudo anotar en la charla', e&&e.message||e); }
           await c.FS.updateDoc(ref, { estado:'enviado', enviadoEn:new Date().toISOString(), detalleEnvio:String(r.detalle||'').slice(0,500), pcId:PC_ID });
           if(s.pendienteUid){ try{ await c.FS.updateDoc(c.FS.doc(c.db,COL,s.pendienteUid), { sugerenciaEstado:'enviada', estado:'resuelto', textoEnviado:String(s.texto||'') }); }catch(e){} }
         } else {
@@ -19562,6 +19641,7 @@ function buildFilterTable(cfg){
         unsubSal=c.FS.onSnapshot(
           c.FS.query(c.FS.collection(c.db,COL_SAL), c.FS.where('estado','==','aprobado')),
           snap=>{
+            ultimoSnapSal=snap;    
             if(waCanalEnvio()!=='web-lenovo'||!extListo) return;
             snap.docs.forEach(d=>{ const s={...d.data(),_uid:d.id}; if(s.canal==='web-lenovo') procesarUno(s); });
           },
@@ -23848,9 +23928,9 @@ function buildFilterTable(cfg){
     const st=document.createElement('style'); st.textContent = `
       #doc-overlay{ position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:100000; overflow:auto; padding:24px 0; display:none; }
       #doc-overlay.open{ display:block; }
-      #doc-bar{ position:sticky; top:0; display:flex; gap:10px; justify-content:center; margin-bottom:16px; }
+      #doc-bar{ position:sticky; top:0; display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-bottom:16px; }
       #doc-bar button{ font:600 14px system-ui; padding:9px 18px; border-radius:9px; border:0; cursor:pointer; }
-      #doc-bar .pr{ background:#2563eb; color:#fff; } #doc-bar .cl{ background:#e5e7eb; color:#111; }
+      #doc-bar .pr{ background:#2563eb; color:#fff; } #doc-bar .sh{ background:#25D366; color:#fff; } #doc-bar .sh:disabled{ opacity:.7; cursor:wait; } #doc-bar .cl{ background:#e5e7eb; color:#111; }
       .doc-sheet{ width:210mm; min-height:296mm; margin:0 auto; background:#fff; color:#111; box-sizing:border-box;
         padding:14mm 12mm; box-shadow:0 8px 40px rgba(0,0,0,.35); font:12px/1.35 Arial,Helvetica,sans-serif; }
       .doc-sheet *{ box-sizing:border-box; }
@@ -23904,7 +23984,7 @@ function buildFilterTable(cfg){
       }`;
     document.head.appendChild(st);
     const ov=document.createElement('div'); ov.id='doc-overlay';
-    ov.innerHTML = '<div id="doc-bar"><button class="pr">🖨️ Imprimir / PDF</button><button class="cl">Cerrar</button></div><div id="doc-sheet-wrap"></div>';
+    ov.innerHTML = '<div id="doc-bar"><button class="pr">🖨️ Imprimir / PDF</button><button class="sh" style="display:none" title="Abre el cuadro Compartir de la computadora o del celular: elegí WhatsApp y el chat. El archivo no queda guardado en ninguna carpeta.">📲 Compartir PDF</button><button class="cl">Cerrar</button></div><div id="doc-sheet-wrap"></div>';
     document.body.appendChild(ov);
      
      
@@ -23912,12 +23992,93 @@ function buildFilterTable(cfg){
     ov.querySelector('.pr').onclick=()=>{ if(docFileName) document.title=docFileName; window.print();
       setTimeout(()=>{ document.title=tituloOriginal; }, 800); };
     window.addEventListener('afterprint', ()=>{ document.title=tituloOriginal; });
+    ov.querySelector('.sh').onclick=()=>compartirPdf();
+    if(puedeCompartirPdf()) ov.querySelector('.sh').style.display='';
     ov.querySelector('.cl').onclick=()=>ov.classList.remove('open');
     ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
   }
+   
+   
+   
+   
+   
+  const PDF_LIBS=[
+    {src:'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', integrity:'sha512-BNaRQnYJYiPSqHHDb58B0yaPfCu+Wgds8Gp/gU33kqBtgNS4tSPHuGibyoeqMV/TJlSKda6FXzoEyYGjTe+vXA==', listo:()=>window.html2canvas},
+    {src:'https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js', integrity:'sha512-plOdviVmws4Y3JAvbnpfKb2hVxKM1lCwsi3vmElYRj+tiDLffZ4FVUj5a8vyKJ9pIgl8JCAHEJ4D1iUKBecswg==', listo:()=>window.jspdf}];
+  const TXT_COMPARTIR='📲 Compartir PDF';
+  let pdfLibsProm=null, pdfDoc=null, pdfTurno=0;
+  function cargarLibsPdf(){
+    if(pdfLibsProm) return pdfLibsProm;
+    pdfLibsProm=Promise.all(PDF_LIBS.map(l=>new Promise((res,rej)=>{ if(l.listo()) return res();
+      const s=document.createElement('script'); s.src=l.src; s.integrity=l.integrity; s.crossOrigin='anonymous';
+      s.onload=()=>l.listo()?res():rej(new Error('la librería del PDF no cargó'));
+      s.onerror=()=>rej(new Error('no se pudo bajar la librería del PDF (¿sin conexión?)')); document.head.appendChild(s); })))
+      .catch(e=>{ pdfLibsProm=null; throw e; });
+    return pdfLibsProm;
+  }
+  function puedeCompartirPdf(){ try{ return !!(navigator.share && navigator.canShare && navigator.canShare({files:[new File(['x'],'x.pdf',{type:'application/pdf'})]})); }catch(e){ return false; } }
+   
+   
+   
+   
+  function cortesPaginaPdf(finales, forzados, altoPag, mSup, mInf){
+    const fin=finales.filter(x=>x>0).sort((a,b)=>a-b), alto=fin.length?fin[fin.length-1]:altoPag;
+    const saltos=(forzados||[]).filter(x=>x>1&&x<alto-1).sort((a,b)=>a-b);
+    const out=[]; let desde=0;
+    while(desde<alto-1){
+      const top=out.length?mSup:0, cabe=desde+altoPag-top, limite=cabe-mInf, salto=saltos.find(x=>x>desde+1);
+      let hasta;
+      if(salto!==undefined && salto<=cabe) hasta=salto;
+      else if(alto<=cabe) hasta=alto;
+      else { const c=fin.filter(x=>x>desde+1&&x<=limite).pop(); hasta=c!==undefined?c:limite; }
+      out.push({desde,hasta,top}); desde=hasta;
+    }
+    return out;
+  }
+  async function armarPdfHoja(sheet, nombre){
+    await cargarLibsPdf();
+    const W=sheet.offsetWidth, altoPag=W*297/210, mm=W/210, y0=sheet.getBoundingClientRect().top, finales=[], forzados=[];
+    sheet.querySelectorAll('*').forEach(el=>{ const cs=getComputedStyle(el), r=el.getBoundingClientRect();
+      if(el.parentElement===sheet || el.tagName==='TR') finales.push(r.bottom-y0);
+      if(/page|always/.test(cs.breakBefore+' '+cs.pageBreakBefore)) forzados.push(r.top-y0);
+      if(/page|always/.test(cs.breakAfter+' '+cs.pageBreakAfter)) forzados.push(r.bottom-y0); });
+     
+    const cv=await window.html2canvas(sheet,{scale:2, backgroundColor:'#ffffff', logging:false, ignoreElements:n=>n.parentElement===document.body && n.id!=='doc-overlay'});
+    const k=cv.width/W, pdf=new window.jspdf.jsPDF({unit:'mm', format:'a4', compress:true});
+    cortesPaginaPdf(finales, forzados, altoPag, 14*mm, 12*mm).forEach((c,i)=>{
+      const hoja=document.createElement('canvas'); hoja.width=cv.width; hoja.height=Math.round(altoPag*k);
+      const g=hoja.getContext('2d'), alto=Math.round((c.hasta-c.desde)*k); g.fillStyle='#fff'; g.fillRect(0,0,hoja.width,hoja.height);
+      g.drawImage(cv, 0,Math.round(c.desde*k),cv.width,alto, 0,Math.round(c.top*k),cv.width,alto);
+      if(i) pdf.addPage('a4');
+      pdf.addImage(hoja.toDataURL('image/jpeg',.92),'JPEG',0,0,210,297,undefined,'FAST');
+    });
+    pdf.setProperties({title:nombre});
+    return new File([pdf.output('blob')], nombre+'.pdf', {type:'application/pdf'});
+  }
+  function btnCompartir(txt, ocupado){ const b=document.querySelector('#doc-bar .sh'); if(b){ b.textContent=txt; b.disabled=!!ocupado; } }
+  async function compartirPdf(){
+    const sheet=document.querySelector('#doc-sheet-wrap .doc-sheet'); if(!sheet) return;
+    const turno=pdfTurno, yaArmado=!!pdfDoc;
+    try{
+      if(!pdfDoc){ btnCompartir('⏳ Armando el PDF…',true);
+        const f=await armarPdfHoja(sheet, docFileName||'Documento');
+        if(turno!==pdfTurno) return;    
+        pdfDoc=f; }
+       
+      if(!yaArmado && navigator.userActivation && !navigator.userActivation.isActive){ btnCompartir('📲 Listo: tocá para compartir'); return; }
+      btnCompartir(TXT_COMPARTIR);
+      await navigator.share({files:[pdfDoc], title:pdfDoc.name.replace(/\.pdf$/,'')});
+    }catch(e){
+      if(e&&e.name==='AbortError'){ btnCompartir(TXT_COMPARTIR); return; }    
+      if(e&&e.name==='NotAllowedError'&&pdfDoc){ btnCompartir('📲 Listo: tocá para compartir'); return; }
+      console.error('compartir PDF:',e); btnCompartir(TXT_COMPARTIR);
+      alert('No se pudo compartir el PDF: '+((e&&e.message)||e)+'\n\nUsá 🖨️ Imprimir / PDF, como siempre.');
+    }
+  }
   let docFileName='';
   function mostrar(sheetHtml, fileName){ ensureLayer(); const ov=document.getElementById('doc-overlay');
-    docFileName = fileName||'';
+    docFileName = fileName||''; pdfDoc=null; pdfTurno++; btnCompartir(TXT_COMPARTIR);
+    if(puedeCompartirPdf()) cargarLibsPdf().catch(()=>{});    
     document.getElementById('doc-sheet-wrap').innerHTML='<div class="doc-sheet">'+sheetHtml+'</div>'; ov.classList.add('open'); ov.scrollTop=0; }
    
    
@@ -25197,6 +25358,7 @@ function buildFilterTable(cfg){
      
     listaPreciosImagen: listaPreciosImagen,
     listaPreciosError: o => (listaPreciosDatos(o).error || ''),
+    compartirPdf: compartirPdf, puedeCompartirPdf: puedeCompartirPdf,
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
@@ -27540,7 +27702,8 @@ function buildFilterTable(cfg){
       '<h3 style="margin:0 0 4px;font-size:15px">'+esc(opts.titulo||'Mensaje de WhatsApp')+'</h3>'+
       '<div style="font-size:12px;color:#666;margin:0 0 10px">'+(opts.destino?esc(opts.destino):(tel?('Abre el chat del cliente (verificá el N°: +'+esc(tel)+')'):'Copiá y pegá en el chat'))+'</div>'+
       '<textarea id="wa-text" rows="7" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;font:13px/1.55 system-ui;resize:vertical">'+esc(opts.texto||'')+'</textarea>'+
-      (opts.adjunto?'<div style="font-size:11.5px;color:#c98a06;margin-top:6px">📎 Acordate de adjuntar: '+esc(opts.adjunto)+' (descargalo con el botón 🖨️ y arrastralo al chat)</div>':'')+
+      (opts.adjunto&&!opts.abrirPdf?'<div style="font-size:11.5px;color:#c98a06;margin-top:6px">📎 Acordate de adjuntar: '+esc(opts.adjunto)+' (abrilo con 🖨️ y tocá 📲 Compartir PDF)</div>':'')+
+      (opts.abrirPdf?'<div style="font-size:11.5px;color:#666;margin-top:6px">Primero mandá el mensaje. Después: 📎 Compartir el PDF → WhatsApp → elegí el chat.</div><button id="wa-pdf" style="width:100%;margin-top:6px;background:#fff;color:#128C4B;border:1.5px solid #25D366;border-radius:9px;padding:9px;font:600 14px system-ui;cursor:pointer">📎 Compartir el PDF</button>':'')+
       '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'+
         (tel?'<button id="wa-open" style="flex:1;min-width:150px;background:#25D366;color:#fff;border:0;border-radius:9px;padding:10px;font:600 14px system-ui;cursor:pointer">Abrir WhatsApp</button>':'')+
         '<button id="wa-copy" style="flex:1;min-width:120px;background:#e5e7eb;color:#111;border:0;border-radius:9px;padding:10px;font:600 14px system-ui;cursor:pointer">Copiar</button>'+
@@ -27554,6 +27717,8 @@ function buildFilterTable(cfg){
       confirmar();
     };
     ov.querySelector('#wa-close').onclick=()=>{ ov.style.display='none'; };
+    const op=ov.querySelector('#wa-pdf');
+    if(op) op.onclick=()=>{ ov.style.display='none'; opts.abrirPdf(); const im=window.__imprimir; if(im&&im.puedeCompartirPdf&&im.puedeCompartirPdf()) im.compartirPdf(); };
     const ob=ov.querySelector('#wa-open');
     if(ob) ob.onclick=()=>{ window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(ta.value),'_blank'); confirmar(); };
   }
