@@ -19496,12 +19496,14 @@ function buildFilterTable(cfg){
   }
 
   // 09/11: WATCHER AUTOMÁTICO del inbox de WhatsApp Web.
-  // Cada INBOX_MS (30 s) le pide a la extensión el listado de chats con mensajes no leídos en el aside de
+  // Cada INBOX_MS (15 s) le pide a la extensión el listado de chats con mensajes no leídos en el aside de
   // WhatsApp Web (sin abrir nada: la extensión solo mira el DOM de la lista, no marca como leído). Para
   // cada nuevo, si trae teléfono (jid con @c.us o número en el nombre del contacto) o si el nombre matchea
   // un cliente/lead del Tablero, llama al Worker a /wa-leer para que el agente genere la sugerencia.
   // Guarda en localStorage los (nombre+preview) ya procesados para no repetir.
-  const INBOX_MS=30000;
+  // 11/11: bajado de 30 a 15 s (Marcelo: "tarda mucho en aparecer el mensaje" — veía ~1 minuto). El Worker
+  // tarda ~6-8 s en generar la sugerencia; la demora grande era la ESPERA del próximo ciclo.
+  const INBOX_MS=15000;
   const procesadosInbox=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_inbox_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
   // Se recuerda solo el ÚLTIMO mensaje visto de cada chat: si el cliente repite un texto más tarde ("Para autos"),
   // vuelve a contar (pasó el 09/11: quedó sin respuesta porque ya lo había mandado antes).
@@ -19572,6 +19574,9 @@ function buildFilterTable(cfg){
     const url=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,'');
     const tk=String(window.__param?window.__param('waLenovoToken',''):'');
     if(!url||!tk) return;   // configuración incompleta: el watcher queda en silencio hasta que se cargue
+    // 11/11: los nuevos del mismo ciclo salen TODOS JUNTOS, no uno esperando al anterior — con varios
+    // clientes escribiendo a la vez, antes el último de la lista esperaba N × latencia del Worker de más.
+    const tareas=[];
     for(const c of r.chats){
       const texto=String(c.preview||'').trim();
       if(!texto) continue;
@@ -19588,13 +19593,16 @@ function buildFilterTable(cfg){
         if(!procesarInboxTick.__sinTel.has(clave)){ procesarInboxTick.__sinTel.add(clave); console.warn('[inbox] mensaje de "'+c.nombre+'" sin teléfono: agendá el contacto en Clientes/Leads o abrí el chat con 📥 Leer'); }
         continue;
       }
-      // Lo marcamos ANTES de llamar al Worker (evita doble disparo si el tick se solapa).
+      // Lo marcamos ANTES de llamar al Worker (evita doble disparo si el tick se solapa, o si dos
+      // mensajes de este mismo tick llegan acá antes de que el primer fetch resuelva).
       recordarInbox(clave);
-      try{
-        const res=await fetch(url+'/wa-leer', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk}, body:JSON.stringify({to:tel, nombre:c.nombre||'', texto}) });
-        if(!res.ok){ console.warn('[inbox] /wa-leer respondió', res.status, 'para', c.nombre); }
-      }catch(e){ console.warn('[inbox] no se pudo hablar con el Worker:', e&&e.message||e); }
+      tareas.push(
+        fetch(url+'/wa-leer', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk}, body:JSON.stringify({to:tel, nombre:c.nombre||'', texto}) })
+          .then(res=>{ if(!res.ok) console.warn('[inbox] /wa-leer respondió', res.status, 'para', c.nombre); })
+          .catch(e=>console.warn('[inbox] no se pudo hablar con el Worker:', e&&e.message||e))
+      );
     }
+    if(tareas.length) await Promise.all(tareas);
   }
   let inboxReloj=null;
   function arrancarWatcherInbox(){ if(inboxReloj) return; inboxReloj=setInterval(procesarInboxTick, INBOX_MS); procesarInboxTick(); }
