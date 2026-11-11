@@ -18253,6 +18253,8 @@ function buildFilterTable(cfg){
     }catch(e){ mayImg='error'; }
   }
    
+  const MAY_WAWEB_KEY='vph_may_wa_web_v1';    
+  function mayWaWeb(){ try{ return localStorage.getItem(MAY_WAWEB_KEY)!=='0'; }catch(e){ return true; } }
   function mayAbrirChat(mi, accion){
     const r=MAYW[mi]; if(!r) return false;
     const lk=topesWaLink(accion==='material' ? r.telefonoMkt : r.telefono); if(!lk) return false;    
@@ -18262,7 +18264,11 @@ function buildFilterTable(cfg){
       mayCopiarLista(r);
     } else mayImg='';
     const seg=maySegmentoDe(mayActDe(r));
-    window.open(lk+'&text='+encodeURIComponent(mayTexto(r, accion, seg)), '_blank');
+     
+     
+     
+    const web = mayWaWeb(), url = (web ? lk.replace('whatsapp://send?', 'https://web.whatsapp.com/send?') : lk) + '&text=' + encodeURIComponent(mayTexto(r, accion, seg));
+    window.open(url, web ? 'vph_wa_web' : '_blank');
     mayConfirm={mi, accion}; drawMayoristas();
     return true;
   }
@@ -18351,6 +18357,7 @@ function buildFilterTable(cfg){
         '<button class="cmp-btn" data-may-lista-cfg title="Fija desde qué día rige la lista nueva: los que ya tenían la anterior vuelven a quedar pendientes y el mensaje dice la fecha">🆕 '+(conFecha?'Lista vigente desde '+mayClaveLabel(per):'Lista nueva')+'</button>'+
         '<button class="cmp-btn" data-may-aviso-cfg title="Prepara el aviso de aumento de precios para los revendedores: desde cuándo rige, el % y hasta cuándo se mantiene el precio actual">📣 '+(MAYAVISO.desde?'Editar aviso de aumento':'Aviso de aumento')+'</button>'+
         (MAYAVISO.desde?('<span style="font-size:12px;color:#334155">vigente desde <b>'+esc(MAYAVISO.desde)+'</b>'+(MAYAVISO.pct?(' · '+esc(MAYAVISO.pct)+'%'):'')+' · enviados: <b>'+MAYW.filter(r=>r.avisoClave===String(MAYAVISO.desde)).length+'</b> de '+MAYW.length+'</span>'):'')+
+        '<label style="font-size:12px;color:#334155;display:inline-flex;gap:4px;align-items:center;cursor:pointer" title="Abre los chats en WhatsApp Web (el número que tenga iniciado ESA pestaña, en la Lenovo el de Sofía). Sin tildar abre la app de WhatsApp de escritorio. Se guarda en esta PC."><input type="checkbox" data-may-waweb'+(mayWaWeb()?' checked':'')+'> 🌐 WhatsApp Web</label>'+
         '<button class="cmp-btn" data-may-actualizar-act title="Cruza esta lista contra vph_ventas: última compra, cuántas y por cuánto en total — clasifica a cada uno en Activo / En atención / Dormido / Nunca compró">🔄 Actualizar actividad</button>'+
         (mayActTs ? ('<span style="font-size:11px;color:#94a3b8">actualizado '+mayActTsLabel()+'</span>') : '<span style="font-size:11px;color:#94a3b8">todavía no se actualizó — tocá 🔄 para ver a quién priorizar</span>')+
       '</div>'+
@@ -18411,6 +18418,7 @@ function buildFilterTable(cfg){
      
     cont.querySelectorAll('[data-may-importar]').forEach(b=>b.onclick=()=>mayImportar());
     cont.querySelectorAll('[data-may-agregar]').forEach(b=>b.onclick=()=>{ maySave(MAYW.concat([{nombre:'', contacto:'', tipo:'cbaFact', telefono:'', notas:'', listaPeriodo:'', listaFecha:'', stockFecha:'', accionPor:''}])); drawMayoristas(); });
+    cont.querySelectorAll('[data-may-waweb]').forEach(c=>c.onchange=()=>{ try{ localStorage.setItem(MAY_WAWEB_KEY, c.checked?'1':'0'); }catch(e){} drawMayoristas(); });
     cont.querySelectorAll('[data-may-actualizar-act]').forEach(b=>b.onclick=()=>mayActualizarActividad());
     cont.querySelectorAll('[data-may-siguiente]').forEach(b=>b.onclick=()=>maySiguiente());
     cont.querySelectorAll('[data-may-aviso-cfg]').forEach(b=>b.onclick=()=>mayConfigurarAviso());
