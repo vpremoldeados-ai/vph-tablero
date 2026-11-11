@@ -2083,6 +2083,8 @@ window.__demoSeed = function () {
           <div class="cmp-field"><label>¿Quién paga el flete?</label><select id="tra-f-pagoEn"></select></div>
           <div class="cmp-field"><label>Descarga</label><select id="tra-f-descarga"></select></div>
           <div class="cmp-field"><label>Fuente</label><input id="tra-f-fuente" placeholder="Cotización por WhatsApp del 15/10"></div>
+          <div class="cmp-field"><label>Zona del presupuesto</label><select id="tra-f-zonaPresupuesto"></select>
+            <div class="meta">Con qué zona se cobra el flete al presupuestar. Si está cargada, el presupuesto la ofrece solo al escribir el destino.</div></div>
         </div>
         <div class="cmp-field" style="margin-top:10px"><label>Condiciones / notas</label><textarea id="tra-f-condiciones" rows="3" placeholder="Seguro por valor declarado, retira en Bolívar 381, cobra el viaje completo aunque vaya un pallet…"></textarea></div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin:10px 0 0">
@@ -13431,7 +13433,8 @@ function buildFilterTable(cfg){
         field('Forma de entrega (flete)','col2','<div class="pf-picker" id="pf-zona-picker" style="margin:2px 0 0"></div>'+
           '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap"><label for="pf-precioflete" style="font-size:12px;font-weight:700;margin:0">💲 Precio del flete por pallet (con IVA)</label>'+
           '<input id="pf-precioflete" inputmode="decimal" style="width:130px" value="'+(num(p.precioFlete)>0?esc(String(num(p.precioFlete)).replace('.',',')):'')+'">'+
-          '<span id="pf-precioflete-nota" style="font-size:11px;color:var(--muted)"></span></div>') +
+          '<span id="pf-precioflete-nota" style="font-size:11px;color:var(--muted)"></span></div>'+
+          '<div id="pf-sug-envio"></div>') +
         '<div class="cmp-field col2" id="pf-fin-wrap"><label>Financiación con tarjeta</label>'+
           '<select id="pf-fin">'+finOpts(p.finPerfil)+'</select>'+
           '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">Los renglones y el total van al precio de <b>CONTADO</b> (el número que compite). La financiación sale en el recuadro <b>«Formas de pago»</b> del PDF: contado con su % OFF y las cuotas hasta el precio de lista (12 cuotas), flete incluido. Elegí el perfil solo si el cliente ya confirmó la tarjeta.</div></div>'+
@@ -13454,7 +13457,7 @@ function buildFilterTable(cfg){
       '<div class="cmp-form-foot"><button class="cmp-btn" id="pf-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="pf-save">Guardar presupuesto</button></div>';
     drawItems();
     ['pf-num:numero','pf-fecha:fecha','pf-val:validezDias','pf-estado:estado','pf-cli:cliente','pf-cuit:cuit','pf-cond:condIva','pf-cat:categoria','pf-lista:listaPrecios','pf-vend:vendedor','pf-doment:domicilioEntrega','pf-domfact:domicilioFacturacion','pf-notacli:notaCliente','pf-nota:nota','pf-descg:descGeneral'].forEach(pair=>{
-      const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); }); });
+      const a=pair.split(':'); const el=$(a[0]); if(!el)return; el.addEventListener('input',()=>{ editing[a[1]]=el.value; if(a[0]==='pf-descg') drawTotals(); if(a[0]==='pf-doment') drawSugEnvio(); }); });
      
      
      
@@ -13571,6 +13574,43 @@ function buildFilterTable(cfg){
     const el=$('pf-precioflete'); if(!el||el.__enl) return; el.__enl=true;
     el.addEventListener('input',()=>{ editing.precioFlete=num(el.value)>0?num(el.value):0; aplicarFlete(editing); drawItems(); drawTotals(); notaPrecioFlete(); });
   }
+   
+   
+   
+   
+   
+   
+  function sugEnvioDe(){
+    if(typeof window.__envioSugerencia!=='function') return null;    
+    const dir=String((editing&&editing.domicilioEntrega)||'').trim();
+    if(dir.length<4) return null;
+     
+     
+    const pallets=calcFlete((editing&&editing.items)||[], 'capital').pallets;
+    if(!(pallets>0)) return null;
+    const s=window.__envioSugerencia(dir, pallets);
+    return s ? Object.assign({}, s, {pallets}) : null;
+  }
+  function drawSugEnvio(){
+    const c=$('pf-sug-envio'); if(!c) return;
+    const s=sugEnvioDe();
+    if(!s || s.flete===null){ c.innerHTML=''; return; }
+    const z=s.zonaPresupuesto||'';
+    const ya = z && String(editing.zona||'')===String(z);
+    const dif = z && Math.abs(zonaCosto(z)*s.pallets - s.flete) > 1;    
+    c.innerHTML='<div class="note" style="margin-top:8px;border-left:4px solid var(--'+(s.confirmado?'green':'amber')+')">'+
+      '🚚 A ese destino llega <b>'+esc(s.transporte)+'</b>'+(s.destino?' · '+esc(s.destino):'')+' · <b>'+money(s.flete)+'</b> por '+s.pallets+' pallet'+(s.pallets>1?'s':'')+' ('+money(s.porPallet)+' c/u)'+
+      (s.plazoDias?' · '+s.plazoDias+' días':'')+
+      (s.confirmado?'':' · <span class="badge amber">tarifa estimada</span>')+
+      (ya ? ' · <b style="color:var(--green)">✓ ya lo estás cobrando así</b>'
+          : z ? ' <button type="button" class="cmp-btn" id="pf-sug-usar" style="margin-left:6px">Cobrarlo con «'+esc(zonaLabel(z))+'»</button>'
+              : ' · <span class="meta">sin zona de presupuesto: cobralo con «'+esc(zonaLabel('cotizar'))+'» y el precio a mano</span>')+
+      (dif&&!ya ? '<div class="meta" style="margin-top:4px">⚠️ Esa zona cobra '+money(zonaCosto(z)*s.pallets)+' y la tarifa cargada dice '+money(s.flete)+': revisá cuál vale.</div>' : '')+
+      '<div class="meta" style="margin-top:4px">El transporte no sale en el PDF: el cliente ve solo el renglón «Flete por pallet».</div>'+
+      '</div>';
+    const b=$('pf-sug-usar');
+    if(b) b.onclick=()=>{ editing.zona=z; aplicarFlete(editing); drawItems(); drawTotals(); drawZonas(); };
+  }
   function drawZonas(){
     const cont=$('pf-zona-picker'); if(!cont) return;
     bindPrecioFlete(); notaPrecioFlete();
@@ -13590,6 +13630,7 @@ function buildFilterTable(cfg){
       notaPrecioFlete();
       if(precioPalletDe(editing.zona,editing.precioFlete)>0 && f.costo<=0) alert('Cargá primero los ítems del presupuesto para poder calcular el flete.');
     });
+    drawSugEnvio();
   }
   const esFleteProd=p=>/^FLE/i.test(String(p.codigo||'')) || /^flete/i.test(String(p.nombre||''));
   function drawPicker(){
@@ -13634,7 +13675,7 @@ function buildFilterTable(cfg){
       drawItems(); drawTotals(); });
     drawPicker(); drawZonas();
   }
-  function drawTotals(){ const kk=calc(editing);
+  function drawTotals(){ const kk=calc(editing); drawSugEnvio();    
     $('pf-totbox').innerHTML =
       '<div class="cmp-tot-row"><span>Neto</span><b>'+money(kk.neto)+'</b></div>'+
       '<div class="cmp-tot-row"><span>IVA</span><b>'+money(kk.iva)+'</b></div>'+
@@ -19935,25 +19976,34 @@ function buildFilterTable(cfg){
    
   window.__traNormLoc=normLoc; window.__traCubre=cubre; window.__traCosto=costoEnvio; window.__traResolver=resolverEnvio;
   window.__envioCotizar=(localidad,pallets)=>resolverEnvio(localidad,pallets,TRA);
+  window.__envioSugerencia=(localidad,pallets)=>{ const r=resolverEnvio(localidad,pallets,TRA); if(!r) return null;
+    const t=TRA.find(x=>x._uid===r._uid); return Object.assign({}, r, {zonaPresupuesto:(t&&t.zonaPresupuesto)||''}); };
   window.__transportesTarifas=()=>TRA.slice();
 
    
    
    
+   
+   
+   
+   
+   
+   
+  const DESTINOS_BRIO=['9 de abril','abasto','acassuso','adrogue','aeropuerto ezeiza','aldo bonzi','almagro','almirante brown','alta gracia','alvarez','alvear','arana','arguello','armstrong','arroyo cabral','arroyo seco','arturo segui','avellaneda','balbanera','balcarce','balnearia','bancalari','banfield','barrio parque leloir','barrio stella maris','base naval rio santiago','beccar','belen de escobar','bell ville','bella vista','benavidez','berazategui','berisso','bernal','bernal este','bernal oeste','bigand','billinghurst','bosques','boulogne','brinkmann','burzaco','c a b a','caba','caceros','campo de mayo','canada de gomez','canning','capital federal','carapachay','carcarana','carlos paz','carlos spegazzini','caseros','casilda','castelar','centro agricola el pato','chabas','city bell','ciudad de cordoba','ciudad de eduardo madero','ciudad evita','ciudad jardin del palomar','ciudadela','claypole','colonia avellaneda','colonia tirolesa','constitucion','cordoba','correa','crespo','crucesita','cuartel v','del viso','dique lujan','dock sud','domingo faustino sarmiento','don bosco','don torcuato','el jaguel','el libertador','el palomar','el pato','el talar','ensenada','escobar','escuela naval militar rio santiago','esperanza','esteban echeverria','etcheverry','ezeiza','ezpeleta','ezpeleta este','ezpeleta oeste','fatima estacion empalme','ferreyra','fighiera','firmat','fisherton','florencio varela','floresta','florida','florida oeste','francisco alvarez','fray luis beltran','freyre','frontera','fuentes','funes','garin','general lagos','general pacheco','general racedo','general rodriguez','general san martin','gerli','gerli avellaneda','gerli lanus','glew','gonet','gonnet','gonzalez catan','gorina','grand bourg','gregorio de la ferrere','guillermo e hudson','gutierrez','haedo','hudson','hurlingham','ibarlucea','ingeniero adolfo sourdeaux','ingeniero allan','ingeniero budge','ingeniero maschwitz','isidro casanova','ituzaingo','james craik','joaquin gorina','jose clemente paz','jose hernandez','jose ingenieros','jose leon suarez','jose maria gutierrez','jose marmol','jose suarez','juan maria gutierrez','juarez celman','la calera','la fraternidad','la lonja','la lucia','la lucila','la matanza','la plata','la reja','la salada','la tablada','la union','laferrere','lanus','las malvinas','las malvinas parada fcdfs','las parejas','leones','libertad','lisandro olmos','llavallol','loma hermosa','loma verde escobar','lomas de zamora','lomas del mirador','longchamps','los hornos','los polvorines','luca','lucio v lopez','luis guillon','lujan','malvinas argentinas','manuel alberti','manuel b gonnet','manzanares','maquinista francisco savio','maquinista savio','mar del plata','maria luisa','martin coronado','martinez','matheu','melchor romero','mendiolaza','mercado central','merlo','mi granja','ministro rivadavia','monte chingolo','monte cristo','monte grande','monte vera','moreno','moron','morrison','morteros','muniz','munro','murphy','nuevo torino','oliva','olivos','oncativo','once de setiembre','open door','oro verde','pablo nogues','pablo noguez','pablo podesta','pacheco','palermo','parana','parque san martin','paso del rey','pereyra','perez','pilar','pineyro','platanos','poblet','pontevedra','portena','presidente derqui','pueblo alcorta','pueblo esther','pueblo munoz','puerto gral san martin','puerto madero','pujato','punta lara','quilmes','quilmes oeste','rafael calzada','rafael castillo','rafaela','ramos mejia','ranelagh','recreo','remedios de escalada','remedios de escalada 3 de febrero','remedios de escalada lanus','renelagh','ricardo rojas','ricardone','rincon de milberg','ringuelet','rio ceballos','roldan','rosario','rufino','salto grande','san andres','san antonio de padua','san benito','san fernando','san francisco','san francisco solano','san guillermo','san isidro','san jeronimo sud','san jose','san justo','san lorenzo','san marcos sud','san miguel','santa fe','santo tome','santos lugares','sarandi','sauce montrull','sauce viejo','solano','sourigues','suardi','sunchales','susana','tablada','tandil','tapiales','temperley','ticino','tigre','tio pujio','tolosa','tortuguitas','tristan suarez','troncos del talar','trujui','turdera','unquillo','valentin alsina','vicente lopez','victoria','vila luzuriaga','villa adelina','villa albertina','villa allende','villa astolfi','villa ballester','villa bonich','villa bosch','villa brown','villa celina','villa de mayo','villa dominico','villa elisa','villa elvira','villa espana','villa esquiu','villa fiorito','villa flandria','villa gobernador udaondo','villa granaderos de san martin','villa insuperable','villa la florida','villa luzuriaga','villa lynch','villa madero','villa maipu','villa maria','villa martelli','villa nueva','villa raffo','villa rafo','villa rosa','villa saenz pena','villa santos tesei','villa sarmiento','villa soldati','virrey del pino','virreyes','warnes'];
   const SEMILLA=[
-    { _uid:'tra_sanchez_capital', transporte:'Sánchez', tipo:'tercero', destino:'Córdoba Capital', provincia:'Córdoba', zona:'capital',
+    { _uid:'tra_sanchez_capital', transporte:'Sánchez', tipo:'tercero', destino:'Córdoba Capital', provincia:'Córdoba', zona:'capital', zonaPresupuesto:'capital',
       localidades:['cordoba','cordoba capital','ciudad de cordoba'], precioPallet:28000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
       condiciones:'Camión de 8 pallets. Entrega en 7 días hábiles. Precio final con IVA (parámetro fleteCapital).', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteCapital)', activo:true, confirmado:true },
-    { _uid:'tra_sanchez_cercanas', transporte:'Sánchez', tipo:'tercero', destino:'Hasta 30 km de Av. de Circunvalación', provincia:'Córdoba', zona:'cercanas',
+    { _uid:'tra_sanchez_cercanas', transporte:'Sánchez', tipo:'tercero', destino:'Hasta 30 km de Av. de Circunvalación', provincia:'Córdoba', zona:'cercanas', zonaPresupuesto:'cercanas',
       localidades:['villa allende','mendiolaza','unquillo','rio ceballos','saldan','la calera','malagueño','toledo','malvinas argentinas','montecristo','juarez celman','estacion juarez celman','villa esquiu','guiñazu','villa retiro','bouwer','villa del rosario de la calera'],
       precioPallet:39000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
       condiciones:'Precio final con IVA (parámetro fleteCercanas). REVISAR la lista de localidades: la armó Claude por distancia, no la confirmó nadie.', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteCercanas)', activo:true, confirmado:false },
-    { _uid:'tra_sanchez_interior_mati', transporte:'Sánchez', tipo:'tercero', destino:'Interior con Mati (viaje a cotizar)', provincia:'Córdoba', zona:'interior',
+    { _uid:'tra_sanchez_interior_mati', transporte:'Sánchez', tipo:'tercero', destino:'Interior con Mati (viaje a cotizar)', provincia:'Córdoba', zona:'interior', zonaPresupuesto:'mati',
       localidades:[], precioViaje:140000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
       condiciones:'Referencia del parámetro fleteMati: $140.000 el viaje. Sin localidades cargadas a propósito: cada destino del interior se cotiza y se agrega como fila propia.', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteMati)', activo:true, confirmado:false },
-    { _uid:'tra_brio_interior', transporte:'Brío', tipo:'tercero', destino:'Interior / otras provincias (flete en destino)', provincia:'', zona:'otraProvincia',
-      localidades:[], precioViaje:0, pallets:0, plazoDias:0, pagoEn:'destino', descarga:'',
-      condiciones:'Mati lleva el pedido hasta el depósito de Brío en Córdoba; Brío lo despacha y el cliente paga el flete en destino. Sin tarifa por destino: Sofía la pide a Brío y la carga como fila propia (destino + localidades + precio).', fechaCotizacion:'', fuente:'Operatoria actual (despacho en otro transporte)', activo:true, confirmado:false },
+    { _uid:'tra_brio_interior', transporte:'Brío', tipo:'tercero', destino:'Interior / otras provincias', provincia:'', zona:'otraProvincia', zonaPresupuesto:'brio',
+      localidades:DESTINOS_BRIO, precioPallet:num(window.__param?window.__param('fleteBrio',140000):140000), pallets:0, plazoDias:0, pagoEn:'origen', descarga:'',
+      condiciones:'Tarifa ÚNICA para todos sus destinos. Mati lleva el pedido hasta el depósito de Brío en Córdoba, Brío lo despacha y EL FLETE LO COBRA VPH al cliente y después se lo paga a Brío (Marcelo, 11/11). Los destinos salen del PDF de Brío 2026; el precio, del parámetro fleteBrio (zona 6 del presupuesto).', fechaCotizacion:'', fuente:'PDF “Destinos Brío 2026” + parámetro fleteBrio', activo:true, confirmado:false },
     { _uid:'tra_biletta_calamuchita', transporte:'Expreso Biletta', tipo:'tercero', destino:'Santa Rosa de Calamuchita / Los Reartes', provincia:'Córdoba', zona:'interior',
       localidades:['santa rosa de calamuchita','los reartes','villa general belgrano','villa rumipal','embalse'], precioPallet:92171, minPallets:1, pallets:0, plazoDias:5, pagoEn:'origen', descarga:'manual',
       condiciones:'Cotización del 15/10: flete $74.174,14 + seguro $2.000 + IVA = $92.170,71 por pallet. Más el traslado de Matías hasta el depósito de Biletta ($20.000 el viaje, se reparte entre los pallets). Villa General Belgrano, Rumipal y Embalse están puestas por cercanía: CONFIRMAR con Biletta.', fechaCotizacion:'2026-10-15', fuente:'Cotización de Biletta (listas Hasta 100 km)', activo:true, confirmado:false },
@@ -20013,7 +20063,11 @@ function buildFilterTable(cfg){
     try{ if(window.__ordenable) window.__ordenable(tb); }catch(e){}
     tb.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>accion(b.dataset.act, b.closest('tr').dataset.uid));
   }
-  function render(){ if(!$('tra-tabla')) return; renderTabla(); renderBuscar(); const sb=$('tra-seed'); if(sb){ const faltan=SEMILLA.filter(s=>!TRA.some(t=>t._uid===s._uid)).length; sb.style.display=(pc()&&faltan)?'':'none'; sb.textContent='📥 Cargar las tarifas conocidas ('+faltan+')'; } }
+  function render(){ if(!$('tra-tabla')) return; renderTabla(); renderBuscar(); const sb=$('tra-seed'); if(sb){
+    const {faltan, viejas}=pendientesSemilla(); const n=faltan.length+viejas.length;
+    sb.style.display=(pc()&&n)?'':'none';
+    sb.textContent=(faltan.length?'📥 Cargar las tarifas conocidas':'📍 Actualizar las tarifas de fábrica')+' ('+n+')';
+  } }
 
    
   function guardar(uid, datos){
@@ -20041,6 +20095,8 @@ function buildFilterTable(cfg){
     $('tra-f-precioPallet').value=Number(d.precioPallet)>0?d.precioPallet:''; $('tra-f-precioViaje').value=Number(d.precioViaje)>0?d.precioViaje:'';
     $('tra-f-pallets').value=Number(d.pallets)>0?d.pallets:''; $('tra-f-minPallets').value=Number(d.minPallets)>0?d.minPallets:''; $('tra-f-plazoDias').value=Number(d.plazoDias)>0?d.plazoDias:'';
     $('tra-f-pagoEn').innerHTML=opts(PAGO,d.pagoEn||'origen'); $('tra-f-descarga').innerHTML=opts(DESCARGA,d.descarga||'');
+     
+    $('tra-f-zonaPresupuesto').innerHTML=opts([['','— Ninguna (se cotiza a mano) —']].concat((window.__fleteZonas?window.__fleteZonas():[]).filter(z=>z.k).map(z=>[z.k,z.l])), d.zonaPresupuesto||'');
     $('tra-f-condiciones').value=d.condiciones||''; $('tra-f-fechaCotizacion').value=d.fechaCotizacion||''; $('tra-f-fuente').value=d.fuente||'';
     $('tra-f-activo').checked=d.activo!==false; $('tra-f-confirmado').checked=!!d.confirmado;
     $('tra-f-err').textContent='';
@@ -20053,7 +20109,7 @@ function buildFilterTable(cfg){
       destino:$('tra-f-destino').value.trim(), provincia:$('tra-f-provincia').value.trim(), zona:$('tra-f-zona').value,
       localidades:$('tra-f-localidades').value.split(/[,;\n]/).map(normLoc).filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i),
       precioPallet:num($('tra-f-precioPallet').value), precioViaje:num($('tra-f-precioViaje').value), pallets:Math.round(num($('tra-f-pallets').value)), minPallets:Math.round(num($('tra-f-minPallets').value)), plazoDias:Math.round(num($('tra-f-plazoDias').value)),
-      pagoEn:$('tra-f-pagoEn').value, descarga:$('tra-f-descarga').value, condiciones:$('tra-f-condiciones').value.trim(), fechaCotizacion:$('tra-f-fechaCotizacion').value, fuente:$('tra-f-fuente').value.trim(),
+      pagoEn:$('tra-f-pagoEn').value, descarga:$('tra-f-descarga').value, zonaPresupuesto:$('tra-f-zonaPresupuesto').value, condiciones:$('tra-f-condiciones').value.trim(), fechaCotizacion:$('tra-f-fechaCotizacion').value, fuente:$('tra-f-fuente').value.trim(),
       activo:$('tra-f-activo').checked, confirmado:$('tra-f-confirmado').checked
     };
   }
@@ -20075,12 +20131,27 @@ function buildFilterTable(cfg){
     if(!editUid) d.creadoEl=d.actualizadoEl;
     guardar(uid,d).then(ok=>{ if(ok) cerrarForm(); });
   }
+   
+   
+   
+  const deSemilla=t=>/^semilla/i.test(String((t&&t.actualizadoPor)||''));
+  const difiereDeSemilla=(t,s)=>Object.keys(s).some(k=>k!=='_uid'&&JSON.stringify(t[k])!==JSON.stringify(s[k]));
+  function pendientesSemilla(){
+    const faltan=SEMILLA.filter(s=>!TRA.some(t=>t._uid===s._uid));
+    const viejas=SEMILLA.filter(s=>{ const t=TRA.find(x=>x._uid===s._uid); return t&&deSemilla(t)&&difiereDeSemilla(t,s); });
+    return {faltan, viejas};
+  }
   function cargarSemilla(){
-    const faltan=SEMILLA.filter(s=>!TRA.some(t=>t._uid===s._uid)); if(!faltan.length) return;
-    if(!confirm('Se cargan '+faltan.length+' tarifas con lo que ya se sabe (parámetros de flete + cotizaciones que pasaron por los chats). Las que no salen de un parámetro quedan "A revisar" hasta que Sofía las confirme. ¿Seguimos?')) return;
+    const {faltan, viejas}=pendientesSemilla(); if(!faltan.length&&!viejas.length) return;
+    const txt=(faltan.length?('Se cargan '+faltan.length+' tarifas nuevas con lo que ya se sabe. '):'')+
+      (viejas.length?('Se actualizan '+viejas.length+' que nadie editó a mano ('+viejas.map(v=>v.transporte).join(', ')+'). '):'')+
+      'Las que no salen de un parámetro quedan "A revisar" hasta que Sofía las confirme. ¿Seguimos?';
+    if(!confirm(txt)) return;
     const c=fb(); if(!c||!c.db){ alert('Iniciá sesión.'); return; }
     const hoy=new Date().toISOString().slice(0,10);
-    Promise.all(faltan.map(s=>{ const {_uid,...d}=s; d.creadoEl=hoy; d.actualizadoEl=hoy; d.actualizadoPor='semilla 07/11'; return c.FS.setDoc(c.FS.doc(c.db,COL,_uid), d, {merge:true}); }))
+    Promise.all(faltan.concat(viejas).map(s=>{ const {_uid,...d}=s; d.actualizadoEl=hoy; d.actualizadoPor='semilla 11/11';
+      if(!TRA.some(t=>t._uid===_uid)) d.creadoEl=hoy;
+      return c.FS.setDoc(c.FS.doc(c.db,COL,_uid), d, {merge:true}); }))
       .catch(e=>alert('No se pudieron cargar todas: '+e.message+'\n¿Está publicada la regla de vph_transportes?'));
   }
 
