@@ -19801,6 +19801,125 @@ function buildFilterTable(cfg){
 </script>
 
 <!-- =====================================================================
+     RECONSULTAS AUTOMÁTICAS (11/11) — lee las propuestas que arma el Worker
+     (vph-agente-instagram/src/reconsulta.js, cron de las 11 h AR L-V) para los leads en
+     Reconsulta 1/2/3 con el seguimiento vencido. Mismo patrón de aprobación que la Bandeja
+     WhatsApp de arriba: Claude propone el texto, pero NADA sale sin que Sofía o Marcelo toquen
+     Enviar — eso escribe un doc 'aprobado' en vph_wa_salientes y el Worker lo manda por la API
+     en el próximo minuto. Módulo aparte y autónomo (botón flotante propio, sin nav ni vistas
+     existentes) para no tocar la Bandeja WhatsApp de arriba mientras sigue en rediseño.
+     Colección: vph_reconsultas_pendientes.
+     ===================================================================== -->
+<script>
+(function(){
+  'use strict';
+  const $ = id=>document.getElementById(id);
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fb = ()=>window.__fbctx;
+  const COL='vph_reconsultas_pendientes';
+  const COL_SAL='vph_wa_salientes';
+  let DB=[], unsub=null, abierto=false, editando=null;
+  const borradores=new Map(), aprobando=new Set();
+
+  const waLink = tel=>{ let d=String(tel||'').replace(/\D/g,''); if(!d) return null; if(!d.startsWith('54')) d='54'+d.replace(/^0/,''); return 'https://wa.me/'+d; };
+  const sugTexto = m=>{ const s=Array.isArray(m.sugerencias)&&m.sugerencias[0]; return (s&&s.texto)||''; };
+
+  function badge(){
+    let b=$('recon-badge');
+    if(!b){
+      b=document.createElement('button'); b.id='recon-badge'; b.type='button';
+      b.style.cssText='position:fixed;right:18px;bottom:18px;z-index:400;display:none;padding:10px 16px;border-radius:24px;border:none;background:var(--blue);color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25)';
+      b.onclick=()=>{ abierto=true; render(); };
+      document.body.appendChild(b);
+    }
+    return b;
+  }
+  function cerrar(){ abierto=false; const ov=$('recon-ov'); if(ov) ov.remove(); }
+
+  function filaHTML(m){
+    const tel=String(m.telefono||'').replace(/\D/g,''); const wa=waLink(tel);
+    if(aprobando.has(m._uid)) return '<div style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><b>'+esc(m.cliente||m.nombre||'(sin nombre)')+'</b> <span class="badge amber">⏳ Enviando…</span></div>';
+    const txt = editando===m._uid ? (borradores.has(m._uid)?borradores.get(m._uid):sugTexto(m)) : sugTexto(m);
+    const cuerpo = editando===m._uid
+      ? '<textarea data-recon-ta="'+esc(m._uid)+'" rows="3" style="width:100%;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--blue);border-radius:8px;resize:vertical">'+esc(txt)+'</textarea>'
+      : '<div style="font-size:12.5px;margin:4px 0;white-space:pre-wrap">'+esc(txt)+'</div>';
+    const acciones = editando===m._uid
+      ? '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-recon-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'
+        +'<button class="kb-move" data-recon-canc="'+esc(m._uid)+'">Cancelar</button>'
+      : '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-recon-env="'+esc(m._uid)+'">📤 Enviar así</button>'
+        +'<button class="kb-move" data-recon-edit="'+esc(m._uid)+'">✏️ Editar y enviar</button>'
+        +'<button class="kb-move" data-recon-desc="'+esc(m._uid)+'" style="opacity:.8">✕ Descartar</button>'
+        +(wa?'<a class="kb-move" href="'+wa+'" target="_blank" rel="noopener">💬 Abrir WhatsApp</a>':'');
+    return '<div style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>'+esc(m.cliente||m.nombre||'(sin nombre)')+'</b>'
+      +'<span class="badge" style="background:#eef2f7;color:#54637a">'+esc(m.reconsultaEtapa||m.etapa||'')+'</span></div>'
+      +(m.resumen?'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(m.resumen)+'</div>':'')
+      +cuerpo+'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+acciones+'</div></div>';
+  }
+
+  function render(){
+    const b=badge();
+    b.style.display = DB.length ? 'block' : 'none';
+    b.textContent = '🔁 Reconsultas propuestas: '+DB.length;
+    if(!abierto){ const ov=$('recon-ov'); if(ov) ov.remove(); return; }
+    let ov=$('recon-ov');
+    if(!ov){ ov=document.createElement('div'); ov.id='recon-ov'; document.body.appendChild(ov); ov.addEventListener('click', e=>{ if(e.target===ov) cerrar(); }); }
+    ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100002;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML='<div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:80vh;overflow:auto;padding:16px 18px">'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h3 style="margin:0">🔁 Reconsultas propuestas por el asistente</h3><button class="cmp-x" id="recon-cerrar" style="margin-left:auto">✕</button></div>'
+      +'<p style="font-size:12px;color:var(--muted);margin:0 0 10px">Claude armó estos mensajes para leads en Reconsulta 1/2/3 con el seguimiento vencido, pero NO se mandó ninguno: elegí Enviar así, editá el texto o descartalo.</p>'
+      +(DB.length?DB.map(filaHTML).join(''):'<p class="note">No hay reconsultas pendientes.</p>')+'</div>';
+    $('recon-cerrar').onclick=cerrar;
+    ov.querySelectorAll('button[data-recon-env]').forEach(btn=> btn.onclick=()=>{ const m=DB.find(x=>x._uid===btn.dataset.reconEnv); if(m) aprobar(m, sugTexto(m), false); });
+    ov.querySelectorAll('button[data-recon-edit]').forEach(btn=> btn.onclick=()=>{ editando=btn.dataset.reconEdit; render(); const ta=ov.querySelector('textarea[data-recon-ta="'+btn.dataset.reconEdit+'"]'); if(ta) ta.focus(); });
+    ov.querySelectorAll('button[data-recon-canc]').forEach(btn=> btn.onclick=()=>{ editando=null; borradores.delete(btn.dataset.reconCanc); render(); });
+    ov.querySelectorAll('button[data-recon-envc]').forEach(btn=> btn.onclick=()=>{ const uid=btn.dataset.reconEnvc; const ta=ov.querySelector('textarea[data-recon-ta="'+uid+'"]'); const m=DB.find(x=>x._uid===uid); if(m) aprobar(m, ta?ta.value:borradores.get(uid), true); });
+    ov.querySelectorAll('textarea[data-recon-ta]').forEach(ta=> ta.oninput=()=>borradores.set(ta.dataset.reconTa, ta.value));
+    ov.querySelectorAll('button[data-recon-desc]').forEach(btn=> btn.onclick=()=>descartar(btn.dataset.reconDesc));
+  }
+
+  async function aprobar(m, texto, editada){
+    const c=fb(); if(!c||!c.db) return;
+    if(aprobando.has(m._uid)) return;
+    const to=String(m.telefono||'').replace(/\D/g,''); texto=String(texto||'').trim();
+    if(!to){ alert('Esta propuesta no tiene teléfono: escribile desde WhatsApp.'); return; }
+    if(!texto){ alert('El texto está vacío.'); return; }
+    if(!confirm('¿Mandar por WhatsApp a '+(m.cliente||m.nombre||to)+'?\n\n'+texto)) return;
+    aprobando.add(m._uid); render();
+    try{
+      const quien=(c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||'';
+      await c.FS.setDoc(c.FS.doc(c.db,COL_SAL,'sal_recon_'+m._uid), { to, texto, pendienteUid:m._uid, estado:'aprobado', editada:!!editada,
+        sugerenciaOriginal:sugTexto(m), aprobadoPor:quien, aprobadoEn:new Date().toISOString(), creadoEn:new Date().toISOString() });
+      await c.FS.updateDoc(c.FS.doc(c.db,COL,m._uid), { sugerenciaEstado:'aprobada', textoAprobado:texto, aprobadoPor:quien });
+      editando=null; borradores.delete(m._uid);
+    }catch(e){ aprobando.delete(m._uid); alert('No se pudo aprobar: '+e.message); render(); }
+  }
+  function descartar(uid){
+    const c=fb(); if(!c||!c.db) return;
+    c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {sugerenciaEstado:'descartada'}).catch(e=>alert('Error: '+e.message));
+  }
+
+  function startSync(){
+    const c=fb(); if(!c||!c.db || unsub) return;
+    try{
+      unsub=c.FS.onSnapshot(c.FS.query(c.FS.collection(c.db,COL), c.FS.where('sugerenciaEstado','==','pendiente')),
+        snap=>{ DB=snap.docs.map(d=>({...d.data(),_uid:d.id})); render(); },
+        err=>console.warn('reconsultas:', err&&err.message||err));
+    }catch(e){ console.warn('no se pudo suscribir a reconsultas', e&&e.message||e); }
+  }
+  function stopSync(){ if(unsub){ try{unsub();}catch(e){} unsub=null; } DB=[]; abierto=false; render(); }
+
+  function boot(){
+    window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(startSync);
+    window.__afterLogout=window.__afterLogout||[]; window.__afterLogout.push(stopSync);
+    if(window.__fbctx && window.__fbctx.auth && window.__fbctx.auth.currentUser) startSync();
+    render();
+  }
+  boot();
+})();
+</script>
+
+<!-- =====================================================================
      MÓDULO BANDEJA INSTAGRAM (28/10) — lee lo que escribe el agente de Instagram
      (Cloudflare Worker vph-agente-instagram, carpeta agente-instagram\worker en Drive).
      Colección vph_ig_mensajes: {igsid, usuario, nombre, dir:'in'|'out'|'evento',
