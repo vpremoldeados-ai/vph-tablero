@@ -8055,7 +8055,7 @@ function buildFilterTable(cfg){
       { l:'📣 Aviso al grupo (venta cargada)', run:()=>window.__wa.modal({ titulo:'Aviso al grupo Producción/Entregas', destino:'Copiá y pegá en el grupo "VPH Producción/Entregas"',
           texto:'chicos hicimos una venta de '+resumenVenta(v)+' para '+(v.cliente||'—')+', ya está cargada en el sistema',
           alConfirmar(){ v.tareasHechas=Object.assign({},v.tareasHechas||{},{grupo:hoyISO}); persistVenta(v); } }) },
-      { l:'💬 Enviar presupuesto al cliente', run:()=>window.__wa.modal({ titulo:'Presupuesto → '+(v.cliente||''), telefono:tel, adjunto:'Presupuesto Nº '+(v.nroFactura||'')+'.pdf',
+      { l:'💬 Enviar presupuesto al cliente', run:()=>window.__wa.modal({ titulo:'Presupuesto → '+(v.cliente||''), telefono:tel, adjunto:'Presupuesto Nº '+(v.nroFactura||'')+'.pdf', abrirPdf:()=>window.__imprimir.presupuesto(v),
           texto:'Hola '+(nombre||'')+'! Te paso el presupuesto'+(v.nroFactura?' Nº '+v.nroFactura:'')+'. Total '+money2(k.total)+', válido 7 días. '+((window.__lineaEntrega&&window.__lineaEntrega(v.items))?window.__lineaEntrega(v.items)+' ':'')+'Cualquier duda me decís 😊' }) },
       { l:'💵 Recordatorio de cobro', hide: !(k.saldo>0.5), run:()=>window.__wa.modal({ titulo:'Cobro → '+(v.cliente||''), telefono:tel,
           texto:'Hola '+(nombre||'')+'! Cómo va? Alguna novedad del pago'+(v.nroFactura?' de la factura '+nro:'')+'? Mil gracias!',
@@ -8317,7 +8317,7 @@ function buildFilterTable(cfg){
     if(o){
       $('ec-print').onclick=()=>{ if(!(window.__imprimir&&window.__imprimir.estadoCuenta)){ alert('Módulo de Documentos no disponible.'); return; } window.__imprimir.estadoCuenta(estadoCuentaDe(ecCliente, ecDesde, ecHasta)); };
       $('ec-wa').onclick=()=>{ if(!window.__wa){ alert('Módulo de WhatsApp no disponible.'); return; } const oo=estadoCuentaDe(ecCliente, ecDesde, ecHasta);
-        window.__wa.modal({ titulo:'Estado de cuenta → '+(oo.cliente||''), telefono:window.__wa.telWa(oo.cliente, oo.cuit), adjunto:'Estado de cuenta '+(oo.cliente||'')+'.pdf', texto:textoEstadoCuentaWa(oo) }); };
+        window.__wa.modal({ titulo:'Estado de cuenta → '+(oo.cliente||''), telefono:window.__wa.telWa(oo.cliente, oo.cuit), adjunto:'Estado de cuenta '+(oo.cliente||'')+'.pdf', abrirPdf:()=>window.__imprimir.estadoCuenta(oo), texto:textoEstadoCuentaWa(oo) }); };
     }
   }
 
@@ -13011,7 +13011,7 @@ function buildFilterTable(cfg){
   function paraDoc(p){ return Object.assign({}, p, {tipoComprobante:'Presupuesto', nroFactura:(p.numero||''), puntoVenta:'', vencimiento:venceISO(p)}); }
   function enviarWa(p){ const kk=calc(p);
     if(window.__wa){ const nombre=window.__wa.primerNombre(p.cliente), tel=window.__wa.telWa(p.cliente,p.cuit);
-      window.__wa.modal({ titulo:'Presupuesto → '+(p.cliente||''), telefono:tel, adjunto:'Presupuesto '+(p.numero||'')+'.pdf',
+      window.__wa.modal({ titulo:'Presupuesto → '+(p.cliente||''), telefono:tel, adjunto:'Presupuesto '+(p.numero||'')+'.pdf', abrirPdf:()=>window.__presupuestoImprimir(p),
         texto:(p.estado==='enviado' && porVencer([p]).length) ? mensajeVencimiento(p, nombre) : 'Hola '+(nombre||'')+'! Te paso el presupuesto '+(p.numero||'')+'. Total '+money(kk.total)+', válido hasta el '+fmtFecha(venceISO(p))+'. '+((window.__lineaEntrega&&window.__lineaEntrega(p.items))?window.__lineaEntrega(p.items)+' ':'')+'Cualquier duda me decís 😊',
         alConfirmar(){ if((p.estado||'borrador')==='borrador'){ p.estado='enviado'; persist(p); } } });
     } else { alert('Módulo de WhatsApp no disponible.'); }
@@ -23734,9 +23734,9 @@ function buildFilterTable(cfg){
     const st=document.createElement('style'); st.textContent = `
       #doc-overlay{ position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:100000; overflow:auto; padding:24px 0; display:none; }
       #doc-overlay.open{ display:block; }
-      #doc-bar{ position:sticky; top:0; display:flex; gap:10px; justify-content:center; margin-bottom:16px; }
+      #doc-bar{ position:sticky; top:0; display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-bottom:16px; }
       #doc-bar button{ font:600 14px system-ui; padding:9px 18px; border-radius:9px; border:0; cursor:pointer; }
-      #doc-bar .pr{ background:#2563eb; color:#fff; } #doc-bar .cl{ background:#e5e7eb; color:#111; }
+      #doc-bar .pr{ background:#2563eb; color:#fff; } #doc-bar .sh{ background:#25D366; color:#fff; } #doc-bar .sh:disabled{ opacity:.7; cursor:wait; } #doc-bar .cl{ background:#e5e7eb; color:#111; }
       .doc-sheet{ width:210mm; min-height:296mm; margin:0 auto; background:#fff; color:#111; box-sizing:border-box;
         padding:14mm 12mm; box-shadow:0 8px 40px rgba(0,0,0,.35); font:12px/1.35 Arial,Helvetica,sans-serif; }
       .doc-sheet *{ box-sizing:border-box; }
@@ -23790,7 +23790,7 @@ function buildFilterTable(cfg){
       }`;
     document.head.appendChild(st);
     const ov=document.createElement('div'); ov.id='doc-overlay';
-    ov.innerHTML = '<div id="doc-bar"><button class="pr">🖨️ Imprimir / PDF</button><button class="cl">Cerrar</button></div><div id="doc-sheet-wrap"></div>';
+    ov.innerHTML = '<div id="doc-bar"><button class="pr">🖨️ Imprimir / PDF</button><button class="sh" style="display:none" title="Abre el cuadro Compartir de la computadora o del celular: elegí WhatsApp y el chat. El archivo no queda guardado en ninguna carpeta.">📲 Compartir PDF</button><button class="cl">Cerrar</button></div><div id="doc-sheet-wrap"></div>';
     document.body.appendChild(ov);
     // El nombre sugerido al "Guardar como PDF" del navegador sale del <title> de la página en el
     // momento de imprimir — no hay otra forma de controlarlo. Se pisa justo antes y se restaura después.
@@ -23798,12 +23798,93 @@ function buildFilterTable(cfg){
     ov.querySelector('.pr').onclick=()=>{ if(docFileName) document.title=docFileName; window.print();
       setTimeout(()=>{ document.title=tituloOriginal; }, 800); };
     window.addEventListener('afterprint', ()=>{ document.title=tituloOriginal; });
+    ov.querySelector('.sh').onclick=()=>compartirPdf();
+    if(puedeCompartirPdf()) ov.querySelector('.sh').style.display='';
     ov.querySelector('.cl').onclick=()=>ov.classList.remove('open');
     ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
   }
+  // ---------- 📲 Compartir el PDF sin guardarlo en la computadora (05/11, pedido de Marcelo) ----------
+  // Un navegador no puede copiar un PDF al portapapeles ni adjuntarlo a WhatsApp, pero sí entregárselo al
+  // cuadro "Compartir" del sistema (Windows y Android), que ofrece la app de WhatsApp. window.print() no
+  // devuelve el archivo, así que acá se dibuja la hoja y se arma el PDF en memoria: va como imagen (se ve
+  // igual, pero el texto no se puede seleccionar). 🖨️ Imprimir / PDF sigue siendo el de siempre.
+  const PDF_LIBS=[
+    {src:'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', integrity:'sha512-BNaRQnYJYiPSqHHDb58B0yaPfCu+Wgds8Gp/gU33kqBtgNS4tSPHuGibyoeqMV/TJlSKda6FXzoEyYGjTe+vXA==', listo:()=>window.html2canvas},
+    {src:'https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js', integrity:'sha512-plOdviVmws4Y3JAvbnpfKb2hVxKM1lCwsi3vmElYRj+tiDLffZ4FVUj5a8vyKJ9pIgl8JCAHEJ4D1iUKBecswg==', listo:()=>window.jspdf}];
+  const TXT_COMPARTIR='📲 Compartir PDF';
+  let pdfLibsProm=null, pdfDoc=null, pdfTurno=0;
+  function cargarLibsPdf(){
+    if(pdfLibsProm) return pdfLibsProm;
+    pdfLibsProm=Promise.all(PDF_LIBS.map(l=>new Promise((res,rej)=>{ if(l.listo()) return res();
+      const s=document.createElement('script'); s.src=l.src; s.integrity=l.integrity; s.crossOrigin='anonymous';
+      s.onload=()=>l.listo()?res():rej(new Error('la librería del PDF no cargó'));
+      s.onerror=()=>rej(new Error('no se pudo bajar la librería del PDF (¿sin conexión?)')); document.head.appendChild(s); })))
+      .catch(e=>{ pdfLibsProm=null; throw e; });
+    return pdfLibsProm;
+  }
+  function puedeCompartirPdf(){ try{ return !!(navigator.share && navigator.canShare && navigator.canShare({files:[new File(['x'],'x.pdf',{type:'application/pdf'})]})); }catch(e){ return false; } }
+  // Pura. Dónde cortar la hoja en páginas A4 sin partir un renglón. finales = dónde termina cada fila o
+  // bloque; forzados = saltos de hoja que pide el documento (recibos de sueldo en lote, lista de precios).
+  // Todo en px de la hoja. Devuelve [{desde,hasta,top}]: la franja de cada página y a qué altura se dibuja
+  // (la primera ya trae su margen en la hoja; las demás llevan mSup).
+  function cortesPaginaPdf(finales, forzados, altoPag, mSup, mInf){
+    const fin=finales.filter(x=>x>0).sort((a,b)=>a-b), alto=fin.length?fin[fin.length-1]:altoPag;
+    const saltos=(forzados||[]).filter(x=>x>1&&x<alto-1).sort((a,b)=>a-b);
+    const out=[]; let desde=0;
+    while(desde<alto-1){
+      const top=out.length?mSup:0, cabe=desde+altoPag-top, limite=cabe-mInf, salto=saltos.find(x=>x>desde+1);
+      let hasta;
+      if(salto!==undefined && salto<=cabe) hasta=salto;
+      else if(alto<=cabe) hasta=alto;
+      else { const c=fin.filter(x=>x>desde+1&&x<=limite).pop(); hasta=c!==undefined?c:limite; }
+      out.push({desde,hasta,top}); desde=hasta;
+    }
+    return out;
+  }
+  async function armarPdfHoja(sheet, nombre){
+    await cargarLibsPdf();
+    const W=sheet.offsetWidth, altoPag=W*297/210, mm=W/210, y0=sheet.getBoundingClientRect().top, finales=[], forzados=[];
+    sheet.querySelectorAll('*').forEach(el=>{ const cs=getComputedStyle(el), r=el.getBoundingClientRect();
+      if(el.parentElement===sheet || el.tagName==='TR') finales.push(r.bottom-y0);
+      if(/page|always/.test(cs.breakBefore+' '+cs.pageBreakBefore)) forzados.push(r.top-y0);
+      if(/page|always/.test(cs.breakAfter+' '+cs.pageBreakAfter)) forzados.push(r.bottom-y0); });
+    // Se saltea el resto de la app al copiar la página: si no, html2canvas clona TODAS las tablas del Tablero.
+    const cv=await window.html2canvas(sheet,{scale:2, backgroundColor:'#ffffff', logging:false, ignoreElements:n=>n.parentElement===document.body && n.id!=='doc-overlay'});
+    const k=cv.width/W, pdf=new window.jspdf.jsPDF({unit:'mm', format:'a4', compress:true});
+    cortesPaginaPdf(finales, forzados, altoPag, 14*mm, 12*mm).forEach((c,i)=>{
+      const hoja=document.createElement('canvas'); hoja.width=cv.width; hoja.height=Math.round(altoPag*k);
+      const g=hoja.getContext('2d'), alto=Math.round((c.hasta-c.desde)*k); g.fillStyle='#fff'; g.fillRect(0,0,hoja.width,hoja.height);
+      g.drawImage(cv, 0,Math.round(c.desde*k),cv.width,alto, 0,Math.round(c.top*k),cv.width,alto);
+      if(i) pdf.addPage('a4');
+      pdf.addImage(hoja.toDataURL('image/jpeg',.92),'JPEG',0,0,210,297,undefined,'FAST');
+    });
+    pdf.setProperties({title:nombre});
+    return new File([pdf.output('blob')], nombre+'.pdf', {type:'application/pdf'});
+  }
+  function btnCompartir(txt, ocupado){ const b=document.querySelector('#doc-bar .sh'); if(b){ b.textContent=txt; b.disabled=!!ocupado; } }
+  async function compartirPdf(){
+    const sheet=document.querySelector('#doc-sheet-wrap .doc-sheet'); if(!sheet) return;
+    const turno=pdfTurno, yaArmado=!!pdfDoc;
+    try{
+      if(!pdfDoc){ btnCompartir('⏳ Armando el PDF…',true);
+        const f=await armarPdfHoja(sheet, docFileName||'Documento');
+        if(turno!==pdfTurno) return;   // mientras se armaba abrieron otro documento: este ya no corresponde
+        pdfDoc=f; }
+      // Chrome solo abre el cuadro poco después de un clic: si armarlo tardó de más, hace falta otro toque.
+      if(!yaArmado && navigator.userActivation && !navigator.userActivation.isActive){ btnCompartir('📲 Listo: tocá para compartir'); return; }
+      btnCompartir(TXT_COMPARTIR);
+      await navigator.share({files:[pdfDoc], title:pdfDoc.name.replace(/\.pdf$/,'')});
+    }catch(e){
+      if(e&&e.name==='AbortError'){ btnCompartir(TXT_COMPARTIR); return; }   // cerró el cuadro sin elegir nada
+      if(e&&e.name==='NotAllowedError'&&pdfDoc){ btnCompartir('📲 Listo: tocá para compartir'); return; }
+      console.error('compartir PDF:',e); btnCompartir(TXT_COMPARTIR);
+      alert('No se pudo compartir el PDF: '+((e&&e.message)||e)+'\n\nUsá 🖨️ Imprimir / PDF, como siempre.');
+    }
+  }
   let docFileName='';
   function mostrar(sheetHtml, fileName){ ensureLayer(); const ov=document.getElementById('doc-overlay');
-    docFileName = fileName||'';
+    docFileName = fileName||''; pdfDoc=null; pdfTurno++; btnCompartir(TXT_COMPARTIR);
+    if(puedeCompartirPdf()) cargarLibsPdf().catch(()=>{});   // ya bajada, el primer toque llega a tiempo al cuadro
     document.getElementById('doc-sheet-wrap').innerHTML='<div class="doc-sheet">'+sheetHtml+'</div>'; ov.classList.add('open'); ov.scrollTop=0; }
   // Nombre de archivo sugerido: "DD-MM Tipo N° <número> <Cliente>" (pedido de Sofía, para poder
   // ordenar/buscar los PDF ya descargados sin abrirlos). Sin caracteres inválidos para Windows.
@@ -25083,6 +25164,7 @@ function buildFilterTable(cfg){
     // una lista no se puede generar ('' si se puede) — para no ofrecer mandar una que no existe.
     listaPreciosImagen: listaPreciosImagen,
     listaPreciosError: o => (listaPreciosDatos(o).error || ''),
+    compartirPdf: compartirPdf, puedeCompartirPdf: puedeCompartirPdf,
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
@@ -27428,7 +27510,8 @@ function buildFilterTable(cfg){
 <!-- =====================================================================
      MÓDULO WHATSAPP — mensajes de un toque calibrados al tono de Sofía.
      Vista previa editable + Copiar (grupo/transportista) o Abrir WhatsApp
-     (cliente individual, wa.me). NO adjunta PDFs (Sofía los arrastra).
+     (cliente individual, wa.me). El PDF no viaja en el link: con opts.abrirPdf, el botón
+     📎 Compartir el PDF lo entrega al cuadro Compartir del sistema.
      Expone window.__wa.{modal, telWa, primerNombre, DATOS_FISCALES, COND_PAGO}.
      ===================================================================== -->
 <script>
@@ -27464,7 +27547,7 @@ function buildFilterTable(cfg){
     document.body.appendChild(ov);
     ov.addEventListener('click',e=>{ if(e.target===ov) ov.style.display='none'; });
   }
-  // opts: { titulo, texto, telefono, destino, adjunto, alConfirmar }
+  // opts: { titulo, texto, telefono, destino, adjunto, abrirPdf, alConfirmar }
   // alConfirmar: callback que se dispara UNA vez cuando el usuario realmente actúa (Copiar o Abrir
   // WhatsApp) — para marcar tareas como hechas recién ahí, no al abrir el modal.
   function modal(opts){
@@ -27476,7 +27559,8 @@ function buildFilterTable(cfg){
       '<h3 style="margin:0 0 4px;font-size:15px">'+esc(opts.titulo||'Mensaje de WhatsApp')+'</h3>'+
       '<div style="font-size:12px;color:#666;margin:0 0 10px">'+(opts.destino?esc(opts.destino):(tel?('Abre el chat del cliente (verificá el N°: +'+esc(tel)+')'):'Copiá y pegá en el chat'))+'</div>'+
       '<textarea id="wa-text" rows="7" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;font:13px/1.55 system-ui;resize:vertical">'+esc(opts.texto||'')+'</textarea>'+
-      (opts.adjunto?'<div style="font-size:11.5px;color:#c98a06;margin-top:6px">📎 Acordate de adjuntar: '+esc(opts.adjunto)+' (descargalo con el botón 🖨️ y arrastralo al chat)</div>':'')+
+      (opts.adjunto&&!opts.abrirPdf?'<div style="font-size:11.5px;color:#c98a06;margin-top:6px">📎 Acordate de adjuntar: '+esc(opts.adjunto)+' (abrilo con 🖨️ y tocá 📲 Compartir PDF)</div>':'')+
+      (opts.abrirPdf?'<div style="font-size:11.5px;color:#666;margin-top:6px">Primero mandá el mensaje. Después: 📎 Compartir el PDF → WhatsApp → elegí el chat.</div><button id="wa-pdf" style="width:100%;margin-top:6px;background:#fff;color:#128C4B;border:1.5px solid #25D366;border-radius:9px;padding:9px;font:600 14px system-ui;cursor:pointer">📎 Compartir el PDF</button>':'')+
       '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'+
         (tel?'<button id="wa-open" style="flex:1;min-width:150px;background:#25D366;color:#fff;border:0;border-radius:9px;padding:10px;font:600 14px system-ui;cursor:pointer">Abrir WhatsApp</button>':'')+
         '<button id="wa-copy" style="flex:1;min-width:120px;background:#e5e7eb;color:#111;border:0;border-radius:9px;padding:10px;font:600 14px system-ui;cursor:pointer">Copiar</button>'+
@@ -27490,6 +27574,8 @@ function buildFilterTable(cfg){
       confirmar();
     };
     ov.querySelector('#wa-close').onclick=()=>{ ov.style.display='none'; };
+    const op=ov.querySelector('#wa-pdf');
+    if(op) op.onclick=()=>{ ov.style.display='none'; opts.abrirPdf(); const im=window.__imprimir; if(im&&im.puedeCompartirPdf&&im.puedeCompartirPdf()) im.compartirPdf(); };
     const ob=ov.querySelector('#wa-open');
     if(ob) ob.onclick=()=>{ window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(ta.value),'_blank'); confirmar(); };
   }
