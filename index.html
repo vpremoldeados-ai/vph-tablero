@@ -19013,8 +19013,15 @@ function buildFilterTable(cfg){
   function sugFotosHTML(m){
     const fs=Array.isArray(m&&m.sugFotos)?m.sugFotos.filter(f=>f&&String(f.url||'').startsWith('https://')):[];
     if(!fs.length) return '';
-    return '<div class="meta" style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--muted)">📎 Se manda con la imagen:</span>'+
-      fs.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.clave||'')+'"><img src="'+esc(f.url)+'" alt="'+esc(f.clave||'foto')+'" style="height:56px;border-radius:6px;border:1px solid var(--line)"></a>').join('')+'</div>';
+    // 11/11: una de estas URL puede ser un PDF (instructivo de colocación), no solo fotos — se distingue por la
+    // extensión y se muestra como chip de documento en vez de intentar dibujarlo como imagen.
+    return '<div class="meta" style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--muted)">📎 Se manda con:</span>'+
+      fs.map(f=>{
+        const esPdf=/\.pdf(\?|$)/i.test(String(f.url||''));
+        return esPdf
+          ? '<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.clave||'')+'" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);border-radius:6px;padding:3px 7px">📄 '+esc(String(f.url).split('/').pop()||'PDF')+'</a>'
+          : '<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.clave||'')+'"><img src="'+esc(f.url)+'" alt="'+esc(f.clave||'foto')+'" style="height:56px;border-radius:6px;border:1px solid var(--line)"></a>';
+      }).join('')+'</div>';
   }
   function adjuntosChipsHTML(uid){
     const l=adjuntosSug.get(uid)||[];
@@ -19060,7 +19067,7 @@ function buildFilterTable(cfg){
       const canal=waCanalEnvio();
       const adj=adjuntosSug.get(uid)||[];
       await c.FS.setDoc(c.FS.doc(c.db,COL_SAL,'sal_'+uid), { to, texto, pendienteUid:uid, estado:'aprobado', editada:!!editada, canal,
-        fotos:(Array.isArray(m.sugFotos)?m.sugFotos:[]).map(f=>f&&f.url).filter(Boolean),   // 07/11: imágenes etiquetadas, salen después del texto
+        fotos:(Array.isArray(m.sugFotos)?m.sugFotos:[]).map(f=>f&&f.url).filter(Boolean),   // 07/11: imágenes/PDF etiquetados ([FOTO_*]), salen después del texto
         adjuntos:adj.map(a=>({tipo:a.tipo,nombre:a.nombre,mime:a.mime||'',b64:a.b64})),    // 09/11: adjuntos de Sofía (canales web-lenovo y cloud)
         sugerenciaOriginal:sugTexto(m), aprobadoPor:quien, aprobadoEn:new Date().toISOString(), creadoEn:new Date().toISOString() });
       await c.FS.updateDoc(c.FS.doc(c.db,COL,uid), { sugerenciaEstado:'aprobada', textoAprobado:texto, aprobadoPor:quien });
@@ -19744,15 +19751,18 @@ function buildFilterTable(cfg){
       if(!reservado){ procesando.delete(s._uid); return; }
 
       const adj=Array.isArray(s.adjuntos)?s.adjuntos.filter(a=>a&&a.b64&&a.nombre&&(a.tipo==='imagen'||a.tipo==='documento')):[];
-      // 09/11: las fotos que eligió el agente ([FOTO_*], urls del Worker) también viajan: se bajan y van como imagen.
+      // 09/11: las fotos que eligió el agente ([FOTO_*], urls del Worker) también viajan: se bajan y van como imagen
+      // o documento según corresponda. 11/11: el agente empezó a mandar también PDFs (instructivos de colocación) con
+      // el mismo mecanismo — se distingue por la extensión de la URL, no por el nombre del campo (sigue siendo `fotos`).
       for(const u of (Array.isArray(s.fotos)?s.fotos:[])){
         try{
           if(!/^https:\/\/vph-agente-instagram\.vpremoldeados\.workers\.dev\//.test(String(u))) continue;
           const resp=await fetch(u); if(!resp.ok) continue;
           const blob=await resp.blob();
+          const esPdf=/\.pdf(\?|$)/i.test(String(u))||blob.type==='application/pdf';
           const b64=await new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=ko; fr.readAsDataURL(blob); });
-          if(b64) adj.push({ tipo:'imagen', nombre:String(u).split('/').pop()||'foto.jpg', mime:blob.type||'image/jpeg', b64 });
-        }catch(e){ console.warn('no se pudo bajar la foto', u, e&&e.message||e); }
+          if(b64) adj.push({ tipo:esPdf?'documento':'imagen', nombre:String(u).split('/').pop()||(esPdf?'documento.pdf':'foto.jpg'), mime:blob.type||(esPdf?'application/pdf':'image/jpeg'), b64 });
+        }catch(e){ console.warn('no se pudo bajar la foto/documento', u, e&&e.message||e); }
       }
       try{
         const timeout=120000 + adj.length*90000;
