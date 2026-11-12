@@ -15054,6 +15054,11 @@ function buildFilterTable(cfg){
     if(l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO) p*=1.5; return p; }
   // Un presupuesto "dormido": ya se cotizó (o está en reconsulta) y el recordatorio quedó vencido.
   const dormido=l=> ['cotizado','reconsulta1','reconsulta2','reconsulta3'].includes(l.estado||'nuevo') && !!l.proximoSeguimiento && l.proximoSeguimiento<hoyISO;
+  // 12/11 (pedido de Sofía): el número de WhatsApp del cliente A LA VISTA y clickeable, debajo del 📲 Escribir de cada fila.
+  // El número abre el chat VACÍO (para escribirle con tus palabras); el 📲 Escribir abre el mismo chat con el mensaje de la etapa
+  // ya escrito. Sin teléfono no se dibuja nada: ahí el panel ya dice "sin tel.".
+  const telWaHtml=(tel,wa)=>{ const t=String(tel||'').trim(); if(!wa || !t) return '';
+    return '<div style="margin-top:3px"><a href="'+wa+'" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:600;color:#128c7e;text-decoration:none" title="Abrir el chat de WhatsApp con '+esc(t)+' (sin mensaje escrito)">💬 '+esc(t)+'</a></div>'; };
   // 12/11 (pedido de Sofía): a quién hay que escribirle HOY. Todos los leads ACTIVOS (con o sin monto, en cualquier etapa,
   // 'nuevo' incluido) cuyo próximo contacto ya llegó: VENCIDOS (fecha anterior a hoy, el más atrasado primero) y los de HOY.
   // Antes solo salían los que tenían monto (ranking) o los ya cotizados (dormidos): un lead nuevo sin monto con el
@@ -15157,7 +15162,7 @@ function buildFilterTable(cfg){
     const o=oportunidadesStock(DB.leads, rp); if(!rp || !o.exceso.length) return '';
     const filaLead=x=>'<tr><td><b>'+esc(x.lead.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">cotizó '+esc(x.prod.nombre)+'</div></td>'+
       '<td data-sortval="'+montoLead(x.lead)+'"><b>'+money(montoLead(x.lead))+'</b></td>'+
-      '<td>'+(waLink(x.lead.telefono)?'<a class="cmp-rowbtn" href="'+waLink(x.lead.telefono)+'?text='+encodeURIComponent(mensajeStockLead(x.lead,x.prod,x.cantidad))+'" target="_blank" rel="noopener">📲 Avisarle</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+'<button class="cmp-rowbtn" data-prio-edit="'+esc(x.lead._uid)+'">Abrir</button></td></tr>';
+      '<td>'+(waLink(x.lead.telefono)?'<a class="cmp-rowbtn" href="'+waLink(x.lead.telefono)+'?text='+encodeURIComponent(mensajeStockLead(x.lead,x.prod,x.cantidad))+'" target="_blank" rel="noopener">📲 Avisarle</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+'<button class="cmp-rowbtn" data-prio-edit="'+esc(x.lead._uid)+'">Abrir</button>'+telWaHtml(x.lead.telefono,waLink(x.lead.telefono))+'</td></tr>';
     return '<h4 style="margin:14px 0 4px">📦 Stock para empujar esta semana</h4>'+
       '<p class="note" style="margin:0 0 6px">Curado y sin comprometer, por encima del mínimo. Hay que <b>venderlo antes de fabricar más</b>.</p>'+
       '<div class="tbl-wrap"><table><thead><tr><th>Producto</th><th>Disponible (u)</th><th>Sobre el mínimo (u)</th><th>Sobrante (kg)</th></tr></thead><tbody>'+
@@ -15202,7 +15207,7 @@ function buildFilterTable(cfg){
       r.slice(0,20).map(x=>{ const wa=waLink(x.l.telefono); return '<tr><td><b>'+esc(x.l.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">'+esc(resumenPedido(x.l))+'</div></td>'+
         '<td>'+esc(x.l.motivoPerdida||'Sin motivo')+'</td><td data-sortval="'+montoLead(x.l)+'">'+(montoLead(x.l)>0?money(montoLead(x.l)):'—')+'</td><td data-sortval="'+x.dias+'">'+x.dias+' d</td>'+
         '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeRetomar(x.l))+'" target="_blank" rel="noopener">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
-          '<button class="cmp-rowbtn" data-prio-retomado="'+esc(x.l._uid)+'" title="Ya le escribí: no vuelve a salir en esta lista">✓ Ya le escribí</button></td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
+          '<button class="cmp-rowbtn" data-prio-retomado="'+esc(x.l._uid)+'" title="Ya le escribí: no vuelve a salir en esta lista">✓ Ya le escribí</button>'+telWaHtml(x.l.telefono,wa)+'</td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
   }
   // ---------- 🔁 Recompra y venta cruzada (29/09, plan de ventas de Marcelo) ----------
   // Vender a quien ya compró es lo más barato que hay: ya nos conoce, ya confió. Se leen las ventas que el módulo
@@ -15255,7 +15260,7 @@ function buildFilterTable(cfg){
       r.slice(0,20).map(o=>{ let tel=''; try{ tel=(window.__wa&&window.__wa.telWa)?window.__wa.telWa(o.nombre,o.cuit):''; }catch(e){} const wa=waLink(tel);
         return '<tr><td><b>'+esc(o.nombre)+'</b></td><td>'+esc(ETIQ_RECOMPRA[o.tipo])+'</td><td data-sortval="'+o.dias+'">hace '+o.dias+' d</td><td data-sortval="'+o.monto+'">'+o.cant+' compra'+(o.cant!==1?'s':'')+' · '+money(o.monto)+'</td>'+
           '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeRecompra(o))+'" target="_blank" rel="noopener">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
-          '<button class="cmp-rowbtn" data-prio-recompra="'+esc(o.norm)+'">✓ Ya le escribí</button></td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
+          '<button class="cmp-rowbtn" data-prio-recompra="'+esc(o.norm)+'">✓ Ya le escribí</button>'+telWaHtml(tel,wa)+'</td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
   }
   function renderPrio(){
     const box=$('crm-prio-panel'); if(!box) return;
@@ -15276,8 +15281,8 @@ function buildFilterTable(cfg){
         '<td><span style="background:'+e.c+';color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">'+esc(e.l)+'</span></td>'+
         '<td data-sortval="'+montoLead(l)+'">'+(montoLead(l)>0?'<b>'+money(montoLead(l))+'</b>':'<span style="color:var(--muted)">—</span>')+'</td>'+
         '<td data-sortval="'+String(l.proximoSeguimiento||'99999999').replace(/\D/g,'')+'">'+(l.proximoSeguimiento?(l.proximoSeguimiento<hoyISO?'<span style="color:#d64541;font-weight:700">⚠ vencido'+(diasDesdeISO(l.proximoSeguimiento,hoyISO)>0?' hace '+diasDesdeISO(l.proximoSeguimiento,hoyISO)+' d':'')+'</span>':(l.proximoSeguimiento===hoyISO?'<span style="color:#c98a06;font-weight:700">hoy</span>':esc(fmtFecha(l.proximoSeguimiento)))):'—')+'</td>'+
-        '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(msg)+'" target="_blank" rel="noopener" title="Abre el chat con el mensaje de esta etapa ya escrito">📲 Escribir</a> ':'')+
-          '<button class="cmp-rowbtn" data-prio-edit="'+esc(l._uid)+'">Abrir</button></td></tr>'; };
+        '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(msg)+'" target="_blank" rel="noopener" title="Abre el chat con el mensaje de esta etapa ya escrito">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
+          '<button class="cmp-rowbtn" data-prio-edit="'+esc(l._uid)+'">Abrir</button>'+telWaHtml(l.telefono,wa)+'</td></tr>'; };
     const tabla=(rows)=> '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Etapa</th><th>Monto</th><th>Seguimiento</th><th></th></tr></thead><tbody>'+rows.map(fila).join('')+'</tbody></table></div>';
     box.innerHTML=
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h3 style="margin:0">🎯 Prioridad de hoy</h3><button class="cmp-x" id="crm-prio-cerrar" style="margin-left:auto" title="Ocultar">✕</button></div>'+
