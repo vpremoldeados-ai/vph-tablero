@@ -8946,10 +8946,18 @@ function buildFilterTable(cfg){
   let retArchivoPend=null;   // PDF del certificado leído pero todavía no archivado (se sube al Guardar)
   let cobroAutoRecibo=false;   // se prende al abrir el cobro DESDE la Ruta de cobranza: imprime el recibo solo al guardar
   let cobroMedioSugerido='';   // medio que trae la parada de la ruta (Efectivo/Cheque), se aplica una sola vez
+  // 11/11: callback opcional para el PRIMER cobro nuevo que se guarda (nunca en una edición) — lo usa la
+  // Bandeja WhatsApp → "Registrar cobro" para armar el recibo en PDF y adjuntarlo al mensaje, sin abrir la
+  // vista previa (eso ya lo hace `cobroAutoRecibo` para la Ruta de cobranza; los dos no se usan juntos).
+  let cobroOnSaved=null;
   // autoRecibo/medioSugerido: los usa la Ruta de cobranza — al guardar el cobro imprime el recibo
   // solo, y el <select> de medio arranca en el que se eligió al agregar la parada.
-  function openCobro(v, autoRecibo, medioSugerido){ cobrandoUid=v._uid; cobroEdit=null; retArchivoPend=null;
-    cobroAutoRecibo=!!autoRecibo; cobroMedioSugerido=medioSugerido||''; drawCobro(); $('vnt-modal-cobro').classList.add('open'); }
+  function openCobro(v, autoRecibo, medioSugerido, onSaved){ cobrandoUid=v._uid; cobroEdit=null; retArchivoPend=null;
+    cobroAutoRecibo=!!autoRecibo; cobroMedioSugerido=medioSugerido||''; cobroOnSaved=(typeof onSaved==='function')?onSaved:null;
+    drawCobro(); $('vnt-modal-cobro').classList.add('open'); }
+  // 11/11: para abrir el cobro desde OTRO módulo (Bandeja WhatsApp → "Registrar cobro"), sin el camino de
+  // autoRecibo (que abre la vista previa) — acá el llamador recibe el cobro armado y arma su propio PDF.
+  window.__abrirCobroVenta = (v, medioSugerido, onSaved) => openCobro(v, false, medioSugerido, onSaved);
   function drawCobro(){
     const v=DB.ventas.find(x=>x._uid===cobrandoUid); if(!v){ $('vnt-modal-cobro').classList.remove('open'); return; }
     v.cobros=v.cobros||[]; const kk=calc(v);
@@ -9200,6 +9208,9 @@ function buildFilterTable(cfg){
       // Cobro NUEVO (no edición) abierto desde la Ruta de cobranza → el recibo sale solo, una sola vez.
       if(cobroAutoRecibo && !prev){ cobroAutoRecibo=false;
         try{ if(window.__imprimir&&window.__imprimir.recibo) window.__imprimir.recibo(lv); }catch(e){} }
+      // 11/11: ídem para quien abrió el cobro con __abrirCobroVenta (Bandeja WhatsApp → "Registrar cobro").
+      if(cobroOnSaved && !prev){ const cb=cobroOnSaved; cobroOnSaved=null;
+        try{ cb(rec, lv); }catch(e){ console.error('cobro onSaved:', e); } }
       drawCobro(); };
   }
 
@@ -19023,6 +19034,18 @@ function buildFilterTable(cfg){
     const p=window.__presupuestoPorUid(m.presupuestoUid);
     return (p && p.estado!=='convertido') ? p : null;
   }
+  // 11/11: la venta de este cliente que todavía tiene saldo — primero por el presupuesto que dejó el
+  // agente (si ya se cerró como venta), si no por el lead (puede tener varias; la más reciente). Umbral
+  // $0,50 para no mostrar "cobrar" por centavos de redondeo (mismo criterio que la cuenta corriente).
+  function ventaCobrable(m){
+    if(!m || typeof window.__ventasTodas!=='function' || typeof window.__ventaCalc!=='function') return null;
+    const todas=window.__ventasTodas();
+    let v = m.presupuestoUid ? todas.find(x=>x.presupuestoUid===m.presupuestoUid) : null;
+    if(!v && m.leadUid){ const des=todas.filter(x=>x.leadUid===m.leadUid).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))); v=des[0]; }
+    if(!v) return null;
+    let saldo=0; try{ saldo=window.__ventaCalc(v).saldo; }catch(e){ return null; }
+    return saldo>0.5 ? v : null;
+  }
   // Pura: el HTML de los botones/estado de la sugerencia de un mensaje. Solo los docs del modo sugerir.
   // 07/11: las imágenes etiquetadas ([FOTO_PISOS] etc.) que el Worker va a mandar DESPUÉS del texto, como miniaturas.
   function sugFotosHTML(m){
@@ -19058,15 +19081,19 @@ function buildFilterTable(cfg){
     // confirma forma de pago/factura y guarda) y, al guardar, arma el PDF y lo deja adjunto a ESTE mensaje.
     const pCerrable=presupuestoCerrable(m);
     const btnCerrar=pCerrable ? '<button class="kb-move" style="background:var(--blue);color:#fff;border-color:var(--blue)" data-sug-cerrar="'+esc(m._uid)+'" title="Convierte el presupuesto '+esc(pCerrable.numero||'')+' en venta y arma el PDF">💰 Cerrar venta ('+esc(pCerrable.numero||'')+')</button>' : '';
+    // 11/11: "Registrar cobro" — abre el cobro de la venta YA cerrada de este cliente (Sofía carga medio/
+    // monto/cuenta y guarda) y arma el recibo en PDF, adjunto a ESTE mensaje. Solo si queda saldo (>$0,50).
+    const vCobrable=ventaCobrable(m);
+    const btnCobrar=vCobrable ? '<button class="kb-move" style="background:#0f9d58;color:#fff;border-color:#0f9d58" data-sug-cobrar="'+esc(m._uid)+'" title="Registra el cobro y arma el recibo en PDF">✅ Registrar cobro ($'+Math.round(window.__ventaCalc(vCobrable).saldo).toLocaleString('es-AR')+')</button>' : '';
     if(editando){
       const txt=borrador!=null?borrador:sugTexto(m);
       return '<div style="margin-top:6px"><textarea class="wab-sug-ed" data-sug-ta="'+esc(m._uid)+'" rows="4" style="width:100%;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--blue);border-radius:8px;resize:vertical">'+esc(txt)+'</textarea>'+
         adj+
-        '<div class="acts" style="margin-top:5px">'+btnCerrar+'<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'+
+        '<div class="acts" style="margin-top:5px">'+btnCerrar+btnCobrar+'<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'+
         '<button class="kb-move" data-sug-adj="'+esc(m._uid)+'" title="Adjuntar imagen o PDF">📎 Adjuntar</button>'+
         '<button class="kb-move" data-sug-canc="'+esc(m._uid)+'">Cancelar</button> '+chipCanal+'</div></div>';
     }
-    return sugFotosHTML(m)+adj+'<div class="acts" style="margin-top:5px">'+btnCerrar+
+    return sugFotosHTML(m)+adj+'<div class="acts" style="margin-top:5px">'+btnCerrar+btnCobrar+
       '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-env="'+esc(m._uid)+'">📤 Enviar así</button>'+
       '<button class="kb-move" data-sug-edit="'+esc(m._uid)+'">✏️ Editar y enviar</button>'+
       '<button class="kb-move" data-sug-adj="'+esc(m._uid)+'" title="Adjuntar imagen o PDF">📎 Adjuntar</button>'+
@@ -19076,6 +19103,8 @@ function buildFilterTable(cfg){
   // "Pasar a venta" de Presupuestos: Sofía confirma forma de pago/factura y lo guarda ELLA) y, recién al
   // guardar, arma el PDF del detalle y lo deja como adjunto de ESTE mensaje — listo para revisar y enviar.
   // No escribe nada en vph_ventas por su cuenta: usa el mismo __ventaDesdePresupuesto que ya usa Presupuestos.
+  // 11/11: compartida por "Cerrar venta" y "Registrar cobro" — el File en memoria a base64 para adjuntarlo.
+  function fileABase64(file){ return new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=ko; fr.readAsDataURL(file); }); }
   async function cerrarVentaDesdeBandeja(uid){
     const m=DB.pendientes.find(x=>x._uid===uid); if(!m){ alert('No encuentro ese mensaje (¿se actualizó la Bandeja?).'); return; }
     const p=presupuestoCerrable(m);
@@ -19094,7 +19123,7 @@ function buildFilterTable(cfg){
       try{
         if(window.__imprimir && window.__imprimir.pdfBlobDetalleVenta){
           const file=await window.__imprimir.pdfBlobDetalleVenta(v);
-          const b64=await new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=ko; fr.readAsDataURL(file); });
+          const b64=await fileABase64(file);
           const l=adjuntosSug.get(uid)||[]; l.push({tipo:'documento', nombre:file.name, mime:'application/pdf', b64}); adjuntosSug.set(uid,l);
           pdfOk=true;
         }
@@ -19103,6 +19132,35 @@ function buildFilterTable(cfg){
       render();
       alert(pdfOk ? 'Venta guardada y PDF adjuntado al mensaje. Revisalo antes de mandarlo.'
                   : 'La venta se guardó, pero no se pudo armar el PDF solo. Generalo desde Documentos (🖨️ Venta) y adjuntalo acá con 📎.');
+    });
+  }
+  // 11/11: registra el cobro de la venta ya cerrada de este cliente (abre el form de cobro de Ventas,
+  // igual que el botón 💵/🖐 de la fila: Sofía carga medio, monto y cuenta, y lo guarda ELLA) y, recién al
+  // guardar, arma el recibo en PDF y lo deja como adjunto de ESTE mensaje. No escribe cobros por su cuenta:
+  // usa el mismo __abrirCobroVenta (openCobro) que ya usa Ventas/Ruta de cobranza.
+  async function registrarCobroDesdeBandeja(uid){
+    const m=DB.pendientes.find(x=>x._uid===uid); if(!m){ alert('No encuentro ese mensaje (¿se actualizó la Bandeja?).'); return; }
+    const v=ventaCobrable(m);
+    if(!v){ alert('No hay una venta con saldo pendiente para este cliente (¿ya está cobrada, o todavía no se cerró la venta?).'); return; }
+    if(typeof window.__abrirCobroVenta!=='function'){ alert('Módulo de Ventas no disponible.'); return; }
+    const saldo=window.__ventaCalc(v).saldo;
+    if(!confirm('¿Registrar el cobro de '+(v.cliente||m.nombre||'')+'?\n\nSaldo pendiente: $'+Math.round(saldo).toLocaleString('es-AR')+'.\n\nSe abre el cobro en Ventas: cargá el medio, el monto y la cuenta, y guardalo ahí. Al guardar, se arma el recibo en PDF y queda adjunto a este mensaje.')) return;
+    const irA=nombre=>{ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes(nombre)); if(nav) nav.click(); };
+    irA('Ventas');
+    window.__abrirCobroVenta(v, '', async (rec, lv)=>{
+      let pdfOk=false;
+      try{
+        if(window.__imprimir && window.__imprimir.pdfBlobRecibo){
+          const file=await window.__imprimir.pdfBlobRecibo(lv);
+          const b64=await fileABase64(file);
+          const l=adjuntosSug.get(uid)||[]; l.push({tipo:'documento', nombre:file.name, mime:'application/pdf', b64}); adjuntosSug.set(uid,l);
+          pdfOk=true;
+        }
+      }catch(e){ console.error('PDF del recibo recién cobrado:', e&&e.message||e); }
+      irA('Bandeja WhatsApp');
+      render();
+      alert(pdfOk ? 'Cobro registrado y recibo adjuntado al mensaje. Revisalo antes de mandarlo.'
+                  : 'El cobro se registró, pero no se pudo armar el recibo solo. Generalo desde Ventas (🖨️ Recibo) y adjuntalo acá con 📎.');
     });
   }
   async function aprobarSugerencia(uid, texto, editada){
@@ -19140,6 +19198,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-sug-adj]').forEach(b=> b.onclick=()=>adjuntarAbrir(b.dataset.sugAdj));
     cont.querySelectorAll('button[data-sug-aqui]').forEach(b=> b.onclick=()=>{ const uid=b.dataset.sugAqui, i=Number(b.dataset.sugAi)||0; const l=adjuntosSug.get(uid)||[]; l.splice(i,1); if(l.length) adjuntosSug.set(uid,l); else adjuntosSug.delete(uid); render(); });
     cont.querySelectorAll('button[data-sug-cerrar]').forEach(b=> b.onclick=()=>cerrarVentaDesdeBandeja(b.dataset.sugCerrar));
+    cont.querySelectorAll('button[data-sug-cobrar]').forEach(b=> b.onclick=()=>registrarCobroDesdeBandeja(b.dataset.sugCobrar));
   }
   // 09/11: adjuntar un archivo (imagen o PDF) a una sugerencia. No toca Firestore: queda en memoria hasta
   // que Sofía aprueba. Tope 10 MB por archivo (WhatsApp Cloud API acepta hasta 100 MB para PDF, pero el
@@ -25915,6 +25974,18 @@ function buildFilterTable(cfg){
     },
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
+    // 11/11: la MISMA hoja de arriba, pero devuelta como File en memoria — la usa la Bandeja WhatsApp →
+    // "Registrar cobro" para adjuntar el recibo al mensaje sin que Sofía tenga que bajarlo y resubirlo.
+    pdfBlobRecibo: async v => {
+      const nombre = nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha);
+      mostrar(recibo(v), nombre);
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const sheet=document.querySelector('#doc-sheet-wrap .doc-sheet');
+      if(!sheet) throw new Error('no se pudo armar la vista previa del recibo');
+      const file = await armarPdfHoja(sheet, nombre);
+      const ov=document.getElementById('doc-overlay'); if(ov) ov.classList.remove('open');
+      return file;
+    },
     ordenPago:    o => mostrar(ordenPago(o), nombreArchivo('Orden de Pago', '', o.proveedor, o.fecha)),
     reciboCtaCte: o => mostrar(reciboCtaCte(o), nombreArchivo('Recibo Cta Cte', '', o.proveedor, o.fecha)),
     rutaCobranza: o => mostrar(rutaCobranza(o), nombreArchivo('Ruta de Cobranza', '', '', o.fecha)),
