@@ -1936,10 +1936,10 @@ window.__demoSeed = function () {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
           <input type="text" class="search-box" id="crm-buscar" placeholder="Buscar cliente, teléfono, producto, lugar..." style="margin-left:0">
+          <button class="kb-viewbtn" id="crm-view-hoy" title="A quién reconsultar hoy, en orden de prioridad: cambiás el estado y la fecha de cada lead desde ahí mismo">🎯 Prioridad de hoy</button>
           <button class="kb-viewbtn" id="crm-view-lista" title="Vista en lista, con filtros por columna">📋 Lista</button>
           <button class="kb-viewbtn" id="crm-view-tablero" title="Vista en columnas por etapa">🗂 Tablero</button>
           <button class="kb-viewbtn" id="crm-ver-archivados" title="Los leads Confirmados (venta) y Perdidos se archivan solos y no aparecen en el listado — tocá acá para verlos igual">📦 Ver archivados</button>
-          <button class="kb-viewbtn" id="crm-prio-btn" title="Los leads que más plata mueven y a los que ya toca llamar, los presupuestos dormidos y por qué se pierden las ventas">🎯 Prioridad de hoy</button>
           <span class="result-count" id="crm-count" style="margin:0 0 0 auto"></span>
         </div>
         
@@ -15345,7 +15345,8 @@ function buildFilterTable(cfg){
   let DB={leads:[]}, q='', unsub=null, uidSeq=Date.now();
    
    
-  let VIEW = localStorage.getItem('vph_crm_view')==='lista' ? 'lista' : 'tablero';
+   
+  let VIEW = (()=>{ const v=localStorage.getItem('vph_crm_view'); return (v==='hoy'||v==='lista'||v==='tablero') ? v : 'hoy'; })();
    
    
   let crmTab = (()=>{ const v=localStorage.getItem('vph_crm_tab_v1'); return (v==='topes'||v==='basenivel') ? v : 'leads'; })();
@@ -15622,55 +15623,76 @@ function buildFilterTable(cfg){
           '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeRecompra(o))+'" target="_blank" rel="noopener">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
           '<button class="cmp-rowbtn" data-prio-recompra="'+esc(o.norm)+'">✓ Ya le escribí</button>'+telWaHtml(tel,wa)+'</td></tr>'; }).join('')+'</tbody></table></div>'+(r.length>20?'<p class="note">… y '+(r.length-20)+' más.</p>':'');
   }
-  function renderPrio(){
+   
+   
+   
+   
+   
+   
+  function listaHoy(leads, hoy){
+    const ag=agendaHoy(leads, hoy);
+    const f=l=>String(l.proximoSeguimiento||'').slice(0,10);
+    return ag.vencidos.concat(ag.hoy).sort((a,b)=>{
+      const pa=puntajeLead(a), pb=puntajeLead(b);
+      if((pa>0)!==(pb>0)) return pa>0?-1:1;
+      return (pb-pa) || f(a).localeCompare(f(b)); });
+  }
+   
+   
+  function yaLeEscribi(l){
+    const dias=HORARIO_SEGUIMIENTO()[l.estado||'nuevo']||0;
+    l.contactado=true; l.proximoSeguimiento = dias>0 ? addDiasHabiles(hoyISO, dias) : ''; l.seguiAgendado=hoyISO;
+    persist(l); return l.proximoSeguimiento;
+  }
+  let prioAbierto={};    
+  function renderPrio(leadsVista){
     const box=$('crm-prio-panel'); if(!box) return;
-    if(box.dataset.abierto!=='1'){ box.style.display='none'; return; }
+    if(VIEW!=='hoy'){ box.style.display='none'; return; }
     box.style.display='';
-    const activos=(DB.leads||[]).filter(l=>ACTIVOS.includes(l.estado||'nuevo'));
-    const sinMonto=activos.filter(l=>montoLead(l)<=0);
-    const top=activos.filter(l=>montoLead(l)>0).sort((a,b)=>puntajeLead(b)-puntajeLead(a)).slice(0,10);
-    const dorm=activos.filter(dormido).filter(l=>montoLead(l)>0).sort((a,b)=>montoLead(b)-montoLead(a));
-    const totDorm=dorm.reduce((s,l)=>s+montoLead(l),0);
-    const ag=agendaHoy(DB.leads, hoyISO);
-    const MAX_AG=40;
+    const lista=listaHoy(leadsVista||DB.leads||[], hoyISO);
+    const MAX_HOY=100;
+    const nVenc=lista.filter(l=>String(l.proximoSeguimiento).slice(0,10)<hoyISO).length, nHoy=lista.length-nVenc;
+    const sinMonto=lista.filter(l=>montoLead(l)<=0).length;
     const perd=(DB.leads||[]).filter(l=>l.estado==='perdido');
     const cuenta={}; perd.forEach(l=>{ const m=l.motivoPerdida||'Sin motivo cargado'; cuenta[m]=(cuenta[m]||0)+1; });
-    const fila=l=>{ const wa=waLink(l.telefono); const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
-      const msg=mensajeReconsulta(l);
-      return '<tr><td><b>'+esc(l.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">'+esc(resumenPedido(l))+'</div></td>'+
-        '<td><span style="background:'+e.c+';color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">'+esc(e.l)+'</span></td>'+
-        '<td data-sortval="'+montoLead(l)+'">'+(montoLead(l)>0?'<b>'+money(montoLead(l))+'</b>':'<span style="color:var(--muted)">—</span>')+'</td>'+
-        '<td data-sortval="'+String(l.proximoSeguimiento||'99999999').replace(/\D/g,'')+'">'+(l.proximoSeguimiento?(l.proximoSeguimiento<hoyISO?'<span style="color:#d64541;font-weight:700">⚠ vencido'+(diasDesdeISO(l.proximoSeguimiento,hoyISO)>0?' hace '+diasDesdeISO(l.proximoSeguimiento,hoyISO)+' d':'')+'</span>':(l.proximoSeguimiento===hoyISO?'<span style="color:#c98a06;font-weight:700">hoy</span>':esc(fmtFecha(l.proximoSeguimiento)))):'—')+'</td>'+
-        '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(msg)+'" target="_blank" rel="noopener" title="Abre el chat con el mensaje de esta etapa ya escrito">📲 Escribir</a> ':'<span style="color:#c0392b;font-size:11px">sin tel.</span> ')+
-          '<button class="cmp-rowbtn" data-prio-edit="'+esc(l._uid)+'">Abrir</button>'+telWaHtml(l.telefono,wa)+'</td></tr>'; };
-    const tabla=(rows)=> '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Etapa</th><th>Monto</th><th>Seguimiento</th><th></th></tr></thead><tbody>'+rows.map(fila).join('')+'</tbody></table></div>';
-    box.innerHTML=
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h3 style="margin:0">🎯 Prioridad de hoy</h3><button class="cmp-x" id="crm-prio-cerrar" style="margin-left:auto" title="Ocultar">✕</button></div>'+
-      metaHtml()+
-      (sinMonto.length?'<div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--amber);border-radius:8px;background:#fff8e6;font-size:12.5px;color:#7a5b00">⚠ <b>'+sinMonto.length+' lead'+(sinMonto.length!==1?'s':'')+' en gestión sin monto</b> (ni presupuesto ni estimado): no entran en el ranking. Cargales el monto estimado para priorizarlos.</div>':'')+
-      '<h4 style="margin:8px 0 4px">⏰ Para atender hoy: '+ag.vencidos.length+' vencido'+(ag.vencidos.length!==1?'s':'')+' · '+ag.hoy.length+' para hoy</h4>'+
-      '<p class="note" style="margin:0 0 6px">Todos los leads en gestión cuyo próximo contacto ya llegó, <b>tengan monto cargado o no</b>. Los vencidos van primero, del más atrasado al más reciente. Cada 📲 abre el chat con el mensaje de <b>su etapa</b>.</p>'+
-      (ag.vencidos.length?'<h5 style="margin:8px 0 4px;color:#d64541">🔴 Vencidos ('+ag.vencidos.length+')</h5>'+tabla(ag.vencidos.slice(0,MAX_AG))+(ag.vencidos.length>MAX_AG?'<p class="note">… y '+(ag.vencidos.length-MAX_AG)+' más (están en la lista del CRM, ordenada por Seguimiento).</p>':''):'')+
-      (ag.hoy.length?'<h5 style="margin:8px 0 4px;color:#c98a06">🟡 Para hoy ('+ag.hoy.length+')</h5>'+tabla(ag.hoy.slice(0,MAX_AG))+(ag.hoy.length>MAX_AG?'<p class="note">… y '+(ag.hoy.length-MAX_AG)+' más.</p>':''):'')+
-      (!ag.vencidos.length && !ag.hoy.length?'<p class="note">Ningún seguimiento vencido ni para hoy. 👏</p>':'')+
-      '<h4 style="margin:14px 0 4px">Los '+top.length+' que más plata mueven</h4>'+
-      (top.length?tabla(top):'<p class="note">No hay leads activos con monto cargado.</p>')+
-      '<h4 style="margin:14px 0 4px">😴 Presupuestos dormidos: '+dorm.length+' · '+money(totDorm)+'</h4>'+
-      '<p class="note" style="margin:0 0 6px">Ya cotizados, con el recordatorio vencido. Ordenados por monto. Cada botón 📲 abre el chat con el mensaje de <b>su etapa</b> (obra → stock disponible → precio con fecha límite).</p>'+
-      (dorm.length?tabla(dorm.slice(0,25)):'<p class="note">Ningún presupuesto dormido. 👏</p>')+(dorm.length>25?'<p class="note">… y '+(dorm.length-25)+' más.</p>':'')+
-      origenHtml()+
-      stockHtml()+
-      retomarHtml()+
-      recompraHtml()+
-      '<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
+    const fila=(l,i)=>{ const wa=waLink(l.telefono); const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
+      const f=String(l.proximoSeguimiento||'').slice(0,10), venc=f<hoyISO, dias=diasDesdeISO(f,hoyISO);
+      const nota=venc ? '<div class="segui-nota" style="color:var(--red)">⚠ vencido'+(dias>0?' hace '+dias+' d':'')+'</div>' : '<div class="segui-nota" style="color:var(--amber)">es hoy</div>';
+      return '<tr><td style="text-align:center;font-weight:800;color:var(--muted)">'+(i+1)+'</td>'+
+        '<td><b>'+esc(l.cliente||'(sin nombre)')+'</b>'+(l.contactado?' <span style="font-size:10px;color:var(--green);font-weight:700" title="Ya se hizo el primer contacto">✓</span>':'')+
+          '<div style="font-size:11px;color:var(--muted)">'+esc(resumenPedido(l))+'</div></td>'+
+        '<td><span class="est-pick"><select class="est-sel" data-move="'+esc(l._uid)+'" style="background-color:'+e.c+'" title="Cambiar el estado del lead">'+
+          ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===e.k?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></span></td>'+
+        '<td style="white-space:nowrap">'+(montoLead(l)>0?'<b>'+money(montoLead(l))+'</b>':'<span style="color:var(--muted)">—</span>')+'</td>'+
+        '<td><input type="date" class="segui-fecha'+(venc?' venc':' hoy')+'" data-segui="'+esc(l._uid)+'" value="'+esc(f)+'" title="Próximo contacto: cambialo acá mismo; al reprogramarlo sale de esta lista hasta que le toque">'+nota+'</td>'+
+        '<td><div class="acts">'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(mensajeReconsulta(l))+'" target="_blank" rel="noopener" title="Abre el chat con el mensaje de esta etapa ya escrito">📲 Escribir</a>':'<span style="color:#c0392b;font-size:11px">sin tel.</span>')+
+          '<button class="cmp-rowbtn" data-prio-escribi="'+esc(l._uid)+'" title="Lo anota como contactado y lo vuelve a agendar según su etapa, sin cambiarle el estado">✓ Ya le escribí</button>'+
+          '<button class="cmp-rowbtn" data-act="edit" data-id="'+esc(l._uid)+'">Abrir</button></div>'+telWaHtml(l.telefono,wa)+'</td></tr>'; };
+    const tabla=lista.length
+      ? '<div class="tbl-wrap"><table class="crm-tbl" id="crm-hoy-tabla"><thead><tr><th style="width:28px">#</th><th>Cliente</th><th>Estado</th><th>Monto</th><th>Próximo contacto</th><th></th></tr></thead><tbody>'+lista.slice(0,MAX_HOY).map(fila).join('')+'</tbody></table></div>'+
+        (lista.length>MAX_HOY?'<p class="note">… y '+(lista.length-MAX_HOY)+' más (están en la vista Lista, ordenada por Próximo contacto).</p>':'')
+      : '<p class="note">Ningún seguimiento vencido ni para hoy. 👏</p>';
+    const extras=stockHtml()+retomarHtml()+recompraHtml();
+    const motivos='<h4 style="margin:14px 0 4px">Por qué se pierden las ventas</h4>'+
       (perd.length?'<div style="display:flex;gap:8px;flex-wrap:wrap">'+Object.keys(cuenta).sort((a,b)=>cuenta[b]-cuenta[a]).map(m=>'<span style="border:1px solid var(--border);border-radius:10px;padding:4px 10px;font-size:12.5px"><b>'+cuenta[m]+'</b> · '+esc(m)+'</span>').join('')+'</div>':'<p class="note">Todavía no hay leads perdidos.</p>');
-    $('crm-prio-cerrar').onclick=()=>{ box.dataset.abierto='0'; renderPrio(); const b=$('crm-prio-btn'); if(b) b.classList.remove('active'); };
+    box.innerHTML=
+      '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px"><h3 style="margin:0">🎯 Prioridad de hoy</h3>'+
+        '<span style="font-size:13px">'+(lista.length?'<b style="color:#d64541">'+nVenc+' vencido'+(nVenc!==1?'s':'')+'</b> · <b style="color:#c98a06">'+nHoy+' para hoy</b>':'')+'</span></div>'+
+      metaHtml()+
+      (lista.length?'<p class="note" style="margin:0 0 6px">A quién reconsultar, <b>en orden</b>: primero los que más plata mueven (monto × chance de su etapa), después los que no tienen monto. Cambiá el <b>estado</b> o la <b>fecha</b> acá mismo: al reprogramarlo sale de la lista hasta que le toque. <b>✓ Ya le escribí</b> lo vuelve a agendar según su etapa.</p>':'')+
+      tabla+
+      (sinMonto?'<p class="note" style="margin:6px 0 0">⚠ '+sinMonto+' sin monto cargado (van al final): cargales el monto estimado para que entren en el orden.</p>':'')+
+      (extras?'<details data-prio-det="mas" style="margin-top:14px"'+(prioAbierto.mas?' open':'')+'><summary style="cursor:pointer;font-weight:700">➕ Más oportunidades de venta <span style="font-weight:400;color:var(--muted)">· stock para empujar, perdidos para retomar, clientes que ya compraron</span></summary>'+extras+'</details>':'')+
+      '<details data-prio-det="stats" style="margin-top:10px"'+(prioAbierto.stats?' open':'')+'><summary style="cursor:pointer;font-weight:700">📊 Estadísticas <span style="font-weight:400;color:var(--muted)">· de dónde vienen los leads y por qué se pierden</span></summary>'+origenHtml()+motivos+'</details>';
+    bindAcciones(box);    
+    box.querySelectorAll('[data-prio-escribi]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioEscribi); if(l) yaLeEscribi(l); });
     box.querySelectorAll('[data-prio-edit]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioEdit); if(l) openForm(l); });
     box.querySelectorAll('[data-prio-retomado]').forEach(b=> b.onclick=()=>{ const l=DB.leads.find(x=>x._uid==b.dataset.prioRetomado); if(!l) return; l.retomadoFecha=hoyISO; persist(l); });
-    box.querySelectorAll('[data-prio-recompra]').forEach(b=> b.onclick=()=>{ recompraMarcar(b.dataset.prioRecompra); renderPrio(); });
+    box.querySelectorAll('[data-prio-recompra]').forEach(b=> b.onclick=()=>{ recompraMarcar(b.dataset.prioRecompra); renderPrio(leadsVista); });
+    box.querySelectorAll('details[data-prio-det]').forEach(d=> d.ontoggle=()=>{ prioAbierto[d.dataset.prioDet]=d.open; });
     const bo=$('crm-prio-copiar-oferta'); if(bo) bo.onclick=()=>{ const rp=(window.__resumenProduccion?window.__resumenProduccion():null); const t=textoOfertaGeneral(oportunidadesStock(DB.leads,rp).exceso);
       if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>{ bo.textContent='✓ Copiado'; }, ()=>{ window.prompt('Copiá este texto:', t); }); else window.prompt('Copiá este texto:', t); };
-    box.querySelectorAll('table').forEach(t=>{ if(window.__ordenable) window.__ordenable(t); });
+    box.querySelectorAll('table').forEach(t=>{ if(window.__ordenable && t.id!=='crm-hoy-tabla') window.__ordenable(t); });    
   }
    
   function pedirMotivoPerdida(l, alOk, alCancelar){
@@ -15731,9 +15753,10 @@ function buildFilterTable(cfg){
      
     const ocultarArchivados = !verArchivados && !filtro.estado;
     const leadsVista = ocultarArchivados ? leads.filter(l=>!ARCHIVADOS.includes(l.estado||'nuevo')) : leads;
-    renderSinSegui(); renderPrio();
+    renderSinSegui(); renderPrio(leadsVista);
     if(VIEW==='lista') { drawTabla(leadsVista); $('crm-filtro-actividad').style.display='none'; }
-    else { renderFilteroActividadKanban(leadsParaConteos); drawBoard(leadsVista); }
+    else if(VIEW==='tablero') { renderFilteroActividadKanban(leadsParaConteos); drawBoard(leadsVista); }
+    else { $('crm-filtro-actividad').style.display='none'; }    
     const archivados = leads.length - leadsVista.length;
     $('crm-count').textContent = leadsVista.length+' leads'+(archivados?' · '+archivados+' archivados ocultos':'');
     $('crm-ver-archivados').classList.toggle('active', verArchivados);
@@ -15906,6 +15929,7 @@ function buildFilterTable(cfg){
     } else render();
   }
   function setView(v){ VIEW=v; localStorage.setItem('vph_crm_view', v);
+    $('crm-view-hoy').classList.toggle('active', v==='hoy');
     $('crm-view-lista').classList.toggle('active', v==='lista');
     $('crm-view-tablero').classList.toggle('active', v==='tablero');
      
@@ -15915,6 +15939,8 @@ function buildFilterTable(cfg){
     $('crm-filtros').style.display = 'flex';
     $('crm-board').style.display = v==='tablero' ? '' : 'none';
     $('crm-tabla-wrap').style.display = v==='lista' ? '' : 'none';
+    $('crm-prio-panel').style.display = v==='hoy' ? '' : 'none';
+    $('crm-ver-archivados').style.display = v==='hoy' ? 'none' : '';    
     render(); }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
    
@@ -16627,7 +16653,7 @@ function buildFilterTable(cfg){
   $('crm-view-lista').onclick=()=>setView('lista');
   $('crm-view-tablero').onclick=()=>setView('tablero');
   $('crm-ver-archivados').onclick=()=>{ verArchivados=!verArchivados; render(); };
-  $('crm-prio-btn').onclick=()=>{ const p=$('crm-prio-panel'); p.dataset.abierto=p.dataset.abierto==='1'?'0':'1'; $('crm-prio-btn').classList.toggle('active',p.dataset.abierto==='1'); renderPrio(); };
+  $('crm-view-hoy').onclick=()=>setView('hoy');
   $('crm-nuevo').onclick=()=>openForm(null);
   $('crm-preg-edit').onclick=()=>openPreg(null);
   $('crm-preg-cerrar').onclick=closePreg;
