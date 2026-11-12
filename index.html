@@ -15054,6 +15054,17 @@ function buildFilterTable(cfg){
     if(l.proximoSeguimiento && l.proximoSeguimiento<=hoyISO) p*=1.5; return p; }
   // Un presupuesto "dormido": ya se cotizó (o está en reconsulta) y el recordatorio quedó vencido.
   const dormido=l=> ['cotizado','reconsulta1','reconsulta2','reconsulta3'].includes(l.estado||'nuevo') && !!l.proximoSeguimiento && l.proximoSeguimiento<hoyISO;
+  // 12/11 (pedido de Sofía): a quién hay que escribirle HOY. Todos los leads ACTIVOS (con o sin monto, en cualquier etapa,
+  // 'nuevo' incluido) cuyo próximo contacto ya llegó: VENCIDOS (fecha anterior a hoy, el más atrasado primero) y los de HOY.
+  // Antes solo salían los que tenían monto (ranking) o los ya cotizados (dormidos): un lead nuevo sin monto con el
+  // seguimiento vencido no aparecía en ningún lado de este panel. No lee ni escribe nada: es una vista del pipeline.
+  function agendaHoy(leads, hoy){
+    const f=l=>String(l.proximoSeguimiento||'').slice(0,10);
+    const act=(leads||[]).filter(l=>ACTIVOS.includes(l.estado||'nuevo') && /^\d{4}-\d{2}-\d{2}$/.test(f(l)) && f(l)<=hoy);
+    const porMonto=(a,b)=>montoLead(b)-montoLead(a);
+    return { vencidos: act.filter(l=>f(l)<hoy).sort((a,b)=>f(a).localeCompare(f(b)) || porMonto(a,b)),
+             hoy: act.filter(l=>f(l)===hoy).sort(porMonto) };
+  }
   // Un mensaje distinto por etapa: no repetir "¿pudiste ver el presupuesto?".
   function mensajeReconsulta(l){
     const nom=String(l.cliente||'').trim().split(/\s+/)[0]||''; const hola='Hola'+(nom?' '+nom:'')+', ';
@@ -15255,14 +15266,16 @@ function buildFilterTable(cfg){
     const top=activos.filter(l=>montoLead(l)>0).sort((a,b)=>puntajeLead(b)-puntajeLead(a)).slice(0,10);
     const dorm=activos.filter(dormido).filter(l=>montoLead(l)>0).sort((a,b)=>montoLead(b)-montoLead(a));
     const totDorm=dorm.reduce((s,l)=>s+montoLead(l),0);
+    const ag=agendaHoy(DB.leads, hoyISO);
+    const MAX_AG=40;
     const perd=(DB.leads||[]).filter(l=>l.estado==='perdido');
     const cuenta={}; perd.forEach(l=>{ const m=l.motivoPerdida||'Sin motivo cargado'; cuenta[m]=(cuenta[m]||0)+1; });
     const fila=l=>{ const wa=waLink(l.telefono); const e=ESTADOS.find(x=>x.k===(l.estado||'nuevo'))||ESTADOS[0];
       const msg=mensajeReconsulta(l);
       return '<tr><td><b>'+esc(l.cliente||'(sin nombre)')+'</b><div style="font-size:11px;color:var(--muted)">'+esc(resumenPedido(l))+'</div></td>'+
         '<td><span style="background:'+e.c+';color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">'+esc(e.l)+'</span></td>'+
-        '<td data-sortval="'+montoLead(l)+'"><b>'+money(montoLead(l))+'</b></td>'+
-        '<td>'+(l.proximoSeguimiento?(l.proximoSeguimiento<hoyISO?'<span style="color:#d64541;font-weight:700">⚠ vencido</span>':(l.proximoSeguimiento===hoyISO?'<span style="color:#c98a06;font-weight:700">hoy</span>':esc(fmtFecha(l.proximoSeguimiento)))):'—')+'</td>'+
+        '<td data-sortval="'+montoLead(l)+'">'+(montoLead(l)>0?'<b>'+money(montoLead(l))+'</b>':'<span style="color:var(--muted)">—</span>')+'</td>'+
+        '<td data-sortval="'+String(l.proximoSeguimiento||'99999999').replace(/\D/g,'')+'">'+(l.proximoSeguimiento?(l.proximoSeguimiento<hoyISO?'<span style="color:#d64541;font-weight:700">⚠ vencido'+(diasDesdeISO(l.proximoSeguimiento,hoyISO)>0?' hace '+diasDesdeISO(l.proximoSeguimiento,hoyISO)+' d':'')+'</span>':(l.proximoSeguimiento===hoyISO?'<span style="color:#c98a06;font-weight:700">hoy</span>':esc(fmtFecha(l.proximoSeguimiento)))):'—')+'</td>'+
         '<td>'+(wa?'<a class="cmp-rowbtn" href="'+wa+'?text='+encodeURIComponent(msg)+'" target="_blank" rel="noopener" title="Abre el chat con el mensaje de esta etapa ya escrito">📲 Escribir</a> ':'')+
           '<button class="cmp-rowbtn" data-prio-edit="'+esc(l._uid)+'">Abrir</button></td></tr>'; };
     const tabla=(rows)=> '<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Etapa</th><th>Monto</th><th>Seguimiento</th><th></th></tr></thead><tbody>'+rows.map(fila).join('')+'</tbody></table></div>';
@@ -15270,7 +15283,12 @@ function buildFilterTable(cfg){
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h3 style="margin:0">🎯 Prioridad de hoy</h3><button class="cmp-x" id="crm-prio-cerrar" style="margin-left:auto" title="Ocultar">✕</button></div>'+
       metaHtml()+
       (sinMonto.length?'<div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--amber);border-radius:8px;background:#fff8e6;font-size:12.5px;color:#7a5b00">⚠ <b>'+sinMonto.length+' lead'+(sinMonto.length!==1?'s':'')+' en gestión sin monto</b> (ni presupuesto ni estimado): no entran en el ranking. Cargales el monto estimado para priorizarlos.</div>':'')+
-      '<h4 style="margin:8px 0 4px">Los '+top.length+' que más plata mueven</h4>'+
+      '<h4 style="margin:8px 0 4px">⏰ Para atender hoy: '+ag.vencidos.length+' vencido'+(ag.vencidos.length!==1?'s':'')+' · '+ag.hoy.length+' para hoy</h4>'+
+      '<p class="note" style="margin:0 0 6px">Todos los leads en gestión cuyo próximo contacto ya llegó, <b>tengan monto cargado o no</b>. Los vencidos van primero, del más atrasado al más reciente. Cada 📲 abre el chat con el mensaje de <b>su etapa</b>.</p>'+
+      (ag.vencidos.length?'<h5 style="margin:8px 0 4px;color:#d64541">🔴 Vencidos ('+ag.vencidos.length+')</h5>'+tabla(ag.vencidos.slice(0,MAX_AG))+(ag.vencidos.length>MAX_AG?'<p class="note">… y '+(ag.vencidos.length-MAX_AG)+' más (están en la lista del CRM, ordenada por Seguimiento).</p>':''):'')+
+      (ag.hoy.length?'<h5 style="margin:8px 0 4px;color:#c98a06">🟡 Para hoy ('+ag.hoy.length+')</h5>'+tabla(ag.hoy.slice(0,MAX_AG))+(ag.hoy.length>MAX_AG?'<p class="note">… y '+(ag.hoy.length-MAX_AG)+' más.</p>':''):'')+
+      (!ag.vencidos.length && !ag.hoy.length?'<p class="note">Ningún seguimiento vencido ni para hoy. 👏</p>':'')+
+      '<h4 style="margin:14px 0 4px">Los '+top.length+' que más plata mueven</h4>'+
       (top.length?tabla(top):'<p class="note">No hay leads activos con monto cargado.</p>')+
       '<h4 style="margin:14px 0 4px">😴 Presupuestos dormidos: '+dorm.length+' · '+money(totDorm)+'</h4>'+
       '<p class="note" style="margin:0 0 6px">Ya cotizados, con el recordatorio vencido. Ordenados por monto. Cada botón 📲 abre el chat con el mensaje de <b>su etapa</b> (obra → stock disponible → precio con fecha límite).</p>'+
