@@ -8931,7 +8931,10 @@ function buildFilterTable(cfg){
     closeForm();
     asignarNroInterno(v).then(()=>{
       persistVenta(v);
-      if(cb){ try{ cb(); }catch(e){ console.error('venta onSaved:',e); } }
+      // 11/11: el callback recibe la venta YA guardada (con _uid/nroInterno asignados) — antes no
+      // recibía nada; quien la necesite (ej. Bandeja WhatsApp → Cerrar venta, para armar el PDF) no
+      // puede esperar el eco de Firestore (es asíncrono, ver §3) así que se le pasa el objeto en mano.
+      if(cb){ try{ cb(v); }catch(e){ console.error('venta onSaved:',e); } }
       // Una venta YA pasada a producción que cambió de renglones: su pedido no se entera solo y Stock y
       // Faltantes seguiría contando lo de antes (23/10, TOTAL CONTAINERS). Producción compara y ofrece.
       if(!esAlta && window.__ofrecerActualizarPedido){ try{ window.__ofrecerActualizarPedido(v); }catch(e){ console.error('actualizar pedido:',e); } }
@@ -13511,6 +13514,10 @@ function buildFilterTable(cfg){
     aplicarFlete(p);   // el renglón "Flete" según la zona (vacía = sin flete)
     asignarNumeroYGuardar(p, pp=>{ if(typeof onDone==='function') onDone(pp); });
   };
+  // 11/11: el documento COMPLETO por uid (items, cuit, condIva, zona, etc.) — lo necesita quien va a
+  // convertirlo a venta (__ventaDesdePresupuesto exige el objeto entero, no el resumen de abajo). Lo usa
+  // la Bandeja WhatsApp → "Cerrar venta", para traer el presupuesto que dejó el agente al cotizar.
+  window.__presupuestoPorUid = uid => (uid && DB.presupuestos.find(p=>p._uid===uid)) || null;
   // ¿Este lead ya fue cotizado? Devuelve el presupuesto MÁS RECIENTE del lead, o null.
   // Lo consume el listado del CRM para mostrar el monto realmente cotizado (no el estimado a ojo).
   // Dos vías, en este orden: (1) el vínculo directo `leadUid`, que se sella al generarlo desde el CRM;
@@ -19008,6 +19015,14 @@ function buildFilterTable(cfg){
   // procesa GET /wa-cola del Worker, nunca esta pestaña.
   function waCanalEnvio(){ const p=window.__param?String(window.__param('waCanalEnvio','api')||'api'):'api'; return p==='web-lenovo'?'web-lenovo':(p==='cloud'?'cloud':'api'); }
   function sugTexto(m){ const s=Array.isArray(m.sugerencias)&&m.sugerencias[0]; return (s&&s.texto)||''; }
+  // 11/11: el presupuesto BORRADOR que el agente dejó cargado al cotizar (ver §2, `presupuestoUid`), si
+  // todavía no se convirtió en venta. null si no hay uno, o si ya se cerró — así el botón "Cerrar venta"
+  // desaparece solo apenas se usa (no hay manera de cerrarlo dos veces desde acá).
+  function presupuestoCerrable(m){
+    if(!m || !m.presupuestoUid || typeof window.__presupuestoPorUid!=='function') return null;
+    const p=window.__presupuestoPorUid(m.presupuestoUid);
+    return (p && p.estado!=='convertido') ? p : null;
+  }
   // Pura: el HTML de los botones/estado de la sugerencia de un mensaje. Solo los docs del modo sugerir.
   // 07/11: las imágenes etiquetadas ([FOTO_PISOS] etc.) que el Worker va a mandar DESPUÉS del texto, como miniaturas.
   function sugFotosHTML(m){
@@ -19039,19 +19054,56 @@ function buildFilterTable(cfg){
     const adj=adjuntosChipsHTML(m._uid);
     const canal=waCanalEnvio();
     const chipCanal='<span class="badge" style="font-size:10px;opacity:.75" title="Canal de envío (Bandeja arriba)">'+(canal==='web-lenovo'?'🌐 WhatsApp Web (Lenovo)':canal==='cloud'?'☁️ Bot en la nube':'📡 API oficial')+'</span>';
+    // 11/11: "Cerrar venta" — abre el formulario de Ventas con el presupuesto que dejó el agente (Sofía
+    // confirma forma de pago/factura y guarda) y, al guardar, arma el PDF y lo deja adjunto a ESTE mensaje.
+    const pCerrable=presupuestoCerrable(m);
+    const btnCerrar=pCerrable ? '<button class="kb-move" style="background:var(--blue);color:#fff;border-color:var(--blue)" data-sug-cerrar="'+esc(m._uid)+'" title="Convierte el presupuesto '+esc(pCerrable.numero||'')+' en venta y arma el PDF">💰 Cerrar venta ('+esc(pCerrable.numero||'')+')</button>' : '';
     if(editando){
       const txt=borrador!=null?borrador:sugTexto(m);
       return '<div style="margin-top:6px"><textarea class="wab-sug-ed" data-sug-ta="'+esc(m._uid)+'" rows="4" style="width:100%;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--blue);border-radius:8px;resize:vertical">'+esc(txt)+'</textarea>'+
         adj+
-        '<div class="acts" style="margin-top:5px"><button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'+
+        '<div class="acts" style="margin-top:5px">'+btnCerrar+'<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'+
         '<button class="kb-move" data-sug-adj="'+esc(m._uid)+'" title="Adjuntar imagen o PDF">📎 Adjuntar</button>'+
         '<button class="kb-move" data-sug-canc="'+esc(m._uid)+'">Cancelar</button> '+chipCanal+'</div></div>';
     }
-    return sugFotosHTML(m)+adj+'<div class="acts" style="margin-top:5px">'+
+    return sugFotosHTML(m)+adj+'<div class="acts" style="margin-top:5px">'+btnCerrar+
       '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-env="'+esc(m._uid)+'">📤 Enviar así</button>'+
       '<button class="kb-move" data-sug-edit="'+esc(m._uid)+'">✏️ Editar y enviar</button>'+
       '<button class="kb-move" data-sug-adj="'+esc(m._uid)+'" title="Adjuntar imagen o PDF">📎 Adjuntar</button>'+
       '<button class="kb-move" data-sug-desc="'+esc(m._uid)+'" style="opacity:.8">✕ Descartar</button> '+chipCanal+'</div>';
+  }
+  // 11/11: convierte el presupuesto que dejó el agente en VENTA (abre el form de Ventas, igual que el botón
+  // "Pasar a venta" de Presupuestos: Sofía confirma forma de pago/factura y lo guarda ELLA) y, recién al
+  // guardar, arma el PDF del detalle y lo deja como adjunto de ESTE mensaje — listo para revisar y enviar.
+  // No escribe nada en vph_ventas por su cuenta: usa el mismo __ventaDesdePresupuesto que ya usa Presupuestos.
+  async function cerrarVentaDesdeBandeja(uid){
+    const m=DB.pendientes.find(x=>x._uid===uid); if(!m){ alert('No encuentro ese mensaje (¿se actualizó la Bandeja?).'); return; }
+    const p=presupuestoCerrable(m);
+    if(!p){ alert('No hay un presupuesto pendiente de convertir para este cliente (¿ya se cerró, o la charla no llegó a cotizar?).'); return; }
+    if(typeof window.__ventaDesdePresupuesto!=='function'){ alert('Módulo de Ventas no disponible.'); return; }
+    const resumen=String(m.sugCalculo||'').trim() || ('Presupuesto '+(p.numero||'')+' — '+(p.cliente||''));
+    if(!confirm('¿Cerrar la venta de '+(p.cliente||m.nombre||'')+'?\n\n'+resumen+'\n\nSe abre el formulario de Ventas con estos datos: confirmá forma de pago, factura y demás, y guardalo ahí. Al guardar, se arma el PDF y queda adjunto a este mensaje.')) return;
+    const irA=nombre=>{ const nav=[...document.querySelectorAll('#nav .nav-item')].find(x=>x.textContent.includes(nombre)); if(nav) nav.click(); };
+    irA('Ventas');
+    window.__ventaDesdePresupuesto(p, async v=>{
+      try{
+        const c=fb();
+        if(c&&c.db) await c.FS.updateDoc(c.FS.doc(c.db,'vph_presupuestos',p._uid), {estado:'convertido'});
+      }catch(e){ console.warn('no se pudo marcar el presupuesto convertido:', e&&e.message||e); }
+      let pdfOk=false;
+      try{
+        if(window.__imprimir && window.__imprimir.pdfBlobDetalleVenta){
+          const file=await window.__imprimir.pdfBlobDetalleVenta(v);
+          const b64=await new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=ko; fr.readAsDataURL(file); });
+          const l=adjuntosSug.get(uid)||[]; l.push({tipo:'documento', nombre:file.name, mime:'application/pdf', b64}); adjuntosSug.set(uid,l);
+          pdfOk=true;
+        }
+      }catch(e){ console.error('PDF de la venta recién cerrada:', e&&e.message||e); }
+      irA('Bandeja WhatsApp');
+      render();
+      alert(pdfOk ? 'Venta guardada y PDF adjuntado al mensaje. Revisalo antes de mandarlo.'
+                  : 'La venta se guardó, pero no se pudo armar el PDF solo. Generalo desde Documentos (🖨️ Venta) y adjuntalo acá con 📎.');
+    });
   }
   async function aprobarSugerencia(uid, texto, editada){
     const c=fb(); if(!c||!c.db) return;
@@ -19087,6 +19139,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-sug-desc]').forEach(b=> b.onclick=()=>descartarSugerencia(b.dataset.sugDesc));
     cont.querySelectorAll('button[data-sug-adj]').forEach(b=> b.onclick=()=>adjuntarAbrir(b.dataset.sugAdj));
     cont.querySelectorAll('button[data-sug-aqui]').forEach(b=> b.onclick=()=>{ const uid=b.dataset.sugAqui, i=Number(b.dataset.sugAi)||0; const l=adjuntosSug.get(uid)||[]; l.splice(i,1); if(l.length) adjuntosSug.set(uid,l); else adjuntosSug.delete(uid); render(); });
+    cont.querySelectorAll('button[data-sug-cerrar]').forEach(b=> b.onclick=()=>cerrarVentaDesdeBandeja(b.dataset.sugCerrar));
   }
   // 09/11: adjuntar un archivo (imagen o PDF) a una sugerencia. No toca Firestore: queda en memoria hasta
   // que Sofía aprueba. Tope 10 MB por archivo (WhatsApp Cloud API acepta hasta 100 MB para PDF, pero el
@@ -25846,6 +25899,20 @@ function buildFilterTable(cfg){
     listaPreciosDatos: listaPreciosDatos,   // 11/11: el cotizador rápido del CRM Mayoristas precia con la MISMA cuenta de la lista
     compartirPdf: compartirPdf, puedeCompartirPdf: puedeCompartirPdf,
     detalleVenta: v => mostrar(detalle(v,false), nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha)),
+    // 11/11: la MISMA hoja de arriba, pero devuelta como File en memoria en vez de solo mostrada en
+    // pantalla — para adjuntarla a un WhatsApp desde otro módulo (Bandeja → "Cerrar venta") sin que Sofía
+    // tenga que bajarla e ir a buscarla. Necesita que la hoja esté REALMENTE en el DOM (html2canvas la
+    // fotografía), así que la abre con `mostrar` y la vuelve a cerrar al terminar.
+    pdfBlobDetalleVenta: async v => {
+      const nombre = nombreArchivo('Venta', numeroVenta(v), v.cliente, v.fecha);
+      mostrar(detalle(v,false), nombre);
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const sheet=document.querySelector('#doc-sheet-wrap .doc-sheet');
+      if(!sheet) throw new Error('no se pudo armar la vista previa del documento');
+      const file = await armarPdfHoja(sheet, nombre);
+      const ov=document.getElementById('doc-overlay'); if(ov) ov.classList.remove('open');
+      return file;
+    },
     presupuesto:  v => mostrar(detalle(v,true), nombreArchivo('Presupuesto', v.numero, v.cliente, v.fecha)),
     recibo:       v => mostrar(recibo(v), nombreArchivo('Recibo', v.nroFactura||'', v.cliente, (v.cobros&&v.cobros[0]&&v.cobros[0].fecha)||v.fecha)),
     ordenPago:    o => mostrar(ordenPago(o), nombreArchivo('Orden de Pago', '', o.proveedor, o.fecha)),
