@@ -1702,7 +1702,8 @@
     <section>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
         <h2 style="margin:0"><span class="dot" style="background:#7c3aed"></span>Revisión del agente</h2>
-        <select id="igr-fecha" style="margin-left:auto"></select>
+        <button class="kb-move" id="igr-correr-ahora" style="margin-left:auto">🔄 Correr la revisión ahora</button>
+        <select id="igr-fecha"></select>
       </div>
       <div id="igr-resumen" class="note"></div>
       <div id="igr-items"></div>
@@ -1717,7 +1718,7 @@
       <p class="note">Esto es lo que el agente ya aprendió: se suma a su manual en cada respuesta (Instagram, comentarios y WhatsApp). Si una lección sale mal, quitala y deja de usarla en 15 minutos.</p>
       <div id="igr-activas"></div>
     </section>
-    <p class="note">Todas las noches a las 20 h, Claude (la IA de Anthropic) lee las charlas y comentarios del día y califica cada respuesta del asistente virtual: ✅ bien, ⚠️ dudosa o ❌ mal. Explica qué falló y cómo debió responder, y propone lecciones. Cuesta centavos por día y sale del crédito mensual del plan Max. Datos en Firestore <code>vph_ig_mensajes</code> (dir <code>revision</code> y <code>leccion</code>), solo admin.</p>
+    <p class="note">Todas las noches a las 20 h, Claude (la IA de Anthropic) lee las charlas y comentarios del día y califica cada respuesta del asistente virtual: ✅ bien, ⚠️ dudosa o ❌ mal. Explica qué falló y cómo debió responder, y propone lecciones. "🔄 Correr la revisión ahora" dispara esa misma revisión en el momento, sin esperar a la noche. Además de corregir errores, aprende de las charlas donde Sofía escribió a mano (su orden de preguntas, su tono y qué documentación comparte y cuándo) y propone lecciones de eso también, aunque el agente no se haya equivocado. Cuesta centavos por revisión y sale del crédito mensual del plan Max. Datos en Firestore <code>vph_ig_mensajes</code> (dir <code>revision</code> y <code>leccion</code>), solo admin.</p>
   </div>
 
   <!-- ================= CONVERTIR CONVERSACIÓN EN LEAD (Bandeja WhatsApp) ================= -->
@@ -20288,6 +20289,28 @@ function buildFilterTable(cfg){
     });
   }
   function render(){ if(!$('igr-kpis')) return; kpis(); renderInforme(); renderLecciones(); }
+
+  // 12/11 (Marcelo: "un botón para hacerla manual cuando uno quiere"): dispara AHORA MISMO la MISMA
+  // revisarDia() que corre sola por el cron de las 20h — mismo endpoint que usa la tarea programada de
+  // /revision-hoy, token compartido (waLenovoToken, Parámetros → CRM). Si ya había una revisión de hoy,
+  // el Worker la ACTUALIZA (no la ignora): sirve para ver el efecto de un cambio reciente sin esperar a
+  // la noche. El resultado llega solo por el onSnapshot de arriba — no hace falta repintar a mano.
+  async function correrRevisionAhora(){
+    const url=String(window.__param?window.__param('waWorkerUrl','https://vph-agente-instagram.vpremoldeados.workers.dev'):'').replace(/\/+$/,'');
+    const tk=String(window.__param?window.__param('waLenovoToken',''):'');
+    if(!url){ alert('Falta cargar la URL del Worker en Parámetros → CRM (waWorkerUrl).'); return; }
+    if(!tk){ alert('Falta cargar el token del Worker en Parámetros → CRM → waLenovoToken.'); return; }
+    if(!confirm('¿Correr la revisión del agente ahora?\n\nClaude va a leer las charlas de las últimas 24 h y recalcular el informe de hoy (si ya había uno, lo actualiza).')) return;
+    const b=$('igr-correr-ahora'); const txt=b.textContent; b.disabled=true; b.textContent='⏳ Revisando…';
+    try{
+      const r=await fetch(url+'/revision/correr', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk} });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || j.ok===false){ alert('El Worker respondió '+r.status+': '+(j&&j.error||'')); return; }
+      alert('Listo: revisó '+(j.charlas||0)+' charla'+(j.charlas===1?'':'s')+(j.items?', '+j.items+' para mirar':'')+(j.lecciones?', '+j.lecciones+' lección(es) nueva(s) propuesta(s)':'')+'. El informe se actualiza solo abajo.');
+    }catch(e){ alert('No se pudo hablar con el Worker: '+e.message+'\n\nMirá que la URL en Parámetros sea correcta y que el Worker esté desplegado.'); }
+    finally{ b.disabled=false; b.textContent=txt; }
+  }
+  { const b=$('igr-correr-ahora'); if(b) b.onclick=correrRevisionAhora; }
 
   function startSync(){
     const c=fb(); if(!c||!c.db) return; stopSync();
