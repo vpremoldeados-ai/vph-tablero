@@ -1632,7 +1632,7 @@
       </div>
       <div class="filter-bar" id="igb-filtros"></div>
       <div id="igb-lista"></div>
-      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b> que atiende el <b>asistente virtual</b> (Worker <code>vph-agente-instagram</code> en Cloudflare), agrupadas por persona. 🤖 = respondió el asistente · 👤 = respondió una persona desde la app de Instagram (cuando eso pasa, el asistente se calla 12 h en esa charla). <b>El asistente recién carga el lead en el CRM y le avisa a Sofía por WhatsApp cuando el cliente deja su número</b>; hasta ahí solo responde. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. También aparecen los <b>comentarios de YouTube</b> del canal (filtro ▶️): el agente los lee cada 15 minutos y responde solo en público (YouTube no tiene mensajes privados), derivando al WhatsApp de ventas. Datos en la nube (Firestore <code>vph_ig_mensajes</code>), los escribe el Worker; se muestran los últimos 30 días.</p>
+      <p class="note">Las charlas por mensaje directo de <b>@vassallopremoldeados</b>, agrupadas por persona. <b>El asistente virtual (Worker <code>vph-agente-instagram</code>) SOLO SUGIERE, como en la Bandeja WhatsApp: nunca manda nada solo.</b> Una sugerencia pendiente (💡) muestra <b>📤 Enviar así</b>, <b>✏️ Editar y enviar</b> y <b>✕ Descartar</b> — recién al tocar Enviar se manda de verdad (la procesa el Worker en el minuto siguiente). 👤 = respondió una persona desde la app de Instagram (el asistente se calla 12 h en esa charla). <b>El CRM y el aviso a Sofía por WhatsApp se cargan solos cuando el cliente deja su número</b>, aunque el texto todavía esté sin aprobar. <b>Abrir en Instagram</b> va directo al chat para seguir a mano. También aparecen los <b>comentarios de YouTube</b> del canal (filtro ▶️), que siguen respondiéndose solos en público (YouTube no tiene mensajes privados), derivando al WhatsApp de ventas. Datos en la nube (Firestore <code>vph_ig_mensajes</code>); se muestran los últimos 30 días.</p>
     </section>
   </div>
 
@@ -20103,8 +20103,13 @@ function buildFilterTable(cfg){
 <!-- =====================================================================
      MÓDULO BANDEJA INSTAGRAM (28/10) — lee lo que escribe el agente de Instagram
      (Cloudflare Worker vph-agente-instagram, carpeta agente-instagram\worker en Drive).
-     Colección vph_ig_mensajes: {igsid, usuario, nombre, dir:'in'|'out'|'evento',
-     autor:'cliente'|'agente'|'persona'|'sistema', texto, leadUid, ts (ISO)}. Solo lectura.
+     Colección vph_ig_mensajes: {igsid, usuario, nombre, dir:'in'|'out'|'evento'|'sugerencia',
+     autor:'cliente'|'agente'|'persona'|'sistema', texto, leadUid, ts (ISO)}.
+     12/11 (Marcelo: "que solo sugiera como lo hace con WhatsApp"): IG_MODO='sugerir' (default del Worker)
+     — el agente NUNCA manda solo: deja dir:'sugerencia', estado:'pendiente', y acá se aprueba/edita/
+     descarta. Al aprobar (estado→'aprobada', escrito DIRECTO por este módulo, como vph_wa_salientes en
+     la Bandeja WhatsApp) el cron de cada minuto del Worker (procesarSugerenciasIG) la manda de verdad y el
+     doc pasa a dir:'out'. IG_MODO='activo' vuelve al comportamiento viejo (responde solo).
      ===================================================================== -->
 <script>
 (function(){
@@ -20119,6 +20124,11 @@ function buildFilterTable(cfg){
 
   let MSGS=[], filtro='', unsub=null;
   const abiertas=new Set();
+  // 12/11 (Marcelo: "que solo sugiera como lo hace con WhatsApp"): estado de edición de las sugerencias
+  // pendientes, SOLO en memoria de esta pestaña — igual que editandoSug/borradores/aprobando de la Bandeja
+  // WhatsApp (bindSugerencias).
+  let editandoSugIG=null;
+  const borradoresIG=new Map(), aprobandoIG=new Set();
 
   // Pura (la prueban los tests): agrupa por persona, ordena y resume cada charla.
   function charlas(msgs, ahoraMs){
@@ -20132,16 +20142,57 @@ function buildFilterTable(cfg){
       const leadUid=(lista.slice().reverse().find(m=>m.leadUid)||{}).leadUid||'';
       const ultPersona=lista.filter(m=>m.autor==='persona').map(m=>tsMs(m.ts)).sort((a,b)=>b-a)[0]||0;
       const yt=lista.slice().reverse().find(m=>m.canal==='youtube')||null;
+      // 12/11: una sugerencia pendiente o con error de envío sigue necesitando una acción de Sofía.
+      const pendienteSug=lista.some(m=>m.dir==='sugerencia'&&(m.estado==='pendiente'||m.estado==='error'));
       out.push({ k, msgs:lista, usuario:conNombre.usuario||'', nombre:conNombre.nombre||'', leadUid, canal: yt?'youtube':'instagram', ytUrl: yt&&yt.ytUrl||'',
         ultimoMs:tsMs(ult.ts), entrantes:lista.filter(m=>m.dir==='in').length,
         persona: !!ultPersona && (ahoraMs-ultPersona)<PAUSA_MS,
+        pendienteSug,
         sinRespuesta: ult.dir==='in' });
     });
     return out.sort((a,b)=>b.ultimoMs-a.ultimoMs);
   }
   window.__igCharlas=charlas;
 
+  // 12/11: fotos/PDF etiquetados que la sugerencia manda DESPUÉS del texto (mismo criterio que sugFotosHTML
+  // de la Bandeja WhatsApp: una URL puede ser un PDF, no solo una imagen).
+  function fotosSugIGHTML(m){
+    const fs=Array.isArray(m&&m.fotos)?m.fotos.filter(f=>f&&String(f.url||'').startsWith('https://')):[];
+    if(!fs.length) return '';
+    return '<div class="meta" style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--muted)">📎 Se manda con:</span>'+
+      fs.map(f=>{
+        const esPdf=/\.pdf(\?|$)/i.test(String(f.url||''));
+        return esPdf
+          ? '<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.clave||'')+'" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;border:1px solid var(--border);border-radius:6px;padding:3px 7px">📄 '+esc(String(f.url).split('/').pop()||'PDF')+'</a>'
+          : '<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.clave||'')+'"><img src="'+esc(f.url)+'" alt="'+esc(f.clave||'foto')+'" style="height:56px;border-radius:6px;border:1px solid var(--border)"></a>';
+      }).join('')+'</div>';
+  }
+  // 12/11: tarjeta de la sugerencia — pendiente/error con botones Enviar/Editar/Descartar, o un chip de
+  // estado mientras se manda (aprobada→enviando) o si ya se mandó (ahí el doc pasa a dir:'out' y entra por
+  // la burbuja normal, esto ya no se usa).
+  function burbujaSugerencia(m, editando, borrador){
+    if(m.estado==='aprobada'||m.estado==='enviando') return '<div style="margin:8px 0;padding:8px 10px;border-radius:10px;border:1px dashed var(--amber);background:var(--amber-bg)"><div style="font-size:11px;color:var(--muted);margin-bottom:2px">💡 Sugerencia · 📤 Enviando…</div>'+esc(m.textoAprobado||m.texto)+'</div>';
+    if(editando){
+      return '<div style="margin:8px 0;padding:8px 10px;border-radius:10px;border:1px solid var(--blue);background:var(--blue-bg)">'+
+        '<div style="font-size:11px;color:var(--muted);margin-bottom:4px">💡 Sugerencia del asistente — editando</div>'+
+        '<textarea class="igb-sug-ed" data-sug-ta="'+esc(m._uid)+'" rows="4" style="width:100%;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--blue);border-radius:8px;resize:vertical;box-sizing:border-box">'+esc(borrador!=null?borrador:m.texto)+'</textarea>'+
+        fotosSugIGHTML(m)+
+        '<div class="acts" style="margin-top:6px">'+
+          '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-envc="'+esc(m._uid)+'">📤 Enviar lo editado</button>'+
+          '<button class="kb-move" data-sug-canc="'+esc(m._uid)+'">Cancelar</button></div></div>';
+    }
+    return '<div style="margin:8px 0;padding:8px 10px;border-radius:10px;border:1px dashed '+(m.estado==='error'?'var(--red)':'#d6249f')+';background:'+(m.estado==='error'?'var(--red-bg)':'rgba(214,36,159,.06)')+'">'+
+      '<div style="font-size:11px;color:var(--muted);margin-bottom:4px">'+(m.estado==='error'?'⚠️ No se pudo mandar: '+esc(m.error||'')+'. Podés reintentar.':'💡 Sugerencia del asistente (todavía no se mandó) · '+fmt(m.ts))+'</div>'+
+      '<div style="white-space:pre-wrap">'+esc(m.texto)+'</div>'+
+      fotosSugIGHTML(m)+
+      '<div class="acts" style="margin-top:6px">'+
+        '<button class="kb-move" style="background:var(--green);color:#fff;border-color:var(--green)" data-sug-env="'+esc(m._uid)+'">📤 Enviar así</button>'+
+        '<button class="kb-move" data-sug-edit="'+esc(m._uid)+'">✏️ Editar y enviar</button>'+
+        '<button class="kb-move" data-sug-desc="'+esc(m._uid)+'" style="opacity:.8">✕ Descartar</button></div></div>';
+  }
+
   function burbuja(m){
+    if(m.dir==='sugerencia') return burbujaSugerencia(m, editandoSugIG===m._uid, borradoresIG.get(m._uid));
     if(m.dir==='comentario') return '<div style="margin:8px 0;padding:8px 10px;border-radius:10px;border:1px dashed '+(m.autor==='sombra'?'#c98a06':'#d6249f')+';white-space:pre-wrap"><div style="font-size:11px;color:var(--muted);margin-bottom:2px">'+(m.autor==='sombra'?'💬 Comentario · 🕶️ modo sombra (no se publicó nada)':'💬 Comentario · respondido por el asistente')+' · '+fmt(m.ts)+'</div>'+esc(m.texto)+'</div>';
     if(m.dir==='evento') return '<div style="text-align:center;margin:8px 0"><span class="badge green">'+esc(m.texto)+' · '+fmt(m.ts)+'</span></div>';
     const sale=m.dir==='out';
@@ -20152,31 +20203,59 @@ function buildFilterTable(cfg){
         '<div style="font-size:11px;color:var(--muted);margin-bottom:2px">'+quien+' · '+fmt(m.ts)+'</div>'+esc(m.texto)+'</div></div>';
   }
 
+  // 12/11: Sofía aprueba/edita/descarta una sugerencia escribiendo DIRECTO en vph_ig_mensajes (mismo patrón
+  // que aprobarSugerencia/descartarSugerencia de la Bandeja WhatsApp con vph_wa_salientes) — el cron de cada
+  // minuto del Worker (procesarSugerenciasIG) es quien de verdad la manda por Instagram.
+  async function aprobarSugerenciaIG(uid, texto, editada){
+    const c=fb(); if(!c||!c.db) return;
+    const m=MSGS.find(x=>x._uid===uid); if(!m){ alert('No encuentro ese mensaje (¿se actualizó la Bandeja?).'); return; }
+    if(aprobandoIG.has(uid)||(m.estado&&m.estado!=='pendiente'&&m.estado!=='error')) return;   // ya aprobada/enviada: nunca dos veces
+    texto=String(texto||'').trim();
+    if(!texto && !(Array.isArray(m.fotos)&&m.fotos.length)){ alert('El texto está vacío.'); return; }
+    if(!confirm('¿Mandar por Instagram a '+(m.nombre||m.usuario||'este contacto')+'?\n\n'+texto)) return;
+    aprobandoIG.add(uid); render();
+    try{
+      const quienSoy=(c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||'';
+      const campos={ estado:'aprobada', aprobadoPor:quienSoy, aprobadoEn:new Date().toISOString() };
+      if(editada) Object.assign(campos, { textoAprobado:texto, editada:true });
+      await c.FS.updateDoc(c.FS.doc(c.db,COL,uid), campos);
+      if(editandoSugIG===uid) editandoSugIG=null; borradoresIG.delete(uid);
+    }catch(e){ aprobandoIG.delete(uid); alert('No se pudo aprobar: '+e.message); render(); }
+  }
+  function descartarSugerenciaIG(uid){
+    const c=fb(); if(!c||!c.db) return;
+    c.FS.updateDoc(c.FS.doc(c.db,COL,uid), {estado:'descartada'}).catch(e=>alert('Error: '+e.message));
+  }
+
   function render(){
     if(!$('igb-lista')) return;
     const todas=charlas(MSGS, Date.now());
     const hoy=new Date(); hoy.setHours(0,0,0,0);
+    const porAprobar=todas.filter(c=>c.pendienteSug).length;
     $('igb-kpis').innerHTML=
       '<div class="kpi info"><div class="label">Charlas ('+DIAS+' días)</div><div class="value">'+todas.length+'</div><div class="sub">Personas que escribieron por DM</div></div>'+
+      '<div class="kpi'+(porAprobar?' warn':'')+'"><div class="label">💡 Sugerencias por aprobar</div><div class="value">'+porAprobar+'</div><div class="sub">Esperan que las mandes</div></div>'+
       '<div class="kpi good"><div class="label">Con lead en el CRM</div><div class="value">'+todas.filter(c=>c.leadUid).length+'</div><div class="sub">Dejaron su WhatsApp</div></div>'+
       '<div class="kpi warn"><div class="label">Sin WhatsApp todavía</div><div class="value">'+todas.filter(c=>!c.leadUid).length+'</div><div class="sub">Solo consultaron</div></div>'+
       '<div class="kpi"><div class="label">Hoy</div><div class="value">'+todas.filter(c=>c.ultimoMs>=hoy.getTime()).length+'</div><div class="sub">Charlas con actividad hoy</div></div>';
-    const F=[['','Todas'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios'],['yt','▶️ YouTube']];
+    const F=[['','Todas'],['sug','💡 Por aprobar'],['lead','🎯 Con lead'],['sinlead','Sin WhatsApp'],['persona','👤 Atendidas a mano'],['coment','💬 Comentarios'],['yt','▶️ YouTube']];
     $('igb-filtros').innerHTML=F.map(([k,l])=>'<button class="filter-btn'+(filtro===k?' active':'')+'" data-f="'+k+'">'+l+'</button>').join('');
     $('igb-filtros').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>{ filtro=b.dataset.f; render(); });
-    const lista=todas.filter(c=> !filtro || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')) || (filtro==='yt'&&c.canal==='youtube'));
+    const lista=todas.filter(c=> !filtro || (filtro==='sug'&&c.pendienteSug) || (filtro==='lead'&&c.leadUid) || (filtro==='sinlead'&&!c.leadUid) || (filtro==='persona'&&c.persona) || (filtro==='coment'&&c.msgs.some(m=>m.dir==='comentario')) || (filtro==='yt'&&c.canal==='youtube'));
     $('igb-count').textContent=lista.length+' charla'+(lista.length!==1?'s':'');
     $('igb-lista').innerHTML=lista.length?lista.map(c=>{
-      const abierta=abiertas.has(c.k);
+      // 12/11: con algo pendiente de aprobar se muestra la charla completa — nunca escondida tras "Ver anteriores".
+      const abierta=abiertas.has(c.k)||c.pendienteSug;
       const vis=(abierta||c.msgs.length<=4)?c.msgs:c.msgs.slice(-3);
       const ocultos=c.msgs.length-vis.length;
       const lead=c.leadUid && window.__leadPorUid ? window.__leadPorUid(c.leadUid) : null;
-      return '<div class="kb-card" style="margin-bottom:8px">'+
+      return '<div class="kb-card" style="margin-bottom:8px'+(c.pendienteSug?';border-color:var(--amber)':'')+'">'+
         '<div class="cli">'+(c.canal==='youtube'?'▶️ ':'')+esc(c.nombre||c.usuario||(c.canal==='youtube'?'Usuario de YouTube':'Usuario de Instagram'))+(c.usuario?' <span class="badge">'+esc(c.usuario)+'</span>':'')+
+          (c.pendienteSug?' <span class="badge amber" title="Hay una sugerencia esperando que la mandes">💡 Por aprobar</span>':'')+
           (c.leadUid?' <span class="badge green" title="Dejó su WhatsApp: ya está en el CRM">🎯 Lead'+(lead&&lead.estado?' · '+esc(lead.estado):'')+'</span>':' <span class="badge amber">Sin WhatsApp</span>')+
           (c.persona?' <span class="badge" title="Una persona respondió desde Instagram: el asistente está en pausa en esta charla">👤 Atendida a mano</span>':'')+'</div>'+
         '<div class="meta">'+c.entrantes+' mensaje'+(c.entrantes!==1?'s':'')+' del cliente · último: '+fmt(c.msgs[c.msgs.length-1].ts)+'</div>'+
-        (ocultos>0?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&c.msgs.length>4?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▴ Ver menos</button>':''))+
+        (ocultos>0?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▾ Ver los '+ocultos+' mensajes anteriores</button>':(abierta&&c.msgs.length>4&&!c.pendienteSug?'<button class="filter-btn" data-x="'+esc(c.k)+'" style="margin:6px 0 0">▴ Ver menos</button>':''))+
         vis.map(burbuja).join('')+
         '<div class="acts" style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">'+
           (c.canal==='youtube'
@@ -20187,6 +20266,12 @@ function buildFilterTable(cfg){
     }).join(''):'<div class="kb-empty">No hay charlas'+(filtro?' con este filtro':' en los últimos '+DIAS+' días')+'.</div>';
     $('igb-lista').querySelectorAll('button[data-x]').forEach(b=>b.onclick=()=>{ const k=b.dataset.x; if(abiertas.has(k)) abiertas.delete(k); else abiertas.add(k); render(); });
     $('igb-lista').querySelectorAll('button[data-crm]').forEach(b=>b.onclick=()=>{ if(typeof irAPagina==='function') irAPagina('CRM / Leads'); });
+    $('igb-lista').querySelectorAll('button[data-sug-env]').forEach(b=>b.onclick=()=>{ const uid=b.dataset.sugEnv; const m=MSGS.find(x=>x._uid===uid); aprobarSugerenciaIG(uid, m&&m.texto, false); });
+    $('igb-lista').querySelectorAll('button[data-sug-edit]').forEach(b=>b.onclick=()=>{ editandoSugIG=b.dataset.sugEdit; render(); });
+    $('igb-lista').querySelectorAll('button[data-sug-canc]').forEach(b=>b.onclick=()=>{ editandoSugIG=null; render(); });
+    $('igb-lista').querySelectorAll('button[data-sug-desc]').forEach(b=>b.onclick=()=>{ const uid=b.dataset.sugDesc; if(confirm('¿Descartar esta sugerencia? No se manda nada.')) descartarSugerenciaIG(uid); });
+    $('igb-lista').querySelectorAll('textarea[data-sug-ta]').forEach(t=>t.oninput=()=>{ borradoresIG.set(t.dataset.sugTa, t.value); });
+    $('igb-lista').querySelectorAll('button[data-sug-envc]').forEach(b=>b.onclick=()=>{ const uid=b.dataset.sugEnvc; const ta=$('igb-lista').querySelector('textarea[data-sug-ta="'+uid+'"]'); aprobarSugerenciaIG(uid, ta?ta.value:borradoresIG.get(uid), true); });
   }
 
   function startSync(){
