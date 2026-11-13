@@ -19085,6 +19085,42 @@ function buildFilterTable(cfg){
   const COL_SAL='vph_wa_salientes';
   const ESTADO_SUG={ aprobada:['⏳ Enviando…','amber'], enviada:['✓ Enviada por el asistente','green'], error:['✗ No se pudo enviar — mandala vos por WhatsApp','red'],
                      descartada:['Sugerencia descartada',''], respondio_sofia:['Respondiste vos',''], sin:['',''] };
+  // 13/11 (pedido de Marcelo, "seguí con las reacciones de emoji"): reaccionar a un mensaje PUNTUAL del
+  // cliente (👍/❤️/etc.), como en WhatsApp de verdad. Solo sobre mensajes que ya traen `waMsgId` (el id
+  // REAL de WhatsApp, lo guarda el Worker desde el 13/11 — los mensajes de antes, o de otro canal que
+  // no sea 'cloud', no lo tienen y no se les puede reaccionar: no hay forma de identificar CUÁL mensaje
+  // es en la sesión real de WhatsApp). Viaja por la MISMA cola que el texto (vph_wa_salientes), con
+  // tipo:'reaccion' — el bot la distingue y llama a msg.react(emoji) en vez de mandar un mensaje.
+  let reaccionAbierta=null;        // uid del mensaje cuyo selector de emoji está abierto
+  const EMOJIS_REACCION=['👍','❤️','😂','😮','😢','🙏'];
+  function reaccionHTML(m){
+    if(!m.waMsgId) return '';
+    const mia=m.reaccionMia||'';
+    let h='<div class="meta" style="margin-top:4px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">';
+    if(mia) h+='<span class="badge" style="padding:2px 7px">Reaccionaste '+esc(mia)+'</span>';
+    h+='<button type="button" class="cmp-x" data-react-toggle="'+esc(m._uid)+'" title="Reaccionar" style="font-size:13px;padding:1px 6px">'+(mia?'✎':'🙂')+'</button>';
+    if(reaccionAbierta===m._uid){
+      h+=EMOJIS_REACCION.map(e=>'<button type="button" class="cmp-x" data-react-set="'+esc(m._uid)+'" data-react-emoji="'+esc(e)+'" style="font-size:15px;padding:1px 5px'+(mia===e?';background:var(--blue-bg)':'')+'">'+e+'</button>').join('');
+      if(mia) h+='<button type="button" class="cmp-x" data-react-quitar="'+esc(m._uid)+'" title="Quitar la reacción" style="font-size:11px;padding:1px 6px">Quitar</button>';
+    }
+    return h+'</div>';
+  }
+  async function enviarReaccion(uid, emoji){
+    const c=fb(); if(!c||!c.db) return;
+    const m=DB.pendientes.find(x=>x._uid===uid); if(!m){ alert('No encuentro ese mensaje (¿se actualizó la Bandeja?).'); return; }
+    const to=String(m.waFrom||'').replace(/\D/g,'');
+    if(!to || !m.waMsgId) return;
+    const quien=(c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||'';
+    const ahora=new Date().toISOString();
+    const idSal='sal_react_'+uid+'_'+Date.now();
+    try{
+      await c.FS.setDoc(c.FS.doc(c.db,COL_SAL,idSal), { to, tipo:'reaccion', waMsgId:m.waMsgId, emoji, pendienteUid:uid, estado:'aprobado', canal:waCanalEnvio(), aprobadoPor:quien, aprobadoEn:ahora, creadoEn:ahora });
+      await c.FS.updateDoc(c.FS.doc(c.db,COL,uid), { reaccionMia: emoji });
+      reaccionAbierta=null;
+      render();
+    }catch(e){ alert('No se pudo reaccionar: '+e.message+'\n\nSi dice "permission", faltan publicar las reglas de vph_wa_salientes para CREAR con tipo "reaccion".'); }
+  }
+
   let editandoSug=null;            // uid del mensaje cuya sugerencia se está editando
   const borradores=new Map();      // uid → texto editado (sobrevive a los re-render de cada snapshot)
   const aprobando=new Set();       // uids ya aprobados en esta sesión (hasta que vuelva el snapshot): evita el doble clic
@@ -19550,6 +19586,7 @@ function buildFilterTable(cfg){
         sugerenciasHTML(Array.isArray(m.sugerencias)&&m.sugerencias.length ? m.sugerencias
                         : (m.respuestaPropuesta?[{titulo:'💬 Respuesta guardada',texto:m.respuestaPropuesta}]:null))+
         sugAccionesHTML(m, editandoSug===m._uid, borradores.get(m._uid))+
+        reaccionHTML(m)+
         '<div class="wab-bubble-time">'+esc(fmtHora(m.creadoEn))+
           (m.fueraDeHorario?' · <span class="badge amber">Fuera de horario</span>':'')+
           // El bot estuvo caído cuando llegó este mensaje y lo recuperó al volver (28/09/2026).
@@ -19594,6 +19631,10 @@ function buildFilterTable(cfg){
       ta.oninput=()=>{ composerTexto.set(ta.dataset.compTa, ta.value); ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; };
       ta.onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); enviarLibre(ta.dataset.compTa, toActual, nombreActual); } };
     });
+    // Reacciones: 🙂 abre/cierra el selector de emoji de ESE mensaje (uno a la vez); elegir una la manda.
+    main.querySelectorAll('button[data-react-toggle]').forEach(b=> b.onclick=()=>{ reaccionAbierta = reaccionAbierta===b.dataset.reactToggle ? null : b.dataset.reactToggle; render(); });
+    main.querySelectorAll('button[data-react-set]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactSet, b.dataset.reactEmoji));
+    main.querySelectorAll('button[data-react-quitar]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactQuitar, ''));
     const th=$('wab-thread'); if(th) th.scrollTop=th.scrollHeight;
   }
 
