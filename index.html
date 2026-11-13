@@ -331,6 +331,15 @@
   .wab-bubble-in.resuelta{opacity:.6}
   .wab-bubble-out{align-self:flex-end;background:#d9fdd3;border-top-right-radius:2px}
   .wab-bubble-time{font-size:10px;color:var(--muted);margin-top:4px}
+  /* 13/11: composer para responder LIBRE desde el Tablero, estilo WhatsApp (barra fija abajo del hilo) */
+  .wab-composer{border-top:1px solid var(--border);background:#f0f2f5;flex-shrink:0}
+  .wab-composer-bar{display:flex;align-items:flex-end;gap:7px;padding:8px 10px}
+  .wab-composer-btn{flex:0 0 auto;background:none;border:none;font-size:19px;cursor:pointer;padding:5px 6px;line-height:1;border-radius:50%}
+  .wab-composer-btn:hover{background:#e3e6ea}
+  .wab-composer-ta{flex:1;min-width:0;resize:none;border:none;border-radius:18px;padding:8px 14px;font:inherit;font-size:13px;max-height:120px;background:#fff;box-shadow:inset 0 0 0 1px var(--border)}
+  .wab-composer-ta:focus{outline:none;box-shadow:inset 0 0 0 1.5px var(--blue)}
+  .wab-composer-send{flex:0 0 auto;background:var(--green);color:#fff;border:none;width:34px;height:34px;border-radius:50%;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .wab-composer-send:hover{filter:brightness(1.08)}
   @media(max-width:860px){.wab-wrap{flex-direction:column;height:auto}.wab-side{flex:0 0 260px;border-right:none;border-bottom:1px solid var(--border)}.wab-main{min-height:420px}}
   .crm-tbl{width:100%;border-collapse:collapse}
   .crm-tbl th,.crm-tbl td{padding:7px 8px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;vertical-align:top;white-space:normal}
@@ -19281,6 +19290,74 @@ function buildFilterTable(cfg){
     inp.click();
   }
 
+  // ---------- Responder LIBRE desde el Tablero (13/11, pedido de Marcelo: "que Sofía pueda responder
+  // desde el tablero") ----------
+  // Hasta acá la Bandeja SOLO dejaba aprobar/editar una sugerencia del agente: sin sugerencia (o si
+  // Sofía quiere decir algo propio, sin esperar al agente) no había forma de escribir desde acá —
+  // había que ir a WhatsApp de verdad. Este composer manda CUALQUIER texto por el mismo canal de
+  // siempre (vph_wa_salientes, el bot lo manda) y ADEMÁS dibuja la burbuja saliente YA (mismo patrón
+  // que docEco() del Worker para lo que Sofía contesta por fuera) para que se sienta como escribir
+  // en WhatsApp de verdad, sin esperar la vuelta del bot.
+  const adjuntosComp=new Map();   // clave del chat (k) → [{tipo,nombre,mime,b64}]
+  const composerTexto=new Map();  // clave del chat (k) → borrador (sobrevive a los re-render del snapshot)
+  function composerAdjChipsHTML(k){
+    const l=adjuntosComp.get(k)||[];
+    if(!l.length) return '';
+    return '<div class="meta" style="padding:6px 10px 0;display:flex;gap:6px;flex-wrap:wrap">'+
+      l.map((a,i)=>'<span class="badge" style="padding:3px 7px;display:inline-flex;align-items:center;gap:4px">'+
+        (a.tipo==='documento'?'📄':'🖼️')+' '+esc(a.nombre)+
+        ' <button class="cmp-x" data-comp-aqui="'+esc(k)+'" data-comp-ai="'+i+'" title="Sacar" style="padding:0 4px">✕</button></span>').join('')+'</div>';
+  }
+  function composerHTML(k){
+    const canal=waCanalEnvio();
+    const tituloAdj=(canal!=='web-lenovo'&&canal!=='cloud')?'Los adjuntos solo se mandan por WhatsApp Web (Lenovo) o el bot en la nube':'Adjuntar imagen o PDF';
+    return '<div class="wab-composer">'+composerAdjChipsHTML(k)+
+      '<div class="wab-composer-bar">'+
+        '<button type="button" class="wab-composer-btn" data-comp-adj="'+esc(k)+'" title="'+esc(tituloAdj)+'">📎</button>'+
+        '<textarea class="wab-composer-ta" data-comp-ta="'+esc(k)+'" rows="1" placeholder="Escribir un mensaje…">'+esc(composerTexto.get(k)||'')+'</textarea>'+
+        '<button type="button" class="wab-composer-send" data-comp-env="'+esc(k)+'" title="Enviar (Enter · Shift+Enter = renglón nuevo)">➤</button>'+
+      '</div></div>';
+  }
+  // `to` sale de `waFrom` del último mensaje del chat (mismo dato que ya usa aprobarSugerencia).
+  async function enviarLibre(k, to){
+    const c=fb(); if(!c||!c.db) return;
+    const texto=String(composerTexto.get(k)||'').trim();
+    const adj=adjuntosComp.get(k)||[];
+    if(!texto && !adj.length) return;
+    if(!to){ alert('No tengo el teléfono de este chat: mandalo vos desde WhatsApp.'); return; }
+    const quien=(c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||'';
+    const ahora=new Date().toISOString();
+    const idSal='sal_tab_'+to+'_'+Date.now();
+    const idEco='tabm'+to+'_'+Date.now();
+    try{
+      await c.FS.setDoc(c.FS.doc(c.db,COL_SAL,idSal), { to, texto, pendienteUid:'', estado:'aprobado', editada:false, canal:waCanalEnvio(),
+        fotos:[], adjuntos:adj.map(a=>({tipo:a.tipo,nombre:a.nombre,mime:a.mime||'',b64:a.b64})),
+        sugerenciaOriginal:texto, aprobadoPor:quien, aprobadoEn:ahora, creadoEn:ahora });
+      await c.FS.setDoc(c.FS.doc(c.db,COL,idEco), { mensaje: texto || '['+(adj[0]&&adj[0].tipo==='documento'?'documento':'imagen')+']',
+        nombre:'', telefono:'+'+to, waId:to+'@c.us', waFrom:to, tipo:'cliente', fueraDeHorario:false,
+        estado:'resuelto', origenAgente:false, deSofia:true, creadoEn:c.FS.Timestamp.now() });
+      composerTexto.delete(k); adjuntosComp.delete(k);
+      render();
+    }catch(e){ alert('No se pudo mandar: '+e.message+'\n\nSi dice "permission", falta que las reglas de Firestore dejen CREAR (no solo editar) en vph_wa_pendientes/vph_wa_salientes.'); }
+  }
+  function adjuntarComposerAbrir(k){
+    const canal=waCanalEnvio();
+    if(canal!=='web-lenovo'&&canal!=='cloud'){ if(!confirm('Los adjuntos solo se mandan por 🌐 WhatsApp Web (Lenovo) o ☁️ Bot en la nube. El canal actual es 📡 API oficial: no se van a mandar. ¿Seguir?')) return; }
+    const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*,application/pdf'; inp.multiple=true;
+    inp.onchange=async ()=>{
+      const files=Array.from(inp.files||[]);
+      for(const f of files){
+        if(f.size>10*1024*1024){ alert('"'+f.name+'" pesa más de 10 MB: adjuntá uno más chico o mandalo a mano.'); continue; }
+        const tipo=/^image\//.test(f.type||'')?'imagen':'documento';
+        const b64=await new Promise((ok,err)=>{ const r=new FileReader(); r.onload=()=>ok(String(r.result||'').split(',')[1]||''); r.onerror=()=>err(r.error||new Error('no se pudo leer')); r.readAsDataURL(f); });
+        if(!b64) continue;
+        const l=adjuntosComp.get(k)||[]; l.push({ tipo, nombre:f.name, mime:f.type||'', b64 }); adjuntosComp.set(k, l);
+      }
+      render();
+    };
+    inp.click();
+  }
+
   // ---------- Convertir la conversación en un lead del CRM ----------
   // La detección (productos/m²/lugar) y el alta viven en el módulo CRM (__detectarPedidoWA /
   // __nuevoLead) — acá solo se junta el texto, se muestra el preview editable y se confirma.
@@ -19389,7 +19466,10 @@ function buildFilterTable(cfg){
 
   function render(){
     let items=DB.pendientes.slice().sort((a,b)=> (b.creadoEn&&b.creadoEn.seconds||0) - (a.creadoEn&&a.creadoEn.seconds||0));
-    if(!mostrarResueltos) items=items.filter(i=>(i.estado||'pendiente')==='pendiente');
+    // 13/11: lo que Sofía mandó (deSofia:true, sea eco de WhatsApp o escrito desde este Tablero) NUNCA
+    // se tapa con "Ocultar resueltos" — "resuelto" ahí es solo para que no cuente como pendiente, no
+    // significa "ocultar": si no, Sofía dejaría de ver sus PROPIOS mensajes apenas los manda.
+    if(!mostrarResueltos) items=items.filter(i=>(i.estado||'pendiente')==='pendiente' || i.deSofia);
     if(filtroTipo) items=items.filter(i=>i.tipo===filtroTipo);
 
     const pendientes=DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente');
@@ -19475,6 +19555,10 @@ function buildFilterTable(cfg){
       '</div>';
     }).join('');
 
+    // Teléfono real para mandar desde el composer — mismo dato que ya usa aprobarSugerencia (waFrom
+    // del mensaje más reciente del chat, sin signos).
+    const toActual=String(ult.waFrom||ult.telefono||'').replace(/\D/g,'');
+
     main.innerHTML =
       '<div class="wab-main-head">'+
         '<div><div class="wab-main-name">'+esc(ult.nombre||ult.telefono)+' <span class="badge" style="background:'+et.c+'22;color:'+et.c+'">'+esc(et.l)+'</span></div>'+
@@ -19485,12 +19569,23 @@ function buildFilterTable(cfg){
                             :'<button class="kb-move" style="background:var(--blue);color:#fff;border-color:var(--blue)" data-cl="'+esc(selectedKey)+'">🆕 Convertir en Lead</button>'):'')+
           (pend.length>1?'<button class="kb-move" data-rg="'+pend.map(m=>m._uid).join(',')+'">✓ Resolver los '+pend.length+' pendientes</button>':'')+
         '</div></div>'+
-      '<div class="wab-thread" id="wab-thread">'+burbujas+'</div>';
+      '<div class="wab-thread" id="wab-thread">'+burbujas+'</div>'+
+      composerHTML(selectedKey);
     main.querySelectorAll('button[data-r]').forEach(b=> b.onclick=()=>marcarResuelto(b.dataset.r));
     main.querySelectorAll('button[data-cp]').forEach(b=> b.onclick=()=>copiarSugerencia(b.dataset.cp, b));
     main.querySelectorAll('button[data-rg]').forEach(b=> b.onclick=()=>resolverVarios(b.dataset.rg.split(',').filter(Boolean)));
     main.querySelectorAll('button[data-cl]').forEach(b=> b.onclick=()=>abrirConvertir(b.dataset.cl));
     bindSugerencias(main);
+    // Composer: Enter manda (Shift+Enter = renglón nuevo, como WhatsApp), la caja crece con el texto
+    // y no le roba el foco a Sofía si ya estaba escribiendo cuando llega un snapshot nuevo.
+    main.querySelectorAll('button[data-comp-env]').forEach(b=> b.onclick=()=>enviarLibre(b.dataset.compEnv, toActual));
+    main.querySelectorAll('button[data-comp-adj]').forEach(b=> b.onclick=()=>adjuntarComposerAbrir(b.dataset.compAdj));
+    main.querySelectorAll('button[data-comp-aqui]').forEach(b=> b.onclick=()=>{ const kk=b.dataset.compAqui, i=Number(b.dataset.compAi)||0; const l=adjuntosComp.get(kk)||[]; l.splice(i,1); if(l.length) adjuntosComp.set(kk,l); else adjuntosComp.delete(kk); render(); });
+    main.querySelectorAll('textarea[data-comp-ta]').forEach(ta=>{
+      ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px';
+      ta.oninput=()=>{ composerTexto.set(ta.dataset.compTa, ta.value); ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; };
+      ta.onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); enviarLibre(ta.dataset.compTa, toActual); } };
+    });
     const th=$('wab-thread'); if(th) th.scrollTop=th.scrollHeight;
   }
 
