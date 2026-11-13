@@ -8956,6 +8956,8 @@ function buildFilterTable(cfg){
       // recibía nada; quien la necesite (ej. Bandeja WhatsApp → Cerrar venta, para armar el PDF) no
       // puede esperar el eco de Firestore (es asíncrono, ver §3) así que se le pasa el objeto en mano.
       if(cb){ try{ cb(v); }catch(e){ console.error('venta onSaved:',e); } }
+      // 13/11: toda venta NUEVA cierra su presupuesto (venga del lead, del presupuesto, de la Bandeja o cargada a mano).
+      if(esAlta && window.__aceptarPresupuestoDeVenta){ try{ window.__aceptarPresupuestoDeVenta(v); }catch(e){ console.error('aceptar presupuesto:',e); } }
       // Una venta YA pasada a producción que cambió de renglones: su pedido no se entera solo y Stock y
       // Faltantes seguiría contando lo de antes (23/10, TOTAL CONTAINERS). Producción compara y ofrece.
       if(!esAlta && window.__ofrecerActualizarPedido){ try{ window.__ofrecerActualizarPedido(v); }catch(e){ console.error('actualizar pedido:',e); } }
@@ -13567,6 +13569,40 @@ function buildFilterTable(cfg){
   // convertirlo a venta (__ventaDesdePresupuesto exige el objeto entero, no el resumen de abajo). Lo usa
   // la Bandeja WhatsApp → "Cerrar venta", para traer el presupuesto que dejó el agente al cotizar.
   window.__presupuestoPorUid = uid => (uid && DB.presupuestos.find(p=>p._uid===uid)) || null;
+  // ---------- ✅ Venta creada → su presupuesto pasa a ACEPTADO (13/11, pedido de Marcelo: LA ITALIANA compró y su
+  // presupuesto seguía "pendiente") ----------
+  // Pura: dada una venta y la lista de presupuestos, devuelve EL presupuesto que esa venta cerró (o null).
+  // Candidatos: abiertos (borrador/enviado, ni reemplazados ni comparativos), del mismo cliente (por el vínculo
+  // presupuestoUid, por el lead o por el nombre sin tildes) y de hasta 60 días antes de la venta. Manda el vínculo
+  // directo; si no, el que lleva los MISMOS productos (el más cercano a la venta); si ninguno coincide, solo se
+  // acepta el vinculado por LEAD (el nombre solo no alcanza para adivinar entre alternativas).
+  function presupuestoDeVenta(v, lista){
+    if(!v || ['Presupuesto','Nota de Crédito','Nota de Débito'].indexOf(v.tipoComprobante)>=0) return null;
+    const nrm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const dias=(a,b)=>Math.round((new Date(b)-new Date(a))/864e5);
+    const cods=a=>(a||[]).map(i=>String((i&&(i.codigo||i.desc))||'').toUpperCase()).filter(x=>x&&!/FLETE/.test(x)).sort().join('|');
+    const cn=nrm(v.cliente), mios=cods(v.items);
+    const cand=(lista||[]).filter(p=>{
+      const e=p.estado||'borrador'; if(e!=='borrador'&&e!=='enviado') return false;
+      if(p.reemplazadoPor||p.esComparativo===true) return false;
+      if(v.presupuestoUid && v.presupuestoUid===p._uid) return true;
+      const porLead=!!(v.leadUid&&p.leadUid&&v.leadUid===p.leadUid), porNom=!!(cn&&nrm(p.cliente)===cn);
+      if(!porLead&&!porNom) return false;
+      const d=dias(p.fecha,v.fecha); return d>=-3&&d<=60; });
+    const directo=cand.find(p=>v.presupuestoUid&&v.presupuestoUid===p._uid); if(directo) return directo;
+    const masCerca=l=>l.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))[0]||null;
+    const iguales=cand.filter(p=>cods(p.items)===mios); if(iguales.length) return masCerca(iguales);
+    return masCerca(cand.filter(p=>v.leadUid&&p.leadUid===v.leadUid));
+  }
+  window.__presupuestoDeVenta = v => presupuestoDeVenta(v, DB.presupuestos);
+  // Marca ese presupuesto como convertido (= aceptado, ya tiene venta). Escribe SOLO esos campos (merge).
+  window.__aceptarPresupuestoDeVenta = v=>{
+    const p=presupuestoDeVenta(v, DB.presupuestos); if(!p) return null;
+    const campos={estado:'convertido', ventaUid:v._uid||'', fechaConvertido:v.fecha||hoyISO};
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL,p._uid),campos,{merge:true}).catch(e=>console.warn('presupuesto aceptado:',e&&e.message||e)); }
+    else { Object.assign(p,campos); saveLocal(); render(); }
+    return p;
+  };
   // ¿Este lead ya fue cotizado? Devuelve el presupuesto MÁS RECIENTE del lead, o null.
   // Lo consume el listado del CRM para mostrar el monto realmente cotizado (no el estimado a ojo).
   // Dos vías, en este orden: (1) el vínculo directo `leadUid`, que se sella al generarlo desde el CRM;
