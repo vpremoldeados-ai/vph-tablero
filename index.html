@@ -326,7 +326,10 @@
   .wab-main-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;background:#fff;border-bottom:1px solid var(--border)}
   .wab-main-name{font-weight:800;font-size:13.5px}
   .wab-thread{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:9px}
-  .wab-bubble{max-width:min(78%,560px);border-radius:10px;padding:7px 10px;font-size:12.5px;box-shadow:var(--shadow);position:relative}
+  /* 13/11 (Marcelo: "las sugerencias no ocupan todo el ancho"): el tope fijo de 560px dejaba la sugerencia
+     del agente angosta en pantallas anchas (mucho aire a la derecha de la burbuja), partiéndose en muchas
+     líneas en vez de usar el espacio disponible. Sube a 860px; el % sigue cuidando pantallas chicas. */
+  .wab-bubble{max-width:min(82%,860px);border-radius:10px;padding:7px 10px;font-size:12.5px;box-shadow:var(--shadow);position:relative}
   .wab-bubble-in{align-self:flex-start;background:#fff;border-top-left-radius:2px}
   .wab-bubble-in.resuelta{opacity:.6}
   .wab-bubble-out{align-self:flex-end;background:#d9fdd3;border-top-right-radius:2px}
@@ -19635,6 +19638,7 @@ function buildFilterTable(cfg){
     main.querySelectorAll('button[data-react-toggle]').forEach(b=> b.onclick=()=>{ reaccionAbierta = reaccionAbierta===b.dataset.reactToggle ? null : b.dataset.reactToggle; render(); });
     main.querySelectorAll('button[data-react-set]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactSet, b.dataset.reactEmoji));
     main.querySelectorAll('button[data-react-quitar]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactQuitar, ''));
+    ajustarAltoWrap();   // lo de arriba (banner del bot, etc.) puede haber cambiado de alto en este render
     const th=$('wab-thread'); if(th) th.scrollTop=th.scrollHeight;
   }
 
@@ -20004,9 +20008,21 @@ function buildFilterTable(cfg){
   // se gastaba ahí. Lo correcto es mirar cuándo la página se vuelve VISIBLE de verdad: el click del menú le
   // agrega la clase "active" — un MutationObserver sobre eso corre DESPUÉS del window.scrollTo({top:0})
   // genérico del menú (que resetea el scroll en cada cambio de página) y gana la carrera.
+  // 13/11 (Marcelo: "hay mucho espacio con cosas que hace que la parte de leer y responder tenga poca
+  // altura"): arriba del panel va el estado del canal/bot y las 3 tarjetas de KPI — lo que les queda
+  // encima varía (el cartel de "bot caído" suma ~90px cuando aparece), así que un alto fijo (72vh) a
+  // veces deja el panel más grande que lo que entra en pantalla, cortando el cuadro de escribir. En vez
+  // de pelearle a un número fijo, se mide cuánto espacio REALMENTE queda bajo el panel y se usa todo.
+  function ajustarAltoWrap(){
+    const wrap=document.querySelector('.wab-wrap'); if(!wrap) return;
+    const top=wrap.getBoundingClientRect().top;
+    const alto=Math.max(460, window.innerHeight - top - 16);
+    wrap.style.height=alto+'px';
+  }
+  window.addEventListener('resize', ajustarAltoWrap);
   (function enfocarAlEntrarALaBandeja(){
     const pg=document.getElementById('page-wabandeja'); if(!pg) return;
-    const bajar=()=>{ const wrap=document.querySelector('.wab-wrap'); if(wrap) setTimeout(()=>wrap.scrollIntoView({block:'start', behavior:'smooth'}), 30); };
+    const bajar=()=>{ ajustarAltoWrap(); const wrap=document.querySelector('.wab-wrap'); if(wrap) setTimeout(()=>{ ajustarAltoWrap(); wrap.scrollIntoView({block:'start', behavior:'smooth'}); }, 30); };
     if(pg.classList.contains('active')) bajar();
     new MutationObserver(muts=>{ for(const m of muts) if(m.attributeName==='class' && pg.classList.contains('active')){ bajar(); break; } })
       .observe(pg, { attributes:true, attributeFilter:['class'] });
