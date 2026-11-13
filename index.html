@@ -23551,12 +23551,35 @@ function buildFilterTable(cfg){
       valorDeclarado:valorMercaderiaDe(pe),
       pedidoUid:pe._uid||'', ventaUid:pe.ventaUid||'', ventaUids:(pe.ventaUids||[]).slice() };
   };
+  // Qué le falta a un pedido para poder imprimir su remito (13/11, pedido de Marcelo): SIEMPRE el domicilio de
+  // entrega (salvo que retire el cliente) y un teléfono de contacto; y si se despacha en otro transporte, además
+  // el contacto de destino con teléfono, el valor declarado y la confirmación de que están todos los datos.
+  function datosRemitoFaltantes(pe){
+    const falta=[];
+    const tieneTel=s=>String(s||'').replace(/\D/g,'').length>=6;
+    const fin=String(pe.transporteFinal||'').trim();
+    const contacto=String(pe.contactoEntrega||'').trim();
+    const retira=norm(pe.transporte)===norm('Retira cliente');
+    if(!retira && !dirPed(pe).trim()) falta.push('domicilio de entrega');
+    if(fin){
+      if(!tieneTel(contacto)) falta.push('con quién coordinar en destino (nombre y teléfono)');
+      if(!(num(pe.valorDeclarado)>0 || valorMercaderiaDe(pe)>0)) falta.push('valor declarado');
+      if(pe.despachoListo===false) falta.push('confirmar los datos del despacho (casillero «Ya tengo todos los datos»)');
+    } else {
+      const cs=window.__catalogoClientes?window.__catalogoClientes():[];
+      const cli=cs.find(c=>norm(c.nombre)===norm(pe.cliente))||{};
+      if(!tieneTel(contacto) && !tieneTel(pe.clienteTel) && !tieneTel(cli.telefono) && !tieneTel(window.__telefonoLead?window.__telefonoLead(pe.cliente):'')) falta.push('teléfono de contacto');
+    }
+    return falta;
+  }
   function imprimirRemito(pe){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
-    // Despacho con datos pendientes: producción (Gustavo) no imprime; el admin puede forzarlo con confirmación.
-    if(despachoPendiente(pe)){
-      if(window.__rol!=='admin'){ alert('⏳ Este despacho todavía no tiene todos los datos (valor declarado, con quién coordinar y teléfono).\n\nEl remito se imprime cuando Marcelo o Sofía los confirmen en el pedido.'); return; }
-      if(!confirm('⏳ Este despacho está marcado como "faltan datos".\n\n¿Imprimir el remito igual?')) return;
+    // Faltan datos: producción (Gustavo) no imprime; el admin puede forzarlo con confirmación.
+    const falta=datosRemitoFaltantes(pe);
+    if(falta.length){
+      const lista='• '+falta.join('\n• ');
+      if(window.__rol!=='admin'){ alert('⏳ Todavía no se puede imprimir el remito de '+(pe.cliente||'este pedido')+'. Falta:\n\n'+lista+'\n\nMarcelo o Sofía tienen que completarlo en el pedido.'); return; }
+      if(!confirm('⏳ A este pedido le falta:\n\n'+lista+'\n\n¿Imprimir el remito igual?')) return;
     }
     window.__imprimir.remitoDatos(window.__remitoPedidoObj(pe));
   }
@@ -23774,7 +23797,7 @@ function buildFilterTable(cfg){
     const cli = cs.find(c=>norm(c.nombre)===norm(pe.cliente)) || {};
     pe.clienteCuit    = cli.cuit     || pe.clienteCuit    || '';
     pe.clienteCondIva = cli.condIva  || pe.clienteCondIva || '';
-    pe.clienteTel     = cli.telefono || pe.clienteTel     || '';
+    pe.clienteTel     = cli.telefono || pe.clienteTel     || (window.__telefonoLead ? window.__telefonoLead(pe.cliente) : '') || '';
     return pe;
   }
   // Valor de la mercadería del pedido (pedido de Marcelo, 22/09): lo necesita el remito cuando el
