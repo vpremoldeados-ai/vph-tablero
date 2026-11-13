@@ -19573,7 +19573,7 @@ function buildFilterTable(cfg){
     }).join('') : '<div class="kb-empty">No hay chats'+(q||filtroTipo||!mostrarResueltos?' con este filtro':'')+'.</div>';
     $('wab-lista').querySelectorAll('.wab-chatitem[data-k]').forEach(el=> el.onclick=()=>{ selectedKey=el.dataset.k; render(); });
 
-    // Conversación abierta (derecha): todos los mensajes del chat seleccionado, viejo→nuevo como en WhatsApp.
+    // Conversación abierta (derecha): todos los mensajes del chat seleccionado, el más NUEVO arriba.
     const main=$('wab-main');
     const msgsSel=selectedKey?(grupos.get(selectedKey)||[]):[];
     if(!msgsSel.length){ main.innerHTML='<div class="wab-main-empty">👈 Elegí un chat de la izquierda para ver la conversación.</div>'; return; }
@@ -19581,7 +19581,10 @@ function buildFilterTable(cfg){
     const et=ETIQUETAS[ult.tipo]||{l:ult.tipo,c:'#7a8699'};
     const link=waLink(ult.telefono);
     const pend=msgsSel.filter(m=>(m.estado||'pendiente')==='pendiente');
-    const cron=msgsSel.slice().reverse(); // de más viejo a más nuevo, como en WhatsApp
+    // 13/11 (Marcelo: "que los mensajes más nuevos estén arriba"): msgsSel YA viene nuevo→viejo
+    // (ver claveDe/conversaciones más arriba), así que NO se invierte — antes se daba vuelta para
+    // mostrar viejo→arriba como WhatsApp; ahora el más reciente queda arriba de la lista.
+    const cron=msgsSel;
     const yaLead=msgsSel.some(m=>m.leadUid && !/^wa/.test(String(m.leadUid)));
     const puedeLead=(ult.tipo==='lead_nuevo'||ult.tipo==='cliente'||ult.tipo==='lead_existente');
 
@@ -19645,7 +19648,7 @@ function buildFilterTable(cfg){
     main.querySelectorAll('button[data-react-set]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactSet, b.dataset.reactEmoji));
     main.querySelectorAll('button[data-react-quitar]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactQuitar, ''));
     ajustarAltoWrap();   // lo de arriba (banner del bot, etc.) puede haber cambiado de alto en este render
-    const th=$('wab-thread'); if(th) th.scrollTop=th.scrollHeight;
+    const th=$('wab-thread'); if(th) th.scrollTop=0; // el más nuevo está arriba: arranca mostrándolo
   }
 
   // Días de historial resuelto que se bajan de la nube (para "Ver resueltos también" y para el
