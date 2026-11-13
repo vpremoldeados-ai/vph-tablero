@@ -9761,6 +9761,23 @@ function buildFilterTable(cfg){
     return { periodo:per, base:round2(base), flete:round2(flete), cantVentas:n };
   };
 
+  // Valor de los PRODUCTOS de una venta con IVA incluido y SIN el flete (con el descuento general y el signo
+  // de la Nota de Crédito, igual que __ventasComisionables). Lo usa Producción para el valor declarado del
+  // seguro del transporte: se asegura la mercadería, no el envío.
+  window.__ventaProductosConIva = v=>{
+    if(!v) return 0;
+    const factor = 1 - (num(v.descGeneral)/100);
+    const signo = v.tipoComprobante==='Nota de Crédito' ? -1 : 1;
+    let base=0;
+    (v.items||[]).forEach(it=>{
+      if(esItemFleteVta(it)) return;
+      const neto = num(it.cant)*num(it.precioUnit)*(1-num(it.descPct)/100)*factor*signo;
+      const al = (it.iva==='exento'||it.iva==='nogravado') ? 0 : num(it.iva);
+      base += neto + neto*al/100;
+    });
+    return round2(base);
+  };
+
   // --- Mix de ventas del mes (lo consume la Vista Diaria) ---
   // Cuatro cortes sobre las MISMAS ventas: canal, facturación, forma de pago acordada y medio de cobro.
   // Los montos van CON IVA porque es lo que la empresa factura y cobra. calc() ya devuelve el total con
@@ -22665,7 +22682,7 @@ function buildFilterTable(cfg){
     const fin=String(pe.transporteFinal||'').trim(); if(!fin) return '';
     const sale=String(pe.transporte||'').trim(); const quien=(sale&&sale!=='Sin asignar')?sale:'';
     const partes=['flete en '+(pe.pagoEnvio==='destino'?'DESTINO (lo paga el cliente)':'ORIGEN (factura a VPH)')];
-    const cont=String(pe.contactoEntrega||'').trim();
+    const cont=String(pe.contactoEntrega||'').trim() || (typeof contactoDefaultDe==='function' ? contactoDefaultDe(pe) : '');
     partes.push(cont ? 'coordinar con '+esc(cont) : '<span style="color:var(--amber)">falta con quién coordinar</span>');
     const val=num(pe.valorDeclarado)||num(pe.valorMercaderia);
     if(val>0) partes.push('valor declarado $ '+nf(val));
@@ -23377,7 +23394,7 @@ function buildFilterTable(cfg){
     // Con despacho en otro transporte, el remito es del transporte FINAL (es el que pide pago/valor/contacto).
     const trFinal=String(pe.transporteFinal||'').trim();
     return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:trFinal||((pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:''),
-      pagoEnvio:pe.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(pe.contactoEntrega||'').trim(),
+      pagoEnvio:pe.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:(String(pe.contactoEntrega||'').trim() || (trFinal ? contactoDefaultDe(pe) : '')),
       // La ficha VIVA manda (es la más fresca); el snapshot del pedido es el que salva la sesión de
       // Gustavo, que no puede leer vph_clientes.
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
@@ -23617,17 +23634,33 @@ function buildFilterTable(cfg){
     const todas = window.__ventasTodas ? window.__ventasTodas() : [];
     if(todas.length){
       const uids=[pe.ventaUid].concat(pe.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
-      const tot=uids.reduce((a,u)=>{ const v=todas.find(x=>x._uid===u); return a+((v&&window.__ventaCalc)?window.__ventaCalc(v).total:0); },0);
+      const tot=totalProductosVentas(pe, todas);
       if(tot>0) return tot;
     }
     return num(pe.valorMercaderia)||0;
+  }
+  // Valor de los PRODUCTOS (con IVA, sin el flete) de la/s venta/s del pedido. Es lo que se asegura: el valor
+  // declarado no incluye el costo del envío. Sin __ventaProductosConIva cae al total (versión vieja).
+  function totalProductosVentas(pe, todas){
+    const uids=[pe.ventaUid].concat(pe.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
+    return uids.reduce((a,u)=>{ const v=todas.find(x=>x._uid===u); if(!v) return a;
+      return a+(window.__ventaProductosConIva ? window.__ventaProductosConIva(v) : (window.__ventaCalc?window.__ventaCalc(v).total:0)); },0);
+  }
+  // Con quién coordinar la entrega cuando no se cargó otra persona: el comprador, o sea la persona del lead
+  // (nombre + teléfono). El teléfono sale del snapshot del pedido, de la ficha del cliente o del lead del CRM.
+  function contactoDefaultDe(pe){
+    const nombre=String(pe.cliente||'').trim(); if(!nombre) return '';
+    const cs=window.__catalogoClientes?window.__catalogoClientes():[];
+    const cli=cs.find(c=>norm(c.nombre)===norm(nombre))||{};
+    const tel=String(pe.clienteTel||cli.telefono||(window.__telefonoLead?window.__telefonoLead(nombre):'')||'').trim();
+    return nombre+(tel?' — '+tel:'');
   }
   function snapValor(pe){
     const todas = window.__ventasTodas ? window.__ventasTodas() : [];
     if(!todas.length) return pe;                     // sin catálogo de ventas (rol produccion) no se toca nada
     const uids=[pe.ventaUid].concat(pe.ventaUids||[]).filter((u,i,a)=>u&&a.indexOf(u)===i);
     if(!uids.length) return pe;
-    const tot=uids.reduce((a,u)=>{ const v=todas.find(x=>x._uid===u); return a+((v&&window.__ventaCalc)?window.__ventaCalc(v).total:0); },0);
+    const tot=totalProductosVentas(pe, todas);
     if(tot>0) pe.valorMercaderia=tot;
     return pe;
   }
@@ -23724,6 +23757,10 @@ function buildFilterTable(cfg){
   function drawPed(){
     const pe=editPed;
     // Idem: la variante de refuerzo no se carga como ítem del pedido, se deriva del plan de pallets.
+    // Lo que se muestra de entrada en el bloque de despacho: valor de los productos (con IVA, sin flete) y el
+    // comprador como contacto. Son valores por defecto: si no se tocan, el pedido queda vacío y se recalculan solos.
+    const valorDecl0 = num(editPed.valorDeclarado)>0 ? num(editPed.valorDeclarado) : valorMercaderiaDe(editPed);
+    const contacto0 = String(editPed.contactoEntrega||'').trim() || contactoDefaultDe(editPed);
     const prodOpts='<datalist id="pe-ped-prod-dl">'+activos().filter(p=>!esProdRefuerzo(p)).map(p=>'<option value="'+esc(p.nombre)+'">'+esc(p.codigo||'')+'</option>').join('')+'</datalist>';
     const cliDl='<datalist id="pe-ped-cli-dl">'+[...new Set(pedidos.map(p=>p.cliente).filter(Boolean))].map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>';
     const opt=(arr,sel)=>arr.map(o=>'<option value="'+esc(o)+'"'+(String(sel)===String(o)?' selected':'')+'>'+esc(o)+'</option>').join('');
@@ -23748,8 +23785,8 @@ function buildFilterTable(cfg){
           '<div id="pd-resto" style="margin-top:8px"'+(String(pe.transporteFinal||'').trim()?'':' hidden')+'>'+
             '<div style="display:flex;flex-wrap:wrap;gap:10px 14px">'+
               '<div class="cmp-field" style="flex:1 1 220px"><label>¿Quién paga el flete?</label><select id="pd-pago"><option value="origen"'+(pe.pagoEnvio!=='destino'?' selected':'')+'>VPH (en origen, se factura a VPH)</option><option value="destino"'+(pe.pagoEnvio==='destino'?' selected':'')+'>El cliente (en destino)</option></select></div>'+
-              '<div class="cmp-field" style="flex:1 1 220px"><label>Valor declarado ($, para el seguro)</label><input id="pd-valor" inputmode="decimal" value="'+esc(num(pe.valorDeclarado)>0?num(pe.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Vacío = total de la venta"></div>'+
-              '<div class="cmp-field" style="flex:1 1 100%"><label>Coordinar la entrega con (nombre y teléfono)</label><input id="pd-contacto" value="'+esc(pe.contactoEntrega||'')+'" placeholder="Si es distinto del cliente. Ej: Erick Rodríguez — 3571349174"></div>'+
+              '<div class="cmp-field" style="flex:1 1 220px"><label>Valor declarado ($, para el seguro)</label><input id="pd-valor" inputmode="decimal" value="'+esc(valorDecl0>0?valorDecl0.toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Productos con IVA, sin el flete"></div>'+
+              '<div class="cmp-field" style="flex:1 1 100%"><label>Coordinar la entrega con (nombre y teléfono)</label><input id="pd-contacto" value="'+esc(contacto0)+'" placeholder="Nombre y teléfono del comprador. Ej: Erick Rodríguez — 3571349174"></div>'+
             '</div></div></div>'+
         '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
         '<div class="cmp-field col2"><label>Dirección de entrega</label><input id="pp-dir" value="'+esc(pe.direccion)+'" placeholder="Dónde hay que descargar"></div>'+
