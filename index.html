@@ -20022,7 +20022,16 @@ function buildFilterTable(cfg){
   window.addEventListener('resize', ajustarAltoWrap);
   (function enfocarAlEntrarALaBandeja(){
     const pg=document.getElementById('page-wabandeja'); if(!pg) return;
-    const bajar=()=>{ ajustarAltoWrap(); const wrap=document.querySelector('.wab-wrap'); if(wrap) setTimeout(()=>{ ajustarAltoWrap(); wrap.scrollIntoView({block:'start', behavior:'smooth'}); }, 30); };
+    // El scroll suave (behavior:'smooth') tarda en animarse — recién CUANDO TERMINA, `top` queda en su
+    // posición final y recién ahí tiene sentido medir el alto disponible. 'scrollend' avisa eso (lo
+    // soporta Chrome moderno); el timeout de 450ms es el respaldo para el resto.
+    const bajar=()=>{
+      ajustarAltoWrap();
+      const wrap=document.querySelector('.wab-wrap'); if(!wrap) return;
+      wrap.scrollIntoView({block:'start', behavior:'smooth'});
+      window.addEventListener('scrollend', ajustarAltoWrap, {once:true});
+      setTimeout(ajustarAltoWrap, 450);
+    };
     if(pg.classList.contains('active')) bajar();
     new MutationObserver(muts=>{ for(const m of muts) if(m.attributeName==='class' && pg.classList.contains('active')){ bajar(); break; } })
       .observe(pg, { attributes:true, attributeFilter:['class'] });
