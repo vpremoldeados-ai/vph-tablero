@@ -19124,6 +19124,53 @@ function buildFilterTable(cfg){
     }catch(e){ alert('No se pudo reaccionar: '+e.message+'\n\nSi dice "permission", faltan publicar las reglas de vph_wa_salientes para CREAR con tipo "reaccion".'); }
   }
 
+  // 13/11 (Marcelo: "que se pueda escuchar los audios y que el agente los escuche" / "que reconozca fotos que
+  // mandan los clientes"): el bot (canal cloud) ya archiva el audio/la foto ORIGINAL en vph_adjuntos (mismo
+  // truco que el PDF de un certificado de retención, ver guardarAdjuntoCert/abrirAdjunto en Compras: base64
+  // en una colección propia, sin Storage). Acá se reproduce/ve EN LA BURBUJA, sin abrir una pestaña nueva —
+  // se baja una sola vez por mensaje (mediaWaCache) y el objectURL se reusa si se repinta la Bandeja.
+  const mediaWaCache=new Map();   // adjUid -> objectURL ya resuelta
+  async function cargarAdjuntoWa(uid){
+    if(mediaWaCache.has(uid)) return mediaWaCache.get(uid);
+    const c=fb(); if(!c||!c.db) throw new Error('sin conexión con la nube');
+    const d=await c.FS.getDoc(c.FS.doc(c.db,'vph_adjuntos',uid));
+    if(!d.exists || !d.exists()) throw new Error('no encontré el archivo guardado');
+    const a=d.data()||{};
+    const bin=atob(String(a.datos||'')); const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const url=URL.createObjectURL(new Blob([arr],{type:a.contentType||'application/octet-stream'}));
+    mediaWaCache.set(uid,url);
+    return url;
+  }
+  async function reproducirAudioWa(uid, btn){
+    const txt=btn.textContent;
+    try{
+      btn.disabled=true; btn.textContent='Cargando…';
+      const url=await cargarAdjuntoWa(uid);
+      const cont=document.createElement('span');
+      cont.innerHTML='<audio controls autoplay style="height:32px;vertical-align:middle;max-width:220px" src="'+url+'"></audio>';
+      btn.replaceWith(cont.firstChild);
+    }catch(e){ btn.disabled=false; btn.textContent=txt; alert('No se pudo cargar el audio.\n'+(e.message||'')); }
+  }
+  async function verFotoWa(uid, btn){
+    const txt=btn.textContent;
+    try{
+      btn.disabled=true; btn.textContent='Cargando…';
+      const url=await cargarAdjuntoWa(uid);
+      const img=document.createElement('img');
+      img.src=url; img.alt='Foto del cliente';
+      img.style.cssText='max-width:220px;max-height:220px;border-radius:8px;display:block;margin-top:4px;cursor:zoom-in';
+      img.onclick=()=>window.open(url,'_blank');
+      btn.replaceWith(img);
+    }catch(e){ btn.disabled=false; btn.textContent=txt; alert('No se pudo cargar la foto.\n'+(e.message||'')); }
+  }
+  function mediaWaHTML(m){
+    let h='';
+    if(m.audioAdjuntoId) h+='<div style="margin-top:4px"><button type="button" class="cmp-x" data-audio-adj="'+esc(m.audioAdjuntoId)+'">🔊 Escuchar audio</button></div>';
+    if(m.fotoAdjuntoId) h+='<div style="margin-top:4px"><button type="button" class="cmp-x" data-foto-adj="'+esc(m.fotoAdjuntoId)+'">🖼️ Ver foto</button></div>';
+    return h;
+  }
+
   let editandoSug=null;            // uid del mensaje cuya sugerencia se está editando
   const borradores=new Map();      // uid → texto editado (sobrevive a los re-render de cada snapshot)
   const aprobando=new Set();       // uids ya aprobados en esta sesión (hasta que vuelva el snapshot): evita el doble clic
@@ -19594,6 +19641,7 @@ function buildFilterTable(cfg){
       if(m.deSofia) return '<div class="wab-bubble wab-bubble-out">'+esc(m.mensaje||'')+'<div class="wab-bubble-time">'+esc(fmtHora(m.creadoEn))+'</div></div>';
       return '<div class="wab-bubble wab-bubble-in'+(res?' resuelta':'')+'">'+
         esc(m.mensaje||'')+
+        mediaWaHTML(m)+
         // Compatibilidad: los mensajes viejos guardaban una sola respuestaPropuesta.
         sugerenciasHTML(Array.isArray(m.sugerencias)&&m.sugerencias.length ? m.sugerencias
                         : (m.respuestaPropuesta?[{titulo:'💬 Respuesta guardada',texto:m.respuestaPropuesta}]:null))+
@@ -19647,6 +19695,8 @@ function buildFilterTable(cfg){
     main.querySelectorAll('button[data-react-toggle]').forEach(b=> b.onclick=()=>{ reaccionAbierta = reaccionAbierta===b.dataset.reactToggle ? null : b.dataset.reactToggle; render(); });
     main.querySelectorAll('button[data-react-set]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactSet, b.dataset.reactEmoji));
     main.querySelectorAll('button[data-react-quitar]').forEach(b=> b.onclick=()=>enviarReaccion(b.dataset.reactQuitar, ''));
+    main.querySelectorAll('button[data-audio-adj]').forEach(b=> b.onclick=()=>reproducirAudioWa(b.dataset.audioAdj, b));
+    main.querySelectorAll('button[data-foto-adj]').forEach(b=> b.onclick=()=>verFotoWa(b.dataset.fotoAdj, b));
     ajustarAltoWrap();   // lo de arriba (banner del bot, etc.) puede haber cambiado de alto en este render
     const th=$('wab-thread'); if(th) th.scrollTop=0; // el más nuevo está arriba: arranca mostrándolo
   }
