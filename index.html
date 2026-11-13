@@ -19062,11 +19062,6 @@ function buildFilterTable(cfg){
   const fmtHora=ts=>{ if(!ts) return ''; const d = ts.toDate ? ts.toDate() : new Date(ts); return d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}); };
 
   let DB={pendientes:[]}, filtroTipo='', mostrarResueltos=false, unsub=null, relojEstado=null;
-  // 13/11 (Marcelo: "hay que desplazarse hacia abajo para ver el último mensaje"): arriba del chat hay
-  // bastante antes de llegar a verlo (el estado del canal, el cartel del bot, los 3 KPI) — al entrar a la
-  // Bandeja se baja la página UNA sola vez hasta el panel de chats, apenas hay datos. Después no se vuelve
-  // a mover solo (si Sofía se corre para mirar las KPI, un mensaje nuevo no la debe arrastrar de vuelta).
-  let yaEnfocoChat=false;
   // 11/11: rediseño estilo app de WhatsApp — lista de chats a la izquierda, conversación abierta a
   // la derecha. selectedKey es el chat (mismo k que agrupa las tarjetas: waId/teléfono/nombre).
   let selectedKey=null, busqueda='';
@@ -19985,14 +19980,7 @@ function buildFilterTable(cfg){
     return out.sort((a,b)=>b.min-a.min);
   }
   // ---------- fin reloj de respuesta ----------
-  function juntar(){
-    pintarEstadoBot(); const m=new Map(); partes.rec.forEach(x=>m.set(x._uid,x)); partes.pend.forEach(x=>m.set(x._uid,x)); DB.pendientes=Array.from(m.values()); render();
-    if(!yaEnfocoChat && DB.pendientes.length){
-      yaEnfocoChat=true;
-      const wrap=document.querySelector('.wab-wrap');
-      if(wrap) setTimeout(()=>wrap.scrollIntoView({block:'start', behavior:'smooth'}), 60);
-    }
-  }
+  function juntar(){ pintarEstadoBot(); const m=new Map(); partes.rec.forEach(x=>m.set(x._uid,x)); partes.pend.forEach(x=>m.set(x._uid,x)); DB.pendientes=Array.from(m.values()); render(); }
   function startSync(){
     const c=fb(); if(!c||!c.db) return; stopSync();
     const col=c.FS.collection(c.db,COL);
@@ -20008,7 +19996,21 @@ function buildFilterTable(cfg){
     // deja de escribir y nadie dispara un render. Por eso se repinta cada 5 minutos.
     if(!relojEstado) relojEstado=setInterval(()=>{ pintarEstadoBot(); render(); if(window.__refreshAlertas) window.__refreshAlertas(); }, 5*60000);
   }
-  function stopSync(){ if(unsub){ unsub.forEach(u=>{ try{u();}catch(e){} }); unsub=null; } partes.pend=[]; partes.rec=[]; yaEnfocoChat=false; }
+  function stopSync(){ if(unsub){ unsub.forEach(u=>{ try{u();}catch(e){} }); unsub=null; } partes.pend=[]; partes.rec=[]; }
+  // 13/11 (Marcelo: "hay que desplazarse hacia abajo para ver el último mensaje"): el intento original
+  // enganchaba esto al primer snapshot de datos — pero TODOS los módulos sincronizan desde que arranca el
+  // Tablero, sin importar qué página está a la vista, así que ese snapshot llegaba con la Bandeja todavía
+  // ESCONDIDA detrás de otra página (scrollIntoView sobre algo oculto no hace nada) y la única oportunidad
+  // se gastaba ahí. Lo correcto es mirar cuándo la página se vuelve VISIBLE de verdad: el click del menú le
+  // agrega la clase "active" — un MutationObserver sobre eso corre DESPUÉS del window.scrollTo({top:0})
+  // genérico del menú (que resetea el scroll en cada cambio de página) y gana la carrera.
+  (function enfocarAlEntrarALaBandeja(){
+    const pg=document.getElementById('page-wabandeja'); if(!pg) return;
+    const bajar=()=>{ const wrap=document.querySelector('.wab-wrap'); if(wrap) setTimeout(()=>wrap.scrollIntoView({block:'start', behavior:'smooth'}), 30); };
+    if(pg.classList.contains('active')) bajar();
+    new MutationObserver(muts=>{ for(const m of muts) if(m.attributeName==='class' && pg.classList.contains('active')){ bajar(); break; } })
+      .observe(pg, { attributes:true, attributeFilter:['class'] });
+  })();
   function boot(){
     window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
     window.__afterLogin.push(startSync);
