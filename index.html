@@ -22822,6 +22822,10 @@ function buildFilterTable(cfg){
   // quién paga el flete, con quién coordinar y el valor declarado. `pe.transporte` sigue siendo quien
   // SALE de la fábrica (así el viaje de Matías ocupa SU camión); `pe.transporteFinal` es el que entrega.
   // Va en cargaDetalle, o sea en Entregas a coordinar Y en Viajes armados con una sola función.
+  // 13/11: un despacho en otro transporte puede cargarse SIN tener todavía el valor declarado ni con quién
+  // coordinar en destino (llegan el día previo). Mientras el pedido esté marcado "faltan datos"
+  // (despachoListo === false) Gustavo no imprime el remito. Un pedido viejo sin la marca cuenta como listo.
+  function despachoPendiente(pe){ return !!(pe && String(pe.transporteFinal||'').trim() && pe.despachoListo===false); }
   function despachoHtml(pe){
     const fin=String(pe.transporteFinal||'').trim(); if(!fin) return '';
     const sale=String(pe.transporte||'').trim(); const quien=(sale&&sale!=='Sin asignar')?sale:'';
@@ -22830,13 +22834,15 @@ function buildFilterTable(cfg){
     partes.push(cont ? 'coordinar con '+esc(cont) : '<span style="color:var(--amber)">falta con quién coordinar</span>');
     const val=num(pe.valorDeclarado)||num(pe.valorMercaderia);
     if(val>0) partes.push('valor declarado $ '+nf(val));
-    return '<div class="pe-despacho">🔁 '+(quien?esc(quien)+' lo lleva y ':'')+'se DESPACHA EN <b>'+esc(fin.toUpperCase())+'</b> · '+partes.join(' · ')+'</div>';
+    const pend = pe.despachoListo===false ? '<div style="margin-top:4px;color:#c0392b;font-weight:800">⏳ FALTAN DATOS DEL DESPACHO (valor declarado, con quién coordinar y teléfono) — NO IMPRIMIR EL REMITO hasta que se confirmen</div>' : '';
+    return '<div class="pe-despacho">🔁 '+(quien?esc(quien)+' lo lleva y ':'')+'se DESPACHA EN <b>'+esc(fin.toUpperCase())+'</b> · '+partes.join(' · ')+pend+'</div>';
   }
   // Al guardar el formulario: sin transporte final (o igual al que sale de la fábrica) es entrega DIRECTA y
   // se limpian los datos del despacho, así no quedan restos que el remito tomaría por vigentes.
   function normalizarDespacho(pe){
     const fin=String(pe.transporteFinal||'').trim();
-    if(!fin || norm(fin)===norm(pe.transporte)){ delete pe.transporteFinal; delete pe.pagoEnvio; delete pe.contactoEntrega; delete pe.valorDeclarado; return pe; }
+    if(!fin || norm(fin)===norm(pe.transporte)){ delete pe.transporteFinal; delete pe.pagoEnvio; delete pe.contactoEntrega; delete pe.valorDeclarado; delete pe.despachoListo; return pe; }
+    pe.despachoListo = pe.despachoListo!==false;
     pe.transporteFinal=fin; pe.pagoEnvio=pe.pagoEnvio==='destino'?'destino':'origen';
     pe.contactoEntrega=String(pe.contactoEntrega||'').trim(); pe.valorDeclarado=Math.max(0,num(pe.valorDeclarado)||0);
     return pe;
@@ -23547,6 +23553,11 @@ function buildFilterTable(cfg){
   };
   function imprimirRemito(pe){
     if(!window.__imprimir){ alert('Módulo de Documentos no disponible.'); return; }
+    // Despacho con datos pendientes: producción (Gustavo) no imprime; el admin puede forzarlo con confirmación.
+    if(despachoPendiente(pe)){
+      if(window.__rol!=='admin'){ alert('⏳ Este despacho todavía no tiene todos los datos (valor declarado, con quién coordinar y teléfono).\n\nEl remito se imprime cuando Marcelo o Sofía los confirmen en el pedido.'); return; }
+      if(!confirm('⏳ Este despacho está marcado como "faltan datos".\n\n¿Imprimir el remito igual?')) return;
+    }
     window.__imprimir.remitoDatos(window.__remitoPedidoObj(pe));
   }
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
@@ -23932,6 +23943,7 @@ function buildFilterTable(cfg){
             '<div style="display:flex;flex-wrap:wrap;gap:10px 14px">'+
               '<div class="cmp-field" style="flex:1 1 220px"><label>¿Quién paga el flete?</label><select id="pd-pago"><option value="origen"'+(pe.pagoEnvio!=='destino'?' selected':'')+'>VPH (en origen, se factura a VPH)</option><option value="destino"'+(pe.pagoEnvio==='destino'?' selected':'')+'>El cliente (en destino)</option></select></div>'+
               '<div class="cmp-field" style="flex:1 1 220px"><label>Valor declarado ($, para el seguro)</label><input id="pd-valor" inputmode="decimal" value="'+esc(valorDecl0>0?valorDecl0.toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Productos con IVA, sin el flete"></div>'+
+              '<div class="cmp-field" style="flex:1 1 100%;border:1px dashed var(--border);border-radius:8px;padding:8px 10px"><label style="display:flex;gap:8px;align-items:flex-start;font-weight:700"><input type="checkbox" id="pd-listo" style="margin-top:3px"'+(editPed.despachoListo!==false?' checked':'')+'> <span>✅ Ya tengo todos los datos del despacho (valor declarado, con quién coordinar y teléfono)<br><span style="font-weight:400;color:var(--muted);font-size:11.5px">Si lo dejás SIN tildar, Gustavo no puede imprimir el remito y el viaje muestra «faltan datos». Tildalo cuando los tengas.</span></span></label></div>'+
               '<div class="cmp-field" style="flex:1 1 100%"><label>Coordinar la entrega con (nombre y teléfono)</label><input id="pd-contacto" value="'+esc(contacto0)+'" placeholder="Nombre y teléfono del comprador. Ej: Erick Rodríguez — 3571349174"></div>'+
             '</div></div></div>'+
         '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
@@ -23950,7 +23962,11 @@ function buildFilterTable(cfg){
     drawPlanCarga();
     drawDisponibilidadPed();
     [['pp-cli','cliente'],['pp-dia','diaEntrega'],['pp-freq','fechaRequerida'],['pp-transp','transporte'],['pp-ciudad','ciudad'],['pp-dir','direccion'],['pp-estado','estado'],['pp-nota','nota']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editPed[key]=el.value; if(id==='pp-dia') drawDisponibilidadPed(); }); });
-    { const ef=$('pd-final'); if(ef) ef.addEventListener('input',()=>{ editPed.transporteFinal=ef.value; const r=$('pd-resto'); if(r) r.hidden=!String(ef.value||'').trim(); }); }
+    { const ef=$('pd-final'); if(ef) ef.addEventListener('input',()=>{
+        const antes=String(editPed.transporteFinal||'').trim(); editPed.transporteFinal=ef.value; const r=$('pd-resto'); if(r) r.hidden=!String(ef.value||'').trim();
+        // Al cargar un transporte final por primera vez arranca en "faltan datos" (hay que tildar que ya están).
+        if(!antes && String(ef.value||'').trim()){ editPed.despachoListo=false; const c=$('pd-listo'); if(c) c.checked=false; } }); }
+    { const el=$('pd-listo'); if(el) el.addEventListener('change',()=>{ editPed.despachoListo=el.checked; }); }
     { const ep=$('pd-pago'); if(ep) ep.addEventListener('change',()=>{ editPed.pagoEnvio=ep.value; }); }
     { const ec=$('pd-contacto'); if(ec) ec.addEventListener('input',()=>{ editPed.contactoEntrega=ec.value; }); }
     { const ev=$('pd-valor'); if(ev) ev.addEventListener('input',()=>{ editPed.valorDeclarado=num(ev.value)||0; }); }
