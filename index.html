@@ -1461,6 +1461,7 @@
           <button class="kb-viewbtn" id="crm-tab-leads" title="El embudo de ventas: leads minoristas y mayoristas, desde el alta hasta la venta">📋 Leads (Minorista/Mayorista)</button>
           <button class="kb-viewbtn" id="crm-tab-topes" title="Prospección en frío de playas de estacionamiento para ofrecerles los topes — lista aparte del embudo de leads">🔩 Topes</button>
           <button class="kb-viewbtn" id="crm-tab-basenivel" title="Prospectos de la Base Nivel BNV-40 (apoyo regulable para módulos y contenedores): fabricantes y alquiladores de módulos — lista aparte de Topes y de los leads">📐 Base Nivel</button>
+          <button class="kb-viewbtn" id="crm-tab-corralones" title="Corralones nuevos, posibles mayoristas: me presento, consigo al que define proveedores, le paso catálogo y lista de precios y le doy seguimiento hasta que acepte">🏪 Corralones</button>
         </div>
       </div>
 
@@ -1521,6 +1522,13 @@
         <h3 style="margin:0 0 10px">📐 Base Nivel BNV-40 — módulos y contenedores</h3>
         <div id="crm-bn-controles"></div>
         <div class="tbl-wrap"><table id="crm-bn-tabla"></table></div>
+      </div>
+
+      <!-- ============ PESTAÑA: CORRALONES NUEVOS (13/11, pedido de Marcelo) — posibles mayoristas: mensaje inicial, contacto que define proveedores, catálogo + lista y seguimiento. Lista propia (vph_config/crm_corralones). ============ -->
+      <div id="crm-cor-panel" style="display:none">
+        <h3 style="margin:0 0 10px">🏪 Corralones nuevos — posibles mayoristas</h3>
+        <div id="crm-cor-controles"></div>
+        <div class="tbl-wrap"><table id="crm-cor-tabla"></table></div>
       </div>
 
       <div id="crm-topes-panel" style="display:none">
@@ -15019,7 +15027,7 @@ function buildFilterTable(cfg){
   let VIEW = (()=>{ const v=localStorage.getItem('vph_crm_view'); return (v==='hoy'||v==='lista'||v==='tablero') ? v : 'hoy'; })();
   // Pestaña activa del CRM (24/09): 'leads' = pipeline Minorista/Mayorista · 'topes' = prospección
   // en frío de Topes. Se recuerda por PC, como VIEW.
-  let crmTab = (()=>{ const v=localStorage.getItem('vph_crm_tab_v1'); return (v==='topes'||v==='basenivel') ? v : 'leads'; })();
+  let crmTab = (()=>{ const v=localStorage.getItem('vph_crm_tab_v1'); return (v==='topes'||v==='basenivel'||v==='corralones') ? v : 'leads'; })();
   // `canal` separa MAYORISTA de MINORISTA: desde que se cargaron los ~31 corralones revendedores
   // (06/08) el pipeline mezcla dos negocios muy distintos, y sin este filtro Sofía no puede
   // trabajar una tanda sin tropezarse con la otra.
@@ -15588,10 +15596,13 @@ function buildFilterTable(cfg){
     $('crm-tab-leads').classList.toggle('active', t==='leads');
     $('crm-tab-topes').classList.toggle('active', t==='topes');
     $('crm-tab-basenivel').classList.toggle('active', t==='basenivel');
+    $('crm-tab-corralones').classList.toggle('active', t==='corralones');
     $('crm-leads-section').style.display = t==='leads' ? '' : 'none';
     $('crm-topes-panel').style.display = t==='topes' ? '' : 'none';
     $('crm-bn-panel').style.display = t==='basenivel' ? '' : 'none';
+    $('crm-cor-panel').style.display = t==='corralones' ? '' : 'none';
     if(t==='basenivel'){ drawBaseNivel(); return; }
+    if(t==='corralones'){ drawCorralones(); return; }
     if(t==='topes'){
       // 30/09 (velocidad): las ~4.000 fichas se bajan recien al abrir esta pestaña; el snapshot la dibuja al llegar.
       if(window.__usaNube && !topesCargado){ const tb=$('topes-tabla'); if(tb) tb.innerHTML='<tr><td style="padding:14px;color:var(--muted)">Cargando prospectos…</td></tr>'; topesSubscribe(); }
@@ -19008,6 +19019,198 @@ function buildFilterTable(cfg){
       bnSave(BNW.filter((x,j)=>j!==bi)); drawBaseNivel();
     });
   }
+  // ============ 🏪 CORRALONES NUEVOS (13/11, pedido de Marcelo) ============
+  // Prospección de corralones que todavía NO nos compran, para convertirlos en mayoristas. El circuito:
+  //   1) mensaje inicial: me presento y pido hablar con quien define los nuevos proveedores  → estado «Consultado»
+  //   2) si no contesta, seguimiento a los COR_SEGUI_CONSULTA días (hasta COR_MAX_SEGUI veces)
+  //   3) cuando aparece el contacto (nombre + teléfono) → «Con contacto»
+  //   4) me presento de nuevo y paso el Catálogo + la Lista de Precios (la lista va COPIADA como imagen, el catálogo se adjunta)  → «Presentado»
+  //   5) seguimiento a los COR_SEGUI_PRESENTADO días hasta que acepte → «Negociando» → «Aceptó» (o «Sin interés»)
+  // Lista propia: vph_config/crm_corralones (campo `filas`), igual que Base Nivel; sin colección nueva ni reglas nuevas.
+  const COR_COL='vph_config', COR_DOC='crm_corralones', COR_KEY='vph_crm_corralones_v1';
+  const COR_SEGUI_CONSULTA=3, COR_SEGUI_PRESENTADO=4, COR_MAX_SEGUI=3;
+  const COR_CATALOGO='VPH_Catalogo_Mayorista_2026.pdf (Drive › 01 VENTAS › MAYORISTAS › CORDOBA)';
+  const COR_ESTADOS=[
+    {k:'pendiente',    l:'Pendiente',     c:'#64748b'},
+    {k:'falta-dato',   l:'Falta dato',    c:'#b45309'},
+    {k:'consultado',   l:'Consultado',    c:'#2563eb'},
+    {k:'con-contacto', l:'Con contacto',  c:'#7c3aed'},
+    {k:'presentado',   l:'Presentado',    c:'#0e7490'},
+    {k:'negociando',   l:'Negociando',    c:'#1e9e5a'},
+    {k:'acepto',       l:'Aceptó',        c:'#15803d'},
+    {k:'sin-interes',  l:'Sin interés',   c:'#94a3b8'}
+  ];
+  function corEstado(k){ return COR_ESTADOS.find(e=>e.k===k)||COR_ESTADOS[0]; }
+  function corFirma(){ return (((typeof topesFirma==='function') && topesFirma()) || 'Sofía').trim() || 'Sofía'; }
+  function corNombreSaludo(nombre){
+    let n=String(nombre||'').replace(/\([^)]*\)/g,' ').split(/\s[-–—|]\s/)[0];
+    n=n.replace(/[\s,]+(S\.?\s?A\.?\s?S\.?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?|Ltda\.?)\s*$/i,'').replace(/\s+/g,' ').trim();
+    return n.length>=2 ? n : '';
+  }
+  function corPila(r){ return String((r&&r.contacto)||'').trim().split(/\s+/)[0]; }
+  function corDias(fechaISO){
+    const p=String(fechaISO||'').slice(0,10).split('-').map(Number);
+    if(p.length<3 || !p[0]) return null;
+    return Math.round((new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate()) - new Date(p[0],p[1]-1,p[2]))/86400000);
+  }
+  // ¿Toca el seguimiento? Solo en «Consultado» (a los 3 días) y «Presentado» (a los 4), contando desde el último mensaje, y con tope.
+  function corTocaSeguimiento(r){
+    if(!r) return false;
+    const est=r.estado||'pendiente'; if(est!=='consultado' && est!=='presentado') return false;
+    if((r.seguimientos||0)>=COR_MAX_SEGUI) return false;
+    const d=corDias(r.ultimoMensajeFecha); if(d==null) return false;
+    return d >= (est==='consultado' ? COR_SEGUI_CONSULTA : COR_SEGUI_PRESENTADO);
+  }
+  // Qué mensaje corresponde ahora a esta fila (el botón 📲 de la fila lo usa).
+  function corAccionDe(r){
+    const est=(r&&r.estado)||'pendiente';
+    if(est==='pendiente' || est==='falta-dato') return 'primero';
+    if(est==='consultado') return corTocaSeguimiento(r) ? 'seg-consulta' : null;
+    if(est==='con-contacto') return 'presentacion';
+    if(est==='presentado') return corTocaSeguimiento(r) ? 'seg-presentado' : null;
+    return null;
+  }
+  // Los mensajes de presentación van al CONTACTO que define proveedores (si no hay teléfono propio, al del corralón).
+  function corTelDe(r, accion){
+    return (accion==='presentacion' || accion==='seg-presentado') ? (String(r.telefonoContacto||'').trim() || String(r.telefono||'').trim()) : String(r.telefono||'').trim();
+  }
+  function corTexto(r, accion){
+    const f=corFirma(), emp=corNombreSaludo(r&&r.nombre), pila=corPila(r);
+    if(accion==='primero')
+      return 'Hola, ¿cómo están'+(emp?' en '+emp:'')+'? Soy '+f+' de VPH Premoldeados (Toledo, Córdoba), fabricamos losetas cribadas, green blocks y topes de hormigón.\n\n'+
+        '¿Con quién puedo hablar para presentarles nuestros productos? Busco a la persona que define los nuevos proveedores del corralón. ¡Gracias!';
+    if(accion==='seg-consulta')
+      return 'Hola, ¿cómo va? Les escribí hace unos días: soy '+f+' de VPH Premoldeados. ¿Me pasan el contacto de quien se encarga de los proveedores del corralón? Quiero presentarles nuestros productos 🙏';
+    if(accion==='presentacion')
+      return 'Hola'+(pila?' '+pila:'')+'! Soy '+f+' de VPH Premoldeados, fábrica de losetas cribadas, green blocks y topes de hormigón en Toledo, Córdoba.\n\n'+
+        'Me pasaron tu contacto como quien define los proveedores'+(emp?' de '+emp:'')+'. Te paso el catálogo y la lista de precios mayorista. Fabricamos y entregamos en 7 días hábiles.\n\n'+
+        '¿Lo vemos? Cualquier consulta estoy acá 👌';
+    if(accion==='seg-presentado')
+      return 'Hola'+(pila?' '+pila:'')+'! ¿Pudiste ver el catálogo y la lista de precios que te pasé? Si querés te armo una cotización por pallets para una primera prueba. Entregamos en 7 días hábiles 👌';
+    return '';
+  }
+  let CORW=[], corUnsub=null, corConfirm=null, corImg='', corFiltro='', corCargado=false;
+  function corLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(COR_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
+  function corSave(list){ CORW=list.slice();
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COR_COL,COR_DOC),{filas:CORW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
+    else { try{ localStorage.setItem(COR_KEY, JSON.stringify(CORW)); }catch(e){} }
+  }
+  function corBtnLabel(){ const seg=CORW.filter(corTocaSeguimiento).length;
+    return '🏪 Corralones'+(CORW.length?(' ('+CORW.length+(seg?(' · '+seg+' a seguir'):'')+')'):''); }
+  function corSubscribe(){ if(!window.__usaNube){ CORW=corLoadLocal(); return; } const c=fb(); if(!c||!c.db) return; if(corUnsub)corUnsub();
+    corUnsub=c.FS.onSnapshot(c.FS.doc(c.db,COR_COL,COR_DOC), snap=>{ const d=snap.exists()?snap.data():null; CORW=(d&&Array.isArray(d.filas))?d.filas:[]; corCargado=true;
+      const btn=$('crm-tab-corralones'); if(btn) btn.textContent=corBtnLabel();
+      const panel=$('crm-cor-panel'); if(panel && panel.style.display!=='none') drawCorralones(); }, err=>console.error('corralones:',err)); }
+  function corUpd(ci, fn){ const l=CORW.slice(); if(!l[ci]) return; l[ci]=fn({...l[ci]}); corSave(l); }
+  // La lista de precios va COPIADA como imagen (misma cuenta de precios que el PDF): en el chat, Ctrl+V y Enviar.
+  // El write() va DENTRO del clic y ANTES de abrir WhatsApp (Chrome exige gesto y foco).
+  function corCopiarLista(r){
+    corImg='';
+    try{
+      const im=window.__imprimir;
+      const x=(im && typeof im.listaPreciosImagen==='function') ? im.listaPreciosImagen({lista:r.lista||'may'}) : null;
+      if(!x || x.error || !x.png || typeof navigator==='undefined' || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem==='undefined'){ corImg='error'; return; }
+      corImg='copiando';
+      navigator.clipboard.write([new ClipboardItem({'image/png':x.png})]).then(()=>{ corImg='ok'; drawCorralones(); }).catch(()=>{ corImg='error'; drawCorralones(); });
+    }catch(e){ corImg='error'; }
+  }
+  function corAbrirChat(ci, accion){
+    const r=CORW[ci]; if(!r) return false;
+    const lk=topesWaLink(corTelDe(r, accion)); if(!lk) return false;
+    if(accion==='presentacion') corCopiarLista(r); else corImg='';
+    const ch=mayChatUrl(lk, corTexto(r, accion));   // mismo criterio de WhatsApp Web / app que el panel Mayoristas
+    window.open(ch.url, ch.web ? 'vph_wa_web' : '_blank');
+    corConfirm={ci, accion}; drawCorralones();
+    return true;
+  }
+  // Al confirmar que SALIÓ: el estado avanza solo (primero → Consultado, presentación → Presentado); un seguimiento
+  // suma 1 al contador y reinicia el reloj. «No salió» no escribe nada; «sin WhatsApp» deja la fila en Falta dato.
+  function corConfirmar(salio, sinWa){
+    const cf=corConfirm; corConfirm=null; if(!cf){ drawCorralones(); return; }
+    if(!salio){
+      if(sinWa) corUpd(cf.ci, r=>({...r, estado:'falta-dato', notas:((r.notas?r.notas+' · ':'')+'sin WhatsApp '+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7))}));
+      drawCorralones(); return;
+    }
+    corUpd(cf.ci, r=>{
+      const n={...r, ultimoMensajeFecha:hoyISO, ultimoMensajePor:corFirma()};
+      if(cf.accion==='primero'){ n.estado='consultado'; n.primerContactoFecha=hoyISO; n.seguimientos=0; }
+      else if(cf.accion==='presentacion'){ n.estado='presentado'; n.presentadoFecha=hoyISO; n.seguimientos=0; }
+      else n.seguimientos=(r.seguimientos||0)+1;
+      return n;
+    });
+    drawCorralones();
+  }
+  function drawCorralones(){
+    const cont=$('crm-cor-controles'), tabla=$('crm-cor-tabla'); if(!cont||!tabla) return;
+    const n=k=>CORW.filter(r=>(r.estado||'pendiente')===k).length;
+    const seg=CORW.filter(corTocaSeguimiento).length;
+    cont.innerHTML=
+      '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
+        '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> manda el mensaje que pide hablar con quien define los proveedores. '+
+        '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
+        '3) <b>📲 Presentación + lista</b> abre el chat con ese contacto y deja la <b>lista de precios copiada</b> (Ctrl+V y Enviar); el <b>catálogo</b> se adjunta a mano con el clip: <i>'+esc(COR_CATALOGO)+'</i>. '+
+        '4) Después aparece <b>🔁 Seguimiento</b> a los '+COR_SEGUI_PRESENTADO+' días hasta que acepte. En cada paso confirmá si el mensaje salió.</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+        '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
+        COR_ESTADOS.map(e=>'<button class="filter-btn'+(corFiltro===e.k?' active':'')+'" data-cor-filtro="'+e.k+'">'+esc(e.l)+' ('+n(e.k)+')</button>').join('')+
+        (seg?('<button class="filter-btn'+(corFiltro==='seguir'?' active':'')+'" data-cor-filtro="seguir" style="border-color:#d98324;color:#b45309;font-weight:700">🔁 Toca seguimiento ('+seg+')</button>'):'')+
+        (corFiltro?'<button class="filter-btn" data-cor-filtro="">✕ Todos</button>':'')+
+        '<span style="margin-left:auto;display:flex;gap:8px"><button class="cmp-btn" data-cor-agregar>+ Agregar</button></span>'+
+      '</div>'+
+      (corConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
+        (corConfirm.accion==='presentacion' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Lista copiada: pegala en el chat con Ctrl+V y adjuntá el catálogo (clip). </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la lista: sacala con el 📄 de Base de Datos. Adjuntá también el catálogo. </span>' : '<span style="color:#64748b">Copiando la lista… </span>') : '')+
+        '¿Salió el mensaje a <b>'+esc((CORW[corConfirm.ci]||{}).nombre||'')+'</b>? '+
+        '<button class="cmp-btn" data-cor-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
+        '<button class="cmp-btn" data-cor-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> '+
+        '<button class="cmp-btn" data-cor-no>✗ No salió</button></div>') : '');
+    const vista=CORW.map((r,ci)=>({r,ci})).filter(({r})=> !corFiltro || (corFiltro==='seguir' ? corTocaSeguimiento(r) : (r.estado||'pendiente')===corFiltro));
+    const ord=k=>({pendiente:1,consultado:2,'con-contacto':0,presentado:3,negociando:4,'falta-dato':5,acepto:6,'sin-interes':7})[k||'pendiente'];
+    vista.sort((a,b)=>((corTocaSeguimiento(b.r)?1:0)-(corTocaSeguimiento(a.r)?1:0)) || (ord(a.r.estado)-ord(b.r.estado)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
+    const fmt=f=>f?(String(f).slice(8,10)+'/'+String(f).slice(5,7)):'';
+    let html='<thead><tr><th>Corralón</th><th>Teléfono</th><th>Contacto (decide proveedores)</th><th>Estado</th><th>📲 Mensaje</th><th>Lista</th><th>Notas</th><th></th></tr></thead><tbody>';
+    vista.forEach(({r,ci})=>{
+      const est=corEstado(r.estado), accion=corAccionDe(r), tel=corTelDe(r, accion||'primero');
+      const etiqueta={primero:'📲 Presentarme','seg-consulta':'🔁 Seguimiento',presentacion:'📲 Presentación + lista','seg-presentado':'🔁 Seguimiento'}[accion]||'';
+      let btn;
+      if(!accion) btn='<span style="color:#94a3b8;font-size:11px">'+(est.k==='presentado'||est.k==='consultado'?'esperando respuesta':'—')+'</span>';
+      else if(!topesWaLink(tel)) btn='<span style="color:#94a3b8;font-size:11px">'+(accion==='presentacion'||accion==='seg-presentado'?'cargá el teléfono del contacto':'sin tel.')+'</span>';
+      else btn='<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+accion+'"'+(accion.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+etiqueta+'</button>';
+      const sub=[r.ultimoMensajeFecha?('último '+fmt(r.ultimoMensajeFecha)):'', r.seguimientos?('seg. '+r.seguimientos):''].filter(Boolean).join(' · ');
+      html+='<tr>'+
+        '<td class="cel-nombre"><input data-cor-nombre="'+ci+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
+          '<input data-cor-loc="'+ci+'" value="'+esc(r.localidad||'')+'" placeholder="localidad" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#64748b"></td>'+
+        '<td><input data-cor-tel="'+ci+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
+        '<td><input data-cor-contacto="'+ci+'" value="'+esc(r.contacto||'')+'" placeholder="nombre" style="width:120px"><br><input data-cor-telc="'+ci+'" value="'+esc(r.telefonoContacto||'')+'" placeholder="teléfono" style="width:120px"></td>'+
+        '<td data-sortval="'+esc(est.l)+'"><select data-cor-estado="'+ci+'" style="color:'+est.c+';font-weight:700">'+COR_ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===(r.estado||'pendiente')?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></td>'+
+        '<td style="white-space:nowrap">'+btn+(sub?('<div style="font-size:10.5px;color:#64748b">'+esc(sub)+'</div>'):'')+'</td>'+
+        '<td><select data-cor-lista="'+ci+'"><option value="may"'+((r.lista||'may')==='may'?' selected':'')+'>Facturado</option><option value="maySF"'+(r.lista==='maySF'?' selected':'')+'>Contado</option></select></td>'+
+        '<td><input data-cor-nota="'+ci+'" value="'+esc(r.notas||'')+'" title="'+esc(r.notas||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;color:#475569"></td>'+
+        '<td><button class="cmp-x" data-cor-borrar="'+ci+'" title="Sacar de la lista">✕</button></td>'+
+      '</tr>';
+    });
+    if(!vista.length) html+='<tr><td colspan="8" style="color:#94a3b8">'+(CORW.length?'Ningún corralón con ese filtro.':'Todavía no hay corralones cargados: tocá «+ Agregar».')+'</td></tr>';
+    tabla.innerHTML=html+'</tbody>';
+    cont.querySelectorAll('[data-cor-filtro]').forEach(b=>b.onclick=()=>{ corFiltro=b.dataset.corFiltro; drawCorralones(); });
+    cont.querySelectorAll('[data-cor-agregar]').forEach(b=>b.onclick=()=>{ corSave([{nombre:'', localidad:'', telefono:'', contacto:'', telefonoContacto:'', lista:'may', estado:'pendiente', notas:''}].concat(CORW)); corFiltro=''; drawCorralones(); });
+    cont.querySelectorAll('[data-cor-si]').forEach(b=>b.onclick=()=>corConfirmar(true));
+    cont.querySelectorAll('[data-cor-no]').forEach(b=>b.onclick=()=>corConfirmar(false));
+    cont.querySelectorAll('[data-cor-sinwa]').forEach(b=>b.onclick=()=>corConfirmar(false,true));
+    tabla.querySelectorAll('[data-cor-chat]').forEach(b=>b.onclick=()=>corAbrirChat(+b.dataset.corChat, b.dataset.corAccion));
+    tabla.querySelectorAll('[data-cor-estado]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corEstado, r=>({...r, estado:s.value, estadoFecha:hoyISO, seguimientos:0, ultimoMensajeFecha:(s.value==='consultado'||s.value==='presentado')?(r.ultimoMensajeFecha||hoyISO):r.ultimoMensajeFecha})); drawCorralones(); });
+    tabla.querySelectorAll('[data-cor-nombre]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNombre, r=>({...r, nombre:i.value.trim()})));
+    tabla.querySelectorAll('[data-cor-loc]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corLoc, r=>({...r, localidad:i.value.trim()})));
+    tabla.querySelectorAll('[data-cor-tel]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTel, r=>({...r, telefono:i.value.trim(), estado:(r.estado==='falta-dato'&&i.value.trim()?'pendiente':r.estado)})); drawCorralones(); });
+    tabla.querySelectorAll('[data-cor-contacto]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corContacto, r=>{ const n={...r, contacto:i.value.trim()};
+      if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0; } return n; }); drawCorralones(); });
+    tabla.querySelectorAll('[data-cor-telc]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTelc, r=>({...r, telefonoContacto:i.value.trim()})); drawCorralones(); });
+    tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})));
+    tabla.querySelectorAll('[data-cor-nota]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNota, r=>({...r, notas:i.value})));
+    tabla.querySelectorAll('[data-cor-borrar]').forEach(b=>b.onclick=()=>{
+      const ci=+b.dataset.corBorrar, r=CORW[ci]; if(!r) return;
+      if(!confirm('¿Sacar a "'+(r.nombre||'(sin nombre)')+'" de la lista de corralones?')) return;
+      corSave(CORW.filter((x,j)=>j!==ci)); drawCorralones();
+    });
+  }
   // Pestaña Topes (24/09, pedido de Marcelo: separar los prospectos fríos del pipeline de leads
   // Minorista/Mayorista — antes convivían en la misma pantalla con un panel inline que se abría con
   // un botón). Sigue sin ser un overlay, ahora es una vista propia que reemplaza a la de Leads.
@@ -19043,6 +19246,11 @@ function buildFilterTable(cfg){
   $('crm-tab-basenivel').onclick=()=>setCrmTab('basenivel');
   if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>{ bnSubscribe(); if(bnWebOn()) bnWebArrancarReloj(); }); }
   else bnSubscribe();
+
+  // Corralones nuevos (13/11): pestaña propia + suscripción a su documento.
+  $('crm-tab-corralones').onclick=()=>setCrmTab('corralones');
+  if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>corSubscribe()); }
+  else corSubscribe();
 
   boot();
 })();
