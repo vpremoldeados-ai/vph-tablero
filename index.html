@@ -1616,7 +1616,7 @@
   <!-- ================= BANDEJA WHATSAPP (bot copiloto) ================= -->
   <div class="page" id="page-wabandeja">
     <div id="wab-estado"></div>
-    <div class="kpis" id="wab-kpis"></div>
+    <div id="wab-kpis" style="margin-bottom:8px"></div>
     <section>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
         <h2 style="margin:0"><span class="dot" style="background:var(--accent2)"></span>Bandeja WhatsApp</h2>
@@ -19515,10 +19515,16 @@ function buildFilterTable(cfg){
 
     const pendientes=DB.pendientes.filter(i=>(i.estado||'pendiente')==='pendiente');
     const fuera=pendientes.filter(i=>i.fueraDeHorario);
+    const nuevos=new Set(pendientes.filter(i=>i.tipo==='lead_nuevo').map(i=>i.waId||i.telefono||i.nombre)).size;
+    // 13/11 (Marcelo: "compactarlo para que ocupe la menor altura posible"): las 3 tarjetas grandes (con su
+    // propio padding y "sub" explicativo) medían ~110px; UNA línea con los mismos 3 datos mide ~30px y no
+    // pierde nada — el texto de cada "sub" pasó a tooltip.
     $('wab-kpis').innerHTML =
-      '<div class="kpi info"><div class="label">Pendientes</div><div class="value">'+pendientes.length+'</div><div class="sub">Sin marcar como resueltos</div></div>'+
-      '<div class="kpi warn"><div class="label">Fuera de horario</div><div class="value">'+fuera.length+'</div><div class="sub">Llegaron fuera de L-V 9 a 17hs</div></div>'+
-      '<div class="kpi good"><div class="label">Contactos nuevos</div><div class="value">'+new Set(pendientes.filter(i=>i.tipo==='lead_nuevo').map(i=>i.waId||i.telefono||i.nombre)).size+'</div><div class="sub">No están en la base — el bot no los carga al CRM</div></div>';
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;padding:7px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px">'+
+        '<span title="Sin marcar como resueltos"><b style="color:var(--blue);font-size:15px">'+pendientes.length+'</b> pendiente'+(pendientes.length===1?'':'s')+'</span>'+
+        '<span title="Llegaron fuera de L-V 9 a 17hs"><b style="color:'+(fuera.length?'var(--amber)':'var(--muted)')+';font-size:15px">'+fuera.length+'</b> fuera de horario</span>'+
+        '<span title="No están en la base — el bot no los carga al CRM"><b style="color:'+(nuevos?'var(--green)':'var(--muted)')+';font-size:15px">'+nuevos+'</b> contacto'+(nuevos===1?'':'s')+' nuevo'+(nuevos===1?'':'s')+'</span>'+
+      '</div>';
 
     $('wab-filtros').innerHTML = ['','fabrica','proveedor','cliente','lead_existente','lead_nuevo'].map(t=>{
       const label = t? (ETIQUETAS[t]?ETIQUETAS[t].l:t) : 'Todos';
@@ -19688,17 +19694,18 @@ function buildFilterTable(cfg){
       return {sev:'warn', titulo:'El bot de WhatsApp perdió la conexión', detalle:'Se está reiniciando solo. Si en 10 minutos no vuelve, avisá.'};
     return null;
   }
+  // 13/11 (Marcelo: "hay que compactarlo para que ocupe la menor altura posible"): con todo bien, el
+  // estado del bot ahora va DENTRO de la misma línea del canal (ver barraCanalHTML), no en un renglón
+  // aparte. El cartel de alerta (rojo/ámbar) SIGUE siendo un bloque propio, a propósito: un problema real
+  // tiene que notarse, no achicarse.
   function pintarEstadoBot(){
     const el=$('wab-estado'); if(!el) return;
     const p=waCanalEnvio()==='cloud'?problemaBot():null; // ver el comentario de estadoBot más arriba
-    const canalHTML=barraCanalHTML();
-    if(!p){
-      el.innerHTML = canalHTML + (estadoBot
-        ? '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">🟢 El bot está conectado y registrando mensajes'+(estadoBot.cuando?' (última señal '+fmtFecha(estadoBot.cuando)+')':'')+'</div>'
-        : '');
-      bindBarraCanal();
-      return;
-    }
+    // Con todo bien, un puntito verde en la MISMA línea del canal alcanza — el cartel aparte era para
+    // avisar algo, y acá no hay nada que avisar.
+    const estadoCorto=(!p && estadoBot) ? '<span class="badge green" style="margin-left:4px" title="Última señal '+esc(fmtFecha(estadoBot.cuando||''))+'">🟢 conectado</span>' : '';
+    const canalHTML=barraCanalHTML(estadoCorto);
+    if(!p){ el.innerHTML = canalHTML; bindBarraCanal(); return; }
     const col=p.sev==='bad'?'var(--red)':'var(--amber)';
     el.innerHTML=canalHTML+'<div style="border:2px solid '+col+';border-radius:12px;padding:12px 14px;margin-bottom:12px;background:'+col+'11">'+
       '<div style="font-weight:800;color:'+col+'">'+(p.sev==='bad'?'🔴 ':'⚠️ ')+esc(p.titulo)+'</div>'+
@@ -19713,7 +19720,11 @@ function buildFilterTable(cfg){
   // Con canal web-lenovo + extensión conectada se muestra 📥 Leer el chat abierto: pide a la extensión el
   // último mensaje del cliente del chat abierto en WA Web y se lo pasa al Worker a /wa-leer para que el
   // agente genere la sugerencia (el mensaje aparece en la Bandeja como un pendiente más).
-  function barraCanalHTML(){
+  // 13/11 (Marcelo: "compactarlo para que ocupe la menor altura posible"): el texto explicativo de cada
+  // canal (`hint`) pasó de un renglón propio siempre visible a un tooltip (title) sobre el nombre del
+  // canal — se lee pasando el mouse, no ocupa alto. `estadoCorto` (el puntito verde "conectado") se
+  // agrega en la MISMA línea en vez de abajo — ver pintarEstadoBot().
+  function barraCanalHTML(estadoCorto){
     const c=waCanalEnvio();
     const txt=c==='web-lenovo'?'🌐 WhatsApp Web en la Lenovo (número de Sofía 351 760-5362)':c==='cloud'?'☁️ Bot en la nube (otra sesión del mismo WhatsApp, sin depender de ninguna PC)':'📡 API oficial de WhatsApp (el Worker manda solo)';
     const hint=c==='web-lenovo'?'Lo aprobado lo manda el Chrome de la Lenovo con la extensión. Depende de esa PC prendida.':c==='cloud'?'Lo aprobado lo manda el bot del servidor (GET /wa-cola), vinculado por QR como otra sesión de WhatsApp Web. No depende de ninguna PC de la oficina.':'El Worker manda solo. Disponible cuando el número de Sofía esté en coexistencia con la API.';
@@ -19729,11 +19740,10 @@ function buildFilterTable(cfg){
     const btnAbrirWa=c==='web-lenovo'?'<button class="kb-move" id="wab-abrir-wa" title="Abre WhatsApp Web en una pestaña de este mismo navegador (la reusa si ya está abierta)">📱 Abrir WhatsApp Web</button>':'';
     const rc=resumenContenido(DB.pendientes||[], Date.now());
     const btnCont='<button class="kb-move" id="wab-cont-toggle">📸 Contenido que piden ('+rc.total+(rc.hoy?' · '+rc.hoy+' hoy':'')+')</button>';
-    return '<div id="wab-canal-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;font-size:12.5px">'+
-      '<span style="font-weight:700">Canal de envío:</span><span>'+esc(txt)+'</span>'+extLista+
+    return '<div id="wab-canal-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:8px;font-size:12.5px">'+
+      '<span style="font-weight:700">Canal:</span><span title="'+esc(hint)+'" style="cursor:help;border-bottom:1px dotted var(--muted)">'+esc(txt)+'</span>'+extLista+(estadoCorto||'')+
       btnAbrirWa+btnLeer+btnCont+
-      '<button class="kb-move" id="wab-canal-cambiar" style="margin-left:auto">Cambiar</button>'+
-      '<div style="flex:0 0 100%;color:var(--muted);font-size:11px;margin-top:2px">'+esc(hint)+'</div></div>'+
+      '<button class="kb-move" id="wab-canal-cambiar" style="margin-left:auto">Cambiar</button></div>'+
       (verContenido?contenidoPanelHTML(rc):'');
   }
   // 09/11 (Marcelo: "que vaya aprendiendo lo que solicitan los clientes así se genera el contenido digital a
