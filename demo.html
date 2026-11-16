@@ -187,7 +187,7 @@
     .nav-item .ico{width:auto;font-size:16px}
     .nav-item .pill{position:absolute;top:0;right:0;margin-left:0}
     
-    #cmp-logout{width:auto !important;max-width:96px;margin:0 8px 0 2px !important;padding:6px 9px !important;font-size:10.5px !important;flex-shrink:0;align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #cmp-logout,#cmp-changepass{width:auto !important;max-width:96px;margin:0 8px 0 2px !important;padding:6px 9px !important;font-size:10.5px !important;flex-shrink:0;align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     main{margin-left:0;padding:58px 12px 30px}
   }
 
@@ -3792,10 +3792,13 @@ window.__pintarStockDisp = function(){
         nBajo>0 ? (cubreMin?'warn':'bad') : 'good') +
     kpi('En secado', fmtKg(rp.kgEnCurado), 'Fabricado, listo en los próximos días', 'info') +
     kpi('Comprometido', fmtKg(rp.kgComprometido), 'Pedidos sin entregar, ya descontados', 'info') +
-    kpi('Mínimo para vender', fmtKg(rp.kgMinimo), 'Suma de los mínimos por producto', rp.kgMinimo>0?'info':'warn');
+    kpi('Mínimo para vender', fmtKg(rp.kgMinimo), 'Suma de los mínimos por producto', rp.kgMinimo>0?'info':'warn') +
+    (rp.productosAReponer>0
+      ? kpi('Fabricar: reposición', fmtKg(rp.kgReponer), rp.productosAReponer+' producto'+(rp.productosAReponer!==1?'s':'')+' por llegar al mínimo (incluye lo que cura)', 'bad')
+      : kpi('Producción', 'Pausar', 'Disponible + en secado cubre el mínimo de todos: fabricar solo cuando aparezcan ventas', 'good'));
   const orden = { falta:0, bajo:1, ok:2 };
   const filas = rp.porProducto.slice().sort((a,b)=> (orden[a.estadoVenta]-orden[b.estadoVenta]) || (b.kgDisponible-a.kgDisponible));
-  tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En secado (u)</th><th>Estado</th></tr>' +
+  tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En secado (u)</th><th class="num">Fabricar (kg)</th><th>Estado</th></tr>' +
     filas.map(f=>{
       const falta = f.estadoVenta==='falta', bajo = f.estadoVenta==='bajo';
       const lote = f.proxLote ? 'próximo lote '+dm(f.proxLote.fecha)+' ('+nf(f.proxLote.cantidad)+' u)' : '';
@@ -3809,6 +3812,7 @@ window.__pintarStockDisp = function(){
         '<td class="num">'+(f.minimo>0?nf(f.minimo):'—')+'</td>'+
         '<td class="num">'+nf(f.kgDisponible)+'</td>'+
         '<td class="num">'+nf(f.enCurado)+'</td>'+
+        '<td class="num" style="color:'+(f.kgReponer>0?'var(--red)':'var(--muted)')+';font-weight:'+(f.kgReponer>0?800:400)+'">'+(f.kgReponer>0?nf(f.kgReponer):'—')+'</td>'+
         '<td>'+badge+((falta||bajo)&&lote ? '<span style="display:block;font-size:11px;color:var(--muted)">'+_escA(lote)+'</span>' : '')+'</td></tr>';
     }).join('');
   try{ if(window.__ordenable) window.__ordenable(tb); }catch(e){}
@@ -7818,19 +7822,85 @@ function buildFilterTable(cfg){
       '<div class="cmp-field" style="margin-bottom:12px"><label>Email</label><input id="cmp-log-email" type="email" autocomplete="username"></div>'+
       '<div class="cmp-field" style="margin-bottom:12px"><label>Contraseña</label><input id="cmp-log-pass" type="password" autocomplete="current-password"></div>'+
       '<div id="cmp-log-err" style="color:var(--red);font-size:12px;min-height:16px;margin-bottom:8px"></div>'+
-      '<button class="cmp-btn cmp-btn-primary" id="cmp-log-btn" style="width:100%">Entrar</button></div></div>';
+      '<button class="cmp-btn cmp-btn-primary" id="cmp-log-btn" style="width:100%">Entrar</button>'+
+      '<div style="text-align:center;color:var(--muted);font-size:11px;margin:12px 0">— o —</div>'+
+      '<button class="cmp-btn" id="cmp-log-google" style="width:100%">🔵 Ingresar con Google</button>'+
+      '</div></div>';
     document.body.appendChild(ov);
     const doLogin=()=>{ const em=($('cmp-log-email').value||'').trim(), pw=$('cmp-log-pass').value;
       $('cmp-log-err').textContent='Ingresando…';
       AUTH.signInWithEmailAndPassword(fbAuth, em, pw).catch(e=>{ $('cmp-log-err').textContent = traducirErr(e.code); }); };
     $('cmp-log-btn').onclick=doLogin;
     $('cmp-log-pass').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+     
+     
+     
+    $('cmp-log-google').onclick=()=>{
+      $('cmp-log-err').textContent='Abriendo Google…';
+      AUTH.signInWithPopup(fbAuth, new AUTH.GoogleAuthProvider()).catch(e=>{
+        if(e.code==='auth/popup-closed-by-user' || e.code==='auth/cancelled-popup-request'){ $('cmp-log-err').textContent=''; return; }
+        $('cmp-log-err').textContent = traducirErr(e.code);
+      });
+    };
   }
   function showLogin(){ const l=$('cmp-login'); if(l) l.classList.add('open'); }
   function hideLogin(){ const l=$('cmp-login'); if(l){ l.classList.remove('open'); const p=$('cmp-log-pass'); if(p) p.value=''; } }
-  function traducirErr(code){ return ({'auth/invalid-credential':'Email o contraseña incorrectos.','auth/invalid-email':'Email inválido.','auth/user-not-found':'Usuario no encontrado.','auth/wrong-password':'Contraseña incorrecta.','auth/too-many-requests':'Demasiados intentos, esperá unos minutos.','auth/network-request-failed':'Sin conexión.'}[code]) || ('Error: '+code); }
+  function traducirErr(code){ return ({'auth/invalid-credential':'Email o contraseña incorrectos.','auth/invalid-email':'Email inválido.','auth/user-not-found':'Usuario no encontrado.','auth/wrong-password':'Contraseña incorrecta.','auth/too-many-requests':'Demasiados intentos, esperá unos minutos.','auth/network-request-failed':'Sin conexión.','auth/weak-password':'La contraseña nueva es muy débil (mínimo 6 caracteres).','auth/requires-recent-login':'Por seguridad, volvé a escribir tu contraseña ACTUAL e intentá de nuevo.','auth/popup-blocked':'El navegador bloqueó la ventana de Google. Habilitá las ventanas emergentes para este sitio.','auth/operation-not-allowed':'El ingreso con Google todavía no está habilitado — avisale a Marcelo.','auth/account-exists-with-different-credential':'Ese email ya tiene una cuenta con otro método de ingreso — avisale a Marcelo.'}[code]) || ('Error: '+code); }
+   
+   
+   
+   
+   
+   
+  function buildCambiarPassUI(){
+    if($('cmp-cambiopass')) return;
+    const ov=document.createElement('div'); ov.className='cmp-overlay'; ov.id='cmp-cambiopass';
+    ov.innerHTML='<div class="cmp-dialog" style="max-width:380px"><div class="cmp-dialog-head"><h3>🔑 Cambiar contraseña</h3></div>'+
+      '<div class="cmp-dialog-body">'+
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Contraseña actual</label><input id="cp-actual" type="password" autocomplete="current-password"></div>'+
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Contraseña nueva</label><input id="cp-nueva" type="password" autocomplete="new-password"></div>'+
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Repetir contraseña nueva</label><input id="cp-repetir" type="password" autocomplete="new-password"></div>'+
+      '<div id="cp-err" style="color:var(--red);font-size:12px;min-height:16px;margin-bottom:8px"></div>'+
+      '<div style="display:flex;gap:8px"><button class="cmp-btn" id="cp-cancelar" style="flex:1">Cancelar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="cp-guardar" style="flex:1">Guardar</button></div>'+
+      '</div></div>';
+    document.body.appendChild(ov);
+    $('cp-cancelar').onclick=()=> ov.classList.remove('open');
+    $('cp-guardar').onclick=async ()=>{
+      const u=fbAuth.currentUser; if(!u){ return; }
+      const actual=$('cp-actual').value, nueva=$('cp-nueva').value, rep=$('cp-repetir').value;
+      const err=$('cp-err'); err.textContent='';
+      if(!actual){ err.textContent='Ingresá tu contraseña actual.'; return; }
+      if(nueva.length<6){ err.textContent='La contraseña nueva tiene que tener al menos 6 caracteres.'; return; }
+      if(nueva!==rep){ err.textContent='Las dos contraseñas nuevas no coinciden.'; return; }
+      err.textContent='Cambiando…';
+      try{
+        const cred = AUTH.EmailAuthProvider.credential(u.email, actual);
+        await AUTH.reauthenticateWithCredential(u, cred);
+        await AUTH.updatePassword(u, nueva);
+        ov.classList.remove('open');
+        alert('Contraseña cambiada.');
+      }catch(e){ err.textContent = traducirErr(e.code); }
+    };
+  }
+  function abrirCambiarPass(){
+    buildCambiarPassUI();
+    $('cp-actual').value=''; $('cp-nueva').value=''; $('cp-repetir').value=''; $('cp-err').textContent='';
+    $('cmp-cambiopass').classList.add('open');
+  }
   function updateUserBar(){
     if(!usuario) return;
+     
+     
+    const tienePass = (usuario.providerData||[]).some(p=>p.providerId==='password');
+    let cp=$('cmp-changepass');
+    if(!cp){ cp=document.createElement('button'); cp.className='cmp-btn'; cp.id='cmp-changepass';
+      cp.style.cssText='width:calc(100% - 24px);margin:8px 12px 0;padding:8px;font-size:12.5px';
+      const sf=document.querySelector('.sidebar-foot');
+      if(sf && sf.parentElement) sf.parentElement.insertBefore(cp, sf);
+      else document.getElementById('nav').appendChild(cp);
+      cp.onclick=abrirCambiarPass; cp.textContent='🔑 Cambiar contraseña'; }
+    cp.style.display = tienePass ? '' : 'none';
      
      
     let b=$('cmp-logout');
@@ -9361,6 +9431,8 @@ function buildFilterTable(cfg){
        
        
       if(cb){ try{ cb(v); }catch(e){ console.error('venta onSaved:',e); } }
+       
+      if(esAlta && window.__aceptarPresupuestoDeVenta){ try{ window.__aceptarPresupuestoDeVenta(v); }catch(e){ console.error('aceptar presupuesto:',e); } }
        
        
       if(!esAlta && window.__ofrecerActualizarPedido){ try{ window.__ofrecerActualizarPedido(v); }catch(e){ console.error('actualizar pedido:',e); } }
@@ -13697,6 +13769,7 @@ function buildFilterTable(cfg){
   function drawSugEnvio(){
     const c=$('pf-sug-envio'); if(!c) return;
     const s=sugEnvioDe();
+    if(s && s.flete===null && typeof window.__enviosLlegHtml==='function'){ c.innerHTML=window.__enviosLlegHtml(String((editing&&editing.domicilioEntrega)||''), s.pallets, {}); return; }
     if(!s || s.flete===null){ c.innerHTML=''; return; }
     const z=s.zonaPresupuesto||'';
     const ya = z && String(editing.zona||'')===String(z);
@@ -13950,6 +14023,40 @@ function buildFilterTable(cfg){
    
    
   window.__presupuestoPorUid = uid => (uid && DB.presupuestos.find(p=>p._uid===uid)) || null;
+   
+   
+   
+   
+   
+   
+   
+  function presupuestoDeVenta(v, lista){
+    if(!v || ['Presupuesto','Nota de Crédito','Nota de Débito'].indexOf(v.tipoComprobante)>=0) return null;
+    const nrm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const dias=(a,b)=>Math.round((new Date(b)-new Date(a))/864e5);
+    const cods=a=>(a||[]).map(i=>String((i&&(i.codigo||i.desc))||'').toUpperCase()).filter(x=>x&&!/FLETE/.test(x)).sort().join('|');
+    const cn=nrm(v.cliente), mios=cods(v.items);
+    const cand=(lista||[]).filter(p=>{
+      const e=p.estado||'borrador'; if(e!=='borrador'&&e!=='enviado') return false;
+      if(p.reemplazadoPor||p.esComparativo===true) return false;
+      if(v.presupuestoUid && v.presupuestoUid===p._uid) return true;
+      const porLead=!!(v.leadUid&&p.leadUid&&v.leadUid===p.leadUid), porNom=!!(cn&&nrm(p.cliente)===cn);
+      if(!porLead&&!porNom) return false;
+      const d=dias(p.fecha,v.fecha); return d>=-3&&d<=60; });
+    const directo=cand.find(p=>v.presupuestoUid&&v.presupuestoUid===p._uid); if(directo) return directo;
+    const masCerca=l=>l.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))[0]||null;
+    const iguales=cand.filter(p=>cods(p.items)===mios); if(iguales.length) return masCerca(iguales);
+    return masCerca(cand.filter(p=>v.leadUid&&p.leadUid===v.leadUid));
+  }
+  window.__presupuestoDeVenta = v => presupuestoDeVenta(v, DB.presupuestos);
+   
+  window.__aceptarPresupuestoDeVenta = v=>{
+    const p=presupuestoDeVenta(v, DB.presupuestos); if(!p) return null;
+    const campos={estado:'convertido', ventaUid:v._uid||'', fechaConvertido:v.fecha||hoyISO};
+    if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COL,p._uid),campos,{merge:true}).catch(e=>console.warn('presupuesto aceptado:',e&&e.message||e)); }
+    else { Object.assign(p,campos); saveLocal(); render(); }
+    return p;
+  };
    
    
    
@@ -16198,6 +16305,7 @@ function buildFilterTable(cfg){
       '<button class="cmp-addline" id="cf-addline">+ Agregar renglón manual</button>'+ datalistProd() +
       '<div id="cf-tot-box" style="margin-top:8px;text-align:right;font-size:13px"></div>'+
       '<div id="cf-flete-box" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg,#f8fafc);font-size:12.5px;line-height:1.5"></div>'+
+      '<div id="cf-sug-transp" style="font-size:12.5px;line-height:1.5"></div>'+
       '<h4 style="margin:14px 0 6px;font-size:13px">Seguimiento</h4>'+
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:2px"><label style="font-size:12.5px;color:var(--muted);font-weight:700;white-space:nowrap">📅 Próximo seguimiento</label><input type="date" id="cf-proxsegui" value="'+esc(l.proximoSeguimiento||'')+'" style="max-width:170px;padding:7px 10px;border:1px solid var(--border);border-radius:8px">'+(l.proximoSeguimiento?'<button class="cmp-rowbtn" id="cf-proxsegui-clear">Quitar</button>':'')+'</div>'+
       '<p class="note" style="margin:0 0 10px">Se reprograma solo: 3 días hábiles al crear el lead, y 5 días hábiles más cada vez que pasás a Reconsulta 1 o 2. Podés ajustarlo a mano acá.</p>'+
@@ -16212,7 +16320,7 @@ function buildFilterTable(cfg){
       fld('Nota general','col2','<textarea id="cf-nota" rows="2" style="width:100%;margin-top:8px">'+esc(l.nota)+'</textarea>')+
       '<div class="cmp-form-foot"><button class="cmp-btn" id="cf-cancel">Cancelar</button><button class="cmp-btn" id="cf-comparativo" title="Generar PDF comparativo de 4 modelos para este cliente">📋 Comparativo</button><button class="cmp-btn cmp-btn-primary" id="cf-save">Guardar</button></div>';
     drawItems(); drawSegui();
-    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona'){ editing.precioFlete=0; drawFleteBox(); } }); });    
+    [['cf-cli','cliente'],['cf-tel','telefono'],['cf-email','email'],['cf-origen','origen'],['cf-estado','estado'],['cf-lugar','lugar'],['cf-domfact','domicilioFacturacion'],['cf-zona','zona'],['cf-pago','pago'],['cf-monto','monto'],['cf-cat','categoria'],['cf-lista','listaPrecios'],['cf-cuit','cuit'],['cf-cond','condIva'],['cf-nota','nota'],['cf-proxsegui','proximoSeguimiento']].forEach(([id,key])=>{ const el=$(id); if(el) el.addEventListener('input',()=>{ editing[key]= (key==='monto')?num(el.value):el.value; if(key==='zona'){ editing.precioFlete=0; drawFleteBox(); } if(key==='lugar'&&typeof drawSugTransp==='function') drawSugTransp(); }); });    
      
      
      
@@ -16406,7 +16514,20 @@ function buildFilterTable(cfg){
     const total = neto+iva;
     return { pallets:pal, tarifa, seguro, traslado, neto, iva, total, precioPallet:Math.round(total/pal) };
   }
+   
+   
+  function drawSugTransp(){
+    const c=$('cf-sug-transp'); if(!c) return;
+    if(typeof window.__enviosLlegHtml!=='function'){ c.innerHTML=''; return; }
+    let pal=1;
+    if(window.__fleteCotizar){
+      const its=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
+      if(its.some(it=>it.cant>0)){ const f0=window.__fleteCotizar(its,'capital'); pal=num(editing.palletsFlete)>0?num(editing.palletsFlete):(f0.palletsAuto||f0.pallets||1); }
+    }
+    c.innerHTML=window.__enviosLlegHtml(editing.lugar||'', pal, {vacio:true});
+  }
   function drawFleteBox(){
+    if(typeof drawSugTransp==='function') drawSugTransp();
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
     if(!zona){ box.innerHTML='<span style="color:var(--muted)">Elegí la <b>forma de entrega</b> arriba para calcular el flete.</span>'; return; }
@@ -20641,6 +20762,12 @@ function buildFilterTable(cfg){
    
   function ajustarAltoWrap(){
     const wrap=document.querySelector('.wab-wrap'); if(!wrap) return;
+     
+     
+     
+     
+     
+    if(window.innerWidth<=860){ wrap.style.height=''; return; }
     const top=wrap.getBoundingClientRect().top;
     const alto=Math.max(460, window.innerHeight - top - 16);
     wrap.style.height=alto+'px';
@@ -21266,6 +21393,37 @@ function buildFilterTable(cfg){
   window.__envioSugerencia=(localidad,pallets)=>{ const r=resolverEnvio(localidad,pallets,TRA); if(!r) return null;
     const t=TRA.find(x=>x._uid===r._uid); return Object.assign({}, r, {zonaPresupuesto:(t&&t.zonaPresupuesto)||''}); };
   window.__transportesTarifas=()=>TRA.slice();
+   
+   
+   
+   
+  function llegan(localidad, pallets){
+    const l=normLoc(localidad); if(l.length<3) return [];
+    return TRA.filter(t=>t&&t.activo!==false&&cubre(t,localidad)).map(t=>{
+      const flete=costoEnvio(t,pallets), n=Math.max(1, Number(pallets)||1);
+      const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&(y===l||l.includes(y)||y.includes(l)); })||'';
+      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide,
+        flete, porPallet:flete===null?null:Math.round(flete/n), plazoDias:Number(t.plazoDias)||0, pagoEn:t.pagoEn||'', confirmado:!!t.confirmado, estado:estadoDe(t)[0] };
+    }).sort((a,b)=>((a.flete===null)-(b.flete===null))||((a.flete||0)-(b.flete||0))||String(a.transporte).localeCompare(String(b.transporte)));
+  }
+  window.__enviosLlegan=llegan;
+   
+   
+  window.__enviosLlegHtml=function(localidad, pallets, opts){
+    opts=opts||{};
+    if(window.__rol!=='admin'||!TRA.length) return '';
+    const loc=String(localidad||'').trim(); if(normLoc(loc).length<3) return '';
+    const n=Math.max(1, Math.round(Number(pallets))||1), L=llegan(loc,n);
+    if(!L.length) return opts.vacio ? '<div class="note" style="margin-top:8px;border-left:4px solid var(--red)">🚚 <b>Ningún transporte cargado llega a «'+esc(loc)+'».</b> <span class="meta">Hay que cotizarlo y sumarlo en 🚛 Transportes.</span></div>' : '';
+    return '<div class="note" style="margin-top:8px;border-left:4px solid var(--'+(L.some(x=>x.flete!==null)?'green':'amber')+')">'+
+      '🚚 <b>Transportes que llegan a «'+esc(loc)+'»</b> <span class="meta">(cotización para '+n+' pallet'+(n>1?'s':'')+')</span>'+
+      L.map(x=>'<div style="margin-top:4px">• <b>'+esc(x.transporte)+'</b>'+
+        (x.flete!==null ? ' · <b>'+money(x.flete)+'</b> ('+money(x.porPallet)+' c/u)'+(x.plazoDias?' · '+x.plazoDias+' días':'')+(x.confirmado?'':' <span class="badge amber">estimada</span>')
+                        : ' · <span class="badge red">falta cotizar</span>')+
+        (x.telefono?' · 📞 '+esc(x.telefono):'')+(x.contacto?' · '+esc(x.contacto):'')+
+        (x.coincide?' <span class="meta">(cubre: '+esc(x.coincide)+')</span>':'')+'</div>').join('')+
+      '</div>';
+  };
 
    
    
@@ -21297,6 +21455,30 @@ function buildFilterTable(cfg){
     { _uid:'tra_fletero_hidrogrua_la_granja', transporte:'Fletero con hidrogrúa', tipo:'tercero', destino:'La Granja (Sierras Chicas)', provincia:'Córdoba', zona:'granCba',
       localidades:['la granja','ascochinga','agua de oro','el manzano','villa ani mi'], precioViaje:260000, pallets:2, plazoDias:3, pagoEn:'origen', descarga:'hidrogrua',
       condiciones:'Cotización que pasó por el WhatsApp de Sofía (ago 2026): $260.000 el viaje con hidrogrúa, 2 pallets. Falta el nombre y el teléfono del fletero. Las localidades vecinas las sumó Claude: CONFIRMAR.', fechaCotizacion:'2026-08-07', fuente:'Chat de WhatsApp de Sofía', activo:true, confirmado:false },
+     
+     
+     
+    {"_uid":"tra_alpha_9norte","transporte":"Servicios de Cargas 9 Norte","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["jesus maria","villa del totoral","san jose de la dormida","san francisco del chanar","villa maria de rio seco"],"telefono":"+54 9 351 682 4985","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Jesús María, Villa del Totoral, San José de la Dormida, San Francisco del Chañar y Villa María de Río Seco.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_andrea","transporte":"Fletes Andrea (Cocconi)","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["villa del rosario","calchin","luque","el aranado","las varillas"],"telefono":"+54 9 351 634 0371","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Villa del Rosario, Calchín, Luque, El Arañado, Las Varillas.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_alfa","transporte":"Expreso Alfa","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["venado tuerto","caba","rufino","san gregorio","canals","la carlota","sur de santa fe"],"telefono":"+54 9 3462 650679 / +54 3462 400 789","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Venado Tuerto, CABA, Rufino, San Gregorio, Canals, La Carlota y todo el sur de Santa Fe en general.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_astutti","transporte":"Expreso Astutti","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["canada de gomez","las rosas","rosario","caba"],"telefono":"+54 3471 422 875 / +54 3471 62 2465","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Cañada de Gómez, Las Rosas, Rosario, CABA.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_belgrano","transporte":"Transporte Belgrano","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["brinkmann","morteros","sunchales","san guillermo","suardi","marull","la portena","villa trinidad"],"telefono":"+54 3562 407127","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Brinkmann, Morteros, Sunchales, San Guillermo, Suardi, Marull, La Porteña, Villa Trinidad.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_brinatti","transporte":"Transportes Brinatti","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["general pico","santa rosa","eduardo castex","trenel","intendente alvear","quemu quemu","rosario"],"telefono":"+54 2302 427 010 / +54 9 2302 410 648","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: General Pico, Santa Rosa, Eduardo Castex, Trenel, Intendente Alvear, Quemú Quemú, Rosario.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_calcabrini","transporte":"Expreso Calcabrini","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["general deheza","general cabrera","carnerillo","buenos aires"],"telefono":"+54 0358 4190265","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: General Deheza, General Cabrera, Carnerillo, Buenos Aires.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_capdevilla","transporte":"Expreso Capdevilla","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["capilla del monte","cosquin","valle hermoso","la falda","villa giardino","la cumbre","cruz del eje"],"telefono":"+54 9 3548 431 369","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Capilla del Monte, Cosquín, Valle Hermoso, La Falda, Villa Giardino, La Cumbre, Cruz del Eje.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_capello","transporte":"Transporte Capello","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["san francisco"],"telefono":"+54 9 3564 473 824","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: San Francisco.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_cravero","transporte":"Comisiones Cravero","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["arroyito","santiago temple"],"telefono":"+54 9 3576 650 250","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Arroyito, Santiago Temple y aledaños a Ruta 19.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_diego","transporte":"Transporte Diego","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["san francisco"],"telefono":"+54 9 3564 661 285","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: San Francisco.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_dominguez","transporte":"Transporte Domínguez","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["la rioja","belen","patquia"],"telefono":"+54 9 380 495 0656","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: La Rioja, Belén, Patquía.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_drago","transporte":"Transporte Drago","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["villa dolores","mina clavero"],"telefono":"+54 9 3544 465 110","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Villa Dolores, Mina Clavero y alrededores.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_giordano","transporte":"Transporte Giordano","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["san jorge","el trebol","rosario","sastre"],"telefono":"+54 3406 403 146","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: San Jorge, El Trébol, Rosario, Sastre e intermedias.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_guse","transporte":"Transporte Gu-Se","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["villa maria","bell ville","leones","villa nueva","james craik","justiniano posse","morrison","noetinger","ordonez"],"telefono":"+54 9 3537 400 516","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Villa María, Bell Ville, Leones, Villa Nueva, James Craik, Justiniano Posse, Morrison, Noetinger, Ordóñez.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_horizonte","transporte":"Transporte Horizonte","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["rosario","caba","santa fe"],"telefono":"+54 9 0342 5424549","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Rosario, CABA, Santa Fe y aledaños.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_olivero","transporte":"Transporte Olivero","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["san francisco"],"telefono":"+54 9 3564 595 141","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: San Francisco.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_robles","transporte":"Transporte Robles","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["dean funes","quilino","colonia caroya","jesus maria"],"telefono":"+54 9 3521 416 249","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Deán Funes, Quilino, Colonia Caroya y Jesús María.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_rofermar","transporte":"Transporte Rofermar","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["tinogasta","fiambala","aimogasta"],"telefono":"+54 9 3837 489 970","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Tinogasta, Fiambalá, Aimogasta.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_elturco","transporte":"Transporte El Turco","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"otraProvincia","localidades":["aimogasta","la rioja"],"telefono":"+54 9 382 745 3666 / +54 9 382 743 6720","contacto":"","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Aimogasta, La Rioja.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
+    {"_uid":"tra_alpha_quebrachito","transporte":"Transporte El Quebrachito","tipo":"tercero","destino":"Central de Cargas Alpha","provincia":"","zona":"interior","localidades":["rio cuarto","san luis","villa mercedes","sampacho"],"telefono":"+54 9 358 417 9865","contacto":"riocuarto@quebrachitocargas.com.ar","pallets":0,"plazoDias":0,"pagoEn":"","descarga":"","condiciones":"Sale desde la Central de Cargas Alpha (Córdoba Capital): VPH lleva el pallet hasta ese depósito. Sin tarifa: se pide la cotización cuando haya un presupuesto para esta zona. Destinos que informa Alpha: Río Cuarto, San Luis, Villa Mercedes, Sampacho.","fechaCotizacion":"","fuente":"Central de Cargas Alpha (lista de transportes, 16/11/2026)","activo":true,"confirmado":false},
   ];
 
   function pc(){ return window.__rol==='admin'; }
@@ -21835,7 +22017,7 @@ function buildFilterTable(cfg){
      
      
     const isoDe=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    let kgDisp=0, kgCur=0, kgMin=0, nBajoMin=0;
+    let kgDisp=0, kgCur=0, kgMin=0, nBajoMin=0, kgRepo=0, nRepo=0;
      
      
     const urgPorK={};
@@ -21848,9 +22030,15 @@ function buildFilterTable(cfg){
       const estadoVenta = disp<0 ? 'falta' : (min>0 && disp<min ? 'bajo' : 'ok');
       if(estadoVenta!=='ok') nBajoMin++;
       const l0=(f.lotes&&f.lotes[0])||null;
+       
+       
+       
+      const reponer = Math.max(0, min - disp - Math.max(0,f.enCurado));
+      kgRepo += reponer*pe; if(reponer>0) nRepo++;
       return { k:f.k, codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe, urgClientes:urgPorK[f.k]||[],
         disponible:Math.round(disp), minimo:Math.round(min), comprometido:Math.round(f.comprometido),
         enCurado:Math.round(f.enCurado), kgDisponible:Math.round(Math.max(0,disp)*pe),
+        reponer:Math.round(reponer), kgReponer:Math.round(reponer*pe),
         estadoVenta, proxLote: l0 ? { fecha: isoDe(l0.el), cantidad: Math.round(l0.cantidad) } : null };
     });
     const per=hoyISO.slice(0,7); let kgMes=0; const diasProdMes={};
@@ -21879,6 +22067,8 @@ function buildFilterTable(cfg){
       kgDisponible: Math.round(kgDisp),               
       kgEnCurado: Math.round(kgCur),                  
       kgMinimo: Math.round(kgMin),                    
+      kgReponer: Math.round(kgRepo),                  
+      productosAReponer: nRepo,                       
       productosBajoMinimo: nBajoMin,                  
       porProducto,                                    
       kgProducidosMes: Math.round(kgMes),
@@ -22025,6 +22215,11 @@ function buildFilterTable(cfg){
       k('Kg en stock','info', nf(kgStock)+' kg', 'Físico en planta · comprometidos '+nf(kgComp)+' kg') +
       k('Disponible para VENDER hoy', clsVend, nf(rp?rp.kgDisponible:0)+' kg',
         'Secado − comprometido · en secado '+nf(rp?rp.kgEnCurado:0)+' kg'+(nBajoV>0 ? ' · '+nBajoV+' producto'+(nBajoV!==1?'s':'')+' bajo mínimo p/ vender' : ' · todos sobre el mínimo')) +
+       
+       
+      (rp && rp.productosAReponer>0
+        ? k('Fabricar para mínimo','bad', nf(rp.kgReponer)+' kg', rp.productosAReponer+' producto'+(rp.productosAReponer!==1?'s':'')+' por debajo del mínimo: fabricar solo esto')
+        : k('Producción', rp?'good':'info', rp?'Pausar':'—', rp?'Disponible + en secado cubre el mínimo de todos: fabricar solo cuando aparezcan ventas':'Sin datos de stock')) +
       k('Entregado hoy','info', nf(entHoy)+' u', fmtFecha(hoyISO));
   }
 
@@ -22049,7 +22244,7 @@ function buildFilterTable(cfg){
      
     const rpS = window.__resumenProduccion ? window.__resumenProduccion() : null;
     const vendPor = {}; (rpS && Array.isArray(rpS.porProducto) ? rpS.porProducto : []).forEach(x=>{ vendPor[x.k]=x; });
-    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Cuánto hay que fabricar: lo vendido que supera al físico (físico − comprometido, cuando da negativo)">Falta fabricar</th><th class="num" title="Físico − comprometido, cuando da positivo: lo que queda libre contando lo que está secando">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-uhoy" title="Unidades que se pueden entregar HOY: lo que ya está seco menos lo comprometido (no cuenta lo que todavía está en secado)">Unidades para vender HOY</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden entregar HOY (seco − comprometido, ÷ unidades por m²). Debajo: lo que habrá con lo que está secando. Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
+    let html='<tr><th class="pe-col-cod">Código</th><th class="pe-col-prod">Producto</th><th class="num">Físico</th><th class="num">En secado</th><th class="num">Compr.</th><th class="num" title="Kilos/unidades a fabricar para llegar al mínimo, contando lo que cura y lo comprometido (misma cuenta que la Vista Diaria)">Falta fabricar</th><th class="num" title="Secado − comprometido, solo lo positivo: lo que se puede entregar YA (igual que la Vista Diaria). Lo que está secando va en En secado">Disponible para vender</th><th class="num" title="Unidades ya vendidas que esperan que termine de secar su lote">En secado ya vendidos</th><th class="num">Mín</th><th>Estado</th><th class="num pe-col-uhoy" title="Unidades que se pueden entregar HOY: lo que ya está seco menos lo comprometido (no cuenta lo que todavía está en secado)">Unidades para vender HOY</th><th class="num pe-col-m2" title="Metros cuadrados que se pueden entregar HOY (seco − comprometido, ÷ unidades por m²). Debajo: lo que habrá con lo que está secando. Solo losetas y greens: los topes, el listón y el cordón se venden por unidad o metro lineal.">m² p/ vender</th></tr>';
     if(!rows.length) html+='<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:20px">Sin productos. Cargalos en Base de Datos.</td></tr>';
     rows.forEach(({p,s})=>{ const col=s.estado==='falta'?'var(--red)':s.estado==='bajo'?'var(--amber)':'var(--green)';
       const v = vendPor[s.k] || null;
@@ -22085,7 +22280,12 @@ function buildFilterTable(cfg){
 
        
        
-      const faltaFab = Math.max(0, -num(s.dispReal)), dispVend = Math.max(0, num(s.dispReal));
+       
+       
+       
+       
+       
+      const faltaFab = v ? Math.max(0, num(v.reponer)) : Math.max(0, -num(s.dispReal)), dispVend = v ? Math.max(0, num(v.disponible)) : Math.max(0, num(s.disponible));
       const secVend = Math.min(num(s.enCurado), Math.max(0, num(s.comprometido) - num(s.curado)));
       const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
       html+='<tr><td class="pe-col-cod" data-label="Código">'+esc(p.codigo||'')+'</td>'+
@@ -26243,6 +26443,17 @@ function buildFilterTable(cfg){
    
   const hoyDoc = ()=> HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
   const isoOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s||'').slice(0,10)) ? String(s).slice(0,10) : '';
+   
+   
+  function remitoQueChoca(emitidos, fecha, transp){
+    const t=normc(transp||'');
+    for(const r of (emitidos||[])){
+      const mismoDia=!!fecha && String(r.fecha||'').slice(0,10)===String(fecha).slice(0,10);
+      const mismoTransp=normc(r.transportista||'')===t;
+      if(mismoDia&&mismoTransp) return {r, mismoDia, mismoTransp};    
+    }
+    return null;
+  }
   function pedirDatosRemito(obj){
     obj=Object.assign({}, obj||{});
     const ts=(window.__transportes?window.__transportes():['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro']);
@@ -26347,6 +26558,15 @@ function buildFilterTable(cfg){
         if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
         if(necesitaValorDeclarado(transp) && !(num(obj.valorDeclarado)>0) && !confirm('El remito va a salir SIN el valor declarado de la mercadería — el transporte lo va a pedir para cotizar el seguro.\n\n¿Generarlo igual?')) return;
         obj.transportista=transp;
+         
+         
+         
+        const choque=remitoQueChoca(window.__remitosDe?window.__remitosDe({ventaUid:obj.ventaUid, pedidoUid:obj.pedidoUid}):[], obj.fecha, transp);
+        if(choque){
+          alert('Ya existe el remito N° '+choque.r.numero+' para esta entrega ('+dmy(choque.r.fecha)+(choque.r.transportista?' · '+choque.r.transportista:' · sin transporte')+').\n\n'+
+            'No se emite otro para el mismo viaje (mismo día y mismo transporte). Si es otro viaje, cambiá el día o el transporte.\n\nUsá el botón 🖨️ de arriba para reimprimir el que ya está.');
+          return;
+        }
         const btn=ov.querySelector('#rem-ok'); btn.disabled=true; btn.textContent='Numerando…';
         emitirEImprimir(obj, ov, btn);
       };
@@ -26893,7 +27113,9 @@ function buildFilterTable(cfg){
    
   window.__remitosDe = function(f){
     f=f||{};
-    return DB.remitos.filter(r=> (f.ventaUid && r.ventaUid===f.ventaUid) || (f.pedidoUid && r.pedidoUid===f.pedidoUid))
+     
+     
+    return DB.remitos.filter(r=> f.pedidoUid ? r.pedidoUid===f.pedidoUid : (f.ventaUid && r.ventaUid===f.ventaUid))
       .sort((a,b)=> num(b.numeroInt)-num(a.numeroInt));
   };
    
