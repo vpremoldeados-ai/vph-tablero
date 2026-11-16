@@ -20733,7 +20733,11 @@ function buildFilterTable(cfg){
   // Pura (la prueban los tests): agrupa por persona, ordena y resume cada charla.
   function charlas(msgs, ahoraMs){
     const g=new Map();
-    (msgs||[]).forEach(m=>{ if(m.dir==='revision'||m.dir==='leccion') return; const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
+    // 16/11 (Marcelo: "está mezclado los mensajes de WhatsApp en la bandeja de Instagram"): desde el 11/11 el
+    // Worker copia cada turno de WhatsApp a vph_ig_mensajes (canal:'whatsapp', igsid 'wa:XXXXXXXXXX') SOLO
+    // para que la revisión nocturna lo lea; acá salían agrupados como "Usuario de Instagram". WhatsApp ya
+    // tiene su Bandeja (vph_wa_pendientes): se excluyen de esta, la copia queda intacta en Firestore.
+    (msgs||[]).forEach(m=>{ if(m.dir==='revision'||m.dir==='leccion'||m.canal==='whatsapp'||String(m.igsid||'').startsWith('wa:')) return; const k=m.igsid||'?'; if(!g.has(k)) g.set(k,[]); g.get(k).push(m); });
     const out=[];
     g.forEach((lista,k)=>{
       lista.sort((a,b)=>tsMs(a.ts)-tsMs(b.ts));
