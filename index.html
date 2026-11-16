@@ -26221,7 +26221,7 @@ function buildFilterTable(cfg){
     for(const r of (emitidos||[])){
       const mismoDia=!!fecha && String(r.fecha||'').slice(0,10)===String(fecha).slice(0,10);
       const mismoTransp=normc(r.transportista||'')===t;
-      if(mismoDia||mismoTransp) return {r, mismoDia, mismoTransp};
+      if(mismoDia&&mismoTransp) return {r, mismoDia, mismoTransp};   // mismo viaje = mismo día + mismo transporte
     }
     return null;
   }
@@ -26335,8 +26335,7 @@ function buildFilterTable(cfg){
         const choque=remitoQueChoca(window.__remitosDe?window.__remitosDe({ventaUid:obj.ventaUid, pedidoUid:obj.pedidoUid}):[], obj.fecha, transp);
         if(choque){
           alert('Ya existe el remito N° '+choque.r.numero+' para esta entrega ('+dmy(choque.r.fecha)+(choque.r.transportista?' · '+choque.r.transportista:' · sin transporte')+').\n\n'+
-            'No se emite otro con '+(choque.mismoDia&&choque.mismoTransp?'el mismo día y el mismo transporte':choque.mismoDia?'el mismo día':'el mismo transporte')+
-            '. Solo se puede hacer uno nuevo si cambian el día Y el transporte.\n\nUsá el botón 🖨️ de arriba para reimprimir el que ya está.');
+            'No se emite otro para el mismo viaje (mismo día y mismo transporte). Si es otro viaje, cambiá el día o el transporte.\n\nUsá el botón 🖨️ de arriba para reimprimir el que ya está.');
           return;
         }
         const btn=ov.querySelector('#rem-ok'); btn.disabled=true; btn.textContent='Numerando…';
@@ -26891,7 +26890,9 @@ function buildFilterTable(cfg){
   // Remitos ya emitidos para una venta / un pedido — evita numerar dos veces la misma entrega.
   window.__remitosDe = function(f){
     f=f||{};
-    return DB.remitos.filter(r=> (f.ventaUid && r.ventaUid===f.ventaUid) || (f.pedidoUid && r.pedidoUid===f.pedidoUid))
+    // Con pedido manda el PEDIDO: uno partido en dos viajes (✂️) son dos pedidos de la MISMA venta y cada
+    // uno lleva su remito; mirar la venta mostraría el 2º viaje como ya emitido.
+    return DB.remitos.filter(r=> f.pedidoUid ? r.pedidoUid===f.pedidoUid : (f.ventaUid && r.ventaUid===f.ventaUid))
       .sort((a,b)=> num(b.numeroInt)-num(a.numeroInt));
   };
   // Próximo número, solo para mostrarlo antes de emitir (NO lo consume).
