@@ -26214,6 +26214,17 @@ function buildFilterTable(cfg){
   // tener que ir a editar la venta ni el pedido.
   const hoyDoc = ()=> HOY.getFullYear()+'-'+p2(HOY.getMonth()+1)+'-'+p2(HOY.getDate());
   const isoOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s||'').slice(0,10)) ? String(s).slice(0,10) : '';
+  // ¿Algún remito ya emitido choca con el nuevo? Choca si coincide el día O el transporte: solo se
+  // permite otro cuando cambian los dos. Devuelve {r, mismoDia, mismoTransp} del primero que choca.
+  function remitoQueChoca(emitidos, fecha, transp){
+    const t=normc(transp||'');
+    for(const r of (emitidos||[])){
+      const mismoDia=!!fecha && String(r.fecha||'').slice(0,10)===String(fecha).slice(0,10);
+      const mismoTransp=normc(r.transportista||'')===t;
+      if(mismoDia||mismoTransp) return {r, mismoDia, mismoTransp};
+    }
+    return null;
+  }
   function pedirDatosRemito(obj){
     obj=Object.assign({}, obj||{});
     const ts=(window.__transportes?window.__transportes():['Sánchez','Brío','Expreso Biletta','Retira cliente','Sin asignar','Otro']);
@@ -26318,6 +26329,16 @@ function buildFilterTable(cfg){
         if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
         if(necesitaValorDeclarado(transp) && !(num(obj.valorDeclarado)>0) && !confirm('El remito va a salir SIN el valor declarado de la mercadería — el transporte lo va a pedir para cotizar el seguro.\n\n¿Generarlo igual?')) return;
         obj.transportista=transp;
+        // 🔒 Un solo remito por entrega: se puede emitir otro SOLO si es otro día Y otro transporte
+        // (pedido de Marcelo, 16/11: para no llenarse de remitos de un mismo pedido). Se mira en vivo,
+        // con lo que está elegido ahora en el formulario.
+        const choque=remitoQueChoca(window.__remitosDe?window.__remitosDe({ventaUid:obj.ventaUid, pedidoUid:obj.pedidoUid}):[], obj.fecha, transp);
+        if(choque){
+          alert('Ya existe el remito N° '+choque.r.numero+' para esta entrega ('+dmy(choque.r.fecha)+(choque.r.transportista?' · '+choque.r.transportista:' · sin transporte')+').\n\n'+
+            'No se emite otro con '+(choque.mismoDia&&choque.mismoTransp?'el mismo día y el mismo transporte':choque.mismoDia?'el mismo día':'el mismo transporte')+
+            '. Solo se puede hacer uno nuevo si cambian el día Y el transporte.\n\nUsá el botón 🖨️ de arriba para reimprimir el que ya está.');
+          return;
+        }
         const btn=ov.querySelector('#rem-ok'); btn.disabled=true; btn.textContent='Numerando…';
         emitirEImprimir(obj, ov, btn);
       };
