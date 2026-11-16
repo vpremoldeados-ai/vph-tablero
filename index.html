@@ -3365,10 +3365,13 @@ window.__pintarStockDisp = function(){
         nBajo>0 ? (cubreMin?'warn':'bad') : 'good') +
     kpi('En secado', fmtKg(rp.kgEnCurado), 'Fabricado, listo en los próximos días', 'info') +
     kpi('Comprometido', fmtKg(rp.kgComprometido), 'Pedidos sin entregar, ya descontados', 'info') +
-    kpi('Mínimo para vender', fmtKg(rp.kgMinimo), 'Suma de los mínimos por producto', rp.kgMinimo>0?'info':'warn');
+    kpi('Mínimo para vender', fmtKg(rp.kgMinimo), 'Suma de los mínimos por producto', rp.kgMinimo>0?'info':'warn') +
+    (rp.productosAReponer>0
+      ? kpi('Fabricar: reposición', fmtKg(rp.kgReponer), rp.productosAReponer+' producto'+(rp.productosAReponer!==1?'s':'')+' por llegar al mínimo (incluye lo que cura)', 'bad')
+      : kpi('Producción', 'Pausar', 'Disponible + en secado cubre el mínimo de todos: fabricar solo cuando aparezcan ventas', 'good'));
   const orden = { falta:0, bajo:1, ok:2 };
   const filas = rp.porProducto.slice().sort((a,b)=> (orden[a.estadoVenta]-orden[b.estadoVenta]) || (b.kgDisponible-a.kgDisponible));
-  tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En secado (u)</th><th>Estado</th></tr>' +
+  tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En secado (u)</th><th class="num">Fabricar (kg)</th><th>Estado</th></tr>' +
     filas.map(f=>{
       const falta = f.estadoVenta==='falta', bajo = f.estadoVenta==='bajo';
       const lote = f.proxLote ? 'próximo lote '+dm(f.proxLote.fecha)+' ('+nf(f.proxLote.cantidad)+' u)' : '';
@@ -3382,6 +3385,7 @@ window.__pintarStockDisp = function(){
         '<td class="num">'+(f.minimo>0?nf(f.minimo):'—')+'</td>'+
         '<td class="num">'+nf(f.kgDisponible)+'</td>'+
         '<td class="num">'+nf(f.enCurado)+'</td>'+
+        '<td class="num" style="color:'+(f.kgReponer>0?'var(--red)':'var(--muted)')+';font-weight:'+(f.kgReponer>0?800:400)+'">'+(f.kgReponer>0?nf(f.kgReponer):'—')+'</td>'+
         '<td>'+badge+((falta||bajo)&&lote ? '<span style="display:block;font-size:11px;color:var(--muted)">'+_escA(lote)+'</span>' : '')+'</td></tr>';
     }).join('');
   try{ if(window.__ordenable) window.__ordenable(tb); }catch(e){}
@@ -21624,7 +21628,7 @@ function buildFilterTable(cfg){
     // criterio de "bajo mínimo" acá compara el DISPONIBLE contra el stockMinimo del producto (en
     // Base de Datos → Productos), no el físico: si está curando todavía no se puede vender.
     const isoDe=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    let kgDisp=0, kgCur=0, kgMin=0, nBajoMin=0;
+    let kgDisp=0, kgCur=0, kgMin=0, nBajoMin=0, kgRepo=0, nRepo=0;
     // 🔥 Clientes con un pedido URGENTE sin entregar, por producto (misma regla que renderPlan: el casillero
     // del pedido). Lo consume el parte del equipo para que "Fabricar" diga lo mismo que el plan de Gustavo.
     const urgPorK={};
@@ -21637,9 +21641,15 @@ function buildFilterTable(cfg){
       const estadoVenta = disp<0 ? 'falta' : (min>0 && disp<min ? 'bajo' : 'ok');
       if(estadoVenta!=='ok') nBajoMin++;
       const l0=(f.lotes&&f.lotes[0])||null;
+      // Reposición: lo que hay que FABRICAR para llegar al mínimo, contando lo que ya está curando
+      // y los pedidos sin entregar. Es la decisión de producción: si todo queda en 0, se pausa la
+      // fabricación; si no, se fabrica solo esta reposición.
+      const reponer = Math.max(0, min - disp - Math.max(0,f.enCurado));
+      kgRepo += reponer*pe; if(reponer>0) nRepo++;
       return { k:f.k, codigo:String(p.codigo||''), nombre:String(p.nombre||''), pesoUnit:pe, urgClientes:urgPorK[f.k]||[],
         disponible:Math.round(disp), minimo:Math.round(min), comprometido:Math.round(f.comprometido),
         enCurado:Math.round(f.enCurado), kgDisponible:Math.round(Math.max(0,disp)*pe),
+        reponer:Math.round(reponer), kgReponer:Math.round(reponer*pe),
         estadoVenta, proxLote: l0 ? { fecha: isoDe(l0.el), cantidad: Math.round(l0.cantidad) } : null };
     });
     const per=hoyISO.slice(0,7); let kgMes=0; const diasProdMes={};
@@ -21668,6 +21678,8 @@ function buildFilterTable(cfg){
       kgDisponible: Math.round(kgDisp),              // curado − comprometido, solo lo positivo de cada producto — lo que se puede VENDER hoy
       kgEnCurado: Math.round(kgCur),                 // fabricado que todavía no cumplió el curado (sale en los próximos días)
       kgMinimo: Math.round(kgMin),                   // suma de los stockMinimo por producto, en kg
+      kgReponer: Math.round(kgRepo),                 // kg a FABRICAR para llegar al mínimo (contando lo curando y lo comprometido)
+      productosAReponer: nRepo,                      // productos que necesitan fabricación; 0 = pausar la producción
       productosBajoMinimo: nBajoMin,                 // productos con disponible < mínimo (o en falta)
       porProducto,                                   // detalle por producto para el widget de la Vista Diaria
       kgProducidosMes: Math.round(kgMes),
