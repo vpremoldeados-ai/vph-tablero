@@ -220,8 +220,9 @@
     .nav-item .pill{position:absolute;top:0;right:0;margin-left:0}
     /* El botón "⎋ Salir" se inserta por JS adentro del aside con width:100% INLINE (pensado para la
        barra vertical): en la fila horizontal se comía todo el ancho y el menú quedaba en cero — fue
-       exactamente lo que vio Marcelo en el iPhone. Los !important son para ganarle al estilo inline. */
-    #cmp-logout{width:auto !important;max-width:96px;margin:0 8px 0 2px !important;padding:6px 9px !important;font-size:10.5px !important;flex-shrink:0;align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+       exactamente lo que vio Marcelo en el iPhone. Los !important son para ganarle al estilo inline.
+       "🔑 Cambiar contraseña" (12/11) se inserta igual, con el mismo !important. */
+    #cmp-logout,#cmp-changepass{width:auto !important;max-width:96px;margin:0 8px 0 2px !important;padding:6px 9px !important;font-size:10.5px !important;flex-shrink:0;align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     main{margin-left:0;padding:58px 12px 30px}
   }
 
@@ -7409,19 +7410,85 @@ function buildFilterTable(cfg){
       '<div class="cmp-field" style="margin-bottom:12px"><label>Email</label><input id="cmp-log-email" type="email" autocomplete="username"></div>'+
       '<div class="cmp-field" style="margin-bottom:12px"><label>Contraseña</label><input id="cmp-log-pass" type="password" autocomplete="current-password"></div>'+
       '<div id="cmp-log-err" style="color:var(--red);font-size:12px;min-height:16px;margin-bottom:8px"></div>'+
-      '<button class="cmp-btn cmp-btn-primary" id="cmp-log-btn" style="width:100%">Entrar</button></div></div>';
+      '<button class="cmp-btn cmp-btn-primary" id="cmp-log-btn" style="width:100%">Entrar</button>'+
+      '<div style="text-align:center;color:var(--muted);font-size:11px;margin:12px 0">— o —</div>'+
+      '<button class="cmp-btn" id="cmp-log-google" style="width:100%">🔵 Ingresar con Google</button>'+
+      '</div></div>';
     document.body.appendChild(ov);
     const doLogin=()=>{ const em=($('cmp-log-email').value||'').trim(), pw=$('cmp-log-pass').value;
       $('cmp-log-err').textContent='Ingresando…';
       AUTH.signInWithEmailAndPassword(fbAuth, em, pw).catch(e=>{ $('cmp-log-err').textContent = traducirErr(e.code); }); };
     $('cmp-log-btn').onclick=doLogin;
     $('cmp-log-pass').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+    // Ingreso con Google (12/11, pedido de Marcelo): requiere que el proveedor Google esté HABILITADO
+    // en Firebase Console → Authentication → Sign-in method (eso lo hace Marcelo a mano, es config de
+    // seguridad). El popup cerrado/cancelado por el propio usuario NO es un error de verdad — se calla.
+    $('cmp-log-google').onclick=()=>{
+      $('cmp-log-err').textContent='Abriendo Google…';
+      AUTH.signInWithPopup(fbAuth, new AUTH.GoogleAuthProvider()).catch(e=>{
+        if(e.code==='auth/popup-closed-by-user' || e.code==='auth/cancelled-popup-request'){ $('cmp-log-err').textContent=''; return; }
+        $('cmp-log-err').textContent = traducirErr(e.code);
+      });
+    };
   }
   function showLogin(){ const l=$('cmp-login'); if(l) l.classList.add('open'); }
   function hideLogin(){ const l=$('cmp-login'); if(l){ l.classList.remove('open'); const p=$('cmp-log-pass'); if(p) p.value=''; } }
-  function traducirErr(code){ return ({'auth/invalid-credential':'Email o contraseña incorrectos.','auth/invalid-email':'Email inválido.','auth/user-not-found':'Usuario no encontrado.','auth/wrong-password':'Contraseña incorrecta.','auth/too-many-requests':'Demasiados intentos, esperá unos minutos.','auth/network-request-failed':'Sin conexión.'}[code]) || ('Error: '+code); }
+  function traducirErr(code){ return ({'auth/invalid-credential':'Email o contraseña incorrectos.','auth/invalid-email':'Email inválido.','auth/user-not-found':'Usuario no encontrado.','auth/wrong-password':'Contraseña incorrecta.','auth/too-many-requests':'Demasiados intentos, esperá unos minutos.','auth/network-request-failed':'Sin conexión.','auth/weak-password':'La contraseña nueva es muy débil (mínimo 6 caracteres).','auth/requires-recent-login':'Por seguridad, volvé a escribir tu contraseña ACTUAL e intentá de nuevo.','auth/popup-blocked':'El navegador bloqueó la ventana de Google. Habilitá las ventanas emergentes para este sitio.','auth/operation-not-allowed':'El ingreso con Google todavía no está habilitado — avisale a Marcelo.','auth/account-exists-with-different-credential':'Ese email ya tiene una cuenta con otro método de ingreso — avisale a Marcelo.'}[code]) || ('Error: '+code); }
+  // Cambiar la propia contraseña (12/11, pedido de Marcelo para que Gustavo no dependa de que alguien
+  // se la resetee). Pide la contraseña ACTUAL + reautentica (Firebase exige una sesión "reciente" para
+  // tocar la contraseña) y recién ahí la cambia — nunca por mail: ver la nota de seguridad del 20/10
+  // sobre sofia@vph.com / gustavo@vph.com (dominio que VPH no es dueño) — un reseteo por mail a esos
+  // mails podría interceptarlo el dueño real del dominio. Solo tiene sentido con login por EMAIL/
+  // CONTRASEÑA: un usuario que entró con Google no tiene contraseña que cambiar (se oculta el botón).
+  function buildCambiarPassUI(){
+    if($('cmp-cambiopass')) return;
+    const ov=document.createElement('div'); ov.className='cmp-overlay'; ov.id='cmp-cambiopass';
+    ov.innerHTML='<div class="cmp-dialog" style="max-width:380px"><div class="cmp-dialog-head"><h3>🔑 Cambiar contraseña</h3></div>'+
+      '<div class="cmp-dialog-body">'+
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Contraseña actual</label><input id="cp-actual" type="password" autocomplete="current-password"></div>'+
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Contraseña nueva</label><input id="cp-nueva" type="password" autocomplete="new-password"></div>'+
+      '<div class="cmp-field" style="margin-bottom:12px"><label>Repetir contraseña nueva</label><input id="cp-repetir" type="password" autocomplete="new-password"></div>'+
+      '<div id="cp-err" style="color:var(--red);font-size:12px;min-height:16px;margin-bottom:8px"></div>'+
+      '<div style="display:flex;gap:8px"><button class="cmp-btn" id="cp-cancelar" style="flex:1">Cancelar</button>'+
+      '<button class="cmp-btn cmp-btn-primary" id="cp-guardar" style="flex:1">Guardar</button></div>'+
+      '</div></div>';
+    document.body.appendChild(ov);
+    $('cp-cancelar').onclick=()=> ov.classList.remove('open');
+    $('cp-guardar').onclick=async ()=>{
+      const u=fbAuth.currentUser; if(!u){ return; }
+      const actual=$('cp-actual').value, nueva=$('cp-nueva').value, rep=$('cp-repetir').value;
+      const err=$('cp-err'); err.textContent='';
+      if(!actual){ err.textContent='Ingresá tu contraseña actual.'; return; }
+      if(nueva.length<6){ err.textContent='La contraseña nueva tiene que tener al menos 6 caracteres.'; return; }
+      if(nueva!==rep){ err.textContent='Las dos contraseñas nuevas no coinciden.'; return; }
+      err.textContent='Cambiando…';
+      try{
+        const cred = AUTH.EmailAuthProvider.credential(u.email, actual);
+        await AUTH.reauthenticateWithCredential(u, cred);
+        await AUTH.updatePassword(u, nueva);
+        ov.classList.remove('open');
+        alert('Contraseña cambiada.');
+      }catch(e){ err.textContent = traducirErr(e.code); }
+    };
+  }
+  function abrirCambiarPass(){
+    buildCambiarPassUI();
+    $('cp-actual').value=''; $('cp-nueva').value=''; $('cp-repetir').value=''; $('cp-err').textContent='';
+    $('cmp-cambiopass').classList.add('open');
+  }
   function updateUserBar(){
     if(!usuario) return;
+    // Botón "🔑 Contraseña" (12/11): solo tiene sentido si el usuario entró con email+contraseña —
+    // uno que entró con Google no tiene una contraseña propia que cambiar acá.
+    const tienePass = (usuario.providerData||[]).some(p=>p.providerId==='password');
+    let cp=$('cmp-changepass');
+    if(!cp){ cp=document.createElement('button'); cp.className='cmp-btn'; cp.id='cmp-changepass';
+      cp.style.cssText='width:calc(100% - 24px);margin:8px 12px 0;padding:8px;font-size:12.5px';
+      const sf=document.querySelector('.sidebar-foot');
+      if(sf && sf.parentElement) sf.parentElement.insertBefore(cp, sf);
+      else document.getElementById('nav').appendChild(cp);
+      cp.onclick=abrirCambiarPass; cp.textContent='🔑 Cambiar contraseña'; }
+    cp.style.display = tienePass ? '' : 'none';
     // Botón "Salir" en el pie del menú lateral: visible en TODAS las páginas y para
     // todos los roles (antes estaba solo en Compras y producción no lo veía).
     let b=$('cmp-logout');
