@@ -38,7 +38,7 @@ if (html.indexOf('</head>') < 0) throw new Error('No encontré </head>');
 html = html.replace('</head>', () => bloque + '</head>');
 
 // 3b) nombres reales de personas que vienen escritos en listas por defecto de la app
-html = html.split("Asoldi Pablo").join("Transporte Norte").split("Ignacio Mahl").join("Transporte Sur").split(", Mahl,").join(", Transporte Sur,");
+html = html.split("Asoldi Pablo").join("Transporte Norte").split("Ignacio Mahl").join("Transporte Sur").split(", Mahl,").join(", Transporte Sur,").split("Logincor").join("Transporte Este").split("LOGINCOR").join("Transporte Este");
 
 // 3c) nombres reales que quedaron en comentarios del código
 for (const [a, b] of [["Nota de Débito a Ranco","Nota de Débito a un cliente"],["ONIX REVESTIMIENTOS","CLIENTE EJEMPLO"],["LOPEZ GRASSO MAYCO","APELLIDO NOMBRE"],["Mayco Lopez Grasso","Nombre Apellido"],["ESCOBEDO ALEJANDRO ARIEL","APELLIDO UNO NOMBRE"],["HERZ JOSE FRANCISCO","APELLIDO DOS NOMBRE"],["Erick Rodríguez — 3571349174","Nombre Apellido — 351 0000000"],["HERTZ JOSE","APELIDO DOS"]]) html = html.split(a).join(b);
