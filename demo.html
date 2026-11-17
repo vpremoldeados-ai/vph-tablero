@@ -21382,12 +21382,16 @@ function buildFilterTable(cfg){
 
    
   const normLoc = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9ñ ]/g,' ').replace(/\s+/g,' ').trim();
+   
+   
+  const palabras=(a,b)=>(" "+a+" ").includes(" "+b+" ");
+  const coincidePal=(x,l)=>x===l||palabras(l,x)||palabras(x,l);
   function cubre(t, localidad){
     const l=normLoc(localidad); if(!l) return false;
     const locs=(t.localidades||[]).map(normLoc).filter(Boolean);
-    if(locs.some(x=>x===l||l.includes(x)||x.includes(l))) return true;
+    if(locs.some(x=>coincidePal(x,l))) return true;
     const d=normLoc(t.destino);
-    return !!d && d.length>3 && (d===l||l.includes(d)||d.includes(l));
+    return !!d && d.length>3 && coincidePal(d,l);
   }
   function costoEnvio(t, pallets){
     const n=Math.max(1, Number(pallets)||1);
@@ -21425,7 +21429,7 @@ function buildFilterTable(cfg){
     const l=normLoc(localidad); if(l.length<3) return [];
     return TRA.filter(t=>t&&t.activo!==false&&cubre(t,localidad)).map(t=>{
       const flete=costoEnvio(t,pallets), n=Math.max(1, Number(pallets)||1);
-      const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&(y===l||l.includes(y)||y.includes(l)); })||'';
+      const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&coincidePal(y,l); })||'';
       return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide,
         flete, porPallet:flete===null?null:Math.round(flete/n), plazoDias:Number(t.plazoDias)||0, pagoEn:t.pagoEn||'', confirmado:!!t.confirmado, estado:estadoDe(t)[0] };
     }).sort((a,b)=>((a.flete===null)-(b.flete===null))||((a.flete||0)-(b.flete||0))||String(a.transporte).localeCompare(String(b.transporte)));
@@ -21492,8 +21496,8 @@ function buildFilterTable(cfg){
       localidades:DESTINOS_BRIO, precioPallet:num(window.__param?window.__param('fleteBrio',140000):140000), pallets:0, plazoDias:0, pagoEn:'origen', descarga:'',
       condiciones:'Tarifa ÚNICA para todos sus destinos. Mati lleva el pedido hasta el depósito de Brío en Córdoba, Brío lo despacha y EL FLETE LO COBRA VPH al cliente y después se lo paga a Brío (Marcelo, 11/11). Los destinos salen del PDF de Brío 2026; el precio, del parámetro fleteBrio (zona 6 del presupuesto).', fechaCotizacion:'', fuente:'PDF “Destinos Brío 2026” + parámetro fleteBrio', activo:true, confirmado:false },
     { _uid:'tra_biletta_calamuchita', transporte:'Expreso Biletta', tipo:'tercero', destino:'Santa Rosa de Calamuchita / Los Reartes', provincia:'Córdoba', zona:'interior',
-      localidades:['embalse','la cruz','villa del dique','villa rumipal','villa parque','el torreon','amboy','san ignacio','santa rosa de calamuchita','yacanto de calamuchita','villa gral. belgrano','villa general belgrano','villa gral belgrano','los reartes','villa ciudad de america','potrero de garay','los molinos','villa berna','calamuchita'], precioPallet:92171, minPallets:1, pallets:0, plazoDias:5, pagoEn:'origen', descarga:'manual',
-      condiciones:'Cotización del 15/10: flete $74.174,14 + seguro $2.000 + IVA = $92.170,71 por pallet. Más el traslado de Matías hasta el depósito de Biletta ($20.000 el viaje, se reparte entre los pallets). La zona Sierras completa (17/11) sale de la web de Biletta; el precio es el de la cotización a Calamuchita y se aplicó a todas por igual: CONFIRMAR con Biletta. La Cumbrecita figura en su web pero NO se cargó: coincidiría con una consulta por La Cumbre (otra localidad).', fechaCotizacion:'2026-10-15', fuente:'Cotización de Biletta (listas Hasta 100 km)', activo:true, confirmado:false },
+      localidades:['embalse','la cruz','villa del dique','villa rumipal','villa parque','el torreon','amboy','san ignacio','santa rosa de calamuchita','yacanto de calamuchita','villa gral. belgrano','villa general belgrano','villa gral belgrano','los reartes','villa ciudad de america','potrero de garay','los molinos','villa berna','la cumbrecita','calamuchita'], precioPallet:92171, minPallets:1, pallets:0, plazoDias:5, pagoEn:'origen', descarga:'manual',
+      condiciones:'Cotización del 15/10: flete $74.174,14 + seguro $2.000 + IVA = $92.170,71 por pallet. Más el traslado de Matías hasta el depósito de Biletta ($20.000 el viaje, se reparte entre los pallets). La zona Sierras completa (17/11) sale de la web de Biletta; el precio es el de la cotización a Calamuchita y se aplicó a todas por igual: CONFIRMAR con Biletta. La Cumbrecita y La Cumbre son destinos distintos: el buscador compara por palabras enteras.', fechaCotizacion:'2026-10-15', fuente:'Cotización de Biletta (listas Hasta 100 km)', activo:true, confirmado:false },
     { _uid:'tra_fletero_hidrogrua_la_granja', transporte:'Fletero con hidrogrúa', tipo:'tercero', destino:'La Granja (Sierras Chicas)', provincia:'Córdoba', zona:'granCba',
       localidades:['la granja','ascochinga','agua de oro','el manzano','villa ani mi'], precioViaje:260000, pallets:2, plazoDias:3, pagoEn:'origen', descarga:'hidrogrua',
       condiciones:'Cotización que pasó por el WhatsApp de Sofía (ago 2026): $260.000 el viaje con hidrogrúa, 2 pallets. Falta el nombre y el teléfono del fletero. Las localidades vecinas las sumó Claude: CONFIRMAR.', fechaCotizacion:'2026-08-07', fuente:'Chat de WhatsApp de Sofía', activo:true, confirmado:false },
