@@ -19010,6 +19010,13 @@ function buildFilterTable(cfg){
     if(d.tipo==='hola'){ const antes=Date.now()-bnWebExtTs>60000; bnWebExtTs=Date.now(); if(antes){ const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); } return; }
     if(d.tipo==='resultado' && bnWebPend && d.id===bnWebPend.id){
       const p=bnWebPend; bnWebPend=null;
+      // 18/11: la extensión manda de a UN mensaje. Si estaba ocupada (otra pestaña del Tablero, o una respuesta
+      // de la Bandeja saliendo), no es un error de la línea: no se pausa ni se toca la reserva; se reintenta
+      // en el próximo minuto (si ese número ya recibió el mensaje, la extensión contesta 'repetido').
+      if(d.estado==='error' && /env[ií]o en curso/i.test(String(d.detalle||''))){
+        const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
+        return;
+      }
       const fin=['enviado','sinwa','repetido'].includes(d.estado);
       const ok = p.origen==='topes'
         ? bnWebTopesRegistrar(p, fin?d.estado:'liberar', Number(d.enviadoTs)||Date.now())
