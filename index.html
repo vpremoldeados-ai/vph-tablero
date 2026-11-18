@@ -8285,7 +8285,7 @@ function buildFilterTable(cfg){
     // Con despacho en otro transporte (Matías lo lleva hasta Brío, Biletta…), el remito es del transporte FINAL.
     const trFinal=pe?String(pe.transporteFinal||'').trim():'';
     return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||trFinal||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'',
-      pagoEnvio:(pe&&pe.pagoEnvio==='destino')?'destino':'origen', contactoEntrega:pe?String(pe.contactoEntrega||'').trim():'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
+      pagoEnvio:(pe&&pe.pagoEnvio==='destino')?'destino':'origen', contactoEntrega:pe?String(pe.contactoEntrega||'').trim():'', dniEntrega:pe?String(pe.dniEntrega||'').replace(/\D/g,''):'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
       ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
@@ -23447,6 +23447,7 @@ function buildFilterTable(cfg){
     partes.push(cont ? 'coordinar con '+esc(cont) : '<span style="color:var(--amber)">falta con quién coordinar</span>');
     const val=num(pe.valorDeclarado)||num(pe.valorMercaderia);
     if(val>0) partes.push('valor declarado $ '+nf(val));
+    { const dni=String(pe.dniEntrega||'').replace(/\D/g,''); partes.push((dni.length>=7&&dni.length<=8) ? 'DNI '+esc(dni) : '<span style="color:var(--amber)">falta el DNI de quien recibe</span>'); }
     const pend = pe.despachoListo===false ? '<div style="margin-top:4px;color:#c0392b;font-weight:800">⏳ FALTAN DATOS DEL DESPACHO (valor declarado, con quién coordinar y teléfono) — NO IMPRIMIR EL REMITO hasta que se confirmen</div>' : '';
     return '<div class="pe-despacho">🔁 '+(quien?esc(quien)+' lo lleva y ':'')+'se DESPACHA EN <b>'+esc(fin.toUpperCase())+'</b> · '+partes.join(' · ')+pend+'</div>';
   }
@@ -24230,6 +24231,7 @@ function buildFilterTable(cfg){
     const trFinal=String(pe.transporteFinal||'').trim();
     return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:trFinal||((pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:''),
       pagoEnvio:pe.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:(String(pe.contactoEntrega||'').trim() || (trFinal ? contactoDefaultDe(pe) : '')),
+      dniEntrega:String(pe.dniEntrega||'').replace(/\D/g,''),
       // La ficha VIVA manda (es la más fresca); el snapshot del pedido es el que salva la sesión de
       // Gustavo, que no puede leer vph_clientes.
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
@@ -24255,6 +24257,10 @@ function buildFilterTable(cfg){
       const cli=cs.find(c=>norm(c.nombre)===norm(pe.cliente))||{};
       if(!tieneTel(contacto) && !tieneTel(pe.clienteTel) && !tieneTel(cli.telefono) && !tieneTel(window.__telefonoLead?window.__telefonoLead(pe.cliente):'')) falta.push('teléfono de contacto');
     }
+    // 🪪 Transporte de larga distancia (Brío, Logincor, Biletta, González, Diemar…): exige el DNI de quien recibe.
+    { const quien = fin || (pe.transporte && pe.transporte!=='Sin asignar' ? pe.transporte : '');
+      const dni = String(pe.dniEntrega||'').replace(/\D/g,'');
+      if(quien && window.__transporteDeCarga && window.__transporteDeCarga(quien) && (dni.length<7 || dni.length>8)) falta.push('DNI de quien recibe (el transporte lo exige para entregar)'); }
     return falta;
   }
   function imprimirRemito(pe){
@@ -24616,6 +24622,11 @@ function buildFilterTable(cfg){
   // Form de pedido
   let editPed=null;
   function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
+  // ¿El transporte que entrega este pedido (el final, o el que sale si es directo) es de carga y exige DNI?
+  function dniExigido(pe){
+    const quien=String(pe.transporteFinal||'').trim() || (pe.transporte && pe.transporte!=='Sin asignar' ? String(pe.transporte) : '');
+    return !!(quien && window.__transporteDeCarga && window.__transporteDeCarga(quien));
+  }
   function openPed(pe){ editPed = pe?JSON.parse(JSON.stringify(pe)):blankPed(); if(!editPed.items||!editPed.items.length)editPed.items=[{producto:'',codigo:'',cantidad:1}]; $('pe-ped-title').textContent=pe?'Editar pedido':'Nuevo pedido'; drawPed(); $('pe-modal-ped').classList.add('open'); }
   function drawPed(){
     const pe=editPed;
@@ -24654,6 +24665,8 @@ function buildFilterTable(cfg){
               '<div class="cmp-field" style="flex:1 1 100%;border:1px dashed var(--border);border-radius:8px;padding:8px 10px"><label style="display:flex;gap:8px;align-items:flex-start;font-weight:700"><input type="checkbox" id="pd-listo" style="margin-top:3px"'+(editPed.despachoListo!==false?' checked':'')+'> <span>✅ Ya tengo todos los datos del despacho (valor declarado, con quién coordinar y teléfono)<br><span style="font-weight:400;color:var(--muted);font-size:11.5px">Si lo dejás SIN tildar, Gustavo no puede imprimir el remito y el viaje muestra «faltan datos». Tildalo cuando los tengas.</span></span></label></div>'+
               '<div class="cmp-field" style="flex:1 1 100%"><label>Coordinar la entrega con (nombre y teléfono)</label><input id="pd-contacto" value="'+esc(contacto0)+'" placeholder="Nombre y teléfono del comprador. Ej: Erick Rodríguez — 3571349174"></div>'+
             '</div></div></div>'+
+        '<div class="cmp-field" id="pd-dni-box" style="grid-column:1/-1"'+(dniExigido(pe)?'':' hidden')+'><label>🪪 DNI de quien recibe <span style="font-weight:400;color:var(--muted)">(lo exige el transporte para entregar; sin esto no se imprime el remito)</span></label>'+
+          '<input id="pd-dni" inputmode="numeric" value="'+esc(pe.dniEntrega||'')+'" placeholder="Ej: 30123456"></div>'+
         '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
         '<div class="cmp-field col2"><label>Dirección de entrega</label><input id="pp-dir" value="'+esc(pe.direccion)+'" placeholder="Dónde hay que descargar"></div>'+
         '<div class="cmp-field"><label>Estado</label><select id="pp-estado">'+EST_PED.map(e=>'<option value="'+e.k+'"'+(pe.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select></div>'+
@@ -24675,6 +24688,10 @@ function buildFilterTable(cfg){
         // Al cargar un transporte final por primera vez arranca en "faltan datos" (hay que tildar que ya están).
         if(!antes && String(ef.value||'').trim()){ editPed.despachoListo=false; const c=$('pd-listo'); if(c) c.checked=false; } }); }
     { const el=$('pd-listo'); if(el) el.addEventListener('change',()=>{ editPed.despachoListo=el.checked; }); }
+    { const ed=$('pd-dni'); if(ed) ed.addEventListener('input',()=>{ editPed.dniEntrega=ed.value.replace(/\D/g,''); });
+      const mostrarDni=()=>{ const b=$('pd-dni-box'); if(b) b.hidden=!dniExigido(editPed); };
+      const et=$('pp-transp'); if(et) et.addEventListener('input',mostrarDni);
+      const ef2=$('pd-final'); if(ef2) ef2.addEventListener('input',mostrarDni); }
     { const ep=$('pd-pago'); if(ep) ep.addEventListener('change',()=>{ editPed.pagoEnvio=ep.value; }); }
     { const ec=$('pd-contacto'); if(ec) ec.addEventListener('input',()=>{ editPed.contactoEntrega=ec.value; }); }
     { const ev=$('pd-valor'); if(ev) ev.addEventListener('input',()=>{ editPed.valorDeclarado=num(ev.value)||0; }); }
@@ -26295,6 +26312,16 @@ function buildFilterTable(cfg){
     const t=normc(transportista);
     return !!t && SIN_LEYENDA.indexOf(t)<0 && !esTransportePropio(t);
   }
+  // 🪪 DNI de quien recibe (18/11, pedido de Marcelo): los transportes de larga distancia (Brío, Logincor,
+  // Expreso Biletta, González, Diemar, OTSENRE, una agencia del cliente…) piden el DNI de quien retira la carga
+  // en destino. Es el MISMO criterio que el valor declarado (un transporte de carga que no es propio): para esos,
+  // el remito NO se genera sin un DNI de 7 u 8 dígitos. Se exporta para que Producción lo use al armar el pedido.
+  window.__transporteDeCarga = necesitaValorDeclarado;
+  const dniDigitos = s => String(s==null?'':s).replace(/\D/g,'');
+  const dniValido = s => { const d=dniDigitos(s); return d.length>=7 && d.length<=8; };
+  const dniFmt = s => { const d=dniDigitos(s); return d.length>=7 ? d.replace(/\B(?=(\d{3})+(?!\d))/g,'.') : d; };
+  // Si el cliente se identifica con DNI (no con CUIT), es el sugerido; se puede corregir en el formulario.
+  const dniDeCuit = c => { const d=dniDigitos(c); return (d.length>=7 && d.length<=8) ? d : ''; };
   // Quién paga el flete es EDITABLE (pedido de Marcelo, 25/09): el default es "EN ORIGEN, facturar
   // a VPH" (lo de siempre), pero hay casos puntuales donde el cliente lo abona directo en destino —
   // ahí la leyenda tiene que decir eso, no inventarle a VPH una factura que no le va a llegar.
@@ -26315,6 +26342,7 @@ function buildFilterTable(cfg){
       '<div><b>Coordinar entrega en destino con:</b> '+(String(obj.contactoEntrega||'').trim()
         ? esc(String(obj.contactoEntrega).trim())
         : esc(obj.clienteNombre||'—')+' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................'))+'</div>'+
+      ((d=>d.length>=7?'<div><b>DNI de quien recibe:</b> '+esc(d.replace(/\B(?=(\d{3})+(?!\d))/g,'.'))+'</div>':'')(String(obj.dniEntrega||'').replace(/\D/g,'')))+
     '</div>';
   }
   // Cómo se nombra una venta en el remito (pedido de Marcelo, 30/07): una venta sin factura se
@@ -26541,7 +26569,9 @@ function buildFilterTable(cfg){
           '<label style="'+lbl+'">Valor declarado de la mercadería <span style="font-weight:400;color:#888">(para el seguro del transporte)</span></label>'+
           '<input id="rem-valor" value="'+esc(obj.valorDeclarado?num(obj.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Ej: 1.500.000" style="'+inp+'">'+
           '<label style="'+lbl+'">Coordinar la entrega con <span style="font-weight:400;color:#888">(nombre y teléfono; vacío = el cliente)</span></label>'+
-          '<input id="rem-contacto" value="'+esc(obj.contactoEntrega||'')+'" placeholder="Ej: Erick Rodríguez — 3571349174" style="'+inp+'">'
+          '<input id="rem-contacto" value="'+esc(obj.contactoEntrega||'')+'" placeholder="Ej: Erick Rodríguez — 3571349174" style="'+inp+'">'+
+          '<label style="'+lbl+'">🪪 DNI de quien recibe <span style="font-weight:400;color:#b91c1c">(obligatorio: el transporte lo exige para entregar)</span></label>'+
+          '<input id="rem-dni" inputmode="numeric" value="'+esc(dniFmt(obj.dniEntrega||dniDeCuit(obj.clienteCuit)))+'" placeholder="Ej: 30.123.456" style="'+inp+'">'
           :'')+
         '<div style="display:flex;gap:8px;margin-top:16px">'+
           '<button id="rem-cancel" class="cmp-btn" style="flex:0 0 auto">Cancelar</button>'+
@@ -26553,7 +26583,8 @@ function buildFilterTable(cfg){
         const uid=ov.querySelector('#rem-venta').value; obj.ventaUid=uid;
         obj.comprobanteAsoc = labelVentas(uid);
         const campoValor=ov.querySelector('#rem-valor'); if(campoValor) obj.valorDeclarado=num(campoValor.value)||0;
-        const campoCont=ov.querySelector('#rem-contacto'); if(campoCont) obj.contactoEntrega=campoCont.value.trim(); };
+        const campoCont=ov.querySelector('#rem-contacto'); if(campoCont) obj.contactoEntrega=campoCont.value.trim();
+        const campoDni=ov.querySelector('#rem-dni'); if(campoDni) obj.dniEntrega=dniDigitos(campoDni.value); };
       ov.querySelectorAll('button[data-re]').forEach(b=> b.onclick=()=>{
         const r=yaEmitidos[+b.dataset.re]; ov.remove();
         try{ window.__imprimir.remito(window.__remitoParaImprimir(r)); }catch(e){ alert('Error al reimprimir: '+e.message); }
@@ -26570,6 +26601,8 @@ function buildFilterTable(cfg){
       ov.querySelector('#rem-ok').onclick=()=>{
         leer();
         if(!obj.fecha){ alert('Cargá la fecha de entrega — es la que va impresa en el remito.'); return; }
+        // 🪪 Condición dura (sin "generar igual"): un transporte de carga no entrega sin el DNI de quien recibe.
+        if(necesitaValorDeclarado(transp) && !dniValido(obj.dniEntrega)){ alert('Falta el DNI de quien recibe (7 u 8 números).\n\n'+transp+' lo exige para entregar la carga: sin el DNI no se puede generar el remito.'); return; }
         if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
         if(necesitaValorDeclarado(transp) && !(num(obj.valorDeclarado)>0) && !confirm('El remito va a salir SIN el valor declarado de la mercadería — el transporte lo va a pedir para cotizar el seguro.\n\n¿Generarlo igual?')) return;
         obj.transportista=transp;
@@ -27203,7 +27236,7 @@ function buildFilterTable(cfg){
       cliente:o.clienteNombre||'', clienteCuit:o.clienteCuit||'', clienteCondIva:o.clienteCondIva||'',
       clienteTel:o.clienteTel||'', domicilioEntrega:o.domicilioEntrega||'', transportista:o.transportista||'',
       ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'', valorDeclarado:num(o.valorDeclarado)||0,
-      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(o.contactoEntrega||'').trim(),
+      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(o.contactoEntrega||'').trim(), dniEntrega:String(o.dniEntrega||'').replace(/\D/g,''),
       items:(o.items||[]).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant), pallets:(it.pallets||null)})),
       usuario:u, ts:new Date().toISOString() };
   }
@@ -27212,7 +27245,7 @@ function buildFilterTable(cfg){
     return { numero:r.numero||'', numeroInt:r.numeroInt, fecha:r.fecha||'', transportista:r.transportista||'',
       clienteNombre:r.cliente||'', clienteCuit:r.clienteCuit||'', clienteCondIva:r.clienteCondIva||'',
       clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'', valorDeclarado:num(r.valorDeclarado)||0,
-      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(r.contactoEntrega||'').trim(),
+      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(r.contactoEntrega||'').trim(), dniEntrega:String(r.dniEntrega||'').replace(/\D/g,''),
       comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
   };
 
@@ -27325,6 +27358,7 @@ function buildFilterTable(cfg){
         // falta y no hay que ensuciar el papel con un dato que no le sirve a nadie.
         campo('Valor declarado (para el seguro del transporte)','<input id="rmt-valor" value="'+esc(r.valorDeclarado?numAR(r.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Ej: 1.500.000">')+
         campo('Coordinar la entrega con (nombre y teléfono)','<input id="rmt-contacto" value="'+esc(r.contactoEntrega||'')+'" placeholder="Vacío = el cliente">','col2')+
+        campo('🪪 DNI de quien recibe (lo exigen los transportes de carga)','<input id="rmt-dni" inputmode="numeric" value="'+esc(r.dniEntrega||'')+'" placeholder="Ej: 30123456">')+
         campo('Pago del envío','<select id="rmt-pago"><option value="origen"'+(r.pagoEnvio!=='destino'?' selected':'')+'>VPH — pago en origen</option>'+
           '<option value="destino"'+(r.pagoEnvio==='destino'?' selected':'')+'>El cliente en destino</option></select>')+
         campo('Factura / venta asociada','<select id="rmt-venta"><option value="">— Sin asociar —</option>'+
@@ -27343,6 +27377,7 @@ function buildFilterTable(cfg){
     { const ev=$('rmt-valor'); if(ev) ev.addEventListener('input',()=>{ editando.valorDeclarado=numAR(ev.value)||0; }); }
     { const ep=$('rmt-pago'); if(ep) ep.addEventListener('change',()=>{ editando.pagoEnvio=ep.value; }); }
     { const ec=$('rmt-contacto'); if(ec) ec.addEventListener('input',()=>{ editando.contactoEntrega=ec.value; }); }
+    { const ed=$('rmt-dni'); if(ed) ed.addEventListener('input',()=>{ editando.dniEntrega=ed.value.replace(/\D/g,''); }); }
     $('rmt-venta').addEventListener('change',()=>{
       const uid=$('rmt-venta').value; editando.ventaUid=uid;
       const v=ventas.find(x=>x._uid===uid);
@@ -27380,6 +27415,8 @@ function buildFilterTable(cfg){
   function guardarEdicion(){
     const r=editando; if(!r) return;
     if(!String(r.fecha||'').trim()){ alert('El remito necesita la fecha de entrega.'); return; }
+    // Un DNI cargado tiene que ser válido (7 u 8 números). Un remito viejo sin DNI se puede seguir editando.
+    { const d=String(r.dniEntrega||'').replace(/\D/g,''); if(d && (d.length<7 || d.length>8)){ alert('El DNI de quien recibe tiene que tener 7 u 8 números.'); return; } }
     r.items=(r.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
     r.editadoPor=(fb()&&fb().auth&&fb().auth.currentUser)?fb().auth.currentUser.email:'';
     r.editadoTs=new Date().toISOString();

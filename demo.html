@@ -91,6 +91,7 @@
   #crm-leads-section .crm-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
   #crm-leads-section .crm-tb-btns{display:flex;gap:6px;flex-wrap:wrap;order:2;margin-left:auto}
   #crm-leads-section .crm-tb-vistas{display:flex;gap:6px;flex-wrap:wrap;align-items:center;order:1;flex:0 1 auto}
+  #crm-leads-section .crm-tb-lista{order:1;flex:0 0 100%;display:flex;justify-content:flex-start}
   #crm-leads-section .crm-tb-vistas .search-box{width:190px;padding:6px 10px}
   #crm-leads-section .crm-toolbar .cmp-btn,#crm-leads-section .crm-tb-vistas .kb-viewbtn{padding:5px 10px;font-size:12px}
   #crm-leads-section .filter-bar select{padding:5px 8px;font-size:12px}
@@ -1972,6 +1973,8 @@ window.__demoSeed = function () {
           <button class="kb-viewbtn" id="crm-ver-archivados" title="Los leads Confirmados (venta) y Perdidos se archivan solos y no aparecen en el listado — tocá acá para verlos igual">📦 Ver archivados</button>
           <span class="result-count" id="crm-count" style="margin:0 0 0 auto"></span>
         </div>
+        
+        <div class="crm-tb-lista"><button class="cmp-btn" id="crm-min-lista" title="Abre en otra pestaña la imagen de la lista de precios MINORISTA, lista para copiar y pegar en WhatsApp">🖼️ Lista minorista</button></div>
         </div>
         
         <div id="crm-may-panel" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;padding:14px">
@@ -8686,7 +8689,7 @@ function buildFilterTable(cfg){
      
     const trFinal=pe?String(pe.transporteFinal||'').trim():'';
     return { numero:'', fecha:(pe&&pe.fechaEntregado)||fViaje||hoyISO, transportista:transportista||trFinal||(pe&&pe.transporte&&pe.transporte!=='Sin asignar'?pe.transporte:'')||'',
-      pagoEnvio:(pe&&pe.pagoEnvio==='destino')?'destino':'origen', contactoEntrega:pe?String(pe.contactoEntrega||'').trim():'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
+      pagoEnvio:(pe&&pe.pagoEnvio==='destino')?'destino':'origen', contactoEntrega:pe?String(pe.contactoEntrega||'').trim():'', dniEntrega:pe?String(pe.dniEntrega||'').replace(/\D/g,''):'', clienteNombre:v.cliente, clienteCuit:v.cuit||cli.cuit||'', clienteCondIva:v.condIva||cli.condIva||'', clienteTel:tel, domicilioEntrega:dom, items, valorDeclarado,
       ventaUid:v._uid||'', comprobanteAsoc:ref+' · '+fmtFecha(v.fecha) };
   }
   function menuImprimir(v){
@@ -17115,12 +17118,12 @@ function buildFilterTable(cfg){
     const t=TIPOS.find(([re])=>re.test(r));
     return t ? t[1] : 'Topes de estacionamiento';
   }
-  function topesTexto(nombre, rubro){
+  function topesTexto(nombre, rubro, firmaLinea){
     const cat=topesTipo(rubro);
     const p=PLANT.find(x=>x.cat===cat) || PLANT_DEFAULT.find(x=>x.cat===cat);
      
      
-    const firma=(typeof topesFirma==='function') ? topesFirma() : '';
+    const firma=firmaLinea || ((typeof topesFirma==='function') ? topesFirma() : '');
     const txt=fillPreg(p?p.txt:'', {cliente:nombre});
     return firma ? txt.replace(/\bsoy Marcelo\b/g, 'soy '+firma) : txt; }
    
@@ -17573,9 +17576,10 @@ function buildFilterTable(cfg){
   }
    
    
-  function topesReservadoPorOtro(t, ahora){
+   
+  function topesReservadoPorOtro(t, ahora, pc){
     if(!t.abiertoPc && !t.abiertoPor) return false;
-    if(t.abiertoPc){ if(t.abiertoPc===topesPcId()) return false; }
+    if(t.abiertoPc){ if(t.abiertoPc===(pc||topesPcId())) return false; }
     else { const f=topesFirma(); if(f && String(t.abiertoPor).trim().toLowerCase()===f.trim().toLowerCase()) return false; }    
     return ((ahora==null ? Date.now() : ahora) - (Number(t.abiertoTs)||0)) < 30*60000;
   }
@@ -17713,12 +17717,12 @@ function buildFilterTable(cfg){
    
    
   function topesPrioridadGrandesOn(){ try{ return localStorage.getItem('vph_topes_prioridad_grandes_v1')!=='0'; }catch(e){ return true; } }
-  function topesElegible(t){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t) && !topesTelYaUsado(t); }
+  function topesElegible(t, pc){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t, undefined, pc) && !topesTelYaUsado(t); }
    
    
    
-  function topesProxIndice(){
-    const elegibles=TOPES.map((t,i)=>({t,i})).filter(x=>topesElegible(x.t));
+  function topesProxIndice(pc){
+    const elegibles=TOPES.map((t,i)=>({t,i})).filter(x=>topesElegible(x.t, pc));
     if(!elegibles.length) return -1;
      
      
@@ -19309,6 +19313,42 @@ function buildFilterTable(cfg){
   function bnWebNota(){ return String(bnWebLs('nota','')); }
   function bnWebSet(on, nota){ bnWebLsSet('on', on?'1':'0'); if(nota!=null) bnWebLsSet('nota', nota); }
   function bnWebTope(){ return bnWebNum('tope', 15); }
+   
+   
+   
+   
+   
+   
+  function bnWebTopesOn(){ return bnWebLs('topes','0')==='1'; }
+  const BNWEB_TOPES_FIN=['contactado','interesado','sin-interes'];
+  function bnWebTopesHoy(pc){ return TOPES.filter(t=>t && t.ultimaAccion===hoyISO && t.accionPc===pc && BNWEB_TOPES_FIN.includes(t.estado)).length; }
+  function bnWebTopesUltTs(pc){ return TOPES.reduce((m,t)=> t && t.ultimaAccion===hoyISO && t.accionPc===pc && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0); }
+  function bnWebEnviadosHoy(){ const pc=bnLineaPc('web'); return bnEnviosHoy(pc)+bnWebTopesHoy(pc); }
+  function bnWebTopesPendientes(){ const pc=bnLineaPc('web'); return TOPES.filter(t=>topesElegible(t, pc)).length; }
+  function bnWebTopesPedido(ahora){
+    if(!bnWebTopesOn() || (window.__usaNube && !topesCargado)) return null;
+    const pc=bnLineaPc('web'), firma=bnWebFirma(); if(!firma) return null;
+    const idx=topesProxIndice(pc); if(idx<0) return null;
+    const t=TOPES[idx];
+    const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
+    const wa=nro(topesWaLink(t.telefono)), wa2=nro(topesWaLink(t.telefono, true));
+    if(!wa) return null;
+    if(!topesActualizar(topesIdFicha(t), row=>({...row, abiertoPor:firma, abiertoPc:pc, abiertoTs:ahora}))) return null;
+    return {origen:'topes', uid:t._uid||'', nombre:t.nombre||'', tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '', tipo:'topes',
+      texto:topesTexto(t.nombre, t.rubro, firma), imagen:topesImagen(t.rubro)};
+  }
+   
+   
+  function bnWebTopesRegistrar(p, estado, ts){
+    const pc=bnLineaPc('web'), firma=bnWebFirma();
+    return topesActualizar(p.uid||p.nombre, row=>{
+      let r=row;
+      if(estado==='enviado') r={...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:ts||Date.now(), accionPor:firma, accionPc:pc};
+      else if(estado==='repetido') r={...row, estado:(row.estado||'pendiente')==='pendiente' ? 'contactado' : row.estado, repetidoBloqueado:hoyISO};
+      else if(estado==='sinwa') r={...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:firma, accionPc:pc};
+      return topesSinReserva(r);
+    });
+  }
   function bnWebEspera(ahoraMs){
     const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
     const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
@@ -19316,7 +19356,7 @@ function buildFilterTable(cfg){
     const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
     if(ahora<aHora(desde)) return {ms:aHora(desde)-ahora, motivo:'antes', min, desde, hasta};
     if(ahora>=aHora(hasta)) return {ms:Infinity, motivo:'despues', min, desde, hasta};
-    const ult=bnUltimoEnvioTs(bnLineaPc('web')); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
+    const ult=Math.max(bnUltimoEnvioTs(bnLineaPc('web')), bnWebTopesUltTs(bnLineaPc('web'))); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
     const ms=Math.min(min*60000, Math.max(0, ult+min*60000-ahora));
     return {ms, motivo:ms>0?'espacio':'', min, desde, hasta};
   }
@@ -19330,10 +19370,19 @@ function buildFilterTable(cfg){
     if(d.tipo==='hola'){ const antes=Date.now()-bnWebExtTs>60000; bnWebExtTs=Date.now(); if(antes){ const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel(); } return; }
     if(d.tipo==='resultado' && bnWebPend && d.id===bnWebPend.id){
       const p=bnWebPend; bnWebPend=null;
-      const fin=['enviado','sinwa','repetido'].includes(d.estado);
-      const ok=bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
        
-      if(ok && d.estado==='enviado' && /^imagen:/.test(String(d.detalle||''))){
+       
+       
+      if(d.estado==='error' && /env[ií]o en curso/i.test(String(d.detalle||''))){
+        const panel=$('crm-bn-panel'); if(panel && panel.style.display!=='none') drawBaseNivel();
+        return;
+      }
+      const fin=['enviado','sinwa','repetido'].includes(d.estado);
+      const ok = p.origen==='topes'
+        ? bnWebTopesRegistrar(p, fin?d.estado:'liberar', Number(d.enviadoTs)||Date.now())
+        : bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
+       
+      if(ok && p.origen!=='topes' && d.estado==='enviado' && /^imagen:/.test(String(d.detalle||''))){
         const bi=BNW.findIndex(r=>r && (r.nombre||'')===(p.nombre||'') && String(r.telefono||'')===String(p.bnTel||''));
         if(bi>=0) bnUpd(bi, r=>({...r, notas:('⚠️ '+String(d.detalle)+' ('+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'). '+(r.notas||'')).trim()}));
       }
@@ -19351,7 +19400,7 @@ function buildFilterTable(cfg){
     if(bnWebPend){
       if(ahora-bnWebPend.ts > BNWEB_ESPERA_MAX){
         const x=bnWebPend; bnWebPend=null;
-        bnAutoRegistrar({...x, estado:'liberar'}, 'web');
+        if(x.origen==='topes') bnWebTopesRegistrar(x, 'liberar'); else bnAutoRegistrar({...x, estado:'liberar'}, 'web');
         bnWebPausar('la extensión no contestó el envío a '+x.nombre+'. Mirá WhatsApp Web: si salió, marcalo Contactado a mano.');
       }
       return;
@@ -19360,11 +19409,12 @@ function buildFilterTable(cfg){
     const panel=$('crm-bn-panel'), redraw=()=>{ if(panel && panel.style.display!=='none') drawBaseNivel(); };
     if(ahora-bnWebExtTs > 60000){ redraw(); return; }    
     const tope=bnWebTope();
-    if(tope && bnEnviosHoy(bnLineaPc('web'))>=tope){ redraw(); return; }
+    if(tope && bnWebEnviadosHoy()>=tope){ redraw(); return; }
     if(bnWebEspera(ahora).ms>0){ redraw(); return; }
-    const ped=bnAutoPedido(ahora, 'web'); if(!ped){ redraw(); return; }
+     
+    const ped=bnWebTopesPedido(ahora) || bnAutoPedido(ahora, 'web'); if(!ped){ redraw(); return; }
     bnWebPend={...ped, id:'wa'+ahora.toString(36), ts:ahora};
-    const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : '';
+    const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : (ped.origen==='topes' && ped.imagen ? new URL(ped.imagen, location.href).href : '');
     window.postMessage({vphWa:1, tipo:'enviar', id:bnWebPend.id, tel:ped.tel, tel2:ped.tel2, texto:ped.texto, imagen:img, familia:ped.tipo}, '*');
     redraw();
   }
@@ -19377,7 +19427,7 @@ function buildFilterTable(cfg){
   function bnWebCambiar(on){
     if(on){
       if(!bnWebFirma()){ alert('Escribí con qué nombre firma la línea de WhatsApp Web.'); drawBaseNivel(); return; }
-      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, el mensaje de los Cubos de Apoyo (con la imagen) firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
+      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, '+(bnWebTopesOn()?'primero el mensaje de Topes (losetas y topes) y después el de los Cubos de Apoyo':'el mensaje de los Cubos de Apoyo')+' (con la imagen) firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
       bnWebSet(true, ''); bnWebArrancarReloj();
       try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
     } else bnWebSet(false, '');
@@ -19402,7 +19452,7 @@ function buildFilterTable(cfg){
       '<span>cada '+inp('bn-app-min', minApp, 52, 'Minutos entre mensajes de la app (vale también para Topes en esta PC)')+' min</span>'+
       (nota?('<span>'+nota+'</span>'):'')+'</div>';
      
-    const won=bnWebOn(), ext=(ahora-bnWebExtTs)<=60000, wnota=bnWebNota(), wtope=bnWebTope(), wenv=bnEnviosHoy(bnLineaPc('web'));
+    const won=bnWebOn(), ext=(ahora-bnWebExtTs)<=60000, wnota=bnWebNota(), wtope=bnWebTope(), wenv=bnWebEnviadosHoy();
     let st='';
     if(won){
       const esp=bnWebEspera(ahora);
@@ -19413,13 +19463,14 @@ function buildFilterTable(cfg){
       else if(esp.motivo==='despues') st='Terminó el horario de hoy';
       else if(esp.ms>0) st='Próximo en '+Math.ceil(esp.ms/60000)+' min';
       else st='Listo para el próximo';
-      st+=' · hoy '+wenv+(wtope?(' de '+wtope):'')+' · en cola: '+cola('web');
+      st+=' · hoy '+wenv+(wtope?(' de '+wtope):'')+' · en cola: '+cola('web')+(bnWebTopesOn()?(' · Topes: <b>'+bnWebTopesPendientes()+'</b>'):'');
     }
     const web='<div style="'+caja+'">'+
       '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="La extensión Ayudante WhatsApp Web VPH manda desde el WhatsApp Web de este Chrome, con su firma, su espera y su tope.">'+
       '<input type="checkbox" id="bn-web-chk"'+(won?' checked':'')+'> 🌐 WhatsApp Web</label>'+
       '<span>firma <input id="bn-web-firma" value="'+esc(bnWebFirma())+'" style="width:80px"></span>'+
       '<span>cada '+inp('bn-web-min', bnWebNum('min',15), 52, 'Minutos entre mensajes de WhatsApp Web')+' min</span>'+
+      '<label style="display:flex;align-items:center;gap:4px" title="Primero manda los prospectos de Topes (losetas y topes) y, cuando no quedan, los Cubos; misma firma, espera y tope."><input type="checkbox" id="bn-web-topes"'+(bnWebTopesOn()?' checked':'')+'> también Topes</label>'+
       '<span>tope '+inp('bn-web-tope', wtope, 52, 'Máximo de mensajes por día de WhatsApp Web (0 = sin tope)')+' por día</span>'+
       (st?('<span>'+st+'</span>'):'')+
       (!won && wnota ? '<span style="color:#b45309;font-weight:600">'+esc(wnota)+'</span>' : '')+'</div>';
@@ -19489,6 +19540,7 @@ function buildFilterTable(cfg){
     const appMin=cont.querySelector('#bn-app-min');
     if(appMin) appMin.onchange=()=>{ const n=Math.max(0, Math.round(Number(appMin.value)||0)); try{ localStorage.setItem('vph_topes_min_v1', String(n)); }catch(e){} drawBaseNivel(); };
     const webChk=cont.querySelector('#bn-web-chk'); if(webChk) webChk.onchange=()=>bnWebCambiar(webChk.checked);
+    const webTop=cont.querySelector('#bn-web-topes'); if(webTop) webTop.onchange=()=>{ bnWebLsSet('topes', webTop.checked?'1':'0'); drawBaseNivel(); };
     const webFirma=cont.querySelector('#bn-web-firma'); if(webFirma) webFirma.onchange=()=>{ bnWebLsSet('firma', String(webFirma.value||'').trim()); drawBaseNivel(); };
     ['min','tope'].forEach(k=>{ const el=cont.querySelector('#bn-web-'+k); if(el) el.onchange=()=>{ bnWebLsSet(k, Math.max(0, Math.round(Number(el.value)||0))); drawBaseNivel(); }; });
     cont.querySelectorAll('[data-bn-si]').forEach(b=>b.onclick=()=>bnConfirmar(true));
@@ -19726,6 +19778,10 @@ function buildFilterTable(cfg){
    
   const topesBuscarInp=$('topes-buscar');
   if(topesBuscarInp) topesBuscarInp.addEventListener('input', e=>{ topesFiltroTexto=e.target.value; topesLimite=TOPES_PAGINA; drawTopes(); });
+
+   
+  const minListaBtn=$('crm-min-lista');
+  if(minListaBtn) minListaBtn.onclick=()=>mayVerLista('min');
 
    
   const mayAbrirBtn=$('crm-may-abrir');
@@ -23633,6 +23689,7 @@ function buildFilterTable(cfg){
     partes.push(cont ? 'coordinar con '+esc(cont) : '<span style="color:var(--amber)">falta con quién coordinar</span>');
     const val=num(pe.valorDeclarado)||num(pe.valorMercaderia);
     if(val>0) partes.push('valor declarado $ '+nf(val));
+    { const dni=String(pe.dniEntrega||'').replace(/\D/g,''); partes.push((dni.length>=7&&dni.length<=8) ? 'DNI '+esc(dni) : '<span style="color:var(--amber)">falta el DNI de quien recibe</span>'); }
     const pend = pe.despachoListo===false ? '<div style="margin-top:4px;color:#c0392b;font-weight:800">⏳ FALTAN DATOS DEL DESPACHO (valor declarado, con quién coordinar y teléfono) — NO IMPRIMIR EL REMITO hasta que se confirmen</div>' : '';
     return '<div class="pe-despacho">🔁 '+(quien?esc(quien)+' lo lleva y ':'')+'se DESPACHA EN <b>'+esc(fin.toUpperCase())+'</b> · '+partes.join(' · ')+pend+'</div>';
   }
@@ -24368,6 +24425,7 @@ function buildFilterTable(cfg){
     const trFinal=String(pe.transporteFinal||'').trim();
     return { numero:'', fecha:fecha||pe.fechaEntregado||(fViaje?isoDeF(fViaje):'')||pe.fechaRequerida||hoyISO, transportista:trFinal||((pe.transporte&&pe.transporte!=='Sin asignar')?pe.transporte:''),
       pagoEnvio:pe.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:(String(pe.contactoEntrega||'').trim() || (trFinal ? contactoDefaultDe(pe) : '')),
+      dniEntrega:String(pe.dniEntrega||'').replace(/\D/g,''),
        
        
       clienteNombre:pe.cliente, clienteCuit:cli.cuit||pe.clienteCuit||'', clienteCondIva:cli.condIva||pe.clienteCondIva||'', clienteTel:tel, domicilioEntrega:dom, items:items, mixtos:mixtos,
@@ -24393,6 +24451,10 @@ function buildFilterTable(cfg){
       const cli=cs.find(c=>norm(c.nombre)===norm(pe.cliente))||{};
       if(!tieneTel(contacto) && !tieneTel(pe.clienteTel) && !tieneTel(cli.telefono) && !tieneTel(window.__telefonoLead?window.__telefonoLead(pe.cliente):'')) falta.push('teléfono de contacto');
     }
+     
+    { const quien = fin || (pe.transporte && pe.transporte!=='Sin asignar' ? pe.transporte : '');
+      const dni = String(pe.dniEntrega||'').replace(/\D/g,'');
+      if(quien && window.__transporteDeCarga && window.__transporteDeCarga(quien) && (dni.length<7 || dni.length>8)) falta.push('DNI de quien recibe (el transporte lo exige para entregar)'); }
     return falta;
   }
   function imprimirRemito(pe){
@@ -24731,6 +24793,11 @@ function buildFilterTable(cfg){
    
   let editPed=null;
   function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
+   
+  function dniExigido(pe){
+    const quien=String(pe.transporteFinal||'').trim() || (pe.transporte && pe.transporte!=='Sin asignar' ? String(pe.transporte) : '');
+    return !!(quien && window.__transporteDeCarga && window.__transporteDeCarga(quien));
+  }
   function openPed(pe){ editPed = pe?JSON.parse(JSON.stringify(pe)):blankPed(); if(!editPed.items||!editPed.items.length)editPed.items=[{producto:'',codigo:'',cantidad:1}]; $('pe-ped-title').textContent=pe?'Editar pedido':'Nuevo pedido'; drawPed(); $('pe-modal-ped').classList.add('open'); }
   function drawPed(){
     const pe=editPed;
@@ -24768,6 +24835,8 @@ function buildFilterTable(cfg){
               '<div class="cmp-field" style="flex:1 1 100%;border:1px dashed var(--border);border-radius:8px;padding:8px 10px"><label style="display:flex;gap:8px;align-items:flex-start;font-weight:700"><input type="checkbox" id="pd-listo" style="margin-top:3px"'+(editPed.despachoListo!==false?' checked':'')+'> <span>✅ Ya tengo todos los datos del despacho (valor declarado, con quién coordinar y teléfono)<br><span style="font-weight:400;color:var(--muted);font-size:11.5px">Si lo dejás SIN tildar, Gustavo no puede imprimir el remito y el viaje muestra «faltan datos». Tildalo cuando los tengas.</span></span></label></div>'+
               '<div class="cmp-field" style="flex:1 1 100%"><label>Coordinar la entrega con (nombre y teléfono)</label><input id="pd-contacto" value="'+esc(contacto0)+'" placeholder="Nombre y teléfono del comprador. Ej: Nombre Apellido — 351 0000000"></div>'+
             '</div></div></div>'+
+        '<div class="cmp-field" id="pd-dni-box" style="grid-column:1/-1"'+(dniExigido(pe)?'':' hidden')+'><label>🪪 DNI de quien recibe <span style="font-weight:400;color:var(--muted)">(lo exige el transporte para entregar; sin esto no se imprime el remito)</span></label>'+
+          '<input id="pd-dni" inputmode="numeric" value="'+esc(pe.dniEntrega||'')+'" placeholder="Ej: 30123456"></div>'+
         '<div class="cmp-field"><label>Ciudad / localidad</label><input id="pp-ciudad" value="'+esc(pe.ciudad)+'"></div>'+
         '<div class="cmp-field col2"><label>Dirección de entrega</label><input id="pp-dir" value="'+esc(pe.direccion)+'" placeholder="Dónde hay que descargar"></div>'+
         '<div class="cmp-field"><label>Estado</label><select id="pp-estado">'+EST_PED.map(e=>'<option value="'+e.k+'"'+(pe.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select></div>'+
@@ -24789,6 +24858,10 @@ function buildFilterTable(cfg){
          
         if(!antes && String(ef.value||'').trim()){ editPed.despachoListo=false; const c=$('pd-listo'); if(c) c.checked=false; } }); }
     { const el=$('pd-listo'); if(el) el.addEventListener('change',()=>{ editPed.despachoListo=el.checked; }); }
+    { const ed=$('pd-dni'); if(ed) ed.addEventListener('input',()=>{ editPed.dniEntrega=ed.value.replace(/\D/g,''); });
+      const mostrarDni=()=>{ const b=$('pd-dni-box'); if(b) b.hidden=!dniExigido(editPed); };
+      const et=$('pp-transp'); if(et) et.addEventListener('input',mostrarDni);
+      const ef2=$('pd-final'); if(ef2) ef2.addEventListener('input',mostrarDni); }
     { const ep=$('pd-pago'); if(ep) ep.addEventListener('change',()=>{ editPed.pagoEnvio=ep.value; }); }
     { const ec=$('pd-contacto'); if(ec) ec.addEventListener('input',()=>{ editPed.contactoEntrega=ec.value; }); }
     { const ev=$('pd-valor'); if(ev) ev.addEventListener('input',()=>{ editPed.valorDeclarado=num(ev.value)||0; }); }
@@ -26401,6 +26474,16 @@ function buildFilterTable(cfg){
    
    
    
+   
+  window.__transporteDeCarga = necesitaValorDeclarado;
+  const dniDigitos = s => String(s==null?'':s).replace(/\D/g,'');
+  const dniValido = s => { const d=dniDigitos(s); return d.length>=7 && d.length<=8; };
+  const dniFmt = s => { const d=dniDigitos(s); return d.length>=7 ? d.replace(/\B(?=(\d{3})+(?!\d))/g,'.') : d; };
+   
+  const dniDeCuit = c => { const d=dniDigitos(c); return (d.length>=7 && d.length<=8) ? d : ''; };
+   
+   
+   
   function lineaPagoEnvio(obj){
     if(obj.pagoEnvio==='destino')
       return '<div><b>Pago del envío:</b> lo abona <b>'+esc(obj.clienteNombre||'el cliente')+'</b> EN DESTINO, directo al transporte.</div>';
@@ -26418,6 +26501,7 @@ function buildFilterTable(cfg){
       '<div><b>Coordinar entrega en destino con:</b> '+(String(obj.contactoEntrega||'').trim()
         ? esc(String(obj.contactoEntrega).trim())
         : esc(obj.clienteNombre||'—')+' — Tel: '+(obj.clienteTel?esc(obj.clienteTel):'......................'))+'</div>'+
+      ((d=>d.length>=7?'<div><b>DNI de quien recibe:</b> '+esc(d.replace(/\B(?=(\d{3})+(?!\d))/g,'.'))+'</div>':'')(String(obj.dniEntrega||'').replace(/\D/g,'')))+
     '</div>';
   }
    
@@ -26644,7 +26728,9 @@ function buildFilterTable(cfg){
           '<label style="'+lbl+'">Valor declarado de la mercadería <span style="font-weight:400;color:#888">(para el seguro del transporte)</span></label>'+
           '<input id="rem-valor" value="'+esc(obj.valorDeclarado?num(obj.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Ej: 1.500.000" style="'+inp+'">'+
           '<label style="'+lbl+'">Coordinar la entrega con <span style="font-weight:400;color:#888">(nombre y teléfono; vacío = el cliente)</span></label>'+
-          '<input id="rem-contacto" value="'+esc(obj.contactoEntrega||'')+'" placeholder="Ej: Nombre Apellido — 351 0000000" style="'+inp+'">'
+          '<input id="rem-contacto" value="'+esc(obj.contactoEntrega||'')+'" placeholder="Ej: Nombre Apellido — 351 0000000" style="'+inp+'">'+
+          '<label style="'+lbl+'">🪪 DNI de quien recibe <span style="font-weight:400;color:#b91c1c">(obligatorio: el transporte lo exige para entregar)</span></label>'+
+          '<input id="rem-dni" inputmode="numeric" value="'+esc(dniFmt(obj.dniEntrega||dniDeCuit(obj.clienteCuit)))+'" placeholder="Ej: 30.123.456" style="'+inp+'">'
           :'')+
         '<div style="display:flex;gap:8px;margin-top:16px">'+
           '<button id="rem-cancel" class="cmp-btn" style="flex:0 0 auto">Cancelar</button>'+
@@ -26656,7 +26742,8 @@ function buildFilterTable(cfg){
         const uid=ov.querySelector('#rem-venta').value; obj.ventaUid=uid;
         obj.comprobanteAsoc = labelVentas(uid);
         const campoValor=ov.querySelector('#rem-valor'); if(campoValor) obj.valorDeclarado=num(campoValor.value)||0;
-        const campoCont=ov.querySelector('#rem-contacto'); if(campoCont) obj.contactoEntrega=campoCont.value.trim(); };
+        const campoCont=ov.querySelector('#rem-contacto'); if(campoCont) obj.contactoEntrega=campoCont.value.trim();
+        const campoDni=ov.querySelector('#rem-dni'); if(campoDni) obj.dniEntrega=dniDigitos(campoDni.value); };
       ov.querySelectorAll('button[data-re]').forEach(b=> b.onclick=()=>{
         const r=yaEmitidos[+b.dataset.re]; ov.remove();
         try{ window.__imprimir.remito(window.__remitoParaImprimir(r)); }catch(e){ alert('Error al reimprimir: '+e.message); }
@@ -26673,6 +26760,8 @@ function buildFilterTable(cfg){
       ov.querySelector('#rem-ok').onclick=()=>{
         leer();
         if(!obj.fecha){ alert('Cargá la fecha de entrega — es la que va impresa en el remito.'); return; }
+         
+        if(necesitaValorDeclarado(transp) && !dniValido(obj.dniEntrega)){ alert('Falta el DNI de quien recibe (7 u 8 números).\n\n'+transp+' lo exige para entregar la carga: sin el DNI no se puede generar el remito.'); return; }
         if(!obj.domicilioEntrega && !confirm('El remito va a salir SIN dirección de entrega (queda el renglón para completarlo a mano).\n\n¿Generarlo igual?')) return;
         if(necesitaValorDeclarado(transp) && !(num(obj.valorDeclarado)>0) && !confirm('El remito va a salir SIN el valor declarado de la mercadería — el transporte lo va a pedir para cotizar el seguro.\n\n¿Generarlo igual?')) return;
         obj.transportista=transp;
@@ -26882,6 +26971,13 @@ function buildFilterTable(cfg){
    
    
   const FUERA_LISTAS_MAYORISTAS = ['BNV40','KNIV','ANC38','ANC10','PINTVA','CA40','CA30'];    
+   
+   
+   
+  const FUERA_LISTA_MIN = ['ULL50','BNV40','CA40','KNIV','ANC38','ANC10','PINTVA'];
+   
+  const ORDEN_MIN = ['ULC60','ULC40','ULL50','UGB35','UGR35','UGC35','UCC10','TET50','TEC50','TET100','TEC100'];
+  const ordenMin = p => { const i=ORDEN_MIN.indexOf(String(p.codigo||'').trim().toUpperCase()); return i<0 ? ORDEN_MIN.length : i; };
   function listaPreciosDatos(o){
     o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
      
@@ -26901,11 +26997,14 @@ function buildFilterTable(cfg){
        
        
       .filter(p=>!(L.may && FUERA_LISTAS_MAYORISTAS.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
+      .filter(p=>!(!L.may && FUERA_LISTA_MIN.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
        
        
       .filter(p=>!(L.flete100||L.lpTablero) || num(p.udPorPallet)>0)
        
-      .sort((a,b)=>nombreLista(a).localeCompare(nombreLista(b),'es'));
+       
+       
+      .sort((a,b)=>(L.may ? 0 : (ordenMin(a)-ordenMin(b))) || nombreLista(a).localeCompare(nombreLista(b),'es'));
     if(!prods.length) return {error:'No hay productos con precio cargado en la lista "'+L.nombre+'".'};
     const d=new Date(); const pad=n=>String(n).padStart(2,'0');
     const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
@@ -27290,7 +27389,7 @@ function buildFilterTable(cfg){
       cliente:o.clienteNombre||'', clienteCuit:o.clienteCuit||'', clienteCondIva:o.clienteCondIva||'',
       clienteTel:o.clienteTel||'', domicilioEntrega:o.domicilioEntrega||'', transportista:o.transportista||'',
       ventaUid:o.ventaUid||'', comprobante:o.comprobanteAsoc||'', pedidoUid:o.pedidoUid||'', valorDeclarado:num(o.valorDeclarado)||0,
-      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(o.contactoEntrega||'').trim(),
+      pagoEnvio:o.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(o.contactoEntrega||'').trim(), dniEntrega:String(o.dniEntrega||'').replace(/\D/g,''),
       items:(o.items||[]).map(it=>({codigo:it.codigo||'', desc:it.desc||'', cant:num(it.cant), pallets:(it.pallets||null)})),
       usuario:u, ts:new Date().toISOString() };
   }
@@ -27299,7 +27398,7 @@ function buildFilterTable(cfg){
     return { numero:r.numero||'', numeroInt:r.numeroInt, fecha:r.fecha||'', transportista:r.transportista||'',
       clienteNombre:r.cliente||'', clienteCuit:r.clienteCuit||'', clienteCondIva:r.clienteCondIva||'',
       clienteTel:r.clienteTel||'', domicilioEntrega:r.domicilioEntrega||'', ventaUid:r.ventaUid||'', valorDeclarado:num(r.valorDeclarado)||0,
-      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(r.contactoEntrega||'').trim(),
+      pagoEnvio:r.pagoEnvio==='destino'?'destino':'origen', contactoEntrega:String(r.contactoEntrega||'').trim(), dniEntrega:String(r.dniEntrega||'').replace(/\D/g,''),
       comprobanteAsoc:r.comprobante||'', pedidoUid:r.pedidoUid||'', items:(r.items||[]).slice(), yaEmitido:true };
   };
 
@@ -27412,6 +27511,7 @@ function buildFilterTable(cfg){
          
         campo('Valor declarado (para el seguro del transporte)','<input id="rmt-valor" value="'+esc(r.valorDeclarado?numAR(r.valorDeclarado).toLocaleString('es-AR',{maximumFractionDigits:2}):'')+'" placeholder="Ej: 1.500.000">')+
         campo('Coordinar la entrega con (nombre y teléfono)','<input id="rmt-contacto" value="'+esc(r.contactoEntrega||'')+'" placeholder="Vacío = el cliente">','col2')+
+        campo('🪪 DNI de quien recibe (lo exigen los transportes de carga)','<input id="rmt-dni" inputmode="numeric" value="'+esc(r.dniEntrega||'')+'" placeholder="Ej: 30123456">')+
         campo('Pago del envío','<select id="rmt-pago"><option value="origen"'+(r.pagoEnvio!=='destino'?' selected':'')+'>VPH — pago en origen</option>'+
           '<option value="destino"'+(r.pagoEnvio==='destino'?' selected':'')+'>El cliente en destino</option></select>')+
         campo('Factura / venta asociada','<select id="rmt-venta"><option value="">— Sin asociar —</option>'+
@@ -27430,6 +27530,7 @@ function buildFilterTable(cfg){
     { const ev=$('rmt-valor'); if(ev) ev.addEventListener('input',()=>{ editando.valorDeclarado=numAR(ev.value)||0; }); }
     { const ep=$('rmt-pago'); if(ep) ep.addEventListener('change',()=>{ editando.pagoEnvio=ep.value; }); }
     { const ec=$('rmt-contacto'); if(ec) ec.addEventListener('input',()=>{ editando.contactoEntrega=ec.value; }); }
+    { const ed=$('rmt-dni'); if(ed) ed.addEventListener('input',()=>{ editando.dniEntrega=ed.value.replace(/\D/g,''); }); }
     $('rmt-venta').addEventListener('change',()=>{
       const uid=$('rmt-venta').value; editando.ventaUid=uid;
       const v=ventas.find(x=>x._uid===uid);
@@ -27467,6 +27568,8 @@ function buildFilterTable(cfg){
   function guardarEdicion(){
     const r=editando; if(!r) return;
     if(!String(r.fecha||'').trim()){ alert('El remito necesita la fecha de entrega.'); return; }
+     
+    { const d=String(r.dniEntrega||'').replace(/\D/g,''); if(d && (d.length<7 || d.length>8)){ alert('El DNI de quien recibe tiene que tener 7 u 8 números.'); return; } }
     r.items=(r.items||[]).filter(it=>it&&(it.desc||it.codigo)&&num(it.cant)>0);
     r.editadoPor=(fb()&&fb().auth&&fb().auth.currentUser)?fb().auth.currentUser.email:'';
     r.editadoTs=new Date().toISOString();
