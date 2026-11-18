@@ -19044,8 +19044,8 @@ function buildFilterTable(cfg){
     const tope=bnWebTope();
     if(tope && bnWebEnviadosHoy()>=tope){ redraw(); return; }
     if(bnWebEspera(ahora).ms>0){ redraw(); return; }
-    // 18/11: primero Base Nivel; cuando no queda nada para esta línea, Topes (si está tildado).
-    const ped=bnAutoPedido(ahora, 'web') || bnWebTopesPedido(ahora); if(!ped){ redraw(); return; }
+    // 18/11 (2ª vuelta, Marcelo): primero TOPES (losetas y topes, si está tildado); cuando no queda nada, Base Nivel.
+    const ped=bnWebTopesPedido(ahora) || bnAutoPedido(ahora, 'web'); if(!ped){ redraw(); return; }
     bnWebPend={...ped, id:'wa'+ahora.toString(36), ts:ahora};
     const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : (ped.origen==='topes' && ped.imagen ? new URL(ped.imagen, location.href).href : '');
     window.postMessage({vphWa:1, tipo:'enviar', id:bnWebPend.id, tel:ped.tel, tel2:ped.tel2, texto:ped.texto, imagen:img, familia:ped.tipo}, '*');
@@ -19060,7 +19060,7 @@ function buildFilterTable(cfg){
   function bnWebCambiar(on){
     if(on){
       if(!bnWebFirma()){ alert('Escribí con qué nombre firma la línea de WhatsApp Web.'); drawBaseNivel(); return; }
-      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, el mensaje de los Cubos de Apoyo (con la imagen)'+(bnWebTopesOn()?' y después el de Topes (losetas y topes)':'')+' firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
+      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, '+(bnWebTopesOn()?'primero el mensaje de Topes (losetas y topes) y después el de los Cubos de Apoyo':'el mensaje de los Cubos de Apoyo')+' (con la imagen) firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
       bnWebSet(true, ''); bnWebArrancarReloj();
       try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
     } else bnWebSet(false, '');
@@ -19103,7 +19103,7 @@ function buildFilterTable(cfg){
       '<input type="checkbox" id="bn-web-chk"'+(won?' checked':'')+'> 🌐 WhatsApp Web</label>'+
       '<span>firma <input id="bn-web-firma" value="'+esc(bnWebFirma())+'" style="width:80px"></span>'+
       '<span>cada '+inp('bn-web-min', bnWebNum('min',15), 52, 'Minutos entre mensajes de WhatsApp Web')+' min</span>'+
-      '<label style="display:flex;align-items:center;gap:4px" title="Cuando no queda nada de Cubos para esta línea, sigue con los prospectos de Topes (losetas y topes), con la misma firma, espera y tope."><input type="checkbox" id="bn-web-topes"'+(bnWebTopesOn()?' checked':'')+'> también Topes</label>'+
+      '<label style="display:flex;align-items:center;gap:4px" title="Primero manda los prospectos de Topes (losetas y topes) y, cuando no quedan, los Cubos; misma firma, espera y tope."><input type="checkbox" id="bn-web-topes"'+(bnWebTopesOn()?' checked':'')+'> también Topes</label>'+
       '<span>tope '+inp('bn-web-tope', wtope, 52, 'Máximo de mensajes por día de WhatsApp Web (0 = sin tope)')+' por día</span>'+
       (st?('<span>'+st+'</span>'):'')+
       (!won && wnota ? '<span style="color:#b45309;font-weight:600">'+esc(wnota)+'</span>' : '')+'</div>';
