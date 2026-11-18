@@ -1496,6 +1496,7 @@
             <button class="cmp-btn" id="crm-plant-edit" title="Editar las plantillas de WhatsApp por producto">📄 Plantillas</button>
             <button class="cmp-btn" id="crm-cartel-abrir" title="Marcelo va visitando los corralones para ver si tienen la cartelería de VPH">🪧 Cartelería</button>
             <button class="cmp-btn" id="crm-may-abrir" title="Los revendedores mayoristas agrupados por su lista de precios (CBA/Interior × Facturado/Contado) — para mandarles el listado del mes y consultarles stock por WhatsApp">🧱 Mayoristas</button>
+            <button class="cmp-btn" id="crm-min-lista" title="Abre en otra pestaña la imagen de la lista de precios MINORISTA, lista para copiar y pegar en WhatsApp">🖼️ Lista minorista</button>
             <button class="cmp-btn" id="crm-export">Exportar JSON</button>
             <button class="cmp-btn" id="crm-import">Importar JSON</button>
             <input type="file" id="crm-import-file" accept="application/json" style="display:none">
@@ -19419,6 +19420,10 @@ function buildFilterTable(cfg){
   const topesBuscarInp=$('topes-buscar');
   if(topesBuscarInp) topesBuscarInp.addEventListener('input', e=>{ topesFiltroTexto=e.target.value; topesLimite=TOPES_PAGINA; drawTopes(); });
 
+  // 🖼️ Lista minorista (18/11): la MISMA imagen que el 🖼️ Ver lista de Mayoristas, con la lista 'min'.
+  const minListaBtn=$('crm-min-lista');
+  if(minListaBtn) minListaBtn.onclick=()=>mayVerLista('min');
+
   // Mayoristas: mismo esquema inline que Topes (abrir/cerrar el panel + suscripción a su documento).
   const mayAbrirBtn=$('crm-may-abrir');
   if(mayAbrirBtn){ mayAbrirBtn.onclick=()=>{ const panel=$('crm-may-panel');
@@ -26772,6 +26777,9 @@ function buildFilterTable(cfg){
   // así la imagen que se le manda al revendedor no puede decir un precio distinto del PDF.
   // Si la lista no se puede armar devuelve {error} y quien la pidió decide cómo avisar.
   const FUERA_LISTAS_MAYORISTAS = ['BNV40','KNIV','ANC38','ANC10','PINTVA','CA40','CA30'];   // ver el filtro de abajo
+  // Orden de la lista minorista: lo que no figura acá va después, en orden alfabético.
+  const ORDEN_MIN = ['ULC60','ULC40','ULL50','UGB35','UGR35','UGC35','UCC10','TET50','TEC50','TET100','TEC100'];
+  const ordenMin = p => { const i=ORDEN_MIN.indexOf(String(p.codigo||'').trim().toUpperCase()); return i<0 ? ORDEN_MIN.length : i; };
   function listaPreciosDatos(o){
     o=o||{}; const L=LISTAS_PDF[o.lista]||LISTAS_PDF.may;
     // El flete "hasta 100 km" (Expreso Biletta) se edita en ⚙️ Parámetros porque el transporte lo
@@ -26794,8 +26802,10 @@ function buildFilterTable(cfg){
       // Con flete incluido, un producto sin udPorPallet no tiene cómo repartir el flete por unidad:
       // mejor afuera de esa lista que con un precio inventado.
       .filter(p=>!(L.flete100||L.lpTablero) || num(p.udPorPallet)>0)
-      // Ordena por el nombre IMPRESO (los topes renombrados quedan juntos igual).
-      .sort((a,b)=>nombreLista(a).localeCompare(nombreLista(b),'es'));
+      // Ordena por el nombre IMPRESO (los topes renombrados quedan juntos igual). La lista MINORISTA
+      // (18/11, pedido de Marcelo) va en el orden de la góndola: losetas, greens, cordón de confinamiento y
+      // topes (trapecio 50, circular 50, trapecio 100, cuadrado 100); lo demás, alfabético al final.
+      .sort((a,b)=>(L.may ? 0 : (ordenMin(a)-ordenMin(b))) || nombreLista(a).localeCompare(nombreLista(b),'es'));
     if(!prods.length) return {error:'No hay productos con precio cargado en la lista "'+L.nombre+'".'};
     const d=new Date(); const pad=n=>String(n).padStart(2,'0');
     const hoy=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
