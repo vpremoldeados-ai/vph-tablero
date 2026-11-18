@@ -16758,12 +16758,12 @@ function buildFilterTable(cfg){
     const t=TIPOS.find(([re])=>re.test(r));
     return t ? t[1] : 'Topes de estacionamiento';
   }
-  function topesTexto(nombre, rubro){
+  function topesTexto(nombre, rubro, firmaLinea){
     const cat=topesTipo(rubro);
     const p=PLANT.find(x=>x.cat===cat) || PLANT_DEFAULT.find(x=>x.cat===cat);
     // 15/09: firma de quien manda (Sofía usa su propio número). Pisa "soy Marcelo" también en las
-    // plantillas guardadas en vph_config/crm_plantillas.
-    const firma=(typeof topesFirma==='function') ? topesFirma() : '';
+    // plantillas guardadas en vph_config/crm_plantillas. 18/11: la línea 🌐 WhatsApp Web pasa la suya.
+    const firma=firmaLinea || ((typeof topesFirma==='function') ? topesFirma() : '');
     const txt=fillPreg(p?p.txt:'', {cliente:nombre});
     return firma ? txt.replace(/\bsoy Marcelo\b/g, 'soy '+firma) : txt; }
   // IMAGEN POR TIPO (14/09, pedido de Marcelo): una imagen con texto propio para cada tipo de
@@ -17216,9 +17216,10 @@ function buildFilterTable(cfg){
   }
   // Prospecto abierto por la OTRA persona en los últimos 30 min: ▶ Siguiente lo saltea, así no le
   // escriben los dos. Se reserva al abrir el chat y se libera al marcar el resultado o ⏹ Terminar.
-  function topesReservadoPorOtro(t, ahora){
+  // 18/11: `pc` = la línea que pregunta (la 🌐 WhatsApp Web de esta PC tiene su propio id, `<pc>-web`).
+  function topesReservadoPorOtro(t, ahora, pc){
     if(!t.abiertoPc && !t.abiertoPor) return false;
-    if(t.abiertoPc){ if(t.abiertoPc===topesPcId()) return false; }
+    if(t.abiertoPc){ if(t.abiertoPc===(pc||topesPcId())) return false; }
     else { const f=topesFirma(); if(f && String(t.abiertoPor).trim().toLowerCase()===f.trim().toLowerCase()) return false; }   // reserva vieja, sin id de PC
     return ((ahora==null ? Date.now() : ahora) - (Number(t.abiertoTs)||0)) < 30*60000;
   }
@@ -17356,12 +17357,12 @@ function buildFilterTable(cfg){
   // es un campo propio `grande:true` en el prospecto (cargado a mano en los ~55 que salieron de la
   // investigación de empresas de 50+ empleados del 21-22/09), no una regex sobre el rubro.
   function topesPrioridadGrandesOn(){ try{ return localStorage.getItem('vph_topes_prioridad_grandes_v1')!=='0'; }catch(e){ return true; } }
-  function topesElegible(t){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t) && !topesTelYaUsado(t); }
+  function topesElegible(t, pc){ return (t.estado||'pendiente')==='pendiente' && String(t.telefono||'').trim() && !topesReservadoPorOtro(t, undefined, pc) && !topesTelYaUsado(t); }
   // Próximo a abrir: primero empresas grandes (si está prendido); si no queda ninguna, constructoras
   // y desarrollistas (mismo criterio de rubro que usa el mensaje); cuando no quedan, el orden de
   // siempre. Las dos prioridades conviven: si las dos están prendidas, grandes gana.
-  function topesProxIndice(){
-    const elegibles=TOPES.map((t,i)=>({t,i})).filter(x=>topesElegible(x.t));
+  function topesProxIndice(pc){
+    const elegibles=TOPES.map((t,i)=>({t,i})).filter(x=>topesElegible(x.t, pc));
     if(!elegibles.length) return -1;
     // 12/10 (Marcelo): una tanda marcada a mano con `prioridad:true` (ej. constructoras y arquitectos de
     // Manantiales) sale ANTES que todo, sin depender de las casillas de esta PC.
@@ -18952,6 +18953,42 @@ function buildFilterTable(cfg){
   function bnWebNota(){ return String(bnWebLs('nota','')); }
   function bnWebSet(on, nota){ bnWebLsSet('on', on?'1':'0'); if(nota!=null) bnWebLsSet('nota', nota); }
   function bnWebTope(){ return bnWebNum('tope', 15); }
+  // ---------- 🌐 WhatsApp Web también manda TOPES (18/11, Marcelo: "activá el envío con 🌐 WhatsApp Web firma
+  // Sofía que mande mensajes a los prospectos de losetas y topes"). Cuando no queda nada de Base Nivel para esta
+  // línea, toma el próximo prospecto de Topes con la MISMA cola y prioridades que la app (topesProxIndice), pero
+  // reservando y firmando como la línea web (`<pc>-web`, firma de la línea). Tope y espera de la línea web suman
+  // los dos (es el mismo número de WhatsApp). Va por la MISMA lista de Topes, así un prospecto nunca recibe de
+  // las dos líneas: la reserva (abiertoPc) y el teléfono ya usado lo impiden.
+  function bnWebTopesOn(){ return bnWebLs('topes','0')==='1'; }
+  const BNWEB_TOPES_FIN=['contactado','interesado','sin-interes'];
+  function bnWebTopesHoy(pc){ return TOPES.filter(t=>t && t.ultimaAccion===hoyISO && t.accionPc===pc && BNWEB_TOPES_FIN.includes(t.estado)).length; }
+  function bnWebTopesUltTs(pc){ return TOPES.reduce((m,t)=> t && t.ultimaAccion===hoyISO && t.accionPc===pc && Number(t.ultimaAccionTs)>m ? Number(t.ultimaAccionTs) : m, 0); }
+  function bnWebEnviadosHoy(){ const pc=bnLineaPc('web'); return bnEnviosHoy(pc)+bnWebTopesHoy(pc); }
+  function bnWebTopesPendientes(){ const pc=bnLineaPc('web'); return TOPES.filter(t=>topesElegible(t, pc)).length; }
+  function bnWebTopesPedido(ahora){
+    if(!bnWebTopesOn() || (window.__usaNube && !topesCargado)) return null;
+    const pc=bnLineaPc('web'), firma=bnWebFirma(); if(!firma) return null;
+    const idx=topesProxIndice(pc); if(idx<0) return null;
+    const t=TOPES[idx];
+    const nro=s=>String(s||'').replace(/^whatsapp:\/\/send\?phone=/,'');
+    const wa=nro(topesWaLink(t.telefono)), wa2=nro(topesWaLink(t.telefono, true));
+    if(!wa) return null;
+    if(!topesActualizar(topesIdFicha(t), row=>({...row, abiertoPor:firma, abiertoPc:pc, abiertoTs:ahora}))) return null;
+    return {origen:'topes', uid:t._uid||'', nombre:t.nombre||'', tel:wa, tel2:(wa2 && wa2!==wa) ? wa2 : '', tipo:'topes',
+      texto:topesTexto(t.nombre, t.rubro, firma), imagen:topesImagen(t.rubro)};
+  }
+  // Lo que contestó la extensión para un prospecto de Topes (mismas reglas que topesAutoRegistrar de la app,
+  // pero con la firma y el id de la línea web). Cualquier otro estado = solo liberar la reserva.
+  function bnWebTopesRegistrar(p, estado, ts){
+    const pc=bnLineaPc('web'), firma=bnWebFirma();
+    return topesActualizar(p.uid||p.nombre, row=>{
+      let r=row;
+      if(estado==='enviado') r={...((row.estado||'pendiente')==='pendiente' ? {...row, estado:'contactado'} : row), ultimaAccion:hoyISO, ultimaAccionTs:ts||Date.now(), accionPor:firma, accionPc:pc};
+      else if(estado==='repetido') r={...row, estado:(row.estado||'pendiente')==='pendiente' ? 'contactado' : row.estado, repetidoBloqueado:hoyISO};
+      else if(estado==='sinwa') r={...row, estado:'falta-dato', ultimaAccion:hoyISO, accionPor:firma, accionPc:pc};
+      return topesSinReserva(r);
+    });
+  }
   function bnWebEspera(ahoraMs){
     const P=(k,d)=>{ const n=Number(window.__param ? window.__param(k,d) : d); return isFinite(n) ? n : d; };
     const ahora=(ahoraMs==null ? Date.now() : ahoraMs);
@@ -18959,7 +18996,7 @@ function buildFilterTable(cfg){
     const aHora=h=>{ const d=new Date(ahora); d.setHours(Math.floor(h), Math.round((h%1)*60), 0, 0); return d.getTime(); };
     if(ahora<aHora(desde)) return {ms:aHora(desde)-ahora, motivo:'antes', min, desde, hasta};
     if(ahora>=aHora(hasta)) return {ms:Infinity, motivo:'despues', min, desde, hasta};
-    const ult=bnUltimoEnvioTs(bnLineaPc('web')); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
+    const ult=Math.max(bnUltimoEnvioTs(bnLineaPc('web')), bnWebTopesUltTs(bnLineaPc('web'))); if(!ult || !min) return {ms:0, motivo:'', min, desde, hasta};
     const ms=Math.min(min*60000, Math.max(0, ult+min*60000-ahora));
     return {ms, motivo:ms>0?'espacio':'', min, desde, hasta};
   }
@@ -18974,9 +19011,11 @@ function buildFilterTable(cfg){
     if(d.tipo==='resultado' && bnWebPend && d.id===bnWebPend.id){
       const p=bnWebPend; bnWebPend=null;
       const fin=['enviado','sinwa','repetido'].includes(d.estado);
-      const ok=bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
+      const ok = p.origen==='topes'
+        ? bnWebTopesRegistrar(p, fin?d.estado:'liberar', Number(d.enviadoTs)||Date.now())
+        : bnAutoRegistrar({...p, estado:fin?d.estado:'liberar', enviadoTs:Number(d.enviadoTs)||Date.now()}, 'web');
       // 30/10: si el texto salió pero la imagen no, queda anotado en la ficha (para mandarla a mano).
-      if(ok && d.estado==='enviado' && /^imagen:/.test(String(d.detalle||''))){
+      if(ok && p.origen!=='topes' && d.estado==='enviado' && /^imagen:/.test(String(d.detalle||''))){
         const bi=BNW.findIndex(r=>r && (r.nombre||'')===(p.nombre||'') && String(r.telefono||'')===String(p.bnTel||''));
         if(bi>=0) bnUpd(bi, r=>({...r, notas:('⚠️ '+String(d.detalle)+' ('+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7)+'). '+(r.notas||'')).trim()}));
       }
@@ -18994,7 +19033,7 @@ function buildFilterTable(cfg){
     if(bnWebPend){
       if(ahora-bnWebPend.ts > BNWEB_ESPERA_MAX){
         const x=bnWebPend; bnWebPend=null;
-        bnAutoRegistrar({...x, estado:'liberar'}, 'web');
+        if(x.origen==='topes') bnWebTopesRegistrar(x, 'liberar'); else bnAutoRegistrar({...x, estado:'liberar'}, 'web');
         bnWebPausar('la extensión no contestó el envío a '+x.nombre+'. Mirá WhatsApp Web: si salió, marcalo Contactado a mano.');
       }
       return;
@@ -19003,11 +19042,12 @@ function buildFilterTable(cfg){
     const panel=$('crm-bn-panel'), redraw=()=>{ if(panel && panel.style.display!=='none') drawBaseNivel(); };
     if(ahora-bnWebExtTs > 60000){ redraw(); return; }   // la extensión no está en este Chrome
     const tope=bnWebTope();
-    if(tope && bnEnviosHoy(bnLineaPc('web'))>=tope){ redraw(); return; }
+    if(tope && bnWebEnviadosHoy()>=tope){ redraw(); return; }
     if(bnWebEspera(ahora).ms>0){ redraw(); return; }
-    const ped=bnAutoPedido(ahora, 'web'); if(!ped){ redraw(); return; }
+    // 18/11: primero Base Nivel; cuando no queda nada para esta línea, Topes (si está tildado).
+    const ped=bnAutoPedido(ahora, 'web') || bnWebTopesPedido(ahora); if(!ped){ redraw(); return; }
     bnWebPend={...ped, id:'wa'+ahora.toString(36), ts:ahora};
-    const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : '';
+    const img=ped.tipo==='base-nivel' ? new URL(BN_FLYER_PNG, location.href).href : (ped.origen==='topes' && ped.imagen ? new URL(ped.imagen, location.href).href : '');
     window.postMessage({vphWa:1, tipo:'enviar', id:bnWebPend.id, tel:ped.tel, tel2:ped.tel2, texto:ped.texto, imagen:img, familia:ped.tipo}, '*');
     redraw();
   }
@@ -19020,7 +19060,7 @@ function buildFilterTable(cfg){
   function bnWebCambiar(on){
     if(on){
       if(!bnWebFirma()){ alert('Escribí con qué nombre firma la línea de WhatsApp Web.'); drawBaseNivel(); return; }
-      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, el mensaje de los Cubos de Apoyo (con la imagen) firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
+      if(!confirm('🌐 WhatsApp Web automático\n\nManda solo, de a uno, el mensaje de los Cubos de Apoyo (con la imagen)'+(bnWebTopesOn()?' y después el de Topes (losetas y topes)':'')+' firmado por '+bnWebFirma()+', desde el WhatsApp Web de este Chrome: hasta '+bnWebTope()+' por día, uno cada '+bnWebNum('min',15)+' minutos, en el horario de Topes.\n\n⚠️ WhatsApp puede restringir el número si detecta envíos automáticos en frío.\n\nNecesita la extensión "Ayudante WhatsApp Web VPH" y WhatsApp Web abierto y vinculado en este Chrome. ¿Lo prendo?')){ drawBaseNivel(); return; }
       bnWebSet(true, ''); bnWebArrancarReloj();
       try{ window.postMessage({vphWa:1, tipo:'ping'}, '*'); }catch(e){}
     } else bnWebSet(false, '');
@@ -19045,7 +19085,7 @@ function buildFilterTable(cfg){
       '<span>cada '+inp('bn-app-min', minApp, 52, 'Minutos entre mensajes de la app (vale también para Topes en esta PC)')+' min</span>'+
       (nota?('<span>'+nota+'</span>'):'')+'</div>';
     // Línea 2: WhatsApp WEB (extensión de Chrome).
-    const won=bnWebOn(), ext=(ahora-bnWebExtTs)<=60000, wnota=bnWebNota(), wtope=bnWebTope(), wenv=bnEnviosHoy(bnLineaPc('web'));
+    const won=bnWebOn(), ext=(ahora-bnWebExtTs)<=60000, wnota=bnWebNota(), wtope=bnWebTope(), wenv=bnWebEnviadosHoy();
     let st='';
     if(won){
       const esp=bnWebEspera(ahora);
@@ -19056,13 +19096,14 @@ function buildFilterTable(cfg){
       else if(esp.motivo==='despues') st='Terminó el horario de hoy';
       else if(esp.ms>0) st='Próximo en '+Math.ceil(esp.ms/60000)+' min';
       else st='Listo para el próximo';
-      st+=' · hoy '+wenv+(wtope?(' de '+wtope):'')+' · en cola: '+cola('web');
+      st+=' · hoy '+wenv+(wtope?(' de '+wtope):'')+' · en cola: '+cola('web')+(bnWebTopesOn()?(' · Topes: <b>'+bnWebTopesPendientes()+'</b>'):'');
     }
     const web='<div style="'+caja+'">'+
       '<label style="display:flex;align-items:center;gap:5px;font-weight:700" title="La extensión Ayudante WhatsApp Web VPH manda desde el WhatsApp Web de este Chrome, con su firma, su espera y su tope.">'+
       '<input type="checkbox" id="bn-web-chk"'+(won?' checked':'')+'> 🌐 WhatsApp Web</label>'+
       '<span>firma <input id="bn-web-firma" value="'+esc(bnWebFirma())+'" style="width:80px"></span>'+
       '<span>cada '+inp('bn-web-min', bnWebNum('min',15), 52, 'Minutos entre mensajes de WhatsApp Web')+' min</span>'+
+      '<label style="display:flex;align-items:center;gap:4px" title="Cuando no queda nada de Cubos para esta línea, sigue con los prospectos de Topes (losetas y topes), con la misma firma, espera y tope."><input type="checkbox" id="bn-web-topes"'+(bnWebTopesOn()?' checked':'')+'> también Topes</label>'+
       '<span>tope '+inp('bn-web-tope', wtope, 52, 'Máximo de mensajes por día de WhatsApp Web (0 = sin tope)')+' por día</span>'+
       (st?('<span>'+st+'</span>'):'')+
       (!won && wnota ? '<span style="color:#b45309;font-weight:600">'+esc(wnota)+'</span>' : '')+'</div>';
@@ -19132,6 +19173,7 @@ function buildFilterTable(cfg){
     const appMin=cont.querySelector('#bn-app-min');
     if(appMin) appMin.onchange=()=>{ const n=Math.max(0, Math.round(Number(appMin.value)||0)); try{ localStorage.setItem('vph_topes_min_v1', String(n)); }catch(e){} drawBaseNivel(); };
     const webChk=cont.querySelector('#bn-web-chk'); if(webChk) webChk.onchange=()=>bnWebCambiar(webChk.checked);
+    const webTop=cont.querySelector('#bn-web-topes'); if(webTop) webTop.onchange=()=>{ bnWebLsSet('topes', webTop.checked?'1':'0'); drawBaseNivel(); };
     const webFirma=cont.querySelector('#bn-web-firma'); if(webFirma) webFirma.onchange=()=>{ bnWebLsSet('firma', String(webFirma.value||'').trim()); drawBaseNivel(); };
     ['min','tope'].forEach(k=>{ const el=cont.querySelector('#bn-web-'+k); if(el) el.onchange=()=>{ bnWebLsSet(k, Math.max(0, Math.round(Number(el.value)||0))); drawBaseNivel(); }; });
     cont.querySelectorAll('[data-bn-si]').forEach(b=>b.onclick=()=>bnConfirmar(true));
