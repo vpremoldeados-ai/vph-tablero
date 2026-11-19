@@ -491,6 +491,7 @@
     #rmt-tabla td:last-child .cmp-rowbtn{margin:2px 3px 2px 0}
   }
   .pe-anclaje{margin-top:5px;background:#0b3d91;color:#fff;font-size:12px;font-weight:800;letter-spacing:.02em;line-height:1.35;padding:5px 9px;border-radius:6px;white-space:normal}
+  .pe-singrua{display:inline-block;background:#1f6feb;color:#fff;font-size:10.5px;font-weight:800;padding:1px 7px;border-radius:9px;letter-spacing:.2px;margin-top:2px}
   .pe-pintar{margin-top:5px;background:#000;color:#ffd400;font-size:12px;font-weight:800;letter-spacing:.02em;line-height:1.35;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-despacho{margin-top:5px;background:#eef2ff;color:#312e81;border:1px solid #a5b4fc;font-size:12px;font-weight:600;line-height:1.4;padding:5px 9px;border-radius:6px;white-space:normal}
   .pe-pallets{margin-top:4px;border-top:1px dashed var(--border);padding-top:4px}
@@ -21619,7 +21620,7 @@ function buildFilterTable(cfg){
 
   let prods=[], prod=[], ent=[], pedidos=[], ajustes=[], insumos=[], feriados=[], asis=[], solicitudes=[];
   let asisMes=null;   // 'AAAA-MM' que muestra la pestaña ⏰ Asistencia; null = mes en curso
-  let tab='stock', q='', qPed='', filtroPed='activos';
+  let tab='stock', q='', qPed='', filtroPed='activos', soloSinGrua=false;
   const unsub={}; let seq=0;
   const uniq=()=> Date.now().toString(36)+'-'+(seq++);
   function usuario(){ const c=fb(); return (c&&c.auth&&c.auth.currentUser&&c.auth.currentUser.email)||''; }
@@ -24000,7 +24001,7 @@ function buildFilterTable(cfg){
         '</div>'+
         '<div style="margin-top:6px;font-size:12.5px">'+v.peds.map(p=>{ const t=totCarga(p), d=dirPed(p), seco=chequeoSeco(p, v.f);
           // La fila entera se puede ARRASTRAR a otro viaje (el ⠿ es la señal visual; el botón sigue siendo botón).
-          return '<div draggable="true" data-arr="'+esc(p._uid)+'" title="Arrastrá para moverlo a otro viaje" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border);cursor:grab"><span style="color:var(--muted)">⠿</span><span style="flex:1;min-width:130px">'+(p.urgente?'<b style="color:var(--red)">🔥 URGENTE</b> ':'')+esc(p.cliente||'—')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
+          return '<div draggable="true" data-arr="'+esc(p._uid)+'" title="Arrastrá para moverlo a otro viaje" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;border-top:1px dashed var(--border);cursor:grab"><span style="color:var(--muted)">⠿</span><span style="flex:1;min-width:130px">'+(p.urgente?'<b style="color:var(--red)">🔥 URGENTE</b> ':'')+esc(p.cliente||'—')+(p.sinGrua?' <span class="pe-singrua">🚚 SIN GRÚA</span>':'')+(d?' <span style="color:var(--muted)">· '+esc(d)+'</span>':'')+'</span><span style="color:var(--muted);white-space:nowrap">'+(t.pallets?t.pallets+' pal':'—')+'</span>'+
             // 🖨️ Remito POR CLIENTE del viaje armado (pedido de Marcelo, 20/08): Gustavo imprime mirando
             // el viaje que va a cargar, no la tabla de abajo. Va con el MISMO data-pact que la tabla, así
             // que lo toma bindAccionesPedido y no hay una segunda copia de la lógica de impresión.
@@ -24163,7 +24164,10 @@ function buildFilterTable(cfg){
     // fecha): si acá se filtrara solo por estado quedaba en NINGUNA pantalla y "desaparecía" (caso
     // BCRS, 13/10). Pendiente de coordinar = pendiente O sin día de entrega válido (y no entregado).
     let rows=pedidos.filter(p=>p.estado!=='entregado' && (p.estado==='pendiente' || !fechaDeDia(p.diaEntrega)));
-    $('pe-ped-filtros').innerHTML='<span class="asof" style="margin:0">Pendientes de coordinar: '+rows.length+'</span>';
+    const nSinGrua=rows.filter(p=>p.sinGrua).length;
+    if(soloSinGrua) rows=rows.filter(p=>p.sinGrua);
+    $('pe-ped-filtros').innerHTML='<span class="asof" style="margin:0">Pendientes de coordinar: '+rows.length+'</span> <label style="display:inline-flex;gap:5px;align-items:center;font-size:12px;font-weight:700;margin-left:12px;cursor:pointer"><input type="checkbox" id="pe-f-singrua"'+(soloSinGrua?' checked':'')+'> 🚚 Solo sin grúa ('+nSinGrua+')</label>';
+    { const fsg=$('pe-f-singrua'); if(fsg) fsg.addEventListener('change',()=>{ soloSinGrua=fsg.checked; render(); }); }
     if(qPed){ const s=qPed.toLowerCase(); rows=rows.filter(p=>(p.cliente+' '+p.ciudad+' '+p.direccion+' '+p.transporte+' '+(p.transporteFinal||'')+' '+resumenPed(p)).toLowerCase().includes(s)); }
     /* ---------- Orden CRONOLÓGICO de la tabla (06/10, pedido de Marcelo) --------------------------
        🔴 `diaEntrega` se comparaba como TEXTO "dd/mm/aa", así que "03/09/26" quedaba ANTES que
@@ -24203,7 +24207,9 @@ function buildFilterTable(cfg){
         + (pe.fechaRequerida?'<div style="font-size:10.5px;color:var(--red);font-weight:700">🎯 requerida '+fmtFecha(pe.fechaRequerida)+'</div>':'')
         + (pe.puedeEsperar&&!pe.urgente?'<div style="font-size:10.5px;color:var(--muted)">🕐 puede esperar</div>':'')
         // 🔥 Urgente: se tilda en la fila (pedido de Marcelo, 05/10) y se ve igual en el plan y en los viajes.
-        + (pe.estado!=='entregado'?'<label style="display:flex;gap:4px;align-items:center;font-size:11px;font-weight:700;margin-top:3px;cursor:pointer;color:'+(pe.urgente?'var(--red)':'var(--muted)')+'"><input type="checkbox" data-pinl="urgente" data-id="'+esc(pe._uid)+'"'+(pe.urgente?' checked':'')+'> 🔥 Urgente</label>':'');
+        + (pe.estado!=='entregado'?'<label style="display:flex;gap:4px;align-items:center;font-size:11px;font-weight:700;margin-top:3px;cursor:pointer;color:'+(pe.urgente?'var(--red)':'var(--muted)')+'"><input type="checkbox" data-pinl="urgente" data-id="'+esc(pe._uid)+'"'+(pe.urgente?' checked':'')+'> 🔥 Urgente</label>'
+          // 🚚 Sin grúa (pedido de Marcelo, 19/11): se baja con un camión común, sin hidrogrúa. Se tilda en la fila.
+          +'<label style="display:flex;gap:4px;align-items:center;font-size:11px;font-weight:700;margin-top:3px;cursor:pointer;color:'+(pe.sinGrua?'var(--blue)':'var(--muted)')+'"><input type="checkbox" data-pinl="singrua" data-id="'+esc(pe._uid)+'"'+(pe.sinGrua?' checked':'')+'> 🚚 Sin grúa</label>':'');
       const trAct=pe.transporte||'Sin asignar';
       const trLista=TRANSPORTES.indexOf(trAct)>=0?TRANSPORTES:TRANSPORTES.concat([trAct]);
       const transpCell='<select class="pe-inl" data-pinl="transp" data-id="'+esc(pe._uid)+'" title="Cambiar el transportista — se guarda al elegirlo">'+
@@ -24216,7 +24222,7 @@ function buildFilterTable(cfg){
       const estadoCell = pe.estado==='entregado' ? badge.entregado
         : '<span class="est-pick"><select class="est-sel" data-pinl="estado" data-id="'+esc(pe._uid)+'" style="background-color:'+eCfg.c+'" title="Cambiar el estado — Entregado pide confirmación y descuenta stock">'+
           EST_PED.map(e=>'<option value="'+e.k+'"'+(e.k===eCfg.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select></span>';
-      html+='<tr><td data-label="Cliente"><b>'+esc(pe.cliente||'—')+'</b></td>'+
+      html+='<tr><td data-label="Cliente"><b>'+esc(pe.cliente||'—')+'</b>'+(pe.sinGrua?'<div><span class="pe-singrua">🚚 SIN GRÚA</span></div>':'')+'</td>'+
       '<td data-label="Entrega" data-sortval="'+(fDia?(fDia.getFullYear()*10000+(fDia.getMonth()+1)*100+fDia.getDate()):99999999)+'">'+entregaCell+'</td>'+
       '<td data-label="Transporte" data-sortval="'+esc(trAct)+'">'+transpCell+'</td>'+
       '<td class="pe-col-ped" data-label="Pedido">'+esc(resumenPed(pe))+cargaMini(pe)+cargaDetalle(pe)+'</td>'+
@@ -24245,6 +24251,7 @@ function buildFilterTable(cfg){
         persistPed(pe); render(); return;
       }
       if(k==='urgente'){ pe.urgente=!!el.checked; if(pe.urgente) pe.puedeEsperar=false; persistPed(pe); render(); return; }
+      if(k==='singrua'){ pe.sinGrua=!!el.checked; persistPed(pe); render(); return; }
       if(k==='transp'){ pe.transporte=el.value; persistPed(pe); render(); return; }
       if(k==='estado'){
         if(el.value==='entregado'){
@@ -24527,7 +24534,7 @@ function buildFilterTable(cfg){
       persistPed(pe);
       const nuevo = Object.assign(blankPed(), {
         cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
-        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, nota:pe.nota||'',
+        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, sinGrua:!!pe.sinGrua, nota:pe.nota||'',
         items:nuevoItems, diaEntrega:fecha2, transporte:transp2, estado:pe.estado==='programado'?'programado':'pendiente'
       });
       persistPed(nuevo);
@@ -24590,6 +24597,8 @@ function buildFilterTable(cfg){
   function unirPedidos(destino, otros){
     if(!destino || !otros || !otros.length) return false;
     fusionarItems(destino, otros);
+    // 🚚 Sin grúa solo si TODOS los pedidos unidos se bajan sin grúa: con uno que la necesite, el camión la lleva.
+    destino.sinGrua = !!destino.sinGrua && otros.every(o=>!!o.sinGrua);
     otros.forEach(o=>{
       // Datos que al destino le falten (en la captura de Marcelo uno de los dos no tenía dirección).
       // Solo COMPLETA, nunca pisa lo que el destino ya tenía cargado.
@@ -24809,7 +24818,7 @@ function buildFilterTable(cfg){
 
   // Form de pedido
   let editPed=null;
-  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
+  function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, sinGrua:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
   // Transportes de carga para el desplegable «Se despacha en otro transporte»: los de siempre + los que haya cargados
   // en 🚛 Transportes (González, Maravilla, Logincor, Diemar…), sin repetir.
   function nombresCarga(){
@@ -24846,7 +24855,8 @@ function buildFilterTable(cfg){
         '</div></div>'+
         '<div class="cmp-field"><label>Fecha requerida (cliente)</label><input type="date" id="pp-freq" value="'+esc(pe.fechaRequerida||'')+'"></div>'+
         '<div class="cmp-field"><label>Prioridad</label><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:9px 0;cursor:pointer"><input type="checkbox" id="pp-espera"'+(pe.puedeEsperar?' checked':'')+'> 🕐 El cliente puede esperar</label>'+
-          '<label style="display:flex;gap:8px;align-items:center;font-weight:800;padding:4px 0 9px;cursor:pointer;color:var(--red)"><input type="checkbox" id="pp-urgente"'+(pe.urgente?' checked':'')+'> 🔥 URGENTE — fabricar y entregar primero</label></div>'+
+          '<label style="display:flex;gap:8px;align-items:center;font-weight:800;padding:4px 0 9px;cursor:pointer;color:var(--red)"><input type="checkbox" id="pp-urgente"'+(pe.urgente?' checked':'')+'> 🔥 URGENTE — fabricar y entregar primero</label>'+
+          '<label style="display:flex;gap:8px;align-items:center;font-weight:700;padding:4px 0 9px;cursor:pointer"><input type="checkbox" id="pp-singrua"'+(pe.sinGrua?' checked':'')+'> 🚚 Se entrega con camión SIN grúa</label></div>'+
         '<div class="cmp-field"><label>Transporte (el que sale de la fábrica)</label><select id="pp-transp">'+opt(TRANSPORTES,pe.transporte)+'</select></div>'+
         /* 🔁 DESPACHO EN OTRO TRANSPORTE (07/10, pedido de Marcelo): Matías lleva el pedido hasta el
            transporte de carga (Brío, Biletta…) que hace la entrega final. Vacío = entrega directa.
@@ -24893,6 +24903,7 @@ function buildFilterTable(cfg){
     { const ec=$('pd-contacto'); if(ec) ec.addEventListener('input',()=>{ editPed.contactoEntrega=ec.value; }); }
     { const ev=$('pd-valor'); if(ev) ev.addEventListener('input',()=>{ editPed.valorDeclarado=num(ev.value)||0; }); }
     $('pp-espera').addEventListener('change',()=>{ editPed.puedeEsperar=$('pp-espera').checked; if(editPed.puedeEsperar){ editPed.urgente=false; $('pp-urgente').checked=false; } });
+    $('pp-singrua').addEventListener('change',()=>{ editPed.sinGrua=$('pp-singrua').checked; });
     $('pp-urgente').addEventListener('change',()=>{ editPed.urgente=$('pp-urgente').checked; if(editPed.urgente){ editPed.puedeEsperar=false; $('pp-espera').checked=false; } });
     // "Día de entrega" se guarda como texto dd/mm/aa (así lo carga Sofía, es lo que entiende
     // fechaDeDia() en Coordinar entregas) — el calendario es solo un ATAJO para escribirlo: al
