@@ -12831,14 +12831,20 @@ function buildFilterTable(cfg){
     {k:'retiro', l:'1 Retira en fábrica', par:null, def:0},
     {k:'capital', l:'2 Córdoba Capital', par:'fleteCapital', def:35000},
     {k:'cercanas', l:'3 Hasta 30km de Av. de Circunvalación', par:'fleteCercanas', def:48750},
-    {k:'mati', l:'4 Interior con Mati', par:'fleteMati', def:140000},
+    {k:'mati', l:'4 Interior con Mati (hidrogrúa)', par:'fleteMati', def:140000},
     {k:'particular', l:'5 Transporte Particular', par:'fleteParticular', def:0},
-    {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000},
-    {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0},   // igual que Brío; el precio suele variar por viaje → se pisa en el presupuesto (precioFlete)
+    // 19/11 (Marcelo): Brío y OTSENRE ya no se eligen como zona aparte — son transportes de carga como González,
+    // Maravilla, Biletta… y se cobran por "Transporte de carga" con el precio de la base 🚛 Transportes. Quedan
+    // definidos (oculta:true) para que los leads y presupuestos viejos que los usan sigan cobrando igual.
+    {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000, oculta:true},
+    {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0, oculta:true},   // el precio suele variar por viaje → se pisa en el presupuesto (precioFlete)
     // 27/10 (Marcelo): a los MAYORISTAS el flete dentro de Córdoba va incluido; en Gran Córdoba y Sierras
     // Chicas (Río Ceballos, La Calera, Villa Allende, Camino a Pekos…) se cobra aparte, $29.000 por pallet
     // SIN IVA. `neto`: el parámetro se carga sin IVA → facturado paga 29.000 + IVA, sin factura 29.000.
     {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true},
+    // Transporte de carga (interior / otras provincias): sin precio de zona; el precio por pallet (flete de la base
+    // 🚛 Transportes + seguro estandarizado) se carga en precioFlete al elegir el transporte.
+    {k:'carga', l:'Transporte de carga (interior / otras provincias)', par:null, def:0},
     {k:'cotizar', l:'9 Transporte externo (a cotizar)', par:null, def:0}   //
   ];
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
@@ -12919,7 +12925,11 @@ function buildFilterTable(cfg){
     if(it){ it.precioContado=it.precioUnit; if(typeof aplicarFinItem==='function') aplicarFinItem(it); p.items.push(it); }
     return Object.assign({}, f, {pallets, costo:precioPalletDe(p.zona,p.precioFlete)*pallets, palletsAuto:f.pallets, manual:pallets!==f.pallets});
   }
-  window.__fleteZonas = ()=> ZONAS.map(z=>({k:z.k,l:z.l}));
+  // Sin argumento: las zonas que se ofrecen. Con una clave: esas + la zona de ESE registro aunque esté oculta (un lead
+  // viejo con "6 Brio" no puede perder su valor). Con '*': todas (para rotular).
+  window.__fleteZonas = (actual)=> ZONAS.filter(z=> !z.oculta || actual==='*' || (actual && actual===z.k)).map(z=>({k:z.k,l:z.l,oculta:!!z.oculta}));
+  // Seguro estandarizado de los transportes de carga (Marcelo, 19/11: $10.000 por pallet, igual para todos).
+  window.__seguroCarga = ()=> Math.max(0, num(window.__param('seguroCargaPallet',10000)));
   // Cotiza el flete desde otro módulo (lo usa el CRM para el detalle en vivo del lead).
   // items: [{desc, codigo, cant}] → {pallets, costo, kg, label, precioPallet, palletsAuto, manual}
   // palletsManual (opcional): pallets cargados a mano; sin él la cotización es la automática de siempre.
@@ -13412,31 +13422,37 @@ function buildFilterTable(cfg){
     const s=sugEnvioDe();
     if(s && s.flete===null && typeof window.__enviosLlegHtml==='function'){ c.innerHTML=window.__enviosLlegHtml(String((editing&&editing.domicilioEntrega)||''), s.pallets, {}); return; }
     if(!s || s.flete===null){ c.innerHTML=''; return; }
-    const z=s.zonaPresupuesto||'';
-    const ya = z && String(editing.zona||'')===String(z);
-    const dif = z && Math.abs(zonaCosto(z)*s.pallets - s.flete) > 1;   // la zona cobra distinto que la tarifa cargada
+    // 19/11: un transporte de CARGA (González, Brío, Maravilla, Biletta, OTSENRE…) se cobra por «Transporte de carga»
+    // con su tarifa + el seguro estandarizado por pallet; los propios, por su zona de siempre.
+    const esCarga = typeof window.__transporteDeCarga==='function' && !!window.__transporteDeCarga(s.transporte);
+    const seg = esCarga && typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
+    const pp = (s.porPallet||0)+seg;
+    const z= esCarga ? 'carga' : (s.zonaPresupuesto||'');
+    const ya = esCarga ? (String(editing.zona||'')==='carga' && Math.abs(num(editing.precioFlete)-pp)<1) : (z && String(editing.zona||'')===String(z));
+    const dif = !esCarga && z && Math.abs(zonaCosto(z)*s.pallets - s.flete) > 1;   // la zona cobra distinto que la tarifa cargada
     c.innerHTML='<div class="note" style="margin-top:8px;border-left:4px solid var(--'+(s.confirmado?'green':'amber')+')">'+
-      '🚚 A ese destino llega <b>'+esc(s.transporte)+'</b>'+(s.destino?' · '+esc(s.destino):'')+' · <b>'+money(s.flete)+'</b> por '+s.pallets+' pallet'+(s.pallets>1?'s':'')+' ('+money(s.porPallet)+' c/u)'+
+      '🚚 A ese destino llega <b>'+esc(s.transporte)+'</b>'+(s.destino?' · '+esc(s.destino):'')+' · <b>'+money(s.flete)+'</b> por '+s.pallets+' pallet'+(s.pallets>1?'s':'')+' ('+money(s.porPallet)+' c/u'+(seg>0?' + seguro '+money(seg)+' = <b>'+money(pp)+'</b> por pallet':'')+')'+
       (s.plazoDias?' · '+s.plazoDias+' días':'')+
       (s.confirmado?'':' · <span class="badge amber">tarifa estimada</span>')+
       (ya ? ' · <b style="color:var(--green)">✓ ya lo estás cobrando así</b>'
-          : z ? ' <button type="button" class="cmp-btn" id="pf-sug-usar" style="margin-left:6px">Cobrarlo con «'+esc(zonaLabel(z))+'»</button>'
+          : z ? ' <button type="button" class="cmp-btn" id="pf-sug-usar" style="margin-left:6px">Cobrarlo con «'+esc(esCarga?'Transporte de carga · '+money(pp)+' por pallet':zonaLabel(z))+'»</button>'
               : ' · <span class="meta">sin zona de presupuesto: cobralo con «'+esc(zonaLabel('cotizar'))+'» y el precio a mano</span>')+
       (dif&&!ya ? '<div class="meta" style="margin-top:4px">⚠️ Esa zona cobra '+money(zonaCosto(z)*s.pallets)+' y la tarifa cargada dice '+money(s.flete)+': revisá cuál vale.</div>' : '')+
       '<div class="meta" style="margin-top:4px">El transporte no sale en el PDF: el cliente ve solo el renglón «Flete por pallet».</div>'+
       '</div>';
     const b=$('pf-sug-usar');
-    if(b) b.onclick=()=>{ editing.zona=z; aplicarFlete(editing); drawItems(); drawTotals(); drawZonas(); };
+    if(b) b.onclick=()=>{ editing.zona=z; editing.precioFlete=esCarga?pp:0; if(esCarga){ editing.transporteCarga=s._uid||''; editing.transporteCargaNombre=s.transporte||''; } aplicarFlete(editing); drawItems(); drawTotals(); drawZonas(); };
   }
   function drawZonas(){
     const cont=$('pf-zona-picker'); if(!cont) return;
     bindPrecioFlete(); notaPrecioFlete();
     cont.innerHTML = ZONAS.map((z,i)=>{
+      if(z.oculta && String(editing.zona||'')!==String(z.k)) return '';   // Brío / OTSENRE: solo si el presupuesto ya los usa
       const c = z.k ? zonaCosto(z.k) : 0;
       const on = String(editing.zona||'')===String(z.k);
       return '<button type="button" class="pf-pick'+(on?' on':'')+'" data-zona="'+i+'" title="'+esc(z.l)+'">'+
         '<span class="nm">'+esc(z.l)+'</span>'+
-        '<span class="pr">'+(z.k ? (c>0 ? money(c)+' /pallet' : 'sin cargo') : '—')+'</span></button>';
+        '<span class="pr">'+(z.k ? (c>0 ? money(c)+' /pallet' : (z.k==='carga'?'precio por transporte':'sin cargo')) : '—')+'</span></button>';
     }).join('');
     cont.querySelectorAll('button[data-zona]').forEach(b=> b.onclick=()=>{
       const z=ZONAS[+b.dataset.zona];
@@ -14706,7 +14722,8 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteSeguroPct', l:'Seguro del transporte externo (% del valor declarado)', def:1.2, t:'num', hint:'Lo usa la calculadora de flete del lead (Transporte externo a cotizar).'},
     {g:'Flete', k:'fleteTrasladoDeposito', l:'Traslado fábrica → depósito del transporte externo (por viaje, sin IVA)', def:20000, t:'num', hint:'Lo que cuesta llevar el pallet desde la fábrica al depósito del transportista en Córdoba Capital. Lo usa la calculadora de flete del lead.'},
-    {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA). Desde el 19/11 Brío se cobra por «Transporte de carga» con el precio de la base 🚛 Transportes (que sale de este parámetro).'},
+    {g:'Flete', k:'seguroCargaPallet', l:'Seguro de los transportes de carga ($ por pallet)', def:10000, t:'num', hint:'Se suma al flete de CUALQUIER transporte de carga (González, Brío, Maravilla, Biletta, OTSENRE…) al armar el presupuesto desde el CRM o Presupuestos. Estandarizado en $10.000 por pallet (Marcelo, 19/11).'},
     {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = un camión de 8 pallets a $210.000.'},
     {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
     {g:'Flete', k:'fleteOtsenre',   l:'7 OTSENRE ($ por pallet)',                       def:0, t:'num', hint:'Precio final (con IVA). Si varía por viaje, dejalo en 0 y cargá el precio en cada presupuesto (campo "Precio del flete por pallet").'},
@@ -15202,7 +15219,7 @@ function buildFilterTable(cfg){
     if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
     return p; };
   // Zonas de flete: las define el módulo Presupuestos (precios editables en Parámetros)
-  const zonasOpt=sel=>{ const zs=(window.__fleteZonas?window.__fleteZonas():[{k:'',l:'— Sin definir —'}]); return zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(sel||'')===z.k?' selected':'')+'>'+esc(z.l)+'</option>').join(''); };
+  const zonasOpt=sel=>{ const zs=(window.__fleteZonas?window.__fleteZonas(sel||''):[{k:'',l:'— Sin definir —'}]); return zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(sel||'')===z.k?' selected':'')+'>'+esc(z.l)+'</option>').join(''); };
   // Precio + IVA del ítem, igual criterio que Ventas/Presupuestos (copia local a propósito, ver §3 CLAUDE.md):
   // así la ficha del lead ya arma el ítem completo (precio, % bonif., IVA) y ese mismo ítem es el que
   // usa el presupuesto al convertir el lead — no hace falta re-tipear precios en dos lugares.
@@ -15578,7 +15595,7 @@ function buildFilterTable(cfg){
   function renderFiltros(source){
     const productos=[...new Set(source.flatMap(l=>(l.items||[]).map(it=>it&&it.producto).filter(Boolean)))].sort();
     const zonas=[...new Set(source.map(l=>l.zona).filter(Boolean))];
-    const zLabel=zk=>{ const z=(window.__fleteZonas?window.__fleteZonas():[]).find(z=>z.k===zk); return z?z.l:zk; };
+    const zLabel=zk=>{ const z=(window.__fleteZonas?window.__fleteZonas('*'):[]).find(z=>z.k===zk); return z?z.l:zk; };
     const origenes=[...new Set(source.map(l=>l.origen).filter(Boolean))];
     const sel=(id,label,valor,opts)=> '<select id="'+id+'" title="'+label+'" style="padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;max-width:170px">'+
       '<option value="">'+label+' (todos)</option>'+ opts.map(([v,l])=>'<option value="'+esc(v)+'"'+(valor===v?' selected':'')+'>'+esc(l)+'</option>').join('') +'</select>';
@@ -15956,7 +15973,7 @@ function buildFilterTable(cfg){
         fld('Email','','<input id="cf-email" value="'+esc(l.email)+'">') +
         fld('Origen'+(l.origen?'':' <span style="color:#d64541">* elegí de dónde llegó</span>'),'','<select id="cf-origen"><option value=""'+(l.origen?'':' selected')+'>— Elegir —</option>'+opt(ORIGENES,l.origen)+'</select>') +
         fld('Estado','','<select id="cf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(l.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
-        fld('Forma de entrega (flete)','col2','<select id="cf-zona">'+zonasOpt(l.zona)+'</select>') +
+        fld('Forma de entrega (flete)','col2','<select id="cf-zona" style="display:none">'+zonasOpt(l.zona)+'</select><div id="cf-modo"></div>') +
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección"><div id="cf-sug-transp" style="font-size:12.5px;line-height:1.5"></div>') +
         fld('Dirección de facturación','col2','<input id="cf-domfact" value="'+esc(l.domicilioFacturacion||'')+'" placeholder="Domicilio fiscal — si es distinta a la de entrega">') +
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
@@ -16036,8 +16053,9 @@ function buildFilterTable(cfg){
     if(window.__tarjetas){
       window.__tarjetas('cf-origen', {omitir:v=>v===''});
       window.__tarjetas('cf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
-      window.__tarjetas('cf-zona');
     }
+    crmModo=modoDeZona(editing.zona||''); envioAutoMsg=''; drawModo(); drawSugTransp();
+    { const lug=$('cf-lugar'); if(lug) lug.addEventListener('change',proponerEnvio); }
     $('cf-cancel').onclick=closeForm;
     $('cf-comparativo').onclick=()=>{
       const cliente = String(editing.cliente||'').trim();
@@ -16181,10 +16199,105 @@ function buildFilterTable(cfg){
     const total = neto+iva;
     return { pallets:pal, tarifa, seguro, traslado, neto, iva, total, precioPallet:Math.round(total/pal) };
   }
+  // ---- Forma de entrega por MODOS (19/11, Marcelo: "hay que estandarizarlo, más fácil, ágil e intuitivo").
+  // En vez de 9 zonas en fila, 4 modos; cada uno muestra solo lo suyo. El <select id="cf-zona"> sigue en el DOM
+  // (oculto) con TODAS las zonas: es la fuente de verdad y lo leen los bindings genéricos. Las claves de zona no
+  // cambian, así los leads y presupuestos viejos (incluidos «6 Brio» y «7 OTSENRE») siguen cobrando igual.
+  const MODOS=[
+    {k:'retiro',  ic:'🏭', l:'Retira o transporte del cliente', zonas:['retiro','particular']},
+    {k:'propia',  ic:'🚚', l:'Flete propio',                    zonas:['capital','cercanas','mati','maygran']},
+    {k:'carga',   ic:'🚛', l:'Transporte de carga',             zonas:[]},
+    {k:'cotizar', ic:'💬', l:'A cotizar',                       zonas:['cotizar']}
+  ];
+  const modoDeZona=z=> (z==='retiro'||z==='particular') ? 'retiro'
+    : (['capital','cercanas','mati','maygran'].indexOf(z)>=0) ? 'propia'
+    : (z==='carga'||z==='brio'||z==='otsenre') ? 'carga'
+    : z==='cotizar' ? 'cotizar' : '';
+  let crmModo='', envioAutoMsg='';
+  function palletsLead(){
+    let pal=1;
+    if(window.__fleteCotizar){
+      const its=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
+      if(its.some(it=>it.cant>0)){ const f0=window.__fleteCotizar(its,'capital'); pal=num(editing.palletsFlete)>0?num(editing.palletsFlete):(f0.palletsAuto||f0.pallets||1); }
+    }
+    return pal;
+  }
+  // Cambia la forma de entrega con el MISMO efecto que tocar el desplegable de antes: el precio a mano era de OTRA zona
+  // y se descarta (salvo que lo traiga el transporte elegido).
+  function setZonaLead(k, extra){
+    extra=extra||{};
+    editing.zona=k; editing.precioFlete=num(extra.precio)>0?num(extra.precio):0;
+    editing.transporteCarga=extra.uid||''; editing.transporteCargaNombre=extra.nombre||'';
+    const sel=$('cf-zona'); if(sel) sel.value=k;
+    crmModo=modoDeZona(k)||crmModo;
+    drawFleteBox();
+  }
+  // Al escribir el lugar de entrega, si todavía no hay forma de entrega elegida, la propone la base de transportes:
+  // primero la zona propia que cubra ese lugar; si no, el transporte de carga MÁS BARATO con precio cargado.
+  // Solo con la forma "sin definir": nunca pisa lo que la persona ya eligió.
+  function proponerEnvio(){
+    envioAutoMsg='';
+    if(editing.zona || typeof window.__enviosOpciones!=='function' || window.__rol!=='admin') return;
+    const lugar=String(editing.lugar||'').trim(); if(lugar.length<3) return;
+    const op=window.__enviosOpciones(lugar, palletsLead()); if(!op) return;
+    const propia=(op.propia||[]).find(x=>x.zonaPresupuesto && x.flete!==null);
+    if(propia){ envioAutoMsg='✨ Propuesto por el lugar de entrega («'+lugar+'»): '+propia.transporte+'. Cambialo si no corresponde.'; setZonaLead(propia.zonaPresupuesto); return; }
+    const c=(op.carga||[]).find(x=>x.totalPallet!==null);
+    if(c){ envioAutoMsg='✨ Propuesto por el lugar de entrega («'+lugar+'»): el transporte de carga más barato. Cambialo si no corresponde.'; setZonaLead('carga',{precio:c.totalPallet, uid:c._uid, nombre:c.transporte}); return; }
+    drawModo();
+  }
+  function drawModo(){
+    const c=$('cf-modo'); if(!c) return;
+    const zonaAct=editing.zona||'';
+    const act=crmModo||modoDeZona(zonaAct);
+    const zl=k=>{ const z=(window.__fleteZonas?window.__fleteZonas('*'):[]).find(x=>x.k===k); return z?z.l.replace(/^\d+\s+/,''):k; };
+    const btn=(on,att,txt,sub)=>'<button type="button" class="tile'+(on?' on':'')+'" '+att+'><span class="nm">'+txt+'</span>'+(sub?'<span class="pr">'+sub+'</span>':'')+'</button>';
+    let h='<div class="tile-picker" style="margin:2px 0 6px">'+MODOS.map(m=>btn(act===m.k,'data-modo="'+m.k+'"',m.ic+' '+esc(m.l))).join('')+'</div>';
+    const modo=MODOS.find(m=>m.k===act);
+    let carriers=[];
+    if(modo && modo.zonas.length>1 || (modo && act==='propia')){
+      h+='<div class="tile-picker" style="margin:0 0 6px">'+modo.zonas.map(k=>btn(zonaAct===k,'data-zk="'+k+'"',esc(zl(k)))).join('')+'</div>';
+    }
+    if(act==='carga'){
+      const lugar=String(editing.lugar||'').trim();
+      const seg=window.__seguroCarga?window.__seguroCarga():0;
+      const op=(lugar.length>=3 && window.__rol==='admin' && window.__enviosOpciones) ? window.__enviosOpciones(lugar, palletsLead()) : null;
+      carriers=op?op.carga:[];
+      h+='<div style="font-size:12.5px;line-height:1.5;margin:0 0 6px">';
+      if(lugar.length<3) h+='<span style="color:var(--muted)">Escribí el <b>lugar de entrega</b> para ver qué transportes de carga llegan y cuánto sale.</span>';
+      else if(!op) h+='<span style="color:var(--muted)">La base de transportes todavía no cargó.</span>';
+      else if(!carriers.length) h+='<span style="color:#c0392b"><b>Ningún transporte de carga cargado llega a «'+esc(lugar)+'».</b> Cotizalo y sumalo en 🚛 Transportes, o cargá el precio a mano.</span>';
+      else h+='<b>Transportes de carga que llegan a «'+esc(lugar)+'»</b> <span class="meta">(flete + seguro de '+money(seg)+' por pallet)</span>'+
+        carriers.map((x,i)=>{
+          const elegido = zonaAct==='carga' && editing.transporteCarga && editing.transporteCarga===x._uid;
+          return '<div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+            '<span>• <b>'+esc(x.transporte)+'</b>'+
+            (x.totalPallet!==null ? ' · '+money(x.porPallet)+' + seguro = <b>'+money(x.totalPallet)+'</b> por pallet'+(x.plazoDias?' · '+x.plazoDias+' días':'')+(x.confirmado?'':' <span class="badge amber">estimada</span>')
+                                  : ' · <span class="badge red">falta cotizar</span>'+(x.telefono?' 📞 '+esc(x.telefono):''))+'</span>'+
+            (x.totalPallet!==null ? (elegido?'<b style="color:var(--green)">✓ elegido</b>':'<button type="button" class="cmp-rowbtn" data-ctr="'+i+'">Usar</button>') : '')+
+            '</div>';
+        }).join('');
+      h+='<div style="margin-top:6px"><button type="button" class="cmp-rowbtn" data-manual="1">✎ Cargar el precio por pallet a mano</button></div></div>';
+    }
+    if(envioAutoMsg) h+='<div style="font-size:11.5px;color:var(--amber);margin:0 0 6px">'+esc(envioAutoMsg)+'</div>';
+    if(zonaAct) h+='<div style="margin:0 0 4px"><button type="button" class="cmp-rowbtn" data-limpiar="1">✕ Dejar sin definir</button></div>';
+    c.innerHTML=h;
+    c.querySelectorAll('[data-modo]').forEach(b=> b.onclick=()=>{
+      const m=b.dataset.modo; envioAutoMsg=''; crmModo=m;
+      if(m==='retiro' && modoDeZona(editing.zona||'')!=='retiro') setZonaLead('retiro');
+      else if(m==='cotizar' && editing.zona!=='cotizar') setZonaLead('cotizar');
+      else drawModo();
+    });
+    c.querySelectorAll('[data-zk]').forEach(b=> b.onclick=()=>{ envioAutoMsg=''; setZonaLead(b.dataset.zk); });
+    c.querySelectorAll('[data-ctr]').forEach(b=> b.onclick=()=>{ const x=carriers[+b.dataset.ctr]; if(!x) return; envioAutoMsg=''; setZonaLead('carga',{precio:x.totalPallet, uid:x._uid, nombre:x.transporte}); });
+    c.querySelectorAll('[data-manual]').forEach(b=> b.onclick=()=>{ envioAutoMsg=''; setZonaLead('carga',{precio:(editing.zona==='carga'?editing.precioFlete:0)}); });
+    c.querySelectorAll('[data-limpiar]').forEach(b=> b.onclick=()=>{ envioAutoMsg=''; crmModo=''; setZonaLead(''); });
+  }
   // Qué transportes de la base (🚛 Transportes) llegan al "Lugar de entrega" del lead. SOLO sugiere: no toca la
   // forma de entrega ni el precio (el flete es plata y lo decide la persona).
   function drawSugTransp(){
     const c=$('cf-sug-transp'); if(!c) return;
+    if(crmModo==='carga'){ c.innerHTML=''; return; }   // en el modo "Transporte de carga" la lista ya está en el selector de la forma de entrega
     if(typeof window.__enviosLlegHtml!=='function'){ c.innerHTML=''; return; }
     let pal=1;
     if(window.__fleteCotizar){
@@ -16194,6 +16307,7 @@ function buildFilterTable(cfg){
     c.innerHTML=window.__enviosLlegHtml(editing.lugar||'', pal, {vacio:true});
   }
   function drawFleteBox(){
+    if(typeof drawModo==='function') drawModo();
     if(typeof drawSugTransp==='function') drawSugTransp();
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
@@ -21164,11 +21278,23 @@ function buildFilterTable(cfg){
     return TRA.filter(t=>t&&t.activo!==false&&cubre(t,localidad)).map(t=>{
       const flete=costoEnvio(t,pallets), n=Math.max(1, Number(pallets)||1);
       const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&coincidePal(y,l); })||'';
-      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide,
+      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide, zonaPresupuesto:t.zonaPresupuesto||'',
         flete, porPallet:flete===null?null:Math.round(flete/n), plazoDias:Number(t.plazoDias)||0, pagoEn:t.pagoEn||'', confirmado:!!t.confirmado, estado:estadoDe(t)[0] };
     }).sort((a,b)=>((a.flete===null)-(b.flete===null))||((a.flete||0)-(b.flete||0))||String(a.transporte).localeCompare(String(b.transporte)));
   }
   window.__enviosLlegan=llegan;
+  // Qué le conviene al CRM, ya separado (19/11): los de entrega PROPIA (Sánchez y fleteros de VPH, con su zona de
+  // presupuesto) y los de CARGA (el resto), estos con el seguro estandarizado sumado por pallet. Mismo criterio de
+  // "carga" que el remito: es el que define Documentos (window.__transporteDeCarga).
+  window.__enviosOpciones=function(localidad, pallets){
+    const L=llegan(localidad, pallets);
+    const carga=x=> typeof window.__transporteDeCarga==='function' && !!window.__transporteDeCarga(x.transporte);
+    const seg= typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
+    return {
+      propia: L.filter(x=>!carga(x)),
+      carga: L.filter(carga).map(x=>Object.assign({}, x, { seguroPallet:seg, totalPallet: x.porPallet===null ? null : x.porPallet+seg }))
+    };
+  };
   // HTML del aviso. Solo para el admin y con la base ya cargada (para el rol producción TRA está vacía y
   // "no hay ningún transporte" sería mentira). `opts.vacio`: avisar también cuando nadie llega.
   window.__enviosLlegHtml=function(localidad, pallets, opts){
@@ -21345,7 +21471,7 @@ function buildFilterTable(cfg){
     $('tra-f-pallets').value=Number(d.pallets)>0?d.pallets:''; $('tra-f-minPallets').value=Number(d.minPallets)>0?d.minPallets:''; $('tra-f-plazoDias').value=Number(d.plazoDias)>0?d.plazoDias:'';
     $('tra-f-pagoEn').innerHTML=opts(PAGO,d.pagoEn||'origen'); $('tra-f-descarga').innerHTML=opts(DESCARGA,d.descarga||'');
     // Las zonas salen de Presupuestos (window.__fleteZonas), que es la ÚNICA lista: si se agrega una zona nueva aparece acá sola.
-    $('tra-f-zonaPresupuesto').innerHTML=opts([['','— Ninguna (se cotiza a mano) —']].concat((window.__fleteZonas?window.__fleteZonas():[]).filter(z=>z.k).map(z=>[z.k,z.l])), d.zonaPresupuesto||'');
+    $('tra-f-zonaPresupuesto').innerHTML=opts([['','— Ninguna (se cotiza a mano) —']].concat((window.__fleteZonas?window.__fleteZonas('*'):[]).filter(z=>z.k).map(z=>[z.k,z.l])), d.zonaPresupuesto||'');
     $('tra-f-condiciones').value=d.condiciones||''; $('tra-f-fechaCotizacion').value=d.fechaCotizacion||''; $('tra-f-fuente').value=d.fuente||'';
     $('tra-f-activo').checked=d.activo!==false; $('tra-f-confirmado').checked=!!d.confirmado;
     $('tra-f-err').textContent='';

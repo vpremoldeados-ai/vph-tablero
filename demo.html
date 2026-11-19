@@ -13213,14 +13213,20 @@ function buildFilterTable(cfg){
     {k:'retiro', l:'1 Retira en fábrica', par:null, def:0},
     {k:'capital', l:'2 Córdoba Capital', par:'fleteCapital', def:35000},
     {k:'cercanas', l:'3 Hasta 30km de Av. de Circunvalación', par:'fleteCercanas', def:48750},
-    {k:'mati', l:'4 Interior con Mati', par:'fleteMati', def:140000},
+    {k:'mati', l:'4 Interior con Mati (hidrogrúa)', par:'fleteMati', def:140000},
     {k:'particular', l:'5 Transporte Particular', par:'fleteParticular', def:0},
-    {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000},
-    {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0},    
+     
+     
+     
+    {k:'brio', l:'6 Brio', par:'fleteBrio', def:140000, oculta:true},
+    {k:'otsenre', l:'7 OTSENRE', par:'fleteOtsenre', def:0, oculta:true},    
      
      
      
     {k:'maygran', l:'8 Mayorista Gran Córdoba / Sierras Chicas', par:'fleteMayGranCba', def:29000, neto:true},
+     
+     
+    {k:'carga', l:'Transporte de carga (interior / otras provincias)', par:null, def:0},
     {k:'cotizar', l:'9 Transporte externo (a cotizar)', par:null, def:0}    
   ];
   const zonaLabel=k=>{ const z=ZONAS.find(x=>x.k===k); return z?z.l:''; };
@@ -13301,7 +13307,11 @@ function buildFilterTable(cfg){
     if(it){ it.precioContado=it.precioUnit; if(typeof aplicarFinItem==='function') aplicarFinItem(it); p.items.push(it); }
     return Object.assign({}, f, {pallets, costo:precioPalletDe(p.zona,p.precioFlete)*pallets, palletsAuto:f.pallets, manual:pallets!==f.pallets});
   }
-  window.__fleteZonas = ()=> ZONAS.map(z=>({k:z.k,l:z.l}));
+   
+   
+  window.__fleteZonas = (actual)=> ZONAS.filter(z=> !z.oculta || actual==='*' || (actual && actual===z.k)).map(z=>({k:z.k,l:z.l,oculta:!!z.oculta}));
+   
+  window.__seguroCarga = ()=> Math.max(0, num(window.__param('seguroCargaPallet',10000)));
    
    
    
@@ -13794,31 +13804,37 @@ function buildFilterTable(cfg){
     const s=sugEnvioDe();
     if(s && s.flete===null && typeof window.__enviosLlegHtml==='function'){ c.innerHTML=window.__enviosLlegHtml(String((editing&&editing.domicilioEntrega)||''), s.pallets, {}); return; }
     if(!s || s.flete===null){ c.innerHTML=''; return; }
-    const z=s.zonaPresupuesto||'';
-    const ya = z && String(editing.zona||'')===String(z);
-    const dif = z && Math.abs(zonaCosto(z)*s.pallets - s.flete) > 1;    
+     
+     
+    const esCarga = typeof window.__transporteDeCarga==='function' && !!window.__transporteDeCarga(s.transporte);
+    const seg = esCarga && typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
+    const pp = (s.porPallet||0)+seg;
+    const z= esCarga ? 'carga' : (s.zonaPresupuesto||'');
+    const ya = esCarga ? (String(editing.zona||'')==='carga' && Math.abs(num(editing.precioFlete)-pp)<1) : (z && String(editing.zona||'')===String(z));
+    const dif = !esCarga && z && Math.abs(zonaCosto(z)*s.pallets - s.flete) > 1;    
     c.innerHTML='<div class="note" style="margin-top:8px;border-left:4px solid var(--'+(s.confirmado?'green':'amber')+')">'+
-      '🚚 A ese destino llega <b>'+esc(s.transporte)+'</b>'+(s.destino?' · '+esc(s.destino):'')+' · <b>'+money(s.flete)+'</b> por '+s.pallets+' pallet'+(s.pallets>1?'s':'')+' ('+money(s.porPallet)+' c/u)'+
+      '🚚 A ese destino llega <b>'+esc(s.transporte)+'</b>'+(s.destino?' · '+esc(s.destino):'')+' · <b>'+money(s.flete)+'</b> por '+s.pallets+' pallet'+(s.pallets>1?'s':'')+' ('+money(s.porPallet)+' c/u'+(seg>0?' + seguro '+money(seg)+' = <b>'+money(pp)+'</b> por pallet':'')+')'+
       (s.plazoDias?' · '+s.plazoDias+' días':'')+
       (s.confirmado?'':' · <span class="badge amber">tarifa estimada</span>')+
       (ya ? ' · <b style="color:var(--green)">✓ ya lo estás cobrando así</b>'
-          : z ? ' <button type="button" class="cmp-btn" id="pf-sug-usar" style="margin-left:6px">Cobrarlo con «'+esc(zonaLabel(z))+'»</button>'
+          : z ? ' <button type="button" class="cmp-btn" id="pf-sug-usar" style="margin-left:6px">Cobrarlo con «'+esc(esCarga?'Transporte de carga · '+money(pp)+' por pallet':zonaLabel(z))+'»</button>'
               : ' · <span class="meta">sin zona de presupuesto: cobralo con «'+esc(zonaLabel('cotizar'))+'» y el precio a mano</span>')+
       (dif&&!ya ? '<div class="meta" style="margin-top:4px">⚠️ Esa zona cobra '+money(zonaCosto(z)*s.pallets)+' y la tarifa cargada dice '+money(s.flete)+': revisá cuál vale.</div>' : '')+
       '<div class="meta" style="margin-top:4px">El transporte no sale en el PDF: el cliente ve solo el renglón «Flete por pallet».</div>'+
       '</div>';
     const b=$('pf-sug-usar');
-    if(b) b.onclick=()=>{ editing.zona=z; aplicarFlete(editing); drawItems(); drawTotals(); drawZonas(); };
+    if(b) b.onclick=()=>{ editing.zona=z; editing.precioFlete=esCarga?pp:0; if(esCarga){ editing.transporteCarga=s._uid||''; editing.transporteCargaNombre=s.transporte||''; } aplicarFlete(editing); drawItems(); drawTotals(); drawZonas(); };
   }
   function drawZonas(){
     const cont=$('pf-zona-picker'); if(!cont) return;
     bindPrecioFlete(); notaPrecioFlete();
     cont.innerHTML = ZONAS.map((z,i)=>{
+      if(z.oculta && String(editing.zona||'')!==String(z.k)) return '';    
       const c = z.k ? zonaCosto(z.k) : 0;
       const on = String(editing.zona||'')===String(z.k);
       return '<button type="button" class="pf-pick'+(on?' on':'')+'" data-zona="'+i+'" title="'+esc(z.l)+'">'+
         '<span class="nm">'+esc(z.l)+'</span>'+
-        '<span class="pr">'+(z.k ? (c>0 ? money(c)+' /pallet' : 'sin cargo') : '—')+'</span></button>';
+        '<span class="pr">'+(z.k ? (c>0 ? money(c)+' /pallet' : (z.k==='carga'?'precio por transporte':'sin cargo')) : '—')+'</span></button>';
     }).join('');
     cont.querySelectorAll('button[data-zona]').forEach(b=> b.onclick=()=>{
       const z=ZONAS[+b.dataset.zona];
@@ -15043,6 +15059,7 @@ function buildFilterTable(cfg){
    
   const DEFS=[
     {g:'Producción', k:'objKgDia',     l:'Objetivo de producción diaria (kg)',        def:6000, t:'num', hint:'Semáforo de Gustavo al cargar producción.'},
+    {g:'Producción', k:'kgStockMaximo', l:'Tope de stock para vender (kg)',       def:50000, t:'num', hint:'Físico + en secado, YA SIN lo comprometido: productos fabricados sin dueño. Al llegar, Producción y Logística avisa parar hasta que ingresen ventas que lo bajen.'},
     {g:'Producción', k:'diasCurado',   l:'Días de secado por defecto',                 def:10,   t:'num', hint:'Se puede sobreescribir por producto en su ficha.'},
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
@@ -15079,7 +15096,8 @@ function buildFilterTable(cfg){
     {g:'Flete', k:'fleteParticular',l:'5 Transporte Particular ($ por pallet)',         def:0, t:'num', hint:'En 0 no se cobra flete (el cliente pone el transporte). Si cobrás algo, cargalo acá.'},
     {g:'Flete', k:'fleteSeguroPct', l:'Seguro del transporte externo (% del valor declarado)', def:1.2, t:'num', hint:'Lo usa la calculadora de flete del lead (Transporte externo a cotizar).'},
     {g:'Flete', k:'fleteTrasladoDeposito', l:'Traslado fábrica → depósito del transporte externo (por viaje, sin IVA)', def:20000, t:'num', hint:'Lo que cuesta llevar el pallet desde la fábrica al depósito del transportista en Córdoba Capital. Lo usa la calculadora de flete del lead.'},
-    {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA).'},
+    {g:'Flete', k:'fleteBrio',      l:'6 Brio ($ por pallet)',                          def:140000, t:'num', hint:'Precio final (con IVA). Desde el 19/11 Brío se cobra por «Transporte de carga» con el precio de la base 🚛 Transportes (que sale de este parámetro).'},
+    {g:'Flete', k:'seguroCargaPallet', l:'Seguro de los transportes de carga ($ por pallet)', def:10000, t:'num', hint:'Se suma al flete de CUALQUIER transporte de carga (González, Brío, Maravilla, Biletta, OTSENRE…) al armar el presupuesto desde el CRM o Presupuestos. Estandarizado en $10.000 por pallet (Marcelo, 19/11).'},
     {g:'Flete', k:'fleteListaConFlete', l:'Listas 7 y 8 "con Flete": flete por pallet ($, SIN IVA)', def:26250, t:'num', hint:'Se reparte por las unidades de cada pallet y se suma al precio de la lista 5 (con IVA) o 6 (sin IVA). 26.250 = un camión de 8 pallets a $210.000.'},
     {g:'Flete', k:'fleteMayGranCba', l:'8 Mayorista Gran Córdoba / Sierras Chicas ($ por pallet, SIN IVA)', def:29000, t:'num', hint:'OJO: este va SIN IVA (las demás zonas son con IVA). Facturado se le suma el IVA ($35.090); sin factura se cobra este número. Dentro de la ciudad de Córdoba el flete mayorista va incluido: usar "Retira en fábrica" o dejar sin zona.'},
     {g:'Flete', k:'fleteOtsenre',   l:'7 OTSENRE ($ por pallet)',                       def:0, t:'num', hint:'Precio final (con IVA). Si varía por viaje, dejalo en 0 y cargá el precio en cada presupuesto (campo "Precio del flete por pallet").'},
@@ -15558,7 +15576,7 @@ function buildFilterTable(cfg){
     if(!p) p=cat.find(p=>(ALIAS_PROD[p.codigo]||[]).some(a=>v.includes(a)));
     return p; };
    
-  const zonasOpt=sel=>{ const zs=(window.__fleteZonas?window.__fleteZonas():[{k:'',l:'— Sin definir —'}]); return zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(sel||'')===z.k?' selected':'')+'>'+esc(z.l)+'</option>').join(''); };
+  const zonasOpt=sel=>{ const zs=(window.__fleteZonas?window.__fleteZonas(sel||''):[{k:'',l:'— Sin definir —'}]); return zs.map(z=>'<option value="'+esc(z.k)+'"'+(String(sel||'')===z.k?' selected':'')+'>'+esc(z.l)+'</option>').join(''); };
    
    
    
@@ -15934,7 +15952,7 @@ function buildFilterTable(cfg){
   function renderFiltros(source){
     const productos=[...new Set(source.flatMap(l=>(l.items||[]).map(it=>it&&it.producto).filter(Boolean)))].sort();
     const zonas=[...new Set(source.map(l=>l.zona).filter(Boolean))];
-    const zLabel=zk=>{ const z=(window.__fleteZonas?window.__fleteZonas():[]).find(z=>z.k===zk); return z?z.l:zk; };
+    const zLabel=zk=>{ const z=(window.__fleteZonas?window.__fleteZonas('*'):[]).find(z=>z.k===zk); return z?z.l:zk; };
     const origenes=[...new Set(source.map(l=>l.origen).filter(Boolean))];
     const sel=(id,label,valor,opts)=> '<select id="'+id+'" title="'+label+'" style="padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;max-width:170px">'+
       '<option value="">'+label+' (todos)</option>'+ opts.map(([v,l])=>'<option value="'+esc(v)+'"'+(valor===v?' selected':'')+'>'+esc(l)+'</option>').join('') +'</select>';
@@ -16312,7 +16330,7 @@ function buildFilterTable(cfg){
         fld('Email','','<input id="cf-email" value="'+esc(l.email)+'">') +
         fld('Origen'+(l.origen?'':' <span style="color:#d64541">* elegí de dónde llegó</span>'),'','<select id="cf-origen"><option value=""'+(l.origen?'':' selected')+'>— Elegir —</option>'+opt(ORIGENES,l.origen)+'</select>') +
         fld('Estado','','<select id="cf-estado">'+ESTADOS.map(e=>'<option value="'+e.k+'"'+(l.estado===e.k?' selected':'')+'>'+e.l+'</option>').join('')+'</select>') +
-        fld('Forma de entrega (flete)','col2','<select id="cf-zona">'+zonasOpt(l.zona)+'</select>') +
+        fld('Forma de entrega (flete)','col2','<select id="cf-zona" style="display:none">'+zonasOpt(l.zona)+'</select><div id="cf-modo"></div>') +
         fld('Lugar de entrega','col2','<input id="cf-lugar" value="'+esc(l.lugar)+'" placeholder="Localidad / dirección"><div id="cf-sug-transp" style="font-size:12.5px;line-height:1.5"></div>') +
         fld('Dirección de facturación','col2','<input id="cf-domfact" value="'+esc(l.domicilioFacturacion||'')+'" placeholder="Domicilio fiscal — si es distinta a la de entrega">') +
         fld('Forma de pago','','<select id="cf-pago">'+opt(PAGOS,l.pago)+'</select>') +
@@ -16392,8 +16410,9 @@ function buildFilterTable(cfg){
     if(window.__tarjetas){
       window.__tarjetas('cf-origen', {omitir:v=>v===''});
       window.__tarjetas('cf-estado', {color:v=>{ const e=ESTADOS.find(x=>x.k===v); return e?e.c:''; }});
-      window.__tarjetas('cf-zona');
     }
+    crmModo=modoDeZona(editing.zona||''); envioAutoMsg=''; drawModo(); drawSugTransp();
+    { const lug=$('cf-lugar'); if(lug) lug.addEventListener('change',proponerEnvio); }
     $('cf-cancel').onclick=closeForm;
     $('cf-comparativo').onclick=()=>{
       const cliente = String(editing.cliente||'').trim();
@@ -16539,8 +16558,103 @@ function buildFilterTable(cfg){
   }
    
    
+   
+   
+  const MODOS=[
+    {k:'retiro',  ic:'🏭', l:'Retira o transporte del cliente', zonas:['retiro','particular']},
+    {k:'propia',  ic:'🚚', l:'Flete propio',                    zonas:['capital','cercanas','mati','maygran']},
+    {k:'carga',   ic:'🚛', l:'Transporte de carga',             zonas:[]},
+    {k:'cotizar', ic:'💬', l:'A cotizar',                       zonas:['cotizar']}
+  ];
+  const modoDeZona=z=> (z==='retiro'||z==='particular') ? 'retiro'
+    : (['capital','cercanas','mati','maygran'].indexOf(z)>=0) ? 'propia'
+    : (z==='carga'||z==='brio'||z==='otsenre') ? 'carga'
+    : z==='cotizar' ? 'cotizar' : '';
+  let crmModo='', envioAutoMsg='';
+  function palletsLead(){
+    let pal=1;
+    if(window.__fleteCotizar){
+      const its=(editing.items||[]).filter(it=>it&&it.producto&&!/^flete/i.test(it.producto)).map(it=>({desc:it.producto, codigo:it.codigo, cant:num(it.cantidad)}));
+      if(its.some(it=>it.cant>0)){ const f0=window.__fleteCotizar(its,'capital'); pal=num(editing.palletsFlete)>0?num(editing.palletsFlete):(f0.palletsAuto||f0.pallets||1); }
+    }
+    return pal;
+  }
+   
+   
+  function setZonaLead(k, extra){
+    extra=extra||{};
+    editing.zona=k; editing.precioFlete=num(extra.precio)>0?num(extra.precio):0;
+    editing.transporteCarga=extra.uid||''; editing.transporteCargaNombre=extra.nombre||'';
+    const sel=$('cf-zona'); if(sel) sel.value=k;
+    crmModo=modoDeZona(k)||crmModo;
+    drawFleteBox();
+  }
+   
+   
+   
+  function proponerEnvio(){
+    envioAutoMsg='';
+    if(editing.zona || typeof window.__enviosOpciones!=='function' || window.__rol!=='admin') return;
+    const lugar=String(editing.lugar||'').trim(); if(lugar.length<3) return;
+    const op=window.__enviosOpciones(lugar, palletsLead()); if(!op) return;
+    const propia=(op.propia||[]).find(x=>x.zonaPresupuesto && x.flete!==null);
+    if(propia){ envioAutoMsg='✨ Propuesto por el lugar de entrega («'+lugar+'»): '+propia.transporte+'. Cambialo si no corresponde.'; setZonaLead(propia.zonaPresupuesto); return; }
+    const c=(op.carga||[]).find(x=>x.totalPallet!==null);
+    if(c){ envioAutoMsg='✨ Propuesto por el lugar de entrega («'+lugar+'»): el transporte de carga más barato. Cambialo si no corresponde.'; setZonaLead('carga',{precio:c.totalPallet, uid:c._uid, nombre:c.transporte}); return; }
+    drawModo();
+  }
+  function drawModo(){
+    const c=$('cf-modo'); if(!c) return;
+    const zonaAct=editing.zona||'';
+    const act=crmModo||modoDeZona(zonaAct);
+    const zl=k=>{ const z=(window.__fleteZonas?window.__fleteZonas('*'):[]).find(x=>x.k===k); return z?z.l.replace(/^\d+\s+/,''):k; };
+    const btn=(on,att,txt,sub)=>'<button type="button" class="tile'+(on?' on':'')+'" '+att+'><span class="nm">'+txt+'</span>'+(sub?'<span class="pr">'+sub+'</span>':'')+'</button>';
+    let h='<div class="tile-picker" style="margin:2px 0 6px">'+MODOS.map(m=>btn(act===m.k,'data-modo="'+m.k+'"',m.ic+' '+esc(m.l))).join('')+'</div>';
+    const modo=MODOS.find(m=>m.k===act);
+    let carriers=[];
+    if(modo && modo.zonas.length>1 || (modo && act==='propia')){
+      h+='<div class="tile-picker" style="margin:0 0 6px">'+modo.zonas.map(k=>btn(zonaAct===k,'data-zk="'+k+'"',esc(zl(k)))).join('')+'</div>';
+    }
+    if(act==='carga'){
+      const lugar=String(editing.lugar||'').trim();
+      const seg=window.__seguroCarga?window.__seguroCarga():0;
+      const op=(lugar.length>=3 && window.__rol==='admin' && window.__enviosOpciones) ? window.__enviosOpciones(lugar, palletsLead()) : null;
+      carriers=op?op.carga:[];
+      h+='<div style="font-size:12.5px;line-height:1.5;margin:0 0 6px">';
+      if(lugar.length<3) h+='<span style="color:var(--muted)">Escribí el <b>lugar de entrega</b> para ver qué transportes de carga llegan y cuánto sale.</span>';
+      else if(!op) h+='<span style="color:var(--muted)">La base de transportes todavía no cargó.</span>';
+      else if(!carriers.length) h+='<span style="color:#c0392b"><b>Ningún transporte de carga cargado llega a «'+esc(lugar)+'».</b> Cotizalo y sumalo en 🚛 Transportes, o cargá el precio a mano.</span>';
+      else h+='<b>Transportes de carga que llegan a «'+esc(lugar)+'»</b> <span class="meta">(flete + seguro de '+money(seg)+' por pallet)</span>'+
+        carriers.map((x,i)=>{
+          const elegido = zonaAct==='carga' && editing.transporteCarga && editing.transporteCarga===x._uid;
+          return '<div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+            '<span>• <b>'+esc(x.transporte)+'</b>'+
+            (x.totalPallet!==null ? ' · '+money(x.porPallet)+' + seguro = <b>'+money(x.totalPallet)+'</b> por pallet'+(x.plazoDias?' · '+x.plazoDias+' días':'')+(x.confirmado?'':' <span class="badge amber">estimada</span>')
+                                  : ' · <span class="badge red">falta cotizar</span>'+(x.telefono?' 📞 '+esc(x.telefono):''))+'</span>'+
+            (x.totalPallet!==null ? (elegido?'<b style="color:var(--green)">✓ elegido</b>':'<button type="button" class="cmp-rowbtn" data-ctr="'+i+'">Usar</button>') : '')+
+            '</div>';
+        }).join('');
+      h+='<div style="margin-top:6px"><button type="button" class="cmp-rowbtn" data-manual="1">✎ Cargar el precio por pallet a mano</button></div></div>';
+    }
+    if(envioAutoMsg) h+='<div style="font-size:11.5px;color:var(--amber);margin:0 0 6px">'+esc(envioAutoMsg)+'</div>';
+    if(zonaAct) h+='<div style="margin:0 0 4px"><button type="button" class="cmp-rowbtn" data-limpiar="1">✕ Dejar sin definir</button></div>';
+    c.innerHTML=h;
+    c.querySelectorAll('[data-modo]').forEach(b=> b.onclick=()=>{
+      const m=b.dataset.modo; envioAutoMsg=''; crmModo=m;
+      if(m==='retiro' && modoDeZona(editing.zona||'')!=='retiro') setZonaLead('retiro');
+      else if(m==='cotizar' && editing.zona!=='cotizar') setZonaLead('cotizar');
+      else drawModo();
+    });
+    c.querySelectorAll('[data-zk]').forEach(b=> b.onclick=()=>{ envioAutoMsg=''; setZonaLead(b.dataset.zk); });
+    c.querySelectorAll('[data-ctr]').forEach(b=> b.onclick=()=>{ const x=carriers[+b.dataset.ctr]; if(!x) return; envioAutoMsg=''; setZonaLead('carga',{precio:x.totalPallet, uid:x._uid, nombre:x.transporte}); });
+    c.querySelectorAll('[data-manual]').forEach(b=> b.onclick=()=>{ envioAutoMsg=''; setZonaLead('carga',{precio:(editing.zona==='carga'?editing.precioFlete:0)}); });
+    c.querySelectorAll('[data-limpiar]').forEach(b=> b.onclick=()=>{ envioAutoMsg=''; crmModo=''; setZonaLead(''); });
+  }
+   
+   
   function drawSugTransp(){
     const c=$('cf-sug-transp'); if(!c) return;
+    if(crmModo==='carga'){ c.innerHTML=''; return; }    
     if(typeof window.__enviosLlegHtml!=='function'){ c.innerHTML=''; return; }
     let pal=1;
     if(window.__fleteCotizar){
@@ -16550,6 +16664,7 @@ function buildFilterTable(cfg){
     c.innerHTML=window.__enviosLlegHtml(editing.lugar||'', pal, {vacio:true});
   }
   function drawFleteBox(){
+    if(typeof drawModo==='function') drawModo();
     if(typeof drawSugTransp==='function') drawSugTransp();
     const box=$('cf-flete-box'); if(!box) return;
     const zona=editing.zona||'';
@@ -21486,11 +21601,23 @@ function buildFilterTable(cfg){
     return TRA.filter(t=>t&&t.activo!==false&&cubre(t,localidad)).map(t=>{
       const flete=costoEnvio(t,pallets), n=Math.max(1, Number(pallets)||1);
       const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&coincidePal(y,l); })||'';
-      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide,
+      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide, zonaPresupuesto:t.zonaPresupuesto||'',
         flete, porPallet:flete===null?null:Math.round(flete/n), plazoDias:Number(t.plazoDias)||0, pagoEn:t.pagoEn||'', confirmado:!!t.confirmado, estado:estadoDe(t)[0] };
     }).sort((a,b)=>((a.flete===null)-(b.flete===null))||((a.flete||0)-(b.flete||0))||String(a.transporte).localeCompare(String(b.transporte)));
   }
   window.__enviosLlegan=llegan;
+   
+   
+   
+  window.__enviosOpciones=function(localidad, pallets){
+    const L=llegan(localidad, pallets);
+    const carga=x=> typeof window.__transporteDeCarga==='function' && !!window.__transporteDeCarga(x.transporte);
+    const seg= typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
+    return {
+      propia: L.filter(x=>!carga(x)),
+      carga: L.filter(carga).map(x=>Object.assign({}, x, { seguroPallet:seg, totalPallet: x.porPallet===null ? null : x.porPallet+seg }))
+    };
+  };
    
    
   window.__enviosLlegHtml=function(localidad, pallets, opts){
@@ -21667,7 +21794,7 @@ function buildFilterTable(cfg){
     $('tra-f-pallets').value=Number(d.pallets)>0?d.pallets:''; $('tra-f-minPallets').value=Number(d.minPallets)>0?d.minPallets:''; $('tra-f-plazoDias').value=Number(d.plazoDias)>0?d.plazoDias:'';
     $('tra-f-pagoEn').innerHTML=opts(PAGO,d.pagoEn||'origen'); $('tra-f-descarga').innerHTML=opts(DESCARGA,d.descarga||'');
      
-    $('tra-f-zonaPresupuesto').innerHTML=opts([['','— Ninguna (se cotiza a mano) —']].concat((window.__fleteZonas?window.__fleteZonas():[]).filter(z=>z.k).map(z=>[z.k,z.l])), d.zonaPresupuesto||'');
+    $('tra-f-zonaPresupuesto').innerHTML=opts([['','— Ninguna (se cotiza a mano) —']].concat((window.__fleteZonas?window.__fleteZonas('*'):[]).filter(z=>z.k).map(z=>[z.k,z.l])), d.zonaPresupuesto||'');
     $('tra-f-condiciones').value=d.condiciones||''; $('tra-f-fechaCotizacion').value=d.fechaCotizacion||''; $('tra-f-fuente').value=d.fuente||'';
     $('tra-f-activo').checked=d.activo!==false; $('tra-f-confirmado').checked=!!d.confirmado;
     $('tra-f-err').textContent='';
@@ -21929,6 +22056,10 @@ function buildFilterTable(cfg){
    
    
   const OBJ=()=>num(window.__param('objKgDia',6000));    
+   
+   
+   
+  const KGMAX=()=>num(window.__param('kgStockMaximo',50000));
   const modoProd=()=>String(window.__param('diasProd','lunvie'));    
    
    
@@ -22290,6 +22421,24 @@ function buildFilterTable(cfg){
     if(tab==='stock') renderStock(); else if(tab==='solic') renderSolic(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
+   
+   
+   
+   
+   
+   
+   
+  function topeStockHtml(kgParaVender){
+    const tope=KGMAX();
+    if(!(tope>0)) return '';
+    const margen=tope-kgParaVender;
+    if(margen<=0){
+      return k('Tope de stock para vender','bad','⛔ Parar producción',
+        nf(kgParaVender)+' kg de '+nf(tope)+' kg sin comprometer · '+nf(-margen)+' kg de más — esperar a que ingresen ventas');
+    }
+    return k('Margen para fabricar', margen<=tope*0.1?'warn':'good', nf(margen)+' kg',
+      'Hasta el tope de '+nf(tope)+' kg ('+nf(kgParaVender)+' kg sin comprometer hoy)');
+  }
   function renderKpis(){
     const filas=activos().map(p=>stockDe(p));
     const faltan=filas.filter(f=>f.estado==='falta').length;
@@ -22301,6 +22450,10 @@ function buildFilterTable(cfg){
     const sem=semanaKg();
     const kgStock=filas.reduce((a,f)=>a+Math.max(0,f.fisico)*pesoDe(f.k),0);
     const kgComp=filas.reduce((a,f)=>a+f.comprometido*pesoDe(f.k),0);
+     
+     
+     
+    const kgParaVender=filas.reduce((a,f)=>a+Math.max(0,f.dispReal)*pesoDe(f.k),0);
     const clsSem = sem.prom>=OBJ()?'good':(sem.prom>=OBJ()*0.8?'warn':'bad');
      
      
@@ -22315,6 +22468,7 @@ function buildFilterTable(cfg){
       k('Producido hoy', kgHoy>=OBJ()?'good':'info', nf(kgHoy)+' kg', nf(prodHoy)+' u · objetivo '+nf(OBJ())+' kg/día') +
       k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' ('+({lunvie:'lun–vie',lunsab:'lun–sáb',todos:'todos los días'}[modoProd()]||'lun–vie')+')') +
       k('Kg en stock','info', nf(kgStock)+' kg', 'Físico en planta · comprometidos '+nf(kgComp)+' kg') +
+      topeStockHtml(kgParaVender) +
       k('Disponible para VENDER hoy', clsVend, nf(rp?rp.kgDisponible:0)+' kg',
         'Secado − comprometido · en secado '+nf(rp?rp.kgEnCurado:0)+' kg'+(nBajoV>0 ? ' · '+nBajoV+' producto'+(nBajoV!==1?'s':'')+' bajo mínimo p/ vender' : ' · todos sobre el mínimo')) +
        
