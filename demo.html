@@ -10389,6 +10389,7 @@ function buildFilterTable(cfg){
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=normLista(lead.listaPrecios);
     v.domicilioFacturacion = lead.domicilioFacturacion||'';
     v.domicilioEntrega = lead.lugar||'';    
+    { const tc=window.__transporteCargaDe?window.__transporteCargaDe(lead):''; if(tc){ v.transporteCargaNombre=tc; v.transporteCarga=lead.transporteCarga||''; } }    
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     v.notaCliente = lead.notaCliente || notas.join(' · ');
@@ -10413,6 +10414,7 @@ function buildFilterTable(cfg){
     if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
     v.domicilioFacturacion = p.domicilioFacturacion||'';
     v.domicilioEntrega = p.domicilioEntrega||'';    
+    { const tc=window.__transporteCargaDe?window.__transporteCargaDe(p):''; if(tc){ v.transporteCargaNombre=tc; v.transporteCarga=p.transporteCarga||''; } }    
     v.descGeneral=p.descGeneral||0; v.notaCliente=p.notaCliente||''; v.nota=(p.nota?p.nota+' · ':'')+'Desde presupuesto '+(p.numero||'');
      
      
@@ -13314,6 +13316,10 @@ function buildFilterTable(cfg){
   window.__seguroCarga = ()=> Math.max(0, num(window.__param('seguroCargaPallet',10000)));
    
    
+  window.__transporteCargaDe = (o)=>{ if(!o) return ''; const z=String(o.zona||''); if(z!=='carga' && z!=='brio' && z!=='otsenre') return '';
+    return String(o.transporteCargaNombre||'').trim() || (z==='brio'?'Brío':z==='otsenre'?'OTSENRE':''); };
+   
+   
    
   window.__fleteCotizar = (items, zona, palletsManual, precioManual)=>{ const f=calcFlete(items, zona);
     const pallets=palletsFleteDe({palletsFlete:palletsManual}, f);
@@ -13839,6 +13845,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-zona]').forEach(b=> b.onclick=()=>{
       const z=ZONAS[+b.dataset.zona];
       editing.zona=z.k;
+      if(z.k!=='carga'){ editing.transporteCarga=''; editing.transporteCargaNombre=''; }    
       const f=aplicarFlete(editing);
       drawItems(); drawTotals();
        
@@ -13985,6 +13992,7 @@ function buildFilterTable(cfg){
     p.leadUid = lead._uid||'';    
     p.palletsFlete = Math.round(num(lead.palletsFlete))||0;    
     p.precioFlete = num(lead.precioFlete)>0 ? num(lead.precioFlete) : 0;    
+    { const tc=window.__transporteCargaDe(lead); if(tc){ p.transporteCargaNombre=tc; p.transporteCarga=lead.transporteCarga||''; } }    
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
      
@@ -24948,6 +24956,15 @@ function buildFilterTable(cfg){
   let editPed=null;
   function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
    
+   
+  function nombresCarga(){
+    const base=['Brío','OTSENRE','Expreso Biletta']; const vistos=new Set(base.map(norm)); const out=base.slice();
+    const tra=(typeof window.__transportesTarifas==='function')?window.__transportesTarifas():[];
+    tra.forEach(t=>{ const n=String(t&&t.transporte||'').trim(); if(!n||vistos.has(norm(n))) return;
+      if(typeof window.__transporteDeCarga==='function' && window.__transporteDeCarga(n)){ vistos.add(norm(n)); out.push(n); } });
+    return out;
+  }
+   
   function dniExigido(pe){
     const quien=String(pe.transporteFinal||'').trim() || (pe.transporte && pe.transporte!=='Sin asignar' ? String(pe.transporte) : '');
     return !!(quien && window.__transporteDeCarga && window.__transporteDeCarga(quien));
@@ -24981,7 +24998,7 @@ function buildFilterTable(cfg){
         '<div class="cmp-field" style="grid-column:1/-1;border:1px solid var(--border);border-radius:10px;padding:10px 12px">'+
           '<label style="font-weight:800">🔁 Se despacha en otro transporte <span style="font-weight:400;color:var(--muted)">(Matías lo lleva hasta ese transporte)</span></label>'+
           '<input id="pd-final" list="pd-final-dl" value="'+esc(pe.transporteFinal||'')+'" placeholder="Vacío = entrega directa. Ej: Brío, Expreso Biletta…">'+
-          '<datalist id="pd-final-dl"><option value="Brío"><option value="OTSENRE"><option value="Expreso Biletta"></datalist>'+
+          '<datalist id="pd-final-dl">'+nombresCarga().map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist>'+
           '<div id="pd-resto" style="margin-top:8px"'+(String(pe.transporteFinal||'').trim()?'':' hidden')+'>'+
             '<div style="display:flex;flex-wrap:wrap;gap:10px 14px">'+
               '<div class="cmp-field" style="flex:1 1 220px"><label>¿Quién paga el flete?</label><select id="pd-pago"><option value="origen"'+(pe.pagoEnvio!=='destino'?' selected':'')+'>VPH (en origen, se factura a VPH)</option><option value="destino"'+(pe.pagoEnvio==='destino'?' selected':'')+'>El cliente (en destino)</option></select></div>'+
@@ -25242,6 +25259,11 @@ function buildFilterTable(cfg){
     pe.ciudad    = ent ? '' : (cli.localidad||'');    
     pe.items=itemsPedidoDeVenta(v);
     if(!pe.items.length) pe.items=[{producto:'',codigo:'',cantidad:1}];
+     
+     
+     
+    { const carga=String(v.transporteCargaNombre||'').trim();
+      if(carga){ pe.transporte='Sánchez'; pe.transporteFinal=carga; pe.pagoEnvio='origen'; pe.despachoListo=false; } }
     tab='coord'; render(); openPed(pe);
   };
    

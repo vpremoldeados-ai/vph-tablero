@@ -9985,6 +9985,7 @@ function buildFilterTable(cfg){
     if(lead.categoria)v.categoria=lead.categoria; if(lead.listaPrecios)v.listaPrecios=normLista(lead.listaPrecios);
     v.domicilioFacturacion = lead.domicilioFacturacion||'';
     v.domicilioEntrega = lead.lugar||'';   // el "lugar de entrega" del lead es la dirección donde se entrega
+    { const tc=window.__transporteCargaDe?window.__transporteCargaDe(lead):''; if(tc){ v.transporteCargaNombre=tc; v.transporteCarga=lead.transporteCarga||''; } }   // 19/11: el pedido nace con el transporte de carga elegido
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     v.notaCliente = lead.notaCliente || notas.join(' · ');
@@ -10009,6 +10010,7 @@ function buildFilterTable(cfg){
     if(p.categoria)v.categoria=p.categoria; if(p.listaPrecios)v.listaPrecios=normLista(p.listaPrecios); if(p.vendedor)v.vendedor=p.vendedor;
     v.domicilioFacturacion = p.domicilioFacturacion||'';
     v.domicilioEntrega = p.domicilioEntrega||'';   // la dirección de entrega viaja del presupuesto a la venta
+    { const tc=window.__transporteCargaDe?window.__transporteCargaDe(p):''; if(tc){ v.transporteCargaNombre=tc; v.transporteCarga=p.transporteCarga||''; } }   // 19/11: ídem para el transporte de carga
     v.descGeneral=p.descGeneral||0; v.notaCliente=p.notaCliente||''; v.nota=(p.nota?p.nota+' · ':'')+'Desde presupuesto '+(p.numero||'');
     // El perfil de financiación del presupuesto viaja a la venta: si el cliente eligió cuotas de la
     // escalera, Sofía marca el plan en "Forma de pago acordada" y los renglones suben con ESAS tasas.
@@ -12930,6 +12932,10 @@ function buildFilterTable(cfg){
   window.__fleteZonas = (actual)=> ZONAS.filter(z=> !z.oculta || actual==='*' || (actual && actual===z.k)).map(z=>({k:z.k,l:z.l,oculta:!!z.oculta}));
   // Seguro estandarizado de los transportes de carga (Marcelo, 19/11: $10.000 por pallet, igual para todos).
   window.__seguroCarga = ()=> Math.max(0, num(window.__param('seguroCargaPallet',10000)));
+  // El transporte de CARGA que se eligió para entregar (lead, presupuesto o venta con \`zona\`), o '' si la forma de
+  // entrega no es de carga. Un lead/presupuesto viejo con «6 Brio» / «7 OTSENRE» no guardó el nombre: se deduce de la zona.
+  window.__transporteCargaDe = (o)=>{ if(!o) return ''; const z=String(o.zona||''); if(z!=='carga' && z!=='brio' && z!=='otsenre') return '';
+    return String(o.transporteCargaNombre||'').trim() || (z==='brio'?'Brío':z==='otsenre'?'OTSENRE':''); };
   // Cotiza el flete desde otro módulo (lo usa el CRM para el detalle en vivo del lead).
   // items: [{desc, codigo, cant}] → {pallets, costo, kg, label, precioPallet, palletsAuto, manual}
   // palletsManual (opcional): pallets cargados a mano; sin él la cotización es la automática de siempre.
@@ -13457,6 +13463,7 @@ function buildFilterTable(cfg){
     cont.querySelectorAll('button[data-zona]').forEach(b=> b.onclick=()=>{
       const z=ZONAS[+b.dataset.zona];
       editing.zona=z.k;
+      if(z.k!=='carga'){ editing.transporteCarga=''; editing.transporteCargaNombre=''; }   // el transporte elegido era de OTRA forma de entrega
       const f=aplicarFlete(editing);
       drawItems(); drawTotals();
       // Solo avisa si la forma de entrega SÍ tiene precio cargado y aun así no se pudo calcular (= faltan ítems).
@@ -13603,6 +13610,7 @@ function buildFilterTable(cfg){
     p.leadUid = lead._uid||'';   // vínculo con el lead que lo originó: el CRM lo usa para mostrar el monto cotizado
     p.palletsFlete = Math.round(num(lead.palletsFlete))||0;   // pallets armados a mano en el lead (0 = automático)
     p.precioFlete = num(lead.precioFlete)>0 ? num(lead.precioFlete) : 0;   // precio por pallet cargado a mano en el lead (0 = el de la zona)
+    { const tc=window.__transporteCargaDe(lead); if(tc){ p.transporteCargaNombre=tc; p.transporteCarga=lead.transporteCarga||''; } }   // 19/11: el transporte de carga elegido en el lead viaja hasta el pedido
     const m2Tot=(lead.items||[]).reduce((a,it)=>a+num(it.m2),0)||num(lead.m2);
     const notas=[]; if(m2Tot)notas.push('Necesita '+m2Tot.toLocaleString('es-AR')+' m²'); if(lead.telefono)notas.push('Tel: '+lead.telefono); if(lead.lugar)notas.push('Entrega: '+lead.lugar); if(lead.pago)notas.push('Pago: '+lead.pago); if(lead.origen)notas.push('Origen: '+lead.origen);
     // Cantidad cargada en el lead ya incluye el 5% de recortes (CRM, recalcUnidades) — se aclara acá para que el cliente vea por qué el número no es el m² × u/m² "justo".
@@ -24776,6 +24784,15 @@ function buildFilterTable(cfg){
   // Form de pedido
   let editPed=null;
   function blankPed(){ return { fecha:hoyISO, cliente:'', ventaUid:'', diaEntrega:'', fechaRequerida:'', puedeEsperar:false, urgente:false, transporte:'Sin asignar', ciudad:'', direccion:'', items:[{producto:'',codigo:'',cantidad:1}], plan:{}, mixtos:[], estado:'pendiente', nota:'' }; }
+  // Transportes de carga para el desplegable «Se despacha en otro transporte»: los de siempre + los que haya cargados
+  // en 🚛 Transportes (González, Maravilla, Logincor, Diemar…), sin repetir.
+  function nombresCarga(){
+    const base=['Brío','OTSENRE','Expreso Biletta']; const vistos=new Set(base.map(norm)); const out=base.slice();
+    const tra=(typeof window.__transportesTarifas==='function')?window.__transportesTarifas():[];
+    tra.forEach(t=>{ const n=String(t&&t.transporte||'').trim(); if(!n||vistos.has(norm(n))) return;
+      if(typeof window.__transporteDeCarga==='function' && window.__transporteDeCarga(n)){ vistos.add(norm(n)); out.push(n); } });
+    return out;
+  }
   // ¿El transporte que entrega este pedido (el final, o el que sale si es directo) es de carga y exige DNI?
   function dniExigido(pe){
     const quien=String(pe.transporteFinal||'').trim() || (pe.transporte && pe.transporte!=='Sin asignar' ? String(pe.transporte) : '');
@@ -24811,7 +24828,7 @@ function buildFilterTable(cfg){
         '<div class="cmp-field" style="grid-column:1/-1;border:1px solid var(--border);border-radius:10px;padding:10px 12px">'+
           '<label style="font-weight:800">🔁 Se despacha en otro transporte <span style="font-weight:400;color:var(--muted)">(Matías lo lleva hasta ese transporte)</span></label>'+
           '<input id="pd-final" list="pd-final-dl" value="'+esc(pe.transporteFinal||'')+'" placeholder="Vacío = entrega directa. Ej: Brío, Expreso Biletta…">'+
-          '<datalist id="pd-final-dl"><option value="Brío"><option value="OTSENRE"><option value="Expreso Biletta"></datalist>'+
+          '<datalist id="pd-final-dl">'+nombresCarga().map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist>'+
           '<div id="pd-resto" style="margin-top:8px"'+(String(pe.transporteFinal||'').trim()?'':' hidden')+'>'+
             '<div style="display:flex;flex-wrap:wrap;gap:10px 14px">'+
               '<div class="cmp-field" style="flex:1 1 220px"><label>¿Quién paga el flete?</label><select id="pd-pago"><option value="origen"'+(pe.pagoEnvio!=='destino'?' selected':'')+'>VPH (en origen, se factura a VPH)</option><option value="destino"'+(pe.pagoEnvio==='destino'?' selected':'')+'>El cliente (en destino)</option></select></div>'+
@@ -25072,6 +25089,11 @@ function buildFilterTable(cfg){
     pe.ciudad    = ent ? '' : (cli.localidad||'');   // con dirección de entrega propia no se inventa la localidad de la ficha
     pe.items=itemsPedidoDeVenta(v);
     if(!pe.items.length) pe.items=[{producto:'',codigo:'',cantidad:1}];
+    // 19/11: si en el lead/presupuesto se eligió un transporte de CARGA, el pedido ya nace como despacho en otro
+    // transporte (Matías lo lleva hasta su depósito, el flete lo factura el transporte a VPH): Gustavo no lo vuelve a
+    // cargar. Queda en "faltan datos" (valor declarado, con quién coordinar, DNI) hasta que se confirmen.
+    { const carga=String(v.transporteCargaNombre||'').trim();
+      if(carga){ pe.transporte='Sánchez'; pe.transporteFinal=carga; pe.pagoEnvio='origen'; pe.despachoListo=false; } }
     tab='coord'; render(); openPed(pe);
   };
   // Los renglones del pedido que salen de una venta: lo que lleva el camión. Los de precio NEGATIVO son
