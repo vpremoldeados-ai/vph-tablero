@@ -13813,7 +13813,7 @@ function buildFilterTable(cfg){
      
      
     const esCarga = typeof window.__transporteDeCarga==='function' && !!window.__transporteDeCarga(s.transporte);
-    const seg = esCarga && typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
+    const seg = esCarga && !s.seguroIncluido && typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
     const pp = (s.porPallet||0)+seg;
     const z= esCarga ? 'carga' : (s.zonaPresupuesto||'');
     const ya = esCarga ? (String(editing.zona||'')==='carga' && Math.abs(num(editing.precioFlete)-pp)<1) : (z && String(editing.zona||'')===String(z));
@@ -16637,7 +16637,7 @@ function buildFilterTable(cfg){
           const elegido = zonaAct==='carga' && editing.transporteCarga && editing.transporteCarga===x._uid;
           return '<div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
             '<span>• <b>'+esc(x.transporte)+'</b>'+
-            (x.totalPallet!==null ? ' · '+money(x.porPallet)+' + seguro = <b>'+money(x.totalPallet)+'</b> por pallet'+(x.plazoDias?' · '+x.plazoDias+' días':'')+(x.confirmado?'':' <span class="badge amber">estimada</span>')
+            (x.totalPallet!==null ? ' · '+money(x.porPallet)+(x.seguroIncluido?' (seguro incluido)':' + seguro')+' = <b>'+money(x.totalPallet)+'</b> por pallet'+(x.plazoDias?' · '+x.plazoDias+' días':'')+(x.confirmado?'':' <span class="badge amber">estimada</span>')
                                   : ' · <span class="badge red">falta cotizar</span>'+(x.telefono?' 📞 '+esc(x.telefono):''))+'</span>'+
             (x.totalPallet!==null ? (elegido?'<b style="color:var(--green)">✓ elegido</b>':'<button type="button" class="cmp-rowbtn" data-ctr="'+i+'">Usar</button>') : '')+
             '</div>';
@@ -21565,10 +21565,35 @@ function buildFilterTable(cfg){
    
   const palabras=(a,b)=>(" "+a+" ").includes(" "+b+" ");
   const coincidePal=(x,l)=>x===l||palabras(l,x)||palabras(x,l);
+   
+   
+   
+   
+  const TITULOS=['general','gral','coronel','cnel','ingeniero','ing','doctor','dr','presidente','pte','capitan','teniente','almirante','brigadier','comodoro'];
+  const PROVS=['buenos aires','catamarca','chaco','chubut','cordoba','corrientes','entre rios','formosa','jujuy','la pampa','la rioja','mendoza','misiones','neuquen','rio negro','salta','san juan','san luis','santa cruz','santa fe','santiago del estero','tierra del fuego','tucuman'];
+  function coincideLoc(x,l){
+    if(x===l || palabras(x,l)) return true;
+    if(!palabras(l,x)) return false;
+    const lt=l.split(' '), xt=x.split(' ');
+    for(let i=0;i+xt.length<=lt.length;i++){
+      if(xt.some((w,k)=>lt[i+k]!==w)) continue;
+      const antes=lt[i-1], despues=lt[i+xt.length], resto=lt[i+xt.length+1];
+      if((despues==='de'||despues==='del') && resto) continue;
+      if(antes && TITULOS.indexOf(antes)>=0 && TITULOS.indexOf(xt[0])<0) continue;
+      return true;
+    }
+    return false;
+  }
   function cubre(t, localidad){
     const l=normLoc(localidad); if(!l) return false;
+     
+     
+    if(Array.isArray(t.provincias) && t.provincias.length){
+      const mias=t.provincias.map(normLoc), ps=PROVS.filter(p=>l===p || l.endsWith(' '+p));
+      if(ps.length && !ps.some(p=>mias.indexOf(p)>=0)) return false;
+    }
     const locs=(t.localidades||[]).map(normLoc).filter(Boolean);
-    if(locs.some(x=>coincidePal(x,l))) return true;
+    if(locs.some(x=>coincideLoc(x,l))) return true;
     const d=normLoc(t.destino);
     return !!d && d.length>3 && coincidePal(d,l);
   }
@@ -21598,7 +21623,7 @@ function buildFilterTable(cfg){
   window.__traNormLoc=normLoc; window.__traCubre=cubre; window.__traCosto=costoEnvio; window.__traResolver=resolverEnvio;
   window.__envioCotizar=(localidad,pallets)=>resolverEnvio(localidad,pallets,TRA);
   window.__envioSugerencia=(localidad,pallets)=>{ const r=resolverEnvio(localidad,pallets,TRA); if(!r) return null;
-    const t=TRA.find(x=>x._uid===r._uid); return Object.assign({}, r, {zonaPresupuesto:(t&&t.zonaPresupuesto)||''}); };
+    const t=TRA.find(x=>x._uid===r._uid); return Object.assign({}, r, {zonaPresupuesto:(t&&t.zonaPresupuesto)||'', seguroIncluido:!!(t&&t.seguroIncluido)}); };
   window.__transportesTarifas=()=>TRA.slice();
    
    
@@ -21608,8 +21633,8 @@ function buildFilterTable(cfg){
     const l=normLoc(localidad); if(l.length<3) return [];
     return TRA.filter(t=>t&&t.activo!==false&&cubre(t,localidad)).map(t=>{
       const flete=costoEnvio(t,pallets), n=Math.max(1, Number(pallets)||1);
-      const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&coincidePal(y,l); })||'';
-      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide, zonaPresupuesto:t.zonaPresupuesto||'',
+      const coincide=(t.localidades||[]).find(x=>{ const y=normLoc(x); return y&&coincideLoc(y,l); })||'';
+      return { _uid:t._uid, transporte:t.transporte, telefono:t.telefono||'', contacto:t.contacto||'', destino:t.destino||'', coincide, zonaPresupuesto:t.zonaPresupuesto||'', seguroIncluido:!!t.seguroIncluido,
         flete, porPallet:flete===null?null:Math.round(flete/n), plazoDias:Number(t.plazoDias)||0, pagoEn:t.pagoEn||'', confirmado:!!t.confirmado, estado:estadoDe(t)[0] };
     }).sort((a,b)=>((a.flete===null)-(b.flete===null))||((a.flete||0)-(b.flete||0))||String(a.transporte).localeCompare(String(b.transporte)));
   }
@@ -21623,7 +21648,8 @@ function buildFilterTable(cfg){
     const seg= typeof window.__seguroCarga==='function' ? window.__seguroCarga() : 0;
     return {
       propia: L.filter(x=>!carga(x)),
-      carga: L.filter(carga).map(x=>Object.assign({}, x, { seguroPallet:seg, totalPallet: x.porPallet===null ? null : x.porPallet+seg }))
+       
+      carga: L.filter(carga).map(x=>{ const sg=x.seguroIncluido?0:seg; return Object.assign({}, x, { seguroPallet:sg, totalPallet: x.porPallet===null ? null : x.porPallet+sg }); })
     };
   };
    
@@ -21684,7 +21710,7 @@ function buildFilterTable(cfg){
       localidades:[], precioViaje:140000, pallets:8, plazoDias:7, pagoEn:'origen', descarga:'manual',
       condiciones:'Referencia del parámetro fleteMati: $140.000 el viaje. Sin localidades cargadas a propósito: cada destino del interior se cotiza y se agrega como fila propia.', fechaCotizacion:'2026-11-07', fuente:'Parámetros del Tablero (fleteMati)', activo:true, confirmado:false },
     { _uid:'tra_brio_interior', transporte:'Brío', tipo:'tercero', destino:'Interior / otras provincias', provincia:'', zona:'otraProvincia', zonaPresupuesto:'brio',
-      localidades:DESTINOS_BRIO, precioPallet:num(window.__param?window.__param('fleteBrio',140000):140000), pallets:0, plazoDias:0, pagoEn:'origen', descarga:'',
+      localidades:DESTINOS_BRIO, provincias:['Buenos Aires','Santa Fe','Córdoba','Entre Ríos'], precioPallet:num(window.__param?window.__param('fleteBrio',140000):140000), pallets:0, plazoDias:0, pagoEn:'origen', descarga:'',
       condiciones:'Tarifa ÚNICA para todos sus destinos. Mati lleva el pedido hasta el depósito de Brío en Córdoba, Brío lo despacha y EL FLETE LO COBRA VPH al cliente y después se lo paga a Brío (Marcelo, 11/11). Los destinos salen del PDF de Brío 2026; el precio, del parámetro fleteBrio (zona 6 del presupuesto).', fechaCotizacion:'', fuente:'PDF “Destinos Brío 2026” + parámetro fleteBrio', activo:true, confirmado:false },
     { _uid:'tra_biletta_calamuchita', transporte:'Expreso Biletta', tipo:'tercero', destino:'Santa Rosa de Calamuchita / Los Reartes', provincia:'Córdoba', zona:'interior',
       localidades:['embalse','la cruz','villa del dique','villa rumipal','villa parque','el torreon','amboy','san ignacio','santa rosa de calamuchita','yacanto de calamuchita','villa gral. belgrano','villa general belgrano','villa gral belgrano','los reartes','villa ciudad de america','potrero de garay','los molinos','villa berna','la cumbrecita','calamuchita'], precioPallet:92171, minPallets:1, pallets:0, plazoDias:5, pagoEn:'origen', descarga:'manual',
