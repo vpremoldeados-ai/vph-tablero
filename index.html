@@ -14669,6 +14669,7 @@ function buildFilterTable(cfg){
   // Definición de los parámetros: grupo, clave, etiqueta, default, tipo. La clave es la que leen los módulos.
   const DEFS=[
     {g:'Producción', k:'objKgDia',     l:'Objetivo de producción diaria (kg)',        def:6000, t:'num', hint:'Semáforo de Gustavo al cargar producción.'},
+    {g:'Producción', k:'kgStockMaximo', l:'Tope de stock total en planta (kg)',       def:50000, t:'num', hint:'Físico + en secado, sin descontar lo comprometido. Al llegar, Producción y Logística avisa parar hasta que bajen las ventas.'},
     {g:'Producción', k:'diasCurado',   l:'Días de secado por defecto',                 def:10,   t:'num', hint:'Se puede sobreescribir por producto en su ficha.'},
     {g:'Producción', k:'ritmoDias',    l:'Ventana del ritmo real (días)',              def:14,   t:'num', hint:'Días hacia atrás para promediar los kg/día y estimar fechas.'},
     {g:'Producción', k:'diasProd',     l:'Días de producción',                          def:'lunvie', t:'sel', opts:[['lunvie','Lunes a viernes'],['lunsab','Lunes a sábado'],['todos','Todos los días']], hint:'Afecta el promedio semanal y las fechas estimadas de fabricación.'},
@@ -21610,6 +21611,10 @@ function buildFilterTable(cfg){
   // ---------- Curado, kilos y ritmo de producción ----------
   // Parámetros editables (Base de Datos → ⚙️ Parámetros), leídos en vivo con default de respaldo.
   const OBJ=()=>num(window.__param('objKgDia',6000));   // objetivo kg/día (semáforo de Gustavo)
+  // Tope de stock TOTAL en planta (19/11, pedido de Marcelo): cuánto hormigón terminado puede haber
+  // parado en el galpón — físico + en secado, SIN descontar lo comprometido (lo que importa acá es
+  // cuánto hay fabricado sin vender, no si ya tiene dueño) — antes de frenar la producción.
+  const KGMAX=()=>num(window.__param('kgStockMaximo',50000));
   const modoProd=()=>String(window.__param('diasProd','lunvie'));   // días de producción
   // ⚠️ Un FERIADO tampoco es día hábil: no se produce y el banco no acredita. Antes esHabil solo
   // miraba el día de la semana, así que un feriado contaba como día de fábrica y corría para adelante
@@ -21975,6 +21980,26 @@ function buildFilterTable(cfg){
     if(tab==='stock') renderStock(); else if(tab==='solic') renderSolic(); else if(tab==='conteo') renderConteo(); else if(tab==='mensual') renderMensual(); else if(tab==='entregado') renderEntregadas(); else renderCoord();
   }
   function k(label,cls,value,sub){ return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+sub+'</div></div>'; }
+  // Tope de stock TOTAL en planta (19/11, pedido de Marcelo: "un indicador que muestre la situación
+  // respecto al límite de 50.000 kg de productos en stock que están para vender, ya sea físico o en
+  // secado; que diga cuántos kilos faltan fabricar para llegar a ese límite y si se alcanzó que
+  // indique que hay que parar la producción hasta que ingresen nuevas ventas que disminuyan ese
+  // stock"). PURA: recibe el `kgStock` YA calculado por renderKpis (físico total, que YA incluye lo
+  // curado y lo en secado — es la MISMA cuenta de la tarjeta "Kg en stock", nunca una segunda) y lo
+  // compara contra el parámetro `kgStockMaximo`. A propósito NO descuenta lo comprometido: lo que
+  // importa acá es cuánto hay fabricado sin vender, esté o no ya vendido — es un tope de producción,
+  // no de disponibilidad.
+  function topeStockHtml(kgStock){
+    const tope=KGMAX();
+    if(!(tope>0)) return '';
+    const margen=tope-kgStock;
+    if(margen<=0){
+      return k('Tope de stock en planta','bad','⛔ Parar producción',
+        nf(kgStock)+' kg de '+nf(tope)+' kg · '+nf(-margen)+' kg de más — esperar a que bajen las ventas');
+    }
+    return k('Margen para fabricar', margen<=tope*0.1?'warn':'good', nf(margen)+' kg',
+      'Hasta el tope de '+nf(tope)+' kg ('+nf(kgStock)+' kg en planta hoy)');
+  }
   function renderKpis(){
     const filas=activos().map(p=>stockDe(p));
     const faltan=filas.filter(f=>f.estado==='falta').length;
@@ -22000,6 +22025,7 @@ function buildFilterTable(cfg){
       k('Producido hoy', kgHoy>=OBJ()?'good':'info', nf(kgHoy)+' kg', nf(prodHoy)+' u · objetivo '+nf(OBJ())+' kg/día') +
       k('Promedio semana', clsSem, nf(sem.prom)+' kg/día', nf(sem.kg)+' kg en '+sem.habiles+' día'+(sem.habiles!==1?'s':'')+' hábil'+(sem.habiles!==1?'es':'')+' ('+({lunvie:'lun–vie',lunsab:'lun–sáb',todos:'todos los días'}[modoProd()]||'lun–vie')+')') +
       k('Kg en stock','info', nf(kgStock)+' kg', 'Físico en planta · comprometidos '+nf(kgComp)+' kg') +
+      topeStockHtml(kgStock) +
       k('Disponible para VENDER hoy', clsVend, nf(rp?rp.kgDisponible:0)+' kg',
         'Secado − comprometido · en secado '+nf(rp?rp.kgEnCurado:0)+' kg'+(nBajoV>0 ? ' · '+nBajoV+' producto'+(nBajoV!==1?'s':'')+' bajo mínimo p/ vender' : ' · todos sobre el mínimo')) +
       // Decisión de producción (pedido de Marcelo, 16/11): kg que faltan para el mínimo, contando lo que
