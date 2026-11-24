@@ -11059,7 +11059,10 @@ function buildFilterTable(cfg){
     // Los COSTOS FIJOS ya se cargan en Compras (categorías "COSTO FIJO" / "Mano de Obra"), así que sus
     // pagos YA entraron en el bloque de compras de arriba. Sumarlos otra vez acá los contaría DOS VECES.
     // (La página "Costos Fijos" es solo una vista de esas mismas compras.)
-    caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && f>desde && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid, cuenta:m.cuenta||''}); });
+    // Un movimiento fechado el MISMO día del saldo declarado cuenta si se cargó DESPUÉS de declararlo
+    // (por `ts`): antes quedaba afuera y un traspaso hecho hoy "no se registraba" (24/11).
+    const _an=ancla(), _anTs=(_an && String(_an.fecha||'').slice(0,10)===desde)?String(_an.ts||''):'';
+    caja.movs.forEach(m=>{ const f=String(m.fecha||'').slice(0,10); if(f && (f>desde || (f===desde && _anTs && String(m.ts||'')>_anTs)) && f<=hoyISO) M.push({fecha:f, signo:num(m.signo)>=0?1:-1, monto:num(m.monto), concepto:(m.concepto||'Movimiento manual'), tipo:'manual', uid:m._uid, cuenta:m.cuenta||''}); });
     return M.sort((a,b)=> String(b.fecha).localeCompare(String(a.fecha))); }
 
   // Saldo POR CUENTA: arranca del saldo declarado de cada una y le aplica los movimientos que la indican.
