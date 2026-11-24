@@ -10219,7 +10219,7 @@ function buildFilterTable(cfg){
   function remove(uid){ if(window.__usaNube){ const cx=fb(); if(cx&&cx.db) cx.FS.deleteDoc(cx.FS.doc(cx.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
     else { DB.cheques=DB.cheques.filter(x=>x._uid!==uid); saveLocal(); render(); } }
   // Al cobrar/rechazar un cheque se registra la fecha del movimiento — la usa la Caja para saber cuándo entró/salió la plata.
-  function setEstado(c,estado){ const extra={estado}; if(estado==='cobrado'||estado==='rechazado') extra.fechaMov=hoyISO; persist({...c, ...extra}); }
+  function setEstado(c,estado){ const extra={estado}; if(estado==='cobrado'||estado==='rechazado'){ extra.fechaMov=hoyISO; extra.movTs=new Date().toISOString(); } persist({...c, ...extra}); }
 
   // En VPH prácticamente TODOS los cheques son electrónicos, y el de papel —cuando aparece— se opera
   // igual. Por eso el formato arranca en ECHEQ y el papel es la excepción que se marca a mano en la
@@ -10775,6 +10775,7 @@ function buildFilterTable(cfg){
       // había marcado "papel" a mano, se respeta: reeditar el cobro no debe pisar esa corrección.
       echeq: (ex.echeq===undefined ? true : !!ex.echeq),
       cuenta:(ex.cuenta||''),   // la cuenta se elige en el módulo Cheques; reeditar el cobro/pago no la pisa
+      movTs:(ex.movTs||''),   // hora en que se marcó cobrado/pagado (Caja la usa si cae el mismo día del saldo declarado)
       fechaMov:(ex.fechaMov||''),   // fecha real en que se cobró/rechazó: si se perdiera, la Caja recalcularía
                                     // con el vencimiento y un cheque ya cobrado se caería del disponible de golpe
       monto:num(p.monto), estado, nota:(p.refNro?((kind==='pag'?'Pago de la compra ':'Cobro de la venta ')+p.refNro):(kind==='pag'?'Generado desde un pago de Compras':'Generado desde un cobro de Ventas')) };
@@ -11178,7 +11179,7 @@ function buildFilterTable(cfg){
       // Un cheque propio sale SIEMPRE de la chequera: los viejos se cargaron antes de que existiera
       // el campo, así que se asume igual que en la proyección (si no, caerían en "Sin asignar" y el
       // saldo por cuenta no cerraría justo donde importa).
-      if(f && f>desde && f<=hoyISO){ const propio=c.tipo==='emitido'; const sg=propio?-1:1;
+      if(f && (f>desde || (f===desde && _anMs>0 && c.movTs && new Date(c.movTs).getTime()>_anMs)) && f<=hoyISO){ const propio=c.tipo==='emitido'; const sg=propio?-1:1;
         M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(propio?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||(propio?chequera():'')}); } });
     // Los COSTOS FIJOS ya se cargan en Compras (categorías "COSTO FIJO" / "Mano de Obra"), así que sus
     // pagos YA entraron en el bloque de compras de arriba. Sumarlos otra vez acá los contaría DOS VECES.
