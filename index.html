@@ -7850,9 +7850,11 @@ function buildFilterTable(cfg){
     const anulada = signo>0 && ncAplicado>0.5 && ncAplicado>=total-1 && cobrado<0.5;
     let estado;
     if(signo<0) estado='cobrado';   // Nota de Crédito: se considera aplicada, no queda pendiente/vencida
-    else if(Math.abs(saldo)<1) estado='cobrado';   // tolerancia de redondeo (centavos); una venta anulada por NC cae acá
+    // Un saldo NEGATIVO es plata pagada de más (saldo a favor del cliente, 24/11): no hay nada que cobrar, así que
+    // no puede figurar "vencida" ni "parcial" (y no resta de los totales de A cobrar / Vencido).
+    else if(Math.abs(saldo)<1 || saldo<0) estado='cobrado';   // tolerancia de redondeo (centavos); una venta anulada por NC cae acá
     else { const venc=parseF(v.vencimiento); estado=(venc&&venc<HOY)?'vencido':(cobrado>0?'parcial':'acobrar'); }
-    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaDebito:round2(iva*signo), total:round2(total), cobrado:round2(cobrado), saldo, estado, signo, ncAplicado:round2(ncAplicado), anulada };
+    return { neto:round2(neto*signo), iva:round2(iva*signo), ivaDebito:round2(iva*signo), total:round2(total), cobrado:round2(cobrado), saldo, estado, signo, ncAplicado:round2(ncAplicado), anulada, aFavor: (signo>0 && cobrado>0.5 && saldo<-0.5) ? round2(-saldo) : 0 };
   }
 
   // periodo:'' = "Todos los períodos" (pedido de Marcelo, 10/08 — mismo criterio que Compras). Antes
@@ -8168,7 +8170,7 @@ function buildFilterTable(cfg){
     // Van en esta misma columna y no en una nueva: la tabla recién entra en pantalla sin scroll
     // horizontal y una columna más la volvía a desbordar.
     // Y debajo de los chips, la CONDICIÓN DE COBRO (13/10): si ya se puede cobrar, reclamar, o esperar.
-    {k:'estado', h:'Estado', opt:true, cell:r=>(r.k.anulada ? '<span class="cmp-estado pagado" title="Anulada por Nota de Crédito: no es deuda a cobrar">Anulada (NC)</span>' : (badgeEstado[r.k.estado]||''))+chipsCircuito(r)+condCobroHtml(r.v,r.k)},
+    {k:'estado', h:'Estado', opt:true, cell:r=>(r.k.anulada ? '<span class="cmp-estado pagado" title="Anulada por Nota de Crédito: no es deuda a cobrar">Anulada (NC)</span>' : (badgeEstado[r.k.estado]||''))+(r.k.aFavor>0.5?'<span class="badge green" title="El cliente pagó de más en esta venta: es saldo a favor suyo. Se aplica a su próxima factura desde 💰 Cobro en cuenta corriente.">💚 A favor '+money(r.k.aFavor)+'</span>':'')+chipsCircuito(r)+condCobroHtml(r.v,r.k)},
     {k:'arca', h:'ARCA', opt:true, off:true, cell:r=>arcaBadge(r.v.arca)},
     {k:'fecha', h:'Emisión', sort:'fecha', opt:true, cell:r=>fmtFecha(r.v.fecha)},
     {k:'cliente', h:'Cliente', sort:'cliente', cell:r=>'<div class="cel-nombre" title="'+esc(r.v.cliente||'')+'"><b>'+esc(r.v.cliente||'')+'</b>'+(r.v.tipoComprobante&&!/^Factura/.test(r.v.tipoComprobante)&&r.v.tipoComprobante!=='Sin factura'?' <span class="badge blue">'+esc(r.v.tipoComprobante)+'</span>':'')+'</div>'},
@@ -8327,19 +8329,23 @@ function buildFilterTable(cfg){
     // cumplido, o cheque rechazado) y cuántas ventas todavía esperan la entrega o el plazo.
     const by={}; all.forEach(({v,k})=>{ if(k.saldo>0.5){ const r=by[v.cliente]=by[v.cliente]||{saldo:0,venc:0,cobrable:0,nCob:0,nEsp:0,urg:0}; r.saldo+=k.saldo; if(k.estado==='vencido') r.venc+=k.saldo;
       const c=condicionCobro(v,k); if(c.cobrable){ r.cobrable+=k.saldo; r.nCob++; r.urg=Math.max(r.urg,c.urg||0); } else if(c.cod!=='nada') r.nEsp++; } });
+    // 💚 24/11: lo que el cliente pagó de más (saldo a favor). Un cliente puede tener plata a favor y ninguna deuda: igual se lista.
+    const fav={}; all.forEach(({v,k})=>{ if(num(k.aFavor)>0.5) fav[v.cliente]=round2((fav[v.cliente]||0)+num(k.aFavor)); });
+    Object.keys(fav).forEach(c=>{ by[c]=by[c]||{saldo:0,venc:0,cobrable:0,nCob:0,nEsp:0,urg:0}; });
     // Primero a quién YA se le puede cobrar (lo más urgente arriba), después por saldo.
-    const arr=Object.entries(by).map(([c,x])=>({c,...x})).sort((a,b)=>(b.urg-a.urg)||(b.cobrable-a.cobrable)||(b.saldo-a.saldo));
-    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num" title="Ventas entregadas y con el plazo cumplido, o con cheque rechazado">💰 Cobrable hoy</th><th class="num">Vencido</th><th>Acciones</th></tr>';
-    if(!arr.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
+    const arr=Object.entries(by).map(([c,x])=>({c,...x,fav:fav[c]||0})).sort((a,b)=>(b.urg-a.urg)||(b.cobrable-a.cobrable)||(b.saldo-a.saldo));
+    let html='<tr><th>Cliente</th><th class="num">Saldo a cobrar</th><th class="num" title="Ventas entregadas y con el plazo cumplido, o con cheque rechazado">💰 Cobrable hoy</th><th class="num">Vencido</th><th class="num" title="Plata que el cliente pagó de más: se aplica a su próxima factura desde 💰 Imputar cobro">💚 A favor</th><th>Acciones</th></tr>';
+    if(!arr.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">Sin saldos pendientes.</td></tr>';
     arr.forEach(r=>{ const det=(r.nCob?r.nCob+' p/ cobrar':'')+(r.nCob&&r.nEsp?' · ':'')+(r.nEsp?r.nEsp+' espera'+(r.nEsp!==1?'n':'')+' entrega/plazo':'');
       html+='<tr><td>'+esc(r.c)+'</td><td class="num"><b>'+money(r.saldo)+'</b></td>'+
       // data-sortval: la celda lleva texto debajo del importe y __ordenable tiene que ordenar por el número.
       '<td class="num" data-sortval="'+Math.round(r.cobrable)+'" style="color:'+(r.cobrable>0?(r.urg>=3?'var(--red)':'var(--green)'):'var(--muted)')+'"><b>'+(r.cobrable>0?money(r.cobrable):'—')+'</b>'+(det?'<div style="font-size:10.5px;font-weight:400;color:var(--muted)">'+det+'</div>':'')+'</td>'+
       '<td class="num" style="color:'+(r.venc>0?'var(--red)':'var(--muted)')+'">'+(r.venc>0?money(r.venc):'—')+'</td>'+
-      '<td class="cel-acciones"><button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button>'+
+      '<td class="num" style="color:'+(r.fav>0?'var(--green)':'var(--muted)')+'">'+(r.fav>0?'<b>'+money(r.fav)+'</b>':'—')+'</td>'+
+      '<td class="cel-acciones">'+(r.saldo>0.5?'<button class="cmp-rowbtn" data-imputar="'+esc(r.c)+'">💰 Imputar cobro</button>':'')+
       '<button class="cmp-rowbtn" data-estcta="'+esc(r.c)+'" title="Estado de cuenta: movimientos del período y comprobantes pendientes, para mandarle al cliente">📄 Estado</button></td></tr>'; });
-    const tot=arr.reduce((a,r)=>a+r.saldo,0), totC=arr.reduce((a,r)=>a+r.cobrable,0), totV=arr.reduce((a,r)=>a+r.venc,0);
-    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totC)+'</td><td class="num">'+money(totV)+'</td><td></td></tr>';
+    const tot=arr.reduce((a,r)=>a+r.saldo,0), totC=arr.reduce((a,r)=>a+r.cobrable,0), totV=arr.reduce((a,r)=>a+r.venc,0), totF=arr.reduce((a,r)=>a+r.fav,0);
+    if(arr.length) html+='<tr class="total"><td>Total</td><td class="num">'+money(tot)+'</td><td class="num">'+money(totC)+'</td><td class="num">'+money(totV)+'</td><td class="num">'+(totF>0?money(totF):'—')+'</td><td></td></tr>';
     $('vnt-tabla-cli').innerHTML=html; window.__ordenable('vnt-tabla-cli');
     $('vnt-tabla-cli').querySelectorAll('button[data-imputar]').forEach(b=> b.onclick=()=> openImputar(b.dataset.imputar));
     $('vnt-tabla-cli').querySelectorAll('button[data-estcta]').forEach(b=> b.onclick=()=> openEstadoCuenta(b.dataset.estcta));
@@ -8362,7 +8368,7 @@ function buildFilterTable(cfg){
     const m=String(c.medio||'—'); let d=m;
     if(esCheque(m)) d+=(c.chNumero?' N° '+c.chNumero:'')+(c.chBanco?' '+c.chBanco:'')+(c.chVenc?' (vence '+fmtFecha(String(c.chVenc).slice(0,10))+')':'');
     else if(esRetencion(m)) d='Retención'+(c.retImpuesto?' '+c.retImpuesto:'')+(c.retCertificado?' cert. '+c.retCertificado:'');
-    else if(esCompensacion(m)) d='Compensación / ajuste'+(c.obs?' · '+c.obs:'');
+    else if(esCompensacion(m)) d=c.aplicSaldo?(c.obs||'Saldo a favor'):'Compensación / ajuste'+(c.obs?' · '+c.obs:'');
     if(c.chequeRechazado) d+=' — RECHAZADO (no computa)';
     return d.replace(/\s+/g,' ').trim();
   }
@@ -8389,7 +8395,7 @@ function buildFilterTable(cfg){
       const esND=v.tipoComprobante==='Nota de Débito';
       movs.push({fecha:f, orden:0, tipo:esND?'nd':'venta', uid:v._uid, comprobante:ref(v), detalle:esND?'Nota de Débito':resumenVenta(v), debe:k.total, haber:0});
       (v.cobros||[]).forEach(c=>{ if(!c) return;
-        movs.push({fecha:String(c.fecha||f).slice(0,10), orden:2, tipo:'cobro', uid:v._uid, cobroId:c.id||'', comprobante:'Cobro', detalle:detalleCobroEC(c)+' · a cta. '+ref(v), debe:0, haber:c.chequeRechazado?0:num(c.monto)}); });
+        movs.push({fecha:String(c.fecha||f).slice(0,10), orden:2, tipo:'cobro', uid:v._uid, cobroId:c.id||'', comprobante:'Cobro', detalle:detalleCobroEC(c)+' · a cta. '+ref(v), debe:(!c.chequeRechazado && num(c.monto)<0)?-num(c.monto):0, haber:c.chequeRechazado?0:Math.max(0,num(c.monto))}); });
     });
     // Cronológico; el mismo día va primero la venta, después su NC y al final los cobros.
     movs.sort((a,b)=> a.fecha.localeCompare(b.fecha) || a.orden-b.orden || String(a.uid).localeCompare(String(b.uid)));
@@ -8541,6 +8547,71 @@ function buildFilterTable(cfg){
     const by={}; DB.ventas.forEach(v=>{ if(v.cliente && calc(v).saldo>0.5) by[v.cliente]=true; });
     return Object.keys(by).sort();
   }
+  // ---------- 💚 SALDO A FAVOR del cliente (24/11, pedido de Marcelo: "esto pasa a veces") ----------
+  // Un cliente paga de más (un e-cheq por más que la factura, una transferencia redondeada hacia arriba). Esa
+  // diferencia es plata SUYA: no es un cobro de nada ni se devuelve, queda para la próxima factura.
+  //  · REGISTRAR: 💰 Cobro en cuenta corriente deja que los valores superen todo lo pendiente; la diferencia se
+  //    carga como pago de más en la última venta (el cheque/la transferencia entra entero, con su monto real).
+  //  · AVISAR: esa venta queda 'cobrado' con el chip 💚 A favor, el cliente figura en la cuenta corriente con su
+  //    columna 💚 y el estado de cuenta lo dice ("a favor del cliente").
+  //  · APLICAR: cuando hay una factura nueva, "Aplicar" mueve el saldo a favor a ella con DOS cobros "Compensación"
+  //    que se anulan entre sí en el total del cliente: un −X en la venta donde se pagó de más y un +X en la nueva.
+  //    Es el MISMO medio sin plata de siempre (Caja y la conciliación ya lo excluyen), así que no entra ni sale un
+  //    peso y el libro del cliente cierra sin contar nada dos veces.
+  const refDeVenta = v => window.__refComprobante ? window.__refComprobante(v) : (v.nroFactura||v.nroInterno||'');
+  function creditosDe(cliente){
+    return DB.ventas.filter(v=> v.cliente===cliente).map(v=>({v, k:calc(v)})).filter(x=> num(x.k.aFavor)>0.5)
+      .map(x=>({ uid:x.v._uid, fecha:x.v.fecha, ref:refDeVenta(x.v), disponible:x.k.aFavor }))
+      .sort((a,b)=> String(a.fecha||'').localeCompare(String(b.fecha||'')));
+  }
+  // Pura y testeable: reparte lo que el cliente tiene a favor (créditos, el más viejo primero) entre las facturas
+  // pendientes (la más vieja primero), sin pasar nunca del saldo de cada una ni de lo que hay a favor.
+  window.__planSaldoAFavor = function planSaldoAFavor(creditos, pendientes){
+    const cr=(creditos||[]).map(c=>({...c, resto:round2(num(c.disponible))})), pares=[]; let ci=0;
+    (pendientes||[]).forEach(p=>{
+      let need=round2(num(p.saldo));
+      while(need>0.004 && ci<cr.length){
+        if(cr[ci].resto<=0.004){ ci++; continue; }
+        const m=round2(Math.min(need, cr[ci].resto));
+        pares.push({ origenUid:cr[ci].uid, origenRef:cr[ci].ref, destinoUid:p.uid, destinoRef:p.ref, monto:m });
+        need=round2(need-m); cr[ci].resto=round2(cr[ci].resto-m);
+      }
+    });
+    return { pares, total: round2(pares.reduce((a,x)=>a+x.monto,0)) };
+  };
+  // soloUid: aplicar solo a esa venta (desde su formulario de cobro). Devuelve el plan aplicado o null.
+  function aplicarSaldoAFavor(cliente, soloUid){
+    const plan=window.__planSaldoAFavor(creditosDe(cliente), ventasPendientesDe(cliente).filter(p=>!soloUid||p.uid===soloUid));
+    if(!plan.pares.length){ alert('No hay saldo a favor para aplicar o el cliente no tiene facturas pendientes.'); return null; }
+    const lineas=plan.pares.map(p=>'• '+money(p.monto)+' de '+(p.origenRef||'—')+' pasan a '+(p.destinoRef||'—'));
+    if(!confirm('Se aplican '+money(plan.total)+' del saldo a favor de '+cliente+':\n\n'+lineas.join('\n')+'\n\nNo entra ni sale plata: es un movimiento entre sus facturas, y queda anotado como "Compensación / ajuste". ¿Confirmás?')) return null;
+    const fecha=hoyISO, porVenta={};
+    plan.pares.forEach(p=>{
+      const par='sf_'+newUid();
+      (porVenta[p.origenUid]=porVenta[p.origenUid]||[]).push({ id:'cob_'+newUid(), fecha, monto:-p.monto, medio:MEDIO_COMP, obs:'Saldo a favor aplicado a '+(p.destinoRef||'otra factura'), chequeRechazado:false, aplicSaldo:par });
+      (porVenta[p.destinoUid]=porVenta[p.destinoUid]||[]).push({ id:'cob_'+newUid(), fecha, monto:p.monto, medio:MEDIO_COMP, obs:'Saldo a favor de '+(p.origenRef||'otra factura'), chequeRechazado:false, aplicSaldo:par });
+    });
+    Object.keys(porVenta).forEach(uid=>{ const v=DB.ventas.find(y=>y._uid===uid); if(!v) return;
+      const cobros=(v.cobros||[]).concat(porVenta[uid]); v.cobros=cobros; persistCobros(uid, cobros); });
+    return plan;
+  }
+  // Las dos mitades de una aplicación (el −X y el +X) se deshacen JUNTAS: quitar una sola dejaría a una factura debiendo
+  // plata que ya se había compensado. Quita de TODAS las ventas el cobro con esa marca que no sea `exceptId`.
+  function quitarParSaldoAFavor(par, exceptId){
+    let n=0;
+    DB.ventas.forEach(v=>{ const cobros=v.cobros||[]; const resto=cobros.filter(c=>!(c && c.aplicSaldo===par && c.id!==exceptId));
+      if(resto.length!==cobros.length){ v.cobros=resto; persistCobros(v._uid, resto); n++; } });
+    return n;
+  }
+  // Cartel verde: cuánto tiene a favor el cliente y el botón para aplicarlo (a todas sus facturas pendientes o solo a una).
+  function saldoAFavorHtml(cliente, soloUid, idBtn){
+    const cr=creditosDe(cliente), tot=round2(cr.reduce((a,x)=>a+x.disponible,0)); if(tot<=0.5) return '';
+    const plan=window.__planSaldoAFavor(cr, ventasPendientesDe(cliente).filter(p=>!soloUid||p.uid===soloUid));
+    return '<div style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--green);border-radius:10px;background:rgba(30,158,90,.08);font-size:12.5px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">'+
+      '<span>💚 <b>'+esc(cliente)+' tiene '+money(tot)+' a favor</b> <span style="color:var(--muted)">(pagó de más en '+cr.map(x=>esc(x.ref||'—')).join(', ')+')</span></span>'+
+      (plan.total>0.5 ? '<button class="cmp-btn" type="button" id="'+idBtn+'">Aplicar '+money(plan.total)+(soloUid?' a esta venta':' a las facturas pendientes')+'</button>'
+        : '<span style="color:var(--muted)">Todavía no tiene facturas pendientes donde aplicarlo.</span>')+'</div>';
+  }
   const blankValorImp = (medio,monto)=>({ medio:medio||MEDIOS_IMPUTAR[0], monto:monto||0, chNumero:'', chBanco:'', chVenc:'', cuenta:'', retImpuesto:IMPUESTOS_RET[0], retCertificado:'', obs:'' });
   const totalValoresImp = ()=> round2(imputValores.reduce((a,x)=>a+num(x.monto),0));
   // Vuelve a proponer el reparto FIFO con el total de los valores cargados.
@@ -8594,6 +8665,7 @@ function buildFilterTable(cfg){
         field('Fecha','','<input type="date" id="ic-fecha" value="'+esc(imputFecha)+'">')+
       '</div>'+
       '<p style="margin:-6px 0 10px;font-size:12.5px;color:var(--muted)">'+(imputCliente?'Saldo total pendiente: <b style="color:var(--text)">'+money(totalSaldo)+'</b>':'Elegí un cliente para ver sus facturas pendientes.')+'</p>'+
+      ((imputCliente && typeof saldoAFavorHtml==='function') ? saldoAFavorHtml(imputCliente,'','ic-saf') : '')+
       '<div style="font-size:12.5px;font-weight:800;margin:0 0 6px">Cómo pagó</div>'+
       imputValores.map(valorImpHtml).join('')+
       '<button class="cmp-btn" type="button" id="ic-addval" style="margin-bottom:6px">＋ Agregar valor (otro e-cheq, una retención, una compensación, efectivo…)</button>'+
@@ -8635,15 +8707,30 @@ function buildFilterTable(cfg){
     box.querySelectorAll('input[data-isp]').forEach(el=> el.addEventListener('input',()=>{
       const i=+el.dataset.isp, v=Math.max(0, Math.min(num(el.value), imputSplits[i].saldo));
       imputSplits[i]=Object.assign({}, imputSplits[i], {imputado:v}); imputManual=true; refrescarCheck(); }));
+    const bsaf=$('ic-saf');
+    if(bsaf) bsaf.onclick=()=>{
+      const antes=round2(imputPend.reduce((a,x)=>a+x.saldo,0));
+      if(!aplicarSaldoAFavor(imputCliente,'')) return;
+      imputPend=ventasPendientesDe(imputCliente);
+      const ahora=round2(imputPend.reduce((a,x)=>a+x.saldo,0));
+      // Si el monto del único valor era el de siempre (todo lo pendiente) sin tocar, se actualiza al nuevo pendiente.
+      if(imputValores.length===1 && Math.abs(num(imputValores[0].monto)-antes)<0.01) imputValores[0].monto=ahora;
+      recalcSplitsImp(); pintarImputar();
+    };
     $('ic-cancel').onclick=()=>$('vnt-modal-imputar').classList.remove('open');
     const conf=$('ic-confirmar'); if(conf) conf.onclick=confirmarImputacion;
   }
   function syncSplitsImp(){ document.querySelectorAll('#vnt-form-imputar input[data-isp]').forEach(el=>{ const x=imputSplits[+el.dataset.isp]; if(x) el.value=num(x.imputado); }); }
   function refrescarCheck(){
     const tv=totalValoresImp(), ts=round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0)), dif=round2(tv-ts);
+    // Si los valores superan TODO lo pendiente (cada factura al tope de su saldo), la diferencia es saldo a favor del cliente.
+    const aFav=(dif>=0.01 && imputSplits.length && ts>=round2(imputPend.reduce((a,x)=>a+num(x.saldo),0))-0.01) ? dif : 0;
     const t=$('ic-totval'); if(t) t.innerHTML='Total de los valores: <b>'+money(tv)+'</b>';
     const c=$('ic-check'); if(c) c.innerHTML='Repartido en ventas: <b>'+money(ts)+'</b>'+
-      (Math.abs(dif)>=0.01?' — <span style="color:var(--amber)">'+(dif>0?'faltan '+money(dif)+' por repartir':'te pasaste por '+money(-dif))+'</span>':' <span style="color:var(--green)">✓ coincide con los valores</span>');
+      (Math.abs(dif)>=0.01
+        ? (aFav>0 ? ' — <span style="color:var(--green)">💚 sobran '+money(aFav)+': quedan como saldo a favor de '+esc(imputCliente||'el cliente')+'</span>'
+                  : ' — <span style="color:var(--amber)">'+(dif>0?'faltan '+money(dif)+' por repartir':'te pasaste por '+money(-dif))+'</span>')
+        : ' <span style="color:var(--green)">✓ coincide con los valores</span>');
   }
   // Registra los cobros — uno por cada pedazo valor↔venta (cascada). Cada venta se guarda UNA vez con
   // persistCobros (solo el campo cobros) y cada cheque pasa por __upsertChequeCobro: el MISMO camino que
@@ -8651,16 +8738,23 @@ function buildFilterTable(cfg){
   function confirmarImputacion(){
     const fecha=imputFecha;
     if(!imputCliente){ alert('Elegí un cliente.'); return; }
-    const activos=imputSplits.filter(x=>num(x.imputado)>0);
+    const activos=imputSplits.filter(x=>num(x.imputado)>0).map(x=>({...x}));   // copias: abajo se le puede sumar el saldo a favor a la última
     if(!activos.length){ alert('Cargá algún monto para al menos una venta.'); return; }
     if(!fecha){ alert('Poné la fecha del cobro.'); return; }
     const valores=imputValores.filter(x=>num(x.monto)>0);
     const tv=round2(valores.reduce((a,x)=>a+num(x.monto),0)), ts=round2(activos.reduce((a,x)=>a+num(x.imputado),0));
-    if(Math.abs(tv-ts)>=0.01){ alert('El total de los valores ('+money(tv)+') no coincide con lo repartido en las ventas ('+money(ts)+'). Ajustalo antes de registrar.'); return; }
+    // 24/11 SALDO A FAVOR: si los valores superan TODO lo que el cliente debe (cada factura al tope de su saldo), la
+    // diferencia no es un error: es plata de más que pagó. Se confirma y queda como pago de más en la última venta.
+    const sobra=(tv-ts>=0.01 && imputSplits.length && round2(imputSplits.reduce((a,x)=>a+num(x.imputado),0))>=round2(imputPend.reduce((a,x)=>a+num(x.saldo),0))-0.01) ? round2(tv-ts) : 0;
+    if(!sobra && Math.abs(tv-ts)>=0.01){ alert('El total de los valores ('+money(tv)+') no coincide con lo repartido en las ventas ('+money(ts)+'). Ajustalo antes de registrar.'); return; }
     const sinCert=valores.filter(x=>esRetencion(x.medio) && !String(x.retCertificado||'').trim());
     if(sinCert.length && !confirm('Hay una retención sin N° de certificado: sin ese número el contador no puede computar el crédito.\n¿Registrar igual?')) return;
     const sinMotivo=valores.filter(x=>esCompensacion(x.medio) && !String(x.obs||'').trim());
     if(sinMotivo.length){ alert('Hay una compensación / ajuste sin motivo. Escribí de dónde sale ese saldo a favor (o qué ajusta): es lo único que después explica por qué la factura figura cobrada sin plata.'); return; }
+    if(sobra){
+      if(!confirm('Los valores superan todo lo que debe '+imputCliente+' por '+money(sobra)+'.\n\nEsa diferencia queda como SALDO A FAVOR del cliente (figura en su estado de cuenta y se aplica a su próxima factura). El cheque o la transferencia entra por su monto real.\n\n¿Registrar así?')) return;
+      activos[activos.length-1].imputado=round2(num(activos[activos.length-1].imputado)+sobra);
+    }
     const piezas=window.__cascadaValores(valores, activos);
     const cobrosPorVenta={}, cheques=[], aplicados={}, maestroCh={}, nrosCh={};
     piezas.forEach(p=>{
@@ -8684,14 +8778,16 @@ function buildFilterTable(cfg){
     Object.keys(cobrosPorVenta).forEach(uid=>{
       const v=DB.ventas.find(y=>y._uid===uid); const cobros=(v.cobros||[]).concat(cobrosPorVenta[uid]); v.cobros=cobros; persistCobros(uid, cobros); });
     cheques.forEach(({v,rec,vi,total})=>{ if(window.__upsertChequeCobro) window.__upsertChequeCobro({ cobroId:rec.id, ventaUid:v._uid, ventaNro:(nrosCh[vi]||[]).join(' + '), entidad:v.cliente||'', cuit:v.cuit||'', numero:rec.chNumero, banco:rec.chBanco, monto:total, fechaEmision:fecha, fechaVencimiento:rec.chVenc||fecha, chequeRechazado:false }); });
-    const facturas=Object.values(aplicados).map(a=>({ comprobante:a.comprobante, fecha:a.fecha, monto:a.monto, saldo:round2(a.saldoAntes-a.monto) }));
+    // El pago de más no es "aplicado" a la factura: el recibo lo muestra aparte (aFavor) y la factura queda en cero.
+    const uidSobra=sobra?activos[activos.length-1].uid:null;
+    const facturas=Object.entries(aplicados).map(([uid,a])=>{ const m=(sobra&&uid===uidSobra)?round2(a.monto-sobra):a.monto; return { comprobante:a.comprobante, fecha:a.fecha, monto:m, saldo:round2(a.saldoAntes-m) }; });
     const cliRef=DB.ventas.find(v=>v.cliente===imputCliente)||{};
     const detalleValor=x=> x.medio+(esCheque(x.medio)?(x.chNumero?' N° '+x.chNumero:'')+(x.chBanco?' · '+x.chBanco:''):esRetencion(x.medio)?' '+(x.retImpuesto||'')+(x.retCertificado?' · cert. '+x.retCertificado:''):esCompensacion(x.medio)?(x.obs?' · '+x.obs:''):'');
     const recibo={ proveedor:imputCliente, cuit:cliRef.cuit||'', condIva:cliRef.condIva||'', fecha,
-      valores:valores.map(x=>({ fecha, detalle:detalleValor(x), monto:num(x.monto) })), facturas };
+      valores:valores.map(x=>({ fecha, detalle:detalleValor(x), monto:num(x.monto) })), facturas, aFavor:sobra };
     $('vnt-modal-imputar').classList.remove('open');
     const nCobros=piezas.length;
-    if(confirm('Se registraron '+nCobros+' cobro'+(nCobros!==1?'s':'')+' en '+facturas.length+' venta'+(facturas.length!==1?'s':'')+'. ¿Imprimir el recibo?')){
+    if(confirm('Se registraron '+nCobros+' cobro'+(nCobros!==1?'s':'')+' en '+facturas.length+' venta'+(facturas.length!==1?'s':'')+'.'+(sobra?' 💚 Quedaron '+money(sobra)+' a favor de '+imputCliente+'.':'')+' ¿Imprimir el recibo?')){
       if(window.__imprimir && window.__imprimir.reciboCtaCte) window.__imprimir.reciboCtaCte(recibo);
     }
   }
@@ -9113,8 +9209,12 @@ function buildFilterTable(cfg){
     const planesCobro = (window.__planesFin ? window.__planesFin(perfilCobro) : [])
       .map(p=>({c:p.cuotas, ar:p.arancel, cf:p.costoFin, tasa:p.tasa}));
     if(!planesCobro.length) VIUMI_PLANES.forEach(p=>planesCobro.push({c:p.c, ar:viumiTasa(p.c), cf:0, tasa:viumiTasa(p.c)}));
+    // 💚 24/11: la venta ya tiene plata de más, o el cliente la tiene en otra y se puede aplicar acá.
+    const afCobro=(kk.aFavor>0.5 ? '<div style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--green);border-radius:10px;background:rgba(30,158,90,.08);font-size:12.5px">💚 En esta venta se pagó de más: <b>'+money(kk.aFavor)+'</b> son saldo a favor de '+esc(v.cliente||'el cliente')+'. Se aplica a su próxima factura desde 💰 Cobro en cuenta corriente.</div>' : '')+
+      ((kk.saldo>0.5 && typeof saldoAFavorHtml==='function') ? saldoAFavorHtml(v.cliente, v._uid, 'vc-saf') : '');
     $('vnt-form-cobro').innerHTML =
       '<p style="margin:0 0 10px;font-size:13px">'+esc(v.cliente||'—')+' — total <b>'+money(kk.total)+'</b> · cobrado <b style="color:var(--green)">'+money(kk.cobrado)+'</b> · saldo <b style="color:'+(kk.saldo>0.5?'var(--amber)':'var(--green)')+'">'+money(kk.saldo)+'</b></p>'+
+      afCobro+
       '<div style="margin-bottom:10px">'+lista+'</div>'+
       '<h4 style="margin:8px 0 6px;font-size:13px">'+(cobroEdit!=null?'✏️ Editar cobro':'Registrar nuevo cobro')+'</h4>'+
       '<div class="cmp-form-grid" style="grid-template-columns:1fr 1fr">'+
@@ -9122,6 +9222,7 @@ function buildFilterTable(cfg){
         field('Medio','','<select id="vc-medio">'+medioOpts(MEDIOS_COBRO, medioDef)+'</select>') +
         '<div class="cmp-field" id="vc-cuenta-wrap" style="display:'+((chShow||platShow||retShow||compShow)?'none':'')+'"><label>¿En qué cuenta entró?</label><select id="vc-cuenta">'+cuentasOpt(ed&&ed.cuenta)+'</select></div>' +
         '<div class="cmp-field col2"><label style="display:flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="vc-rechazado"'+(ed&&ed.chequeRechazado?' checked':'')+'> ⚠️ Cheque rechazado</label></div>' + '</div>'+
+      '<div id="vc-sobra" style="display:none;margin:-4px 0 10px;font-size:12px;color:var(--green)"></div>'+
       // Retención: el cliente actúa de agente de retención. Estos dos datos son los que pide el
       // contador para computar el crédito — sin el certificado, la retención no se puede usar.
       '<div id="vc-ret-extra" style="display:'+(esRetencion(medioDef)?'block':'none')+';border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg,#f8fafc)">'+
@@ -9234,11 +9335,20 @@ function buildFilterTable(cfg){
       if(iv && !iv.dataset.tocado) { iv.value=Math.round(num(arEl.value)*0.21*100)/100; calcNetoPlat(); } });
     const ivEl=$('vc-pl-iva'); if(ivEl) ivEl.addEventListener('input',()=>{ ivEl.dataset.tocado='1'; });
     if(platShow) calcNetoPlat();
-    $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{ cobroEdit=+b.dataset.cedit; drawCobro(); });
-    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i]; if(!confirm('¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return;
+    $('vnt-form-cobro').querySelectorAll('[data-cedit]').forEach(b=> b.onclick=()=>{
+      const ce=v.cobros[+b.dataset.cedit];
+      if(ce && ce.aplicSaldo){ alert('Un saldo a favor aplicado no se edita suelto: afecta a dos facturas. Eliminalo con la ✕ (se deshace en las dos) y volvé a aplicarlo.'); return; }
+      cobroEdit=+b.dataset.cedit; drawCobro(); });
+    $('vnt-form-cobro').querySelectorAll('[data-cdel]').forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; const cob=v.cobros[i];
+      // 💚 24/11: el −X / +X de un saldo a favor aplicado van de a pares.
+      const esPar=!!(cob && cob.aplicSaldo);
+      if(!esPar && (viva().cobros||[]).some(c=>c && c.aplicSaldo)){ alert('Esta venta tiene un saldo a favor aplicado. Primero deshacelo (✕ en el cobro "Saldo a favor…", que se anula en las dos facturas) y recién después eliminá este cobro.'); return; }
+      if(!confirm(esPar ? 'Este cobro es parte de un saldo a favor aplicado entre dos facturas.\n\nSe deshace en LAS DOS: el saldo a favor vuelve a quedar en la factura donde se pagó de más y la otra vuelve a deber ese monto. ¿Confirmás?' : '¿Revertir/eliminar este cobro de '+money(num(cob.monto))+'?')) return;
       const lv=viva(); const cobros=(lv.cobros||[]).slice(); const j=posViva(cobros, cob, i);
       if(j<0){ alert('Ese cobro ya no está en la venta (la cambió otra sesión). Vuelvo a mostrar los cobros actuales.'); cobroEdit=null; drawCobro(); return; }
-      cobros.splice(j,1); lv.cobros=cobros; v.cobros=cobros; cobroEdit=null; persistCobros(lv._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id); drawCobro(); });
+      cobros.splice(j,1); lv.cobros=cobros; v.cobros=cobros; cobroEdit=null; persistCobros(lv._uid, cobros); if(cob&&cob.id&&window.__deleteChequeCobro) window.__deleteChequeCobro(cob.id);
+      if(esPar) quitarParSaldoAFavor(cob.aplicSaldo, cob.id);
+      drawCobro(); });
     // Tarjetas: el medio de cobro es lo que más toca Sofía y bifurca el form (cheque → datos del cheque,
     // sin cuenta, y NO cuenta como plata de hoy). Es donde se rompen los números de caja si se elige mal.
     if(window.__tarjetas){ window.__tarjetas('vc-medio'); window.__tarjetas('vc-cuenta'); }
@@ -9279,6 +9389,16 @@ function buildFilterTable(cfg){
       };
     }
     if($('vc-cancel-edit')) $('vc-cancel-edit').onclick=()=>{ cobroEdit=null; drawCobro(); };
+    if($('vc-saf')) $('vc-saf').onclick=()=>{ if(aplicarSaldoAFavor(v.cliente, v._uid)) drawCobro(); };
+    // 💚 Aviso en vivo: un monto mayor al saldo es válido (queda como saldo a favor), pero que no sea una sorpresa.
+    const baseSaldoCobro=kk.saldo+(ed?num(ed.monto):0);
+    const pintarSobra=()=>{ const el=$('vc-sobra'), m=$('vc-monto'), md=$('vc-medio'); if(!el||!el.style||!m) return;
+      const d=round2(num(m.value)-baseSaldoCobro);
+      if(d>0.5 && !(md && esPlataforma(md.value))){ el.style.display='block'; el.innerHTML='💚 Es '+money(d)+' más que el saldo ('+money(baseSaldoCobro)+'): la diferencia queda como <b>saldo a favor</b> del cliente.'; }
+      else el.style.display='none'; };
+    if($('vc-monto')&&$('vc-monto').addEventListener) $('vc-monto').addEventListener('input',pintarSobra);
+    if($('vc-medio')&&$('vc-medio').addEventListener) $('vc-medio').addEventListener('change',pintarSobra);
+    pintarSobra();
     $('vc-save').onclick=async ()=>{ const m=num($('vc-monto').value); if(!m){ alert('Ingresá el monto del cobro.'); return; }
       const prev = cobroEdit!=null ? v.cobros[cobroEdit] : null;
       const rec={ id:(prev&&prev.id)||('cob_'+newUid()), fecha:$('vc-fecha').value, monto:m, medio:$('vc-medio').value, chequeRechazado:!!$('vc-rechazado').checked };
@@ -26428,7 +26548,7 @@ function buildFilterTable(cfg){
     const ent=String(v.domicilioEntrega||'').trim();   // ídem detalle: se muestran las dos direcciones
     const izq='<b>'+esc(v.cliente||'—')+'</b><br>Dirección de facturación: '+esc(dom)+(ent?'<br>Dirección de entrega: '+esc(ent):'');
     const der='CUIT: '+esc(v.cuit||cli.cuit||'—')+'<br>Cond. IVA: '+esc(v.condIva||cli.condIva||'—');
-    const cobros=(v.cobros||[]).filter(c=>c&&num(c.monto)>0);
+    const cobros=(v.cobros||[]).filter(c=>c&&num(c.monto)!==0);   // 24/11: también el −X con que se aplicó un saldo a favor, así el total cierra con la factura
     let filas=cobros.map(c=>'<tr><td>'+dmy(c.fecha)+'</td><td>'+esc(c.medio||'')+'</td><td>'+esc(c.obs||'')+'</td><td class="n">'+money(c.monto)+'</td></tr>').join('');
     if(!filas) filas='<tr><td colspan="4" style="text-align:center;color:#888">Sin cobros cargados.</td></tr>';
     const totCob=cobros.reduce((a,c)=>a+num(c.monto),0);
@@ -26496,7 +26616,9 @@ function buildFilterTable(cfg){
         : '<tr><td colspan="4" style="text-align:center;color:#888">Pago a cuenta.</td></tr>')+
       '</table>'+
       (fs.some(f=>num(f.saldo)>0.5)?'<div style="font-size:10px;color:#666;margin:-6px 0 8px">Saldo restante: lo que queda debiendo de ese comprobante DESPUÉS de este pago.</div>':'');
-    return encabezado('X','RECIBO DE COBRANZA','', dmy(o.fecha))+bloqueCliente(izq,der)+valores+concepto+firma()+pie();
+    return encabezado('X','RECIBO DE COBRANZA','', dmy(o.fecha))+bloqueCliente(izq,der)+valores+concepto+
+      (num(o.aFavor)>0.5?'<div style="margin:6px 0 8px;padding:6px 10px;border:1px solid #9bd0a8;background:#f1faf3;font-size:11px"><b>Saldo a favor del cliente: '+money(o.aFavor)+'</b> — queda a cuenta de futuras facturas.</div>':'')+
+      firma()+pie();
   }
 
   // ---------- Remito (recibe objeto normalizado) ----------
