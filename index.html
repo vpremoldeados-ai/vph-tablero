@@ -22410,8 +22410,16 @@ function buildFilterTable(cfg){
       // Disponible para vender = curado − comprometido, solo lo positivo: el MISMO criterio que la Vista Diaria
       // (cambio pedido por Marcelo, 16/11). Lo que todavía está secando NO cuenta acá: va en "En secado".
       const faltaFab = v ? Math.max(0, num(v.reponer)) : Math.max(0, -num(s.dispReal)), dispVend = v ? Math.max(0, num(v.disponible)) : Math.max(0, num(s.disponible));
-      const secVend = Math.min(num(s.enCurado), Math.max(0, num(s.comprometido) - num(s.curado)));
-      const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
+      // 🔴 "En secado" NUNCA puede ser más que el Físico (es un subconjunto de él): si alguna entrega
+      // salió antes de que terminara de curar SU lote (el sistema no ata cada entrega a un lote puntual,
+      // solo resta el total entregado), el conteo acumulado por fecha de producción puede superar al
+      // físico de HOY — 25/11, caso real del Cubo CA30: "en secado" daba 50 con un físico de 40.
+      // Para MOSTRAR se topa en el físico — esto es SOLO cosmético: "Falta fabricar"/"Disponible para
+      // vender" no dependen de `enCurado` (se cancela algebraicamente en las dos fórmulas), así que
+      // toparlo acá no les cambia el número.
+      const enSecMostrar = Math.min(num(s.enCurado), Math.max(0, s.fisico));
+      const secVend = Math.min(enSecMostrar, Math.max(0, num(s.comprometido) - (s.fisico-enSecMostrar)));
+      const cur = enSecMostrar>0 ? nf(enSecMostrar)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
       html+='<tr><td class="pe-col-cod" data-label="Código">'+esc(p.codigo||'')+'</td>'+
         // data-sortval: sin esto __ordenable leería "Loseta Cribada RectangularULC60" y, al sacarle
         // las letras, la columna Producto pasaría a ordenarse como si fuera un número.
