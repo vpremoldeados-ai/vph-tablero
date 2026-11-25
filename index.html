@@ -3398,17 +3398,26 @@ window.__pintarStockDisp = function(){
   tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En secado (u)</th><th class="num">Fabricar (kg)</th><th>Estado</th></tr>' +
     filas.map(f=>{
       const falta = f.estadoVenta==='falta', bajo = f.estadoVenta==='bajo';
+      // 🔴 25/11, mismo caso real del Cubo CA30 que en Producción → Stock y faltantes (renderStock):
+      // "en secado" (f.enCurado) puede quedar por encima del físico si una entrega salió antes de que
+      // terminara de secar su lote (el sistema no ata cada entrega a un lote puntual). Acá se deriva el
+      // físico desde los mismos campos de porProducto (disponible+comprometido+enCurado = físico, una
+      // identidad que siempre vale) y se topan "En secado" y el "Faltan" de Disponible — kg y Fabricar
+      // no cambian (no dependen de enCurado, ver la nota de renderStock).
+      const fisicoDer = (f.disponible||0)+(f.comprometido||0)+(f.enCurado||0);
+      const enSecMostrar = Math.min(f.enCurado||0, Math.max(0, fisicoDer));
+      const dispMostrar = (fisicoDer-enSecMostrar) - (f.comprometido||0);
       const lote = f.proxLote ? 'próximo lote '+dm(f.proxLote.fecha)+' ('+nf(f.proxLote.cantidad)+' u)' : '';
-      const badge = falta ? '<span class="badge red">FALTAN '+nf(-f.disponible)+' u</span>'
+      const badge = falta ? '<span class="badge red">FALTAN '+nf(-dispMostrar)+' u</span>'
                   : bajo  ? '<span class="badge amber">Bajo mínimo</span>'
                           : '<span class="badge green">OK</span>';
       const col = falta ? 'var(--red)' : (bajo ? 'var(--amber)' : 'var(--green)');
-      const dispTxt = falta ? 'Faltan '+nf(-f.disponible) : nf(f.disponible);
+      const dispTxt = falta ? 'Faltan '+nf(-dispMostrar) : nf(dispMostrar);
       return '<tr><td><b>'+_escA(f.codigo)+'</b> <span style="color:var(--muted)">'+_escA(f.nombre)+'</span></td>'+
         '<td class="num" style="color:'+col+';font-weight:800">'+dispTxt+'</td>'+
         '<td class="num">'+(f.minimo>0?nf(f.minimo):'—')+'</td>'+
         '<td class="num">'+nf(f.kgDisponible)+'</td>'+
-        '<td class="num">'+nf(f.enCurado)+'</td>'+
+        '<td class="num">'+nf(enSecMostrar)+'</td>'+
         '<td class="num" style="color:'+(f.kgReponer>0?'var(--red)':'var(--muted)')+';font-weight:'+(f.kgReponer>0?800:400)+'">'+(f.kgReponer>0?nf(f.kgReponer):'—')+'</td>'+
         '<td>'+badge+((falta||bajo)&&lote ? '<span style="display:block;font-size:11px;color:var(--muted)">'+_escA(lote)+'</span>' : '')+'</td></tr>';
     }).join('');
