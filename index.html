@@ -24650,63 +24650,149 @@ function buildFilterTable(cfg){
      arma su plan de pallets solo (se borra el `pe.plan` guardado del producto tocado — si no,
      `cargaRows` seguiría usando el armado viejo, pensado para la cantidad ANTES de partir), y de
      ahí en más cada pedido sigue el camino normal (remito, entrega) sin ningún caso especial. */
+  /* Partir POR PALLETS (26/11, pedido de Marcelo con GRUPO DE NOVO: "quiero organizar el camión
+     cortándolo por pallets, sin hacer cálculos mentales de cuántas losetas van al segundo viaje").
+     N pallets = las N tandas MÁS GRANDES del armado (salen los llenos; el pallet incompleto se queda
+     con el primer viaje). Con N = todos, es la cantidad entera. Pura. */
+  function unidadesDePallets(tandas, n){
+    const t=(tandas||[]).slice().sort((a,b)=>b-a);
+    n=Math.max(0,Math.min(t.length,Math.round(num(n))));
+    return t.slice(0,n).reduce((a,u)=>a+u,0);
+  }
+  /* Camiones YA armados (con fecha) a los que se puede mandar la parte que se corta: así no hay que
+     acordarse de qué día ni con quién salía. Mismo agrupado día + transportista + n° de viaje que
+     usa 🚚 Viajes armados; no entra el camión de este mismo pedido. */
+  function viajesParaPartir(pe){
+    const g={};
+    pedidos.forEach(p=>{
+      if(!p || p.estado==='entregado' || p._uid===pe._uid) return;
+      const f=fechaDeDia(p.diaEntrega); if(!f) return;
+      const tr=String(p.transporte||'').trim()||'Sin asignar', nv=p.numeroViaje||1;
+      const dia=fmtF(f), k=dia+'||'+tr+'||'+nv;
+      g[k]=g[k]||{ dia, f, tr, nv, diaTxt:String(p.diaEntrega||'').trim(), pallets:0, clientes:[] };
+      g[k].pallets+=totCarga(p).pallets;
+      if(p.cliente && g[k].clientes.indexOf(p.cliente)<0) g[k].clientes.push(p.cliente);
+    });
+    return Object.keys(g).map(k=>g[k]).sort((a,b)=> a.f-b.f || String(a.tr).localeCompare(String(b.tr)) || a.nv-b.nv);
+  }
+  // Reparte las cantidades entre el pedido original (se muta) y un pedido nuevo (se devuelve, sin guardar).
+  function repartirPedido(pe, rows, movs){
+    const nuevoItems=[], planNuevo={};
+    rows.forEach((r,i)=>{
+      const mov=Math.max(0,Math.min(r.cant,Math.round(num(movs[i])))); if(mov<=0) return;
+      nuevoItems.push({ producto:r.it.producto||'', codigo:r.it.codigo||'', cantidad:mov });
+      r.it.cantidad = r.cant - mov;
+      if(pe.plan && pe.plan[r.key]){
+        // Si el armado estaba guardado a mano y se cortó justo por pallets enteros, cada viaje se
+        // queda con SUS pallets tal cual. Si no, el armado viejo ya no sirve y se recalcula.
+        const t=pe.plan[r.key].map(x=>Math.round(num(x))).sort((a,b)=>b-a);
+        let n=0, suma=0; while(n<t.length && suma<mov){ suma+=t[n]; n++; }
+        const unico=rows.filter(x=>x.key===r.key).length===1;
+        if(unico && suma===mov && t.reduce((a,u)=>a+u,0)===r.cant){
+          planNuevo[r.key]=t.slice(0,n);
+          if(t.length>n) pe.plan[r.key]=t.slice(n); else delete pe.plan[r.key];
+        } else delete pe.plan[r.key];
+      }
+    });
+    pe.items = (pe.items||[]).filter(it=> it && num(it.cantidad)>0);
+    pe.mixtos = [];   // pudo quedar referenciando tandas que ya no existen tras el reparto
+    const nuevo = Object.assign(blankPed(), {
+      cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
+      fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, sinGrua:!!pe.sinGrua, nota:pe.nota||'',
+      items:nuevoItems, plan:planNuevo, estado:pe.estado==='programado'?'programado':'pendiente'
+    });
+    return nuevo;
+  }
   function abrirPartirPedido(pe){
     const rows=filasParaPartir(pe);
     if(rows.length<1){ alert('Este pedido no tiene productos para partir (¿es solo un servicio/flete?).'); return; }
     const totPal=rows.reduce((a,r)=>a+r.pallets,0);
+    const viajes=viajesParaPartir(pe);
     let ov=document.getElementById('pe-partir-modal');
     if(!ov){ ov=document.createElement('div'); ov.id='pe-partir-modal';
       ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px';
       document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
-    const fSug=fechaDeDia(pe.diaEntrega); const fechaSugerida=fSug?fmtF(addDiasHabiles(fSug,1)):'';
+    const fSug=fechaDeDia(pe.diaEntrega); const fechaSugerida=fSug?isoDeF(addDiasHabiles(fSug,1)):'';
+    const DIAS=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+    const opViaje=(v,i)=>{ const cap=capacidadDe(v.tr), libre=cap-v.pallets;
+      return '<option value="'+i+'">'+esc(DIAS[v.f.getDay()]+' '+v.dia+' · '+v.tr+' · '+v.pallets+(cap?' de '+cap:'')+' pal'+(cap?(libre>0?' (entran '+libre+')':' (completo)'):'')+' · '+v.clientes.join(', '))+'</option>'; };
+    const bPm='width:40px;height:36px;border:1px solid #ccc;background:#f3f4f6;border-radius:8px;font-size:20px;font-weight:800;cursor:pointer;color:#111';
+    const campo='width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box';
     ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:min(560px,96vw);max-height:92vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
       '<h3 style="margin:0 0 4px;font-size:15px">✂️ Partir pedido — '+esc(pe.cliente||'—')+'</h3>'+
-      '<div style="font-size:11.5px;color:#666;margin-bottom:10px">Elegí cuánto de cada producto va al 2do viaje. Lo que no muevas queda en este mismo pedido.</div>'+
-      '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><tr style="text-align:left;color:#666"><th>Producto</th><th style="text-align:right">Total</th><th style="text-align:right;width:110px">Al 2do viaje</th></tr>'+
-      rows.map((r,i)=>'<tr style="border-top:1px solid #eee"><td style="padding:4px 0">'+esc(r.nombre)+'</td>'+
-        '<td style="text-align:right">'+r.cant+'</td>'+
-        '<td style="text-align:right"><input type="number" min="0" max="'+r.cant+'" step="1" value="0" data-psp-mov="'+i+'" style="width:80px;text-align:right;padding:3px 6px;border:1px solid #ccc;border-radius:6px"></td></tr>').join('')+
-      '</table>'+
-      '<div id="pe-partir-resumen" style="margin-top:10px;font-size:12.5px;font-weight:700"></div>'+
-      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
-        '<div class="cmp-field" style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Fecha del 2do viaje</label><input id="pe-partir-fecha" value="'+esc(fechaSugerida)+'" placeholder="dd/mm/aa" style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:6px"></div>'+
-        '<div class="cmp-field" style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Transporte del 2do viaje</label><select id="pe-partir-transp" style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:6px">'+
+      '<div style="font-size:11.5px;color:#666;margin-bottom:10px">Tocá + para pasar pallets al 2do viaje. Lo que no muevas queda en este mismo pedido.</div>'+
+      rows.map((r,i)=>'<div style="border-top:1px solid #eee;padding:9px 0">'+
+        '<div style="font-size:13px;font-weight:700">'+esc(r.nombre)+' <span style="font-weight:400;color:#666">· '+r.cant+' u en '+r.pallets+' pallet'+(r.pallets!==1?'s':'')+'</span></div>'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">'+
+          '<button type="button" data-psp-menos="'+i+'" style="'+bPm+'">−</button>'+
+          '<span data-psp-pal="'+i+'" style="min-width:92px;text-align:center;font-weight:800;font-size:15px">0 pallets</span>'+
+          '<button type="button" data-psp-mas="'+i+'" style="'+bPm+'">+</button>'+
+          '<span style="font-size:11.5px;color:#666;margin-left:auto">o en unidades</span>'+
+          '<input type="number" min="0" max="'+r.cant+'" step="1" value="0" data-psp-mov="'+i+'" style="width:80px;text-align:right;padding:6px;border:1px solid #ccc;border-radius:6px">'+
+        '</div></div>').join('')+
+      '<div id="pe-partir-resumen" style="border-top:1px solid #eee;padding-top:10px;font-size:13px;font-weight:700"></div>'+
+      '<div style="margin-top:12px"><label style="font-size:11px;color:#666">¿A qué camión va el 2do viaje?</label><select id="pe-partir-viaje" style="'+campo+'">'+
+        '<option value="">🆕 Camión nuevo (elijo fecha y transporte)</option>'+viajes.map(opViaje).join('')+'</select></div>'+
+      '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Fecha del 2do viaje</label><input type="date" id="pe-partir-fecha" value="'+esc(fechaSugerida)+'" style="'+campo+'"></div>'+
+        '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Transporte del 2do viaje</label><select id="pe-partir-transp" style="'+campo+'">'+
           (window.__transportes?window.__transportes():['Sánchez']).map(t=>'<option'+(t===pe.transporte?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>'+
       '</div>'+
       '<div style="display:flex;gap:8px;margin-top:14px">'+
         '<button id="pe-partir-ok" class="cmp-btn cmp-btn-primary">Partir pedido</button>'+
         '<button id="pe-partir-x" class="cmp-btn">Cancelar</button>'+
       '</div></div>';
+    const q=s=>ov.querySelector(s);
+    const campoMov=i=>q('[data-psp-mov="'+i+'"]');
+    const movDe=i=>Math.max(0,Math.min(rows[i].cant,Math.round(num(campoMov(i).value))));
+    const palDe=i=>{ const m=movDe(i); if(m<=0) return 0; const r=rows[i];
+      // Corte exacto por pallets del armado real; si se tipearon unidades sueltas, se estima.
+      for(let n=1;n<=r.tandas.length;n++) if(unidadesDePallets(r.tandas,n)===m) return n;
+      return planStd(m, r.ud).length; };
+    const viajeElegido=()=>{ const v=q('#pe-partir-viaje').value; return v===''?null:viajes[+v]; };
     const resumen=()=>{
       let pal1=0, pal2=0;
-      rows.forEach((r,i)=>{ const mov=Math.max(0,Math.min(r.cant,Math.round(num(ov.querySelector('[data-psp-mov="'+i+'"]').value))));
-        pal1+=planStd(r.cant-mov, r.ud).length; pal2+=mov>0?planStd(mov, r.ud).length:0; });
-      ov.querySelector('#pe-partir-resumen').textContent = 'Viaje 1 (este pedido): '+pal1+' pallet'+(pal1!==1?'s':'')+'  ·  Viaje 2 (nuevo pedido): '+pal2+' pallet'+(pal2!==1?'s':'')+' de '+totPal+' totales';
+      rows.forEach((r,i)=>{ const mov=movDe(i), n=palDe(i);
+        pal2+=n; pal1+=mov>=r.cant?0:(r.ud>0?planStd(r.cant-mov, r.ud).length:1);
+        q('[data-psp-pal="'+i+'"]').textContent=n+' pallet'+(n!==1?'s':''); });
+      const v=viajeElegido(), tr=q('#pe-partir-transp').value, cap=capacidadDe(v?v.tr:tr);
+      const unidades=rows.map((r,i)=>movDe(i)>0?movDe(i)+' '+(r.it.codigo||r.nombre):'').filter(Boolean).join(' · ');
+      const total2=pal2+(v?v.pallets:0);
+      q('#pe-partir-resumen').innerHTML='Viaje 1 (este pedido): '+pal1+' pallet'+(pal1!==1?'s':'')+' de '+totPal+
+        '<br>Viaje 2: '+pal2+' pallet'+(pal2!==1?'s':'')+(unidades?' <span style="font-weight:400;color:#666">('+esc(unidades)+')</span>':'')+
+        (cap && (v||pal2) ? '<br><span style="color:'+(total2>cap?'#b91c1c':'#15803d')+'">El camión queda con '+total2+' de '+cap+' pallets'+(total2>cap?' — se pasa por '+(total2-cap):'')+'</span>' : '');
     };
-    ov.querySelectorAll('[data-psp-mov]').forEach(inp=> inp.oninput=resumen);
+    rows.forEach((r,i)=>{
+      const poner=n=>{ campoMov(i).value=unidadesDePallets(r.tandas,n); resumen(); };
+      q('[data-psp-mas="'+i+'"]').onclick=()=>poner(palDe(i)+1);
+      q('[data-psp-menos="'+i+'"]').onclick=()=>poner(palDe(i)-1);
+      campoMov(i).oninput=resumen;
+    });
+    q('#pe-partir-viaje').onchange=()=>{ const v=viajeElegido();
+      if(v){ q('#pe-partir-fecha').value=isoDeF(v.f); q('#pe-partir-transp').value=v.tr; }
+      resumen(); };
+    // Cambiar la fecha o el transporte a mano deja de ser "ese" camión.
+    q('#pe-partir-fecha').onchange=()=>{ q('#pe-partir-viaje').value=''; resumen(); };
+    q('#pe-partir-transp').onchange=()=>{ q('#pe-partir-viaje').value=''; resumen(); };
     resumen();
-    ov.querySelector('#pe-partir-x').onclick=()=>ov.remove();
-    ov.querySelector('#pe-partir-ok').onclick=()=>{
-      const movs=rows.map((r,i)=> Math.max(0,Math.min(r.cant,Math.round(num(ov.querySelector('[data-psp-mov="'+i+'"]').value)))));
-      if(!movs.some(m=>m>0)){ alert('Poné una cantidad mayor a 0 en al menos un producto para partir el pedido.'); return; }
-      const fecha2=ov.querySelector('#pe-partir-fecha').value.trim();
-      if(!fecha2){ alert('Falta la fecha del 2do viaje.'); return; }
-      const transp2=ov.querySelector('#pe-partir-transp').value;
-      if(!confirm('Vas a crear un pedido nuevo para '+(pe.cliente||'—')+' con lo que muevas, fechado '+fecha2+' ('+transp2+'). El pedido original se queda con el resto. ¿Confirmar?')) return;
-      const nuevoItems=[];
-      rows.forEach((r,i)=>{ const mov=movs[i]; if(mov<=0) return;
-        nuevoItems.push({ producto:r.it.producto||'', codigo:r.it.codigo||'', cantidad:mov });
-        r.it.cantidad = r.cant - mov;
-        if(pe.plan) delete pe.plan[r.key];    // el armado viejo era para la cantidad de ANTES de partir
-      });
-      pe.items = (pe.items||[]).filter(it=> it && num(it.cantidad)>0);
-      pe.mixtos = [];   // pudo quedar referenciando tandas que ya no existen tras el reparto
+    q('#pe-partir-x').onclick=()=>ov.remove();
+    q('#pe-partir-ok').onclick=()=>{
+      const movs=rows.map((r,i)=>movDe(i));
+      if(!movs.some(m=>m>0)){ alert('Pasá al menos un pallet al 2do viaje.'); return; }
+      if(rows.every((r,i)=>movs[i]>=r.cant)){ alert('Estás pasando todo el pedido. Para cambiarle el día o el transportista no hace falta partirlo: cambialo en la fila.'); return; }
+      const iso=String(q('#pe-partir-fecha').value||'');
+      if(!iso){ alert('Falta la fecha del 2do viaje.'); return; }
+      const v=viajeElegido();
+      // Un camión ya armado se escribe con SU texto de día, así queda en el mismo grupo.
+      const fecha2=v ? v.diaTxt : (iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(2,4));
+      const transp2=v ? v.tr : q('#pe-partir-transp').value;
+      const n2=rows.reduce((a,r,i)=>a+palDe(i),0);
+      if(!confirm('Pasan '+n2+' pallet'+(n2!==1?'s':'')+' de '+(pe.cliente||'—')+' al viaje del '+fecha2+' ('+transp2+'). El resto queda en este pedido. ¿Confirmar?')) return;
+      const nuevo=repartirPedido(pe, rows, movs);
       persistPed(pe);
-      const nuevo = Object.assign(blankPed(), {
-        cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
-        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, sinGrua:!!pe.sinGrua, nota:pe.nota||'',
-        items:nuevoItems, diaEntrega:fecha2, transporte:transp2, estado:pe.estado==='programado'?'programado':'pendiente'
-      });
+      nuevo.diaEntrega=fecha2; nuevo.transporte=transp2;
+      // Sellar los "previos" evita que persistPed lo mande a un camión NUEVO en vez del elegido.
+      if(v){ nuevo.numeroViaje=v.nv; nuevo._diaPrevio=fecha2.trim(); nuevo._trPrevio=transp2; }
       persistPed(nuevo);
       ov.remove(); render();
     };
@@ -24721,7 +24807,7 @@ function buildFilterTable(cfg){
       const key=keyDe(it.codigo,it.producto), j=occ[key]||0; occ[key]=j+1;
       const r=rows.find(x=>x.key===key && x.j===j);
       if(!r) return null;   // servicio/flete: no se parte
-      return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length };
+      return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length, tandas:r.pallets.slice() };
     }).filter(Boolean);
   }
   /* ---------- ➕ UNIR pedidos del MISMO cliente (17/09, pedido de Marcelo: "un cliente hizo un
