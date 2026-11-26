@@ -15252,6 +15252,7 @@ function buildFilterTable(cfg){
      
      
     {g:'Lista de precios', k:'fletePallet100', l:'Flete por pallet hasta 100 km ($)', def:0, t:'num', hint:'Lo que cobra el transporte (Expreso Biletta) por pallet hasta 100 km de Córdoba Capital (ej. Santa Rosa de Calamuchita). La lista "Mayorista hasta 100 km" suma este flete dividido las unidades del pallet al precio de cada producto. En 0 esa lista NO se genera.'},
+    {g:'Lista de precios', k:'fletePalletBA', l:'Flete por pallet puesto en Buenos Aires ($, con IVA)', def:120000, t:'num', hint:'Va dentro del precio de las listas "puesto en Buenos Aires" (se reparte por las unidades de cada pallet). 120.000 cubre un camión de 18 pallets a $1.500.000 + IVA desde los 16 pallets. En 0 esas listas NO se generan.'},
     {g:'Lista de precios', k:'margenSugerido', l:'Margen sugerido de reventa (%)', def:75, t:'num', hint:'La columna "Sugerido reventa" de las listas mayoristas en PDF: el precio de la lista más este porcentaje.'},
     {g:'Logística', k:'capSanchez', l:'Capacidad camión Sánchez (pallets)',              def:8,  t:'num', hint:'Cuántos pallets entran por viaje. Se usa en Producción y Logística → Coordinar entregas para saber cuánto lugar queda en cada camión.'},
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
@@ -27442,7 +27443,8 @@ function buildFilterTable(cfg){
          
         LP_COMUN='Pedidos por pallets enteros. Plazo de entrega: 7 días hábiles desde la confirmación.',
         LP_PAGO_FACT='Formas de pago: Pago Contado, Débito o E-cheq a 30 días de fecha de factura.',
-        LP_PAGO_CONT='Forma de pago: Pago Contado.';
+        LP_PAGO_CONT='Forma de pago: Pago Contado.',
+        LP_CAMION='Pedidos por pallets enteros. Entrega en camión compartido: el envío se programa al completar la carga.';
   const LISTAS_PDF = {
     min:     { campo:'precioMinorista',   nombre:'Minorista',
                cond:'Precios finales por unidad, IVA incluido. El flete se cotiza aparte según la zona de entrega.' },
@@ -27464,20 +27466,12 @@ function buildFilterTable(cfg){
      
      
      
-    mayBA:     { campo:'precioMayorista',   nombre:'Mayorista puesto en Buenos Aires', may:1, fleteTra:'brio',
-               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_FACT+' Pedidos por pallets enteros.' },
-    maySFBA:   { campo:'precioMayoristaSF', nombre:'Mayorista Contado puesto en Buenos Aires', may:1, fleteTra:'brio',
-               cond:'Precios por unidad, PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Pedidos por pallets enteros.' }
+     
+    mayBA:     { campo:'precioMayorista',   nombre:'Mayorista puesto en Buenos Aires', may:1, fleteBA:1, sinSugerido:1,
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_FACT+' '+LP_CAMION },
+    maySFBA:   { campo:'precioMayoristaSF', nombre:'Mayorista Contado puesto en Buenos Aires', may:1, fleteBA:1, sinSugerido:1,
+               cond:'Precios por unidad, PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_CONT+' '+LP_CAMION }
   };
-   
-   
-  function fleteDeTransporte(nombre){
-    const t=(window.__transportesTarifas?window.__transportesTarifas():[])||[];
-    const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-    const sirve=f=>f && f.activo!==false && Number(f.precioPallet)>0;
-    const fila=t.find(f=>sirve(f) && f._uid==='tra_'+nombre+'_interior') || t.find(f=>sirve(f) && norm(f.transporte).indexOf(nombre)>=0);
-    return fila ? Number(fila.precioPallet) : 0;
-  }
    
    
    
@@ -27498,11 +27492,11 @@ function buildFilterTable(cfg){
     const flete100 = L.flete100 ? num(window.__param ? window.__param('fletePallet100',0) : 0) : 0;
     if(L.flete100 && !(flete100>0))
       return {error:'Falta cargar el "Flete por pallet hasta 100 km" en Base de Datos → ⚙️ Parámetros (es lo que cobra Expreso Biletta por pallet). Con ese dato cargado, esta lista se genera sola.'};
-    const fleteTra = L.fleteTra ? fleteDeTransporte(L.fleteTra) : 0;
-    if(L.fleteTra && !(fleteTra>0))
-      return {error:'No encontré la tarifa por pallet de Brío en 🚛 Transportes. Esperá unos segundos a que cargue; si sigue igual, cargá ahí el precio por pallet.'};
+    const fleteBA = L.fleteBA ? num(window.__param ? window.__param('fletePalletBA',120000) : 120000) : 0;
+    if(L.fleteBA && !(fleteBA>0))
+      return {error:'El "Flete por pallet puesto en Buenos Aires" está en 0 en Base de Datos → ⚙️ Parámetros. Cargalo y la lista se genera sola.'};
      
-    const fletePal = flete100 || fleteTra;
+    const fletePal = flete100 || fleteBA;
     const margen = num(window.__param ? window.__param('margenSugerido',75) : 75);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
       .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
@@ -27517,7 +27511,7 @@ function buildFilterTable(cfg){
       .filter(p=>!(!L.may && FUERA_LISTA_MIN.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
        
        
-      .filter(p=>!(L.flete100||L.fleteTra||L.lpTablero) || num(p.udPorPallet)>0)
+      .filter(p=>!(L.flete100||L.fleteBA||L.lpTablero) || num(p.udPorPallet)>0)
        
        
        
@@ -27529,7 +27523,7 @@ function buildFilterTable(cfg){
      
     const unit = p => { const base=num(p[L.campo]);
       if(L.lpTablero && window.__precioDeLista) return Math.round(window.__precioDeLista(p, L.lpTablero));
-      return Math.round((L.flete100||L.fleteTra) ? base + fletePal/num(p.udPorPallet) : base); };
+      return Math.round((L.flete100||L.fleteBA) ? base + fletePal/num(p.udPorPallet) : base); };
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
        
        
@@ -27545,6 +27539,7 @@ function buildFilterTable(cfg){
     const D=listaPreciosDatos(o);
     if(D.error){ alert(D.error); return; }
     const L=D.L, margen=D.margen, hoy=D.hoy, hoyISO=D.hoyISO, conM2=D.conM2;
+    const conSug = L.may && !L.sinSugerido;    
      
      
     const filas=D.filas.map(f=>{ const pu=f.pu, uxm2=f.uxm2, ud=f.ud;
@@ -27556,7 +27551,7 @@ function buildFilterTable(cfg){
          
         '<td class="n"><b>'+money(pu)+'</b></td>'+
         (conM2?celM2(f.m2):'')+
-        (L.may?('<td class="n">'+money(f.sugerido)+'</td>'+(conM2?celM2(f.sugM2):'')):'')+
+        (conSug?('<td class="n">'+money(f.sugerido)+'</td>'+(conM2?celM2(f.sugM2):'')):'')+
         '<td class="n">'+(f.peso>0?pct(f.peso)+' kg':'—')+'</td>'+
         '<td class="n">'+(ud>0?nf(ud):'—')+'</td>'+
         (L.may?('<td class="n">'+(ud>0?money(f.pallet):'—')+'</td>'):'')+
@@ -27564,7 +27559,7 @@ function buildFilterTable(cfg){
     const html = encabezado('L','LISTA DE PRECIOS — '+L.nombre.toUpperCase(),'',hoy,'','Vigente desde')+
       (L.may?'<div class="doc-obs" style="margin-bottom:6px"><b>Sin necesidad de stock: fabricamos a pedido, con entregas rápidas.</b></div>':'')+
       '<table class="doc-tab"><thead>'+
-      (L.may
+      (conSug
          
          
         ? ('<tr><th rowspan="2">Código</th><th rowspan="2">Producto</th>'+
@@ -27573,7 +27568,7 @@ function buildFilterTable(cfg){
            '<th rowspan="2" class="n">Peso x unidad</th><th rowspan="2" class="n">Unid. x pallet</th><th rowspan="2" class="n">Precio x pallet</th></tr>'+
            '<tr><th class="n">x unidad</th>'+(conM2?'<th class="n">x m²</th>':'')+'<th class="n">x unidad</th>'+(conM2?'<th class="n">x m²</th>':'')+'</tr>')
         : ('<tr><th>Código</th><th>Producto</th><th class="n">Precio x unidad</th>'+(conM2?'<th class="n">Precio x m²</th>':'')+
-           '<th class="n">Peso x unidad</th><th class="n">Unid. x pallet</th></tr>'))+
+           '<th class="n">Peso x unidad</th><th class="n">Unid. x pallet</th>'+(L.may?'<th class="n">Precio x pallet</th>':'')+'</tr>'))+
       '</thead><tbody>'+filas+'</tbody></table>'+
       '<div class="doc-obs"><b>Condiciones:</b> '+esc(L.cond)+'<br>'+
       'Precios sujetos a modificación sin previo aviso. Consultas y pedidos: '+esc(EMPRESA.tel)+' · '+esc(EMPRESA.email)+'</div>'+
@@ -27600,10 +27595,11 @@ function buildFilterTable(cfg){
          
          
         const det=[], det2=[];
-        if(L.may){ det.push('Reventa sugerida '+lpPlata(f.sugerido)+' x unidad'+(f.uxm2>0?(' · '+lpPlata(f.sugM2)+' x m²'):''));
+        const conSug = L.may && !L.sinSugerido;
+        if(conSug){ det.push('Reventa sugerida '+lpPlata(f.sugerido)+' x unidad'+(f.uxm2>0?(' · '+lpPlata(f.sugM2)+' x m²'):''));
           if(f.uxm2>0) det2.push('Costo x m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)'); }
-        else if(f.uxm2>0) det.push('m² '+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
-        const resto = L.may ? det2 : det;
+        else if(f.uxm2>0) det.push((L.may?'Costo x m² ':'m² ')+lpPlata(f.m2)+' ('+pct(f.uxm2)+' u/m²)');
+        const resto = conSug ? det2 : det;
         if(f.peso>0) resto.push(pct(f.peso)+' kg');
         if(f.ud>0) resto.push(nf(f.ud)+' u/pallet');
         const img=IMG_PRODUCTO[String(f.codigo||'').trim().toUpperCase()];
