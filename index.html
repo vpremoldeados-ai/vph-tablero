@@ -14786,6 +14786,8 @@ function buildFilterTable(cfg){
       '<button style="'+b+'" data-l="maySF100">Mayorista Contado — hasta 100 km</button>'+
       '<button style="'+b+'" data-l="mayFlete">Mayorista Facturado — con flete (puesto)</button>'+
       '<button style="'+b+'" data-l="maySFFlete">Mayorista Contado — con flete (puesto)</button>'+
+      '<button style="'+b+'" data-l="mayBA">Mayorista Facturado — puesto en Buenos Aires</button>'+
+      '<button style="'+b+'" data-l="maySFBA">Mayorista Contado — puesto en Buenos Aires</button>'+
       '<button style="'+b+'" data-l="min">Minorista</button>'+
       '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
     document.body.appendChild(ov);
@@ -19485,6 +19487,9 @@ function buildFilterTable(cfg){
   const COR_COL='vph_config', COR_DOC='crm_corralones', COR_KEY='vph_crm_corralones_v1';
   const COR_SEGUI_CONSULTA=3, COR_SEGUI_PRESENTADO=4, COR_MAX_SEGUI=3;
   const COR_CATALOGO='VPH_Catalogo_Mayorista_2026.pdf (Drive › 01 VENTAS › MAYORISTAS › CORDOBA)';
+  // Qué lista de precios recibe cada corralón: las dos de fábrica (Córdoba) o las puestas en Buenos Aires (26/11).
+  const COR_LISTAS=[['may','Facturado'],['maySF','Contado'],['mayBA','Bs. As. · Facturado'],['maySFBA','Bs. As. · Contado']];
+  const corPuestoBA=r=>/BA$/.test(String((r&&r.lista)||''));
   const COR_ESTADOS=[
     {k:'pendiente',    l:'Pendiente',     c:'#64748b'},
     {k:'falta-dato',   l:'Falta dato',    c:'#b45309'},
@@ -19538,10 +19543,12 @@ function buildFilterTable(cfg){
       return 'Hola, ¿cómo va? Les escribí hace unos días: soy '+f+' de VPH Premoldeados. ¿Me pasan el contacto de quien se encarga de los proveedores del corralón? Quiero presentarles nuestros productos 🙏';
     if(accion==='presentacion')
       return 'Hola'+(pila?' '+pila:'')+'! Soy '+f+' de VPH Premoldeados, fábrica de losetas cribadas, green blocks y topes de hormigón en Toledo, Córdoba.\n\n'+
-        'Me pasaron tu contacto como quien define los proveedores'+(emp?' de '+emp:'')+'. Te paso el catálogo y la lista de precios mayorista. Fabricamos y entregamos en 7 días hábiles.\n\n'+
+        'Me pasaron tu contacto como quien define los proveedores'+(emp?' de '+emp:'')+'. Te paso el catálogo y la lista de precios mayorista. '+
+        (corPuestoBA(r) ? 'Los precios son puestos en tu corralón: el flete ya está incluido.' : 'Fabricamos y entregamos en 7 días hábiles.')+'\n\n'+
         '¿Lo vemos? Cualquier consulta estoy acá 👌';
     if(accion==='seg-presentado')
-      return 'Hola'+(pila?' '+pila:'')+'! ¿Pudiste ver el catálogo y la lista de precios que te pasé? Si querés te armo una cotización por pallets para una primera prueba. Entregamos en 7 días hábiles 👌';
+      return 'Hola'+(pila?' '+pila:'')+'! ¿Pudiste ver el catálogo y la lista de precios que te pasé? Si querés te armo una cotización por pallets para una primera prueba. '+
+        (corPuestoBA(r) ? 'Va con el flete incluido, puesta en tu corralón 👌' : 'Entregamos en 7 días hábiles 👌');
     return '';
   }
   let CORW=[], corUnsub=null, corConfirm=null, corImg='', corFiltro='', corCargado=false;
@@ -19603,7 +19610,7 @@ function buildFilterTable(cfg){
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
         '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> manda el mensaje que pide hablar con quien define los proveedores. '+
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
-        '3) <b>📲 Presentación + lista</b> abre el chat con ese contacto y deja la <b>lista de precios copiada</b> (Ctrl+V y Enviar); el <b>catálogo</b> se adjunta a mano con el clip: <i>'+esc(COR_CATALOGO)+'</i>. '+
+        '3) <b>📲 Presentación + lista</b> abre el chat con ese contacto y deja <b>copiada la lista de la columna «Lista»</b> (Ctrl+V y Enviar; para Buenos Aires, las «Bs. As.», con el flete incluido); el <b>catálogo</b> se adjunta a mano con el clip: <i>'+esc(COR_CATALOGO)+'</i>. '+
         '4) Después aparece <b>🔁 Seguimiento</b> a los '+COR_SEGUI_PRESENTADO+' días hasta que acepte. En cada paso confirmá si el mensaje salió.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
@@ -19613,7 +19620,7 @@ function buildFilterTable(cfg){
         '<span style="margin-left:auto;display:flex;gap:8px"><button class="cmp-btn" data-cor-agregar>+ Agregar</button></span>'+
       '</div>'+
       (corConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
-        (corConfirm.accion==='presentacion' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Lista copiada: pegala en el chat con Ctrl+V y adjuntá el catálogo (clip). </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la lista: sacala con el 📄 de Base de Datos. Adjuntá también el catálogo. </span>' : '<span style="color:#64748b">Copiando la lista… </span>') : '')+
+        (corConfirm.accion==='presentacion' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Lista '+(corPuestoBA(CORW[corConfirm.ci])?'puesta en Buenos Aires ':'')+'copiada: pegala en el chat con Ctrl+V y adjuntá el catálogo (clip). </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la lista: sacala con el 📄 de Base de Datos. Adjuntá también el catálogo. </span>' : '<span style="color:#64748b">Copiando la lista… </span>') : '')+
         '¿Salió el mensaje a <b>'+esc((CORW[corConfirm.ci]||{}).nombre||'')+'</b>? '+
         '<button class="cmp-btn" data-cor-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-cor-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> '+
@@ -19638,7 +19645,7 @@ function buildFilterTable(cfg){
         '<td><input data-cor-contacto="'+ci+'" value="'+esc(r.contacto||'')+'" placeholder="nombre" style="width:120px"><br><input data-cor-telc="'+ci+'" value="'+esc(r.telefonoContacto||'')+'" placeholder="teléfono" style="width:120px"></td>'+
         '<td data-sortval="'+esc(est.l)+'"><select data-cor-estado="'+ci+'" style="color:'+est.c+';font-weight:700">'+COR_ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===(r.estado||'pendiente')?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></td>'+
         '<td style="white-space:nowrap">'+btn+(sub?('<div style="font-size:10.5px;color:#64748b">'+esc(sub)+'</div>'):'')+'</td>'+
-        '<td><select data-cor-lista="'+ci+'"><option value="may"'+((r.lista||'may')==='may'?' selected':'')+'>Facturado</option><option value="maySF"'+(r.lista==='maySF'?' selected':'')+'>Contado</option></select></td>'+
+        '<td><select data-cor-lista="'+ci+'">'+COR_LISTAS.map(x=>'<option value="'+x[0]+'"'+(x[0]===(r.lista||'may')?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></td>'+
         '<td><input data-cor-nota="'+ci+'" value="'+esc(r.notas||'')+'" title="'+esc(r.notas||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;color:#475569"></td>'+
         '<td><button class="cmp-x" data-cor-borrar="'+ci+'" title="Sacar de la lista">✕</button></td>'+
       '</tr>';
@@ -19658,7 +19665,7 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-cor-contacto]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corContacto, r=>{ const n={...r, contacto:i.value.trim()};
       if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0; } return n; }); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-telc]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTelc, r=>({...r, telefonoContacto:i.value.trim()})); drawCorralones(); });
-    tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})));
+    tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nota]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNota, r=>({...r, notas:i.value})));
     tabla.querySelectorAll('[data-cor-borrar]').forEach(b=>b.onclick=()=>{
       const ci=+b.dataset.corBorrar, r=CORW[ci]; if(!r) return;
@@ -27285,8 +27292,24 @@ function buildFilterTable(cfg){
     mayFlete:  { campo:'precioMayorista',   nombre:'Mayorista con flete', may:1, lpTablero:'7 Mayorista Facturado con Flete',
                cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_FACT+' Compra mínima: 1 pallet. '+LP_COMUN },
     maySFFlete:{ campo:'precioMayoristaSF', nombre:'Mayorista Contado con flete', may:1, lpTablero:'8 Mayorista Sin Facturar con Flete',
-               cond:'Precios por unidad, PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Compra mínima: 1 pallet. '+LP_COMUN }
+               cond:'Precios por unidad, PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Compra mínima: 1 pallet. '+LP_COMUN },
+    // 26/11 (Marcelo): corralones de Buenos Aires — precio puesto allá. Lista de fábrica + el flete por pallet de
+    // Brío cargado en 🚛 Transportes, repartido en las unidades del pallet. Sin compra mínima ni plazo de entrega:
+    // con Brío todavía no están definidos y la lista no puede prometerlos.
+    mayBA:     { campo:'precioMayorista',   nombre:'Mayorista puesto en Buenos Aires', may:1, fleteTra:'brio',
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_FACT+' Pedidos por pallets enteros.' },
+    maySFBA:   { campo:'precioMayoristaSF', nombre:'Mayorista Contado puesto en Buenos Aires', may:1, fleteTra:'brio',
+               cond:'Precios por unidad, PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Pedidos por pallets enteros.' }
   };
+  // El flete por pallet de un transporte, de la base 🚛 Transportes: primero su fila fija (tra_<nombre>_interior)
+  // y si no está, la primera activa de ese transporte con precio por pallet. 0 = no hay tarifa.
+  function fleteDeTransporte(nombre){
+    const t=(window.__transportesTarifas?window.__transportesTarifas():[])||[];
+    const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const sirve=f=>f && f.activo!==false && Number(f.precioPallet)>0;
+    const fila=t.find(f=>sirve(f) && f._uid==='tra_'+nombre+'_interior') || t.find(f=>sirve(f) && norm(f.transporte).indexOf(nombre)>=0);
+    return fila ? Number(fila.precioPallet) : 0;
+  }
   // Los DATOS de una lista (qué productos entran y a qué precio), separados del papel. Los consumen
   // el PDF (listaPrecios) y la IMAGEN para WhatsApp (listaPreciosImagen, 02/10): es UNA sola cuenta,
   // así la imagen que se le manda al revendedor no puede decir un precio distinto del PDF.
@@ -27307,6 +27330,11 @@ function buildFilterTable(cfg){
     const flete100 = L.flete100 ? num(window.__param ? window.__param('fletePallet100',0) : 0) : 0;
     if(L.flete100 && !(flete100>0))
       return {error:'Falta cargar el "Flete por pallet hasta 100 km" en Base de Datos → ⚙️ Parámetros (es lo que cobra Expreso Biletta por pallet). Con ese dato cargado, esta lista se genera sola.'};
+    const fleteTra = L.fleteTra ? fleteDeTransporte(L.fleteTra) : 0;
+    if(L.fleteTra && !(fleteTra>0))
+      return {error:'No encontré la tarifa por pallet de Brío en 🚛 Transportes. Esperá unos segundos a que cargue; si sigue igual, cargá ahí el precio por pallet.'};
+    // Flete que va DENTRO del precio (parámetro de las listas de 100 km o tarifa del transporte).
+    const fletePal = flete100 || fleteTra;
     const margen = num(window.__param ? window.__param('margenSugerido',75) : 75);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
       .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
@@ -27321,7 +27349,7 @@ function buildFilterTable(cfg){
       .filter(p=>!(!L.may && FUERA_LISTA_MIN.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
       // Con flete incluido, un producto sin udPorPallet no tiene cómo repartir el flete por unidad:
       // mejor afuera de esa lista que con un precio inventado.
-      .filter(p=>!(L.flete100||L.lpTablero) || num(p.udPorPallet)>0)
+      .filter(p=>!(L.flete100||L.fleteTra||L.lpTablero) || num(p.udPorPallet)>0)
       // Ordena por el nombre IMPRESO (los topes renombrados quedan juntos igual). La lista MINORISTA
       // (18/11, pedido de Marcelo) va en el orden de la góndola: losetas, greens, cordón de confinamiento y
       // topes (trapecio 50, circular 50, trapecio 100, cuadrado 100); lo demás, alfabético al final.
@@ -27333,7 +27361,7 @@ function buildFilterTable(cfg){
     // Todo lo derivado se redondea al peso entero (regla de Marcelo para los precios publicados).
     const unit = p => { const base=num(p[L.campo]);
       if(L.lpTablero && window.__precioDeLista) return Math.round(window.__precioDeLista(p, L.lpTablero));
-      return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
+      return Math.round((L.flete100||L.fleteTra) ? base + fletePal/num(p.udPorPallet) : base); };
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
       // 02/11 (pedido de Marcelo): el revendedor ve DOS precios, cada uno por unidad Y por m² —
       // `pu`/`m2` = su precio de costo (lo que le cobra VPH) y `sugerido`/`sugM2` = la reventa

@@ -3825,17 +3825,26 @@ window.__pintarStockDisp = function(){
   tb.innerHTML = '<tr><th>Producto</th><th class="num">Disponible (u)</th><th class="num">Mínimo (u)</th><th class="num">Disponible (kg)</th><th class="num">En secado (u)</th><th class="num">Fabricar (kg)</th><th>Estado</th></tr>' +
     filas.map(f=>{
       const falta = f.estadoVenta==='falta', bajo = f.estadoVenta==='bajo';
+       
+       
+       
+       
+       
+       
+      const fisicoDer = (f.disponible||0)+(f.comprometido||0)+(f.enCurado||0);
+      const enSecMostrar = Math.min(f.enCurado||0, Math.max(0, fisicoDer));
+      const dispMostrar = (fisicoDer-enSecMostrar) - (f.comprometido||0);
       const lote = f.proxLote ? 'próximo lote '+dm(f.proxLote.fecha)+' ('+nf(f.proxLote.cantidad)+' u)' : '';
-      const badge = falta ? '<span class="badge red">FALTAN '+nf(-f.disponible)+' u</span>'
+      const badge = falta ? '<span class="badge red">FALTAN '+nf(-dispMostrar)+' u</span>'
                   : bajo  ? '<span class="badge amber">Bajo mínimo</span>'
                           : '<span class="badge green">OK</span>';
       const col = falta ? 'var(--red)' : (bajo ? 'var(--amber)' : 'var(--green)');
-      const dispTxt = falta ? 'Faltan '+nf(-f.disponible) : nf(f.disponible);
+      const dispTxt = falta ? 'Faltan '+nf(-dispMostrar) : nf(dispMostrar);
       return '<tr><td><b>'+_escA(f.codigo)+'</b> <span style="color:var(--muted)">'+_escA(f.nombre)+'</span></td>'+
         '<td class="num" style="color:'+col+';font-weight:800">'+dispTxt+'</td>'+
         '<td class="num">'+(f.minimo>0?nf(f.minimo):'—')+'</td>'+
         '<td class="num">'+nf(f.kgDisponible)+'</td>'+
-        '<td class="num">'+nf(f.enCurado)+'</td>'+
+        '<td class="num">'+nf(enSecMostrar)+'</td>'+
         '<td class="num" style="color:'+(f.kgReponer>0?'var(--red)':'var(--muted)')+';font-weight:'+(f.kgReponer>0?800:400)+'">'+(f.kgReponer>0?nf(f.kgReponer):'—')+'</td>'+
         '<td>'+badge+((falta||bajo)&&lote ? '<span style="display:block;font-size:11px;color:var(--muted)">'+_escA(lote)+'</span>' : '')+'</td></tr>';
     }).join('');
@@ -10620,7 +10629,7 @@ function buildFilterTable(cfg){
   function remove(uid){ if(window.__usaNube){ const cx=fb(); if(cx&&cx.db) cx.FS.deleteDoc(cx.FS.doc(cx.db,COL,uid)).catch(e=>alert('Error: '+e.message)); }
     else { DB.cheques=DB.cheques.filter(x=>x._uid!==uid); saveLocal(); render(); } }
    
-  function setEstado(c,estado){ const extra={estado}; if(estado==='cobrado'||estado==='rechazado') extra.fechaMov=hoyISO; persist({...c, ...extra}); }
+  function setEstado(c,estado){ const extra={estado}; if(estado==='cobrado'||estado==='rechazado'){ extra.fechaMov=hoyISO; extra.movTs=new Date().toISOString(); } persist({...c, ...extra}); }
 
    
    
@@ -11176,6 +11185,7 @@ function buildFilterTable(cfg){
        
       echeq: (ex.echeq===undefined ? true : !!ex.echeq),
       cuenta:(ex.cuenta||''),    
+      movTs:(ex.movTs||''),    
       fechaMov:(ex.fechaMov||''),    
                                      
       monto:num(p.monto), estado, nota:(p.refNro?((kind==='pag'?'Pago de la compra ':'Cobro de la venta ')+p.refNro):(kind==='pag'?'Generado desde un pago de Compras':'Generado desde un cobro de Ventas')) };
@@ -11534,6 +11544,10 @@ function buildFilterTable(cfg){
     const M=[];
      
      
+    const _an0=ancla(), _anMs=(_an0 && String(_an0.fecha||'').slice(0,10)===desde && _an0.ts)?new Date(_an0.ts).getTime():NaN;
+    const _despues=(id)=>{ if(!(_anMs>0)) return false; const m=/^(?:cob_|pag_)?[a-z]([0-9a-z]{8})/.exec(String(id||'')); if(!m) return false; const ms=parseInt(m[1],36); return ms>1e12 && ms>_anMs; };
+     
+     
      
     ventas.forEach(v=>{ (v.cobros||[]).forEach(c=>{ if(esCheque(c.medio) || (window.__esAdministrativo && window.__esAdministrativo(c.medio)) || (window.__esRetencion && window.__esRetencion(c.medio)) || (window.__esCompensacionCobro && window.__esCompensacionCobro(c.medio))) return;
        
@@ -11545,7 +11559,7 @@ function buildFilterTable(cfg){
         if(fa && fa>desde && fa<=hoyISO && neto>0) M.push({fecha:fa, signo:1, monto:neto, concepto:'Acreditación '+(c.medio||'plataforma')+' · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''});
         return; }
       const f=String(c.fecha||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
+      if(f && (f>desde || (f===desde && _despues(c.id))) && f<=hoyISO && num(c.monto)>0) M.push({fecha:f, signo:1, monto:num(c.monto), concepto:'Cobro · '+(v.cliente||'—'), tipo:'cobro', cuenta:c.cuenta||''}); }); });
      
      
     compras.forEach(c=>{ (c.pagos||[]).forEach(p=>{ if(esCheque(p.medio) || (window.__esAdministrativo && window.__esAdministrativo(p.medio)) || (window.__esRetencion && window.__esRetencion(p.medio))) return;
@@ -11560,12 +11574,12 @@ function buildFilterTable(cfg){
           if(fd && fd>desde && fd<=hoyISO && num(dd.monto)>0) M.push({fecha:fd, signo:-1, monto:num(dd.monto), concepto:'Débito VISA · '+(c.proveedor||'—'), tipo:'pago', cuenta:dd.cuenta||p.cuenta||''}); });
         return; }
       const f=String(p.fecha||'').slice(0,10);
-      if(f && f>desde && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
+      if(f && (f>desde || (f===desde && _despues(p.id))) && f<=hoyISO && num(p.monto)>0) M.push({fecha:f, signo:-1, monto:num(p.monto), concepto:'Pago · '+(c.proveedor||'—'), tipo:'pago', cuenta:p.cuenta||''}); }); });
     cheques.forEach(c=>{ if(c.estado!=='cobrado') return; const f=String(c.fechaMov||c.fechaVencimiento||'').slice(0,10);
        
        
        
-      if(f && f>desde && f<=hoyISO){ const propio=c.tipo==='emitido'; const sg=propio?-1:1;
+      if(f && (f>desde || (f===desde && _anMs>0 && c.movTs && new Date(c.movTs).getTime()>_anMs)) && f<=hoyISO){ const propio=c.tipo==='emitido'; const sg=propio?-1:1;
         M.push({fecha:f, signo:sg, monto:num(c.monto), concepto:(propio?'Cheque pagado · ':'Cheque cobrado · ')+(c.entidad||'—'), tipo:'cheque', cuenta:c.cuenta||(propio?chequera():'')}); } });
      
      
@@ -15150,6 +15164,8 @@ function buildFilterTable(cfg){
       '<button style="'+b+'" data-l="maySF100">Mayorista Contado — hasta 100 km</button>'+
       '<button style="'+b+'" data-l="mayFlete">Mayorista Facturado — con flete (puesto)</button>'+
       '<button style="'+b+'" data-l="maySFFlete">Mayorista Contado — con flete (puesto)</button>'+
+      '<button style="'+b+'" data-l="mayBA">Mayorista Facturado — puesto en Buenos Aires</button>'+
+      '<button style="'+b+'" data-l="maySFBA">Mayorista Contado — puesto en Buenos Aires</button>'+
       '<button style="'+b+'" data-l="min">Minorista</button>'+
       '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
     document.body.appendChild(ov);
@@ -19828,6 +19844,9 @@ function buildFilterTable(cfg){
   const COR_COL='vph_config', COR_DOC='crm_corralones', COR_KEY='vph_crm_corralones_v1';
   const COR_SEGUI_CONSULTA=3, COR_SEGUI_PRESENTADO=4, COR_MAX_SEGUI=3;
   const COR_CATALOGO='VPH_Catalogo_Mayorista_2026.pdf (Drive › 01 VENTAS › MAYORISTAS › CORDOBA)';
+   
+  const COR_LISTAS=[['may','Facturado'],['maySF','Contado'],['mayBA','Bs. As. · Facturado'],['maySFBA','Bs. As. · Contado']];
+  const corPuestoBA=r=>/BA$/.test(String((r&&r.lista)||''));
   const COR_ESTADOS=[
     {k:'pendiente',    l:'Pendiente',     c:'#64748b'},
     {k:'falta-dato',   l:'Falta dato',    c:'#b45309'},
@@ -19881,10 +19900,12 @@ function buildFilterTable(cfg){
       return 'Hola, ¿cómo va? Les escribí hace unos días: soy '+f+' de VPH Premoldeados. ¿Me pasan el contacto de quien se encarga de los proveedores del corralón? Quiero presentarles nuestros productos 🙏';
     if(accion==='presentacion')
       return 'Hola'+(pila?' '+pila:'')+'! Soy '+f+' de VPH Premoldeados, fábrica de losetas cribadas, green blocks y topes de hormigón en Toledo, Córdoba.\n\n'+
-        'Me pasaron tu contacto como quien define los proveedores'+(emp?' de '+emp:'')+'. Te paso el catálogo y la lista de precios mayorista. Fabricamos y entregamos en 7 días hábiles.\n\n'+
+        'Me pasaron tu contacto como quien define los proveedores'+(emp?' de '+emp:'')+'. Te paso el catálogo y la lista de precios mayorista. '+
+        (corPuestoBA(r) ? 'Los precios son puestos en tu corralón: el flete ya está incluido.' : 'Fabricamos y entregamos en 7 días hábiles.')+'\n\n'+
         '¿Lo vemos? Cualquier consulta estoy acá 👌';
     if(accion==='seg-presentado')
-      return 'Hola'+(pila?' '+pila:'')+'! ¿Pudiste ver el catálogo y la lista de precios que te pasé? Si querés te armo una cotización por pallets para una primera prueba. Entregamos en 7 días hábiles 👌';
+      return 'Hola'+(pila?' '+pila:'')+'! ¿Pudiste ver el catálogo y la lista de precios que te pasé? Si querés te armo una cotización por pallets para una primera prueba. '+
+        (corPuestoBA(r) ? 'Va con el flete incluido, puesta en tu corralón 👌' : 'Entregamos en 7 días hábiles 👌');
     return '';
   }
   let CORW=[], corUnsub=null, corConfirm=null, corImg='', corFiltro='', corCargado=false;
@@ -19946,7 +19967,7 @@ function buildFilterTable(cfg){
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
         '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> manda el mensaje que pide hablar con quien define los proveedores. '+
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
-        '3) <b>📲 Presentación + lista</b> abre el chat con ese contacto y deja la <b>lista de precios copiada</b> (Ctrl+V y Enviar); el <b>catálogo</b> se adjunta a mano con el clip: <i>'+esc(COR_CATALOGO)+'</i>. '+
+        '3) <b>📲 Presentación + lista</b> abre el chat con ese contacto y deja <b>copiada la lista de la columna «Lista»</b> (Ctrl+V y Enviar; para Buenos Aires, las «Bs. As.», con el flete incluido); el <b>catálogo</b> se adjunta a mano con el clip: <i>'+esc(COR_CATALOGO)+'</i>. '+
         '4) Después aparece <b>🔁 Seguimiento</b> a los '+COR_SEGUI_PRESENTADO+' días hasta que acepte. En cada paso confirmá si el mensaje salió.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
@@ -19956,7 +19977,7 @@ function buildFilterTable(cfg){
         '<span style="margin-left:auto;display:flex;gap:8px"><button class="cmp-btn" data-cor-agregar>+ Agregar</button></span>'+
       '</div>'+
       (corConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
-        (corConfirm.accion==='presentacion' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Lista copiada: pegala en el chat con Ctrl+V y adjuntá el catálogo (clip). </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la lista: sacala con el 📄 de Base de Datos. Adjuntá también el catálogo. </span>' : '<span style="color:#64748b">Copiando la lista… </span>') : '')+
+        (corConfirm.accion==='presentacion' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Lista '+(corPuestoBA(CORW[corConfirm.ci])?'puesta en Buenos Aires ':'')+'copiada: pegala en el chat con Ctrl+V y adjuntá el catálogo (clip). </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la lista: sacala con el 📄 de Base de Datos. Adjuntá también el catálogo. </span>' : '<span style="color:#64748b">Copiando la lista… </span>') : '')+
         '¿Salió el mensaje a <b>'+esc((CORW[corConfirm.ci]||{}).nombre||'')+'</b>? '+
         '<button class="cmp-btn" data-cor-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-cor-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> '+
@@ -19981,7 +20002,7 @@ function buildFilterTable(cfg){
         '<td><input data-cor-contacto="'+ci+'" value="'+esc(r.contacto||'')+'" placeholder="nombre" style="width:120px"><br><input data-cor-telc="'+ci+'" value="'+esc(r.telefonoContacto||'')+'" placeholder="teléfono" style="width:120px"></td>'+
         '<td data-sortval="'+esc(est.l)+'"><select data-cor-estado="'+ci+'" style="color:'+est.c+';font-weight:700">'+COR_ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===(r.estado||'pendiente')?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></td>'+
         '<td style="white-space:nowrap">'+btn+(sub?('<div style="font-size:10.5px;color:#64748b">'+esc(sub)+'</div>'):'')+'</td>'+
-        '<td><select data-cor-lista="'+ci+'"><option value="may"'+((r.lista||'may')==='may'?' selected':'')+'>Facturado</option><option value="maySF"'+(r.lista==='maySF'?' selected':'')+'>Contado</option></select></td>'+
+        '<td><select data-cor-lista="'+ci+'">'+COR_LISTAS.map(x=>'<option value="'+x[0]+'"'+(x[0]===(r.lista||'may')?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></td>'+
         '<td><input data-cor-nota="'+ci+'" value="'+esc(r.notas||'')+'" title="'+esc(r.notas||'')+'" style="width:100%;min-width:140px;border:0;background:transparent;color:#475569"></td>'+
         '<td><button class="cmp-x" data-cor-borrar="'+ci+'" title="Sacar de la lista">✕</button></td>'+
       '</tr>';
@@ -20001,7 +20022,7 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-cor-contacto]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corContacto, r=>{ const n={...r, contacto:i.value.trim()};
       if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0; } return n; }); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-telc]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTelc, r=>({...r, telefonoContacto:i.value.trim()})); drawCorralones(); });
-    tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})));
+    tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nota]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNota, r=>({...r, notas:i.value})));
     tabla.querySelectorAll('[data-cor-borrar]').forEach(b=>b.onclick=()=>{
       const ci=+b.dataset.corBorrar, r=CORW[ci]; if(!r) return;
@@ -22715,8 +22736,16 @@ function buildFilterTable(cfg){
        
        
       const faltaFab = v ? Math.max(0, num(v.reponer)) : Math.max(0, -num(s.dispReal)), dispVend = v ? Math.max(0, num(v.disponible)) : Math.max(0, num(s.disponible));
-      const secVend = Math.min(num(s.enCurado), Math.max(0, num(s.comprometido) - num(s.curado)));
-      const cur = s.enCurado>0 ? nf(s.enCurado)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
+       
+       
+       
+       
+       
+       
+       
+      const enSecMostrar = Math.min(num(s.enCurado), Math.max(0, s.fisico));
+      const secVend = Math.min(enSecMostrar, Math.max(0, num(s.comprometido) - (s.fisico-enSecMostrar)));
+      const cur = enSecMostrar>0 ? nf(enSecMostrar)+(s.lotes[0]?'<div class="pe-cur-desde" style="font-size:10px;color:var(--muted)">desde '+fmtF(s.lotes[0].el)+'</div>':'') : '0';
       html+='<tr><td class="pe-col-cod" data-label="Código">'+esc(p.codigo||'')+'</td>'+
          
          
@@ -24573,7 +24602,7 @@ function buildFilterTable(cfg){
       '<td data-label="" class="pe-col-acc">'+(pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="entregar" data-id="'+esc(pe._uid)+'">✓ Entregado</button>':'')+
         '<button class="cmp-rowbtn" data-pact="remito" data-id="'+esc(pe._uid)+'" title="Imprimir remito">🖨️ Remito</button>'+
         '<button class="cmp-rowbtn" data-pact="wa" data-id="'+esc(pe._uid)+'" title="Mensajes de WhatsApp">📲</button>'+
-        (pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="partir" data-id="'+esc(pe._uid)+'" title="Partir en 2 viajes">✂️ Partir</button>':'')+
+        (pe.estado!=='entregado'?'<button class="cmp-rowbtn" data-pact="partir" data-id="'+esc(pe._uid)+'" title="Armar el primer envío por pallets; el resto queda pendiente">✂️ Partir</button>':'')+
         (pe.estado!=='entregado'&&pedidosUnibles(pe).length?'<button class="cmp-rowbtn" data-pact="unir" data-id="'+esc(pe._uid)+'" title="Unirle otro pedido del mismo cliente: un solo viaje y un solo remito">➕ Unir</button>':'')+
         '<button class="cmp-rowbtn" data-pact="edit" data-id="'+esc(pe._uid)+'">Editar</button>'+
         (esAdmin()?'<button class="cmp-rowbtn" data-pact="del" data-id="'+esc(pe._uid)+'">✕</button>':'')+'</td></tr>'; });
@@ -24814,64 +24843,155 @@ function buildFilterTable(cfg){
   function delPed(uid){ const c=fb(); if(c&&c.db) c.FS.deleteDoc(c.FS.doc(c.db,'vph_pedidos',uid)).catch(e=>alert('Error: '+e.message)); }
   
 
+  
+
+  function unidadesDePallets(tandas, n){
+    const t=(tandas||[]).slice().sort((a,b)=>b-a);
+    n=Math.max(0,Math.min(t.length,Math.round(num(n))));
+    return t.slice(0,n).reduce((a,u)=>a+u,0);
+  }
+  
+
+  function viajesParaPartir(pe){
+    const g={};
+    pedidos.forEach(p=>{
+      if(!p || p.estado==='entregado' || p._uid===pe._uid) return;
+      const f=fechaDeDia(p.diaEntrega); if(!f) return;
+      const tr=String(p.transporte||'').trim()||'Sin asignar', nv=p.numeroViaje||1;
+      const dia=fmtF(f), k=dia+'||'+tr+'||'+nv;
+      g[k]=g[k]||{ dia, f, tr, nv, diaTxt:String(p.diaEntrega||'').trim(), pallets:0, clientes:[] };
+      g[k].pallets+=totCarga(p).pallets;
+      if(p.cliente && g[k].clientes.indexOf(p.cliente)<0) g[k].clientes.push(p.cliente);
+    });
+    return Object.keys(g).map(k=>g[k]).sort((a,b)=> a.f-b.f || String(a.tr).localeCompare(String(b.tr)) || a.nv-b.nv);
+  }
+  
+
+  function repartirPedido(pe, rows, salen){
+    const restoItems=[], planResto={};
+    rows.forEach((r,i)=>{
+      const sale=Math.max(0,Math.min(r.cant,Math.round(num(salen[i])))), resto=r.cant-sale;
+      if(resto<=0) return;
+      restoItems.push({ producto:r.it.producto||'', codigo:r.it.codigo||'', cantidad:resto });
+      r.it.cantidad = sale;
+      if(pe.plan && pe.plan[r.key]){
+         
+         
+        const t=pe.plan[r.key].map(x=>Math.round(num(x))).sort((a,b)=>b-a);
+        let n=0, suma=0; while(n<t.length && suma<sale){ suma+=t[n]; n++; }
+        const unico=rows.filter(x=>x.key===r.key).length===1;
+        if(unico && suma===sale && t.reduce((a,u)=>a+u,0)===r.cant){
+          planResto[r.key]=t.slice(n);
+          if(n>0) pe.plan[r.key]=t.slice(0,n); else delete pe.plan[r.key];
+        } else delete pe.plan[r.key];
+      }
+    });
+    pe.items = (pe.items||[]).filter(it=> it && num(it.cantidad)>0);
+    pe.mixtos = [];    
+    const resto = Object.assign(blankPed(), {
+      cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
+      fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, sinGrua:!!pe.sinGrua, nota:pe.nota||'',
+      items:restoItems, plan:planResto, estado:'pendiente'
+    });
+    if(pe.ventaUids) resto.ventaUids=pe.ventaUids.slice();
+    ['transporteFinal','pagoEnvio','contactoEntrega','despachoListo'].forEach(k=>{ if(pe[k]!==undefined) resto[k]=pe[k]; });
+    return resto;
+  }
   function abrirPartirPedido(pe){
     const rows=filasParaPartir(pe);
     if(rows.length<1){ alert('Este pedido no tiene productos para partir (¿es solo un servicio/flete?).'); return; }
     const totPal=rows.reduce((a,r)=>a+r.pallets,0);
+    const viajes=viajesParaPartir(pe);
     let ov=document.getElementById('pe-partir-modal');
     if(!ov){ ov=document.createElement('div'); ov.id='pe-partir-modal';
       ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px';
       document.body.appendChild(ov); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); }); }
-    const fSug=fechaDeDia(pe.diaEntrega); const fechaSugerida=fSug?fmtF(addDiasHabiles(fSug,1)):'';
+    const fAct=fechaDeDia(pe.diaEntrega); const fechaActual=fAct?isoDeF(fAct):'';
+     
+    const iAct=fAct ? viajes.findIndex(v=>v.dia===fmtF(fAct) && v.tr===(pe.transporte||'Sin asignar') && v.nv===(pe.numeroViaje||1)) : -1;
+    const DIAS=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+    const opViaje=(v,i)=>{ const cap=capacidadDe(v.tr), libre=cap-v.pallets;
+      return '<option value="'+i+'"'+(i===iAct?' selected':'')+'>'+esc(DIAS[v.f.getDay()]+' '+v.dia+' · '+v.tr+' · '+v.pallets+(cap?' de '+cap:'')+' pal'+(cap?(libre>0?' (entran '+libre+')':' (completo)'):'')+' · '+v.clientes.join(', '))+'</option>'; };
+    const bPm='width:40px;height:36px;border:1px solid #ccc;background:#f3f4f6;border-radius:8px;font-size:20px;font-weight:800;cursor:pointer;color:#111';
+    const campo='width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box';
     ov.innerHTML='<div style="background:#fff;color:#111;border-radius:12px;padding:18px;width:min(560px,96vw);max-height:92vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.35);font-family:system-ui">'+
-      '<h3 style="margin:0 0 4px;font-size:15px">✂️ Partir pedido — '+esc(pe.cliente||'—')+'</h3>'+
-      '<div style="font-size:11.5px;color:#666;margin-bottom:10px">Elegí cuánto de cada producto va al 2do viaje. Lo que no muevas queda en este mismo pedido.</div>'+
-      '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><tr style="text-align:left;color:#666"><th>Producto</th><th style="text-align:right">Total</th><th style="text-align:right;width:110px">Al 2do viaje</th></tr>'+
-      rows.map((r,i)=>'<tr style="border-top:1px solid #eee"><td style="padding:4px 0">'+esc(r.nombre)+'</td>'+
-        '<td style="text-align:right">'+r.cant+'</td>'+
-        '<td style="text-align:right"><input type="number" min="0" max="'+r.cant+'" step="1" value="0" data-psp-mov="'+i+'" style="width:80px;text-align:right;padding:3px 6px;border:1px solid #ccc;border-radius:6px"></td></tr>').join('')+
-      '</table>'+
-      '<div id="pe-partir-resumen" style="margin-top:10px;font-size:12.5px;font-weight:700"></div>'+
-      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
-        '<div class="cmp-field" style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Fecha del 2do viaje</label><input id="pe-partir-fecha" value="'+esc(fechaSugerida)+'" placeholder="dd/mm/aa" style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:6px"></div>'+
-        '<div class="cmp-field" style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Transporte del 2do viaje</label><select id="pe-partir-transp" style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:6px">'+
+      '<h3 style="margin:0 0 4px;font-size:15px">✂️ Armar el primer envío — '+esc(pe.cliente||'—')+'</h3>'+
+      '<div style="font-size:11.5px;color:#666;margin-bottom:10px">Tocá + para elegir los pallets que salen ahora. El resto queda pendiente, sin fecha.</div>'+
+      rows.map((r,i)=>'<div style="border-top:1px solid #eee;padding:9px 0">'+
+        '<div style="font-size:13px;font-weight:700">'+esc(r.nombre)+' <span style="font-weight:400;color:#666">· '+r.cant+' u en '+r.pallets+' pallet'+(r.pallets!==1?'s':'')+'</span></div>'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">'+
+          '<button type="button" data-psp-menos="'+i+'" style="'+bPm+'">−</button>'+
+          '<span data-psp-pal="'+i+'" style="min-width:92px;text-align:center;font-weight:800;font-size:15px">0 pallets</span>'+
+          '<button type="button" data-psp-mas="'+i+'" style="'+bPm+'">+</button>'+
+          '<span style="font-size:11.5px;color:#666;margin-left:auto">o en unidades</span>'+
+          '<input type="number" min="0" max="'+r.cant+'" step="1" value="0" data-psp-mov="'+i+'" style="width:80px;text-align:right;padding:6px;border:1px solid #ccc;border-radius:6px">'+
+        '</div></div>').join('')+
+      '<div id="pe-partir-resumen" style="border-top:1px solid #eee;padding-top:10px;font-size:13px;font-weight:700"></div>'+
+      '<div style="margin-top:12px"><label style="font-size:11px;color:#666">¿En qué camión sale?</label><select id="pe-partir-viaje" style="'+campo+'">'+
+        '<option value="">🆕 Camión nuevo (elijo fecha y transporte)</option>'+viajes.map(opViaje).join('')+'</select></div>'+
+      '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Fecha de este envío</label><input type="date" id="pe-partir-fecha" value="'+esc(fechaActual)+'" style="'+campo+'"></div>'+
+        '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666">Transporte de este envío</label><select id="pe-partir-transp" style="'+campo+'">'+
           (window.__transportes?window.__transportes():['Sánchez']).map(t=>'<option'+(t===pe.transporte?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>'+
       '</div>'+
       '<div style="display:flex;gap:8px;margin-top:14px">'+
-        '<button id="pe-partir-ok" class="cmp-btn cmp-btn-primary">Partir pedido</button>'+
+        '<button id="pe-partir-ok" class="cmp-btn cmp-btn-primary">Armar envío</button>'+
         '<button id="pe-partir-x" class="cmp-btn">Cancelar</button>'+
       '</div></div>';
+    const q=s=>ov.querySelector(s);
+    const campoMov=i=>q('[data-psp-mov="'+i+'"]');
+    const movDe=i=>Math.max(0,Math.min(rows[i].cant,Math.round(num(campoMov(i).value))));
+    const palDe=i=>{ const m=movDe(i); if(m<=0) return 0; const r=rows[i];
+       
+      for(let n=1;n<=r.tandas.length;n++) if(unidadesDePallets(r.tandas,n)===m) return n;
+      return planStd(m, r.ud).length; };
+    const viajeElegido=()=>{ const v=q('#pe-partir-viaje').value; return v===''?null:viajes[+v]; };
     const resumen=()=>{
-      let pal1=0, pal2=0;
-      rows.forEach((r,i)=>{ const mov=Math.max(0,Math.min(r.cant,Math.round(num(ov.querySelector('[data-psp-mov="'+i+'"]').value))));
-        pal1+=planStd(r.cant-mov, r.ud).length; pal2+=mov>0?planStd(mov, r.ud).length:0; });
-      ov.querySelector('#pe-partir-resumen').textContent = 'Viaje 1 (este pedido): '+pal1+' pallet'+(pal1!==1?'s':'')+'  ·  Viaje 2 (nuevo pedido): '+pal2+' pallet'+(pal2!==1?'s':'')+' de '+totPal+' totales';
+      let salen=0, quedan=0;
+      rows.forEach((r,i)=>{ const mov=movDe(i), n=palDe(i);
+        salen+=n; quedan+=mov>=r.cant?0:(r.ud>0?planStd(r.cant-mov, r.ud).length:1);
+        q('[data-psp-pal="'+i+'"]').textContent=n+' pallet'+(n!==1?'s':''); });
+      const v=viajeElegido(), tr=q('#pe-partir-transp').value, cap=capacidadDe(v?v.tr:tr);
+      const lista=f=>rows.map((r,i)=>f(i)>0?f(i)+' '+(r.it.codigo||r.nombre):'').filter(Boolean).join(' · ');
+      const detalle=t=>t?' <span style="font-weight:400;color:#666">('+esc(t)+')</span>':'';
+      const camion=salen+(v?v.pallets:0);
+      q('#pe-partir-resumen').innerHTML='Sale en este envío: '+salen+' pallet'+(salen!==1?'s':'')+detalle(lista(movDe))+
+        '<br>Queda pendiente: '+quedan+' pallet'+(quedan!==1?'s':'')+detalle(lista(i=>rows[i].cant-movDe(i)))+
+        (cap && (v||salen) ? '<br><span style="color:'+(camion>cap?'#b91c1c':'#15803d')+'">El camión queda con '+camion+' de '+cap+' pallets'+(camion>cap?' — se pasa por '+(camion-cap):'')+'</span>' : '');
     };
-    ov.querySelectorAll('[data-psp-mov]').forEach(inp=> inp.oninput=resumen);
+    rows.forEach((r,i)=>{
+      const poner=n=>{ campoMov(i).value=unidadesDePallets(r.tandas,n); resumen(); };
+      q('[data-psp-mas="'+i+'"]').onclick=()=>poner(palDe(i)+1);
+      q('[data-psp-menos="'+i+'"]').onclick=()=>poner(palDe(i)-1);
+      campoMov(i).oninput=resumen;
+    });
+    q('#pe-partir-viaje').onchange=()=>{ const v=viajeElegido();
+      if(v){ q('#pe-partir-fecha').value=isoDeF(v.f); q('#pe-partir-transp').value=v.tr; }
+      resumen(); };
+     
+    q('#pe-partir-fecha').onchange=()=>{ q('#pe-partir-viaje').value=''; resumen(); };
+    q('#pe-partir-transp').onchange=()=>{ q('#pe-partir-viaje').value=''; resumen(); };
+    if(iAct>=0) q('#pe-partir-viaje').value=String(iAct);
     resumen();
-    ov.querySelector('#pe-partir-x').onclick=()=>ov.remove();
-    ov.querySelector('#pe-partir-ok').onclick=()=>{
-      const movs=rows.map((r,i)=> Math.max(0,Math.min(r.cant,Math.round(num(ov.querySelector('[data-psp-mov="'+i+'"]').value)))));
-      if(!movs.some(m=>m>0)){ alert('Poné una cantidad mayor a 0 en al menos un producto para partir el pedido.'); return; }
-      const fecha2=ov.querySelector('#pe-partir-fecha').value.trim();
-      if(!fecha2){ alert('Falta la fecha del 2do viaje.'); return; }
-      const transp2=ov.querySelector('#pe-partir-transp').value;
-      if(!confirm('Vas a crear un pedido nuevo para '+(pe.cliente||'—')+' con lo que muevas, fechado '+fecha2+' ('+transp2+'). El pedido original se queda con el resto. ¿Confirmar?')) return;
-      const nuevoItems=[];
-      rows.forEach((r,i)=>{ const mov=movs[i]; if(mov<=0) return;
-        nuevoItems.push({ producto:r.it.producto||'', codigo:r.it.codigo||'', cantidad:mov });
-        r.it.cantidad = r.cant - mov;
-        if(pe.plan) delete pe.plan[r.key];     
-      });
-      pe.items = (pe.items||[]).filter(it=> it && num(it.cantidad)>0);
-      pe.mixtos = [];    
+    q('#pe-partir-x').onclick=()=>ov.remove();
+    q('#pe-partir-ok').onclick=()=>{
+      const salen=rows.map((r,i)=>movDe(i));
+      if(!salen.some(m=>m>0)){ alert('Elegí al menos un pallet para este envío.'); return; }
+      if(rows.every((r,i)=>salen[i]>=r.cant)){ alert('Estás mandando todo el pedido. No hace falta partirlo: cambiale el día y el transportista en la fila.'); return; }
+      const iso=String(q('#pe-partir-fecha').value||'');
+      if(!iso){ alert('Falta la fecha de este envío.'); return; }
+      const v=viajeElegido();
+       
+      const dia=v ? v.diaTxt : (iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(2,4));
+      const transp=v ? v.tr : q('#pe-partir-transp').value;
+      const n=rows.reduce((a,r,i)=>a+palDe(i),0);
+      if(!confirm('Salen '+n+' pallet'+(n!==1?'s':'')+' de '+(pe.cliente||'—')+' el '+dia+' ('+transp+'). El resto queda pendiente, sin fecha. ¿Confirmar?')) return;
+      const resto=repartirPedido(pe, rows, salen);
+      pe.diaEntrega=dia; pe.transporte=transp;
+       
+      if(v){ pe.numeroViaje=v.nv; pe._diaPrevio=dia.trim(); pe._trPrevio=transp; }
       persistPed(pe);
-      const nuevo = Object.assign(blankPed(), {
-        cliente:pe.cliente, ventaUid:pe.ventaUid||'', direccion:pe.direccion||'', ciudad:pe.ciudad||'',
-        fechaRequerida:pe.fechaRequerida||'', puedeEsperar:!!pe.puedeEsperar, urgente:!!pe.urgente, sinGrua:!!pe.sinGrua, nota:pe.nota||'',
-        items:nuevoItems, diaEntrega:fecha2, transporte:transp2, estado:pe.estado==='programado'?'programado':'pendiente'
-      });
-      persistPed(nuevo);
+      persistPed(resto);
       ov.remove(); render();
     };
   }
@@ -24885,7 +25005,7 @@ function buildFilterTable(cfg){
       const key=keyDe(it.codigo,it.producto), j=occ[key]||0; occ[key]=j+1;
       const r=rows.find(x=>x.key===key && x.j===j);
       if(!r) return null;    
-      return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length };
+      return { it, key, j, nombre:r.nombre, cant:r.cant, ud:r.ud, pallets:r.pallets.length, tandas:r.pallets.slice() };
     }).filter(Boolean);
   }
   
@@ -27327,8 +27447,24 @@ function buildFilterTable(cfg){
     mayFlete:  { campo:'precioMayorista',   nombre:'Mayorista con flete', may:1, lpTablero:'7 Mayorista Facturado con Flete',
                cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_FACT+' Compra mínima: 1 pallet. '+LP_COMUN },
     maySFFlete:{ campo:'precioMayoristaSF', nombre:'Mayorista Contado con flete', may:1, lpTablero:'8 Mayorista Sin Facturar con Flete',
-               cond:'Precios por unidad, PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Compra mínima: 1 pallet. '+LP_COMUN }
+               cond:'Precios por unidad, PUESTOS en su depósito o corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Compra mínima: 1 pallet. '+LP_COMUN },
+     
+     
+     
+    mayBA:     { campo:'precioMayorista',   nombre:'Mayorista puesto en Buenos Aires', may:1, fleteTra:'brio',
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_FACT+' Pedidos por pallets enteros.' },
+    maySFBA:   { campo:'precioMayoristaSF', nombre:'Mayorista Contado puesto en Buenos Aires', may:1, fleteTra:'brio',
+               cond:'Precios por unidad, PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_CONT+' Pedidos por pallets enteros.' }
   };
+   
+   
+  function fleteDeTransporte(nombre){
+    const t=(window.__transportesTarifas?window.__transportesTarifas():[])||[];
+    const norm=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const sirve=f=>f && f.activo!==false && Number(f.precioPallet)>0;
+    const fila=t.find(f=>sirve(f) && f._uid==='tra_'+nombre+'_interior') || t.find(f=>sirve(f) && norm(f.transporte).indexOf(nombre)>=0);
+    return fila ? Number(fila.precioPallet) : 0;
+  }
    
    
    
@@ -27349,6 +27485,11 @@ function buildFilterTable(cfg){
     const flete100 = L.flete100 ? num(window.__param ? window.__param('fletePallet100',0) : 0) : 0;
     if(L.flete100 && !(flete100>0))
       return {error:'Falta cargar el "Flete por pallet hasta 100 km" en Base de Datos → ⚙️ Parámetros (es lo que cobra Expreso Biletta por pallet). Con ese dato cargado, esta lista se genera sola.'};
+    const fleteTra = L.fleteTra ? fleteDeTransporte(L.fleteTra) : 0;
+    if(L.fleteTra && !(fleteTra>0))
+      return {error:'No encontré la tarifa por pallet de Brío en 🚛 Transportes. Esperá unos segundos a que cargue; si sigue igual, cargá ahí el precio por pallet.'};
+     
+    const fletePal = flete100 || fleteTra;
     const margen = num(window.__param ? window.__param('margenSugerido',75) : 75);
     const prods=(window.__catalogoProductos?window.__catalogoProductos():[])
       .filter(p=>p.activo!==false && p.seVende!==false && num(p[L.campo])>0)
@@ -27363,7 +27504,7 @@ function buildFilterTable(cfg){
       .filter(p=>!(!L.may && FUERA_LISTA_MIN.indexOf(String(p.codigo||'').trim().toUpperCase())>=0))
        
        
-      .filter(p=>!(L.flete100||L.lpTablero) || num(p.udPorPallet)>0)
+      .filter(p=>!(L.flete100||L.fleteTra||L.lpTablero) || num(p.udPorPallet)>0)
        
        
        
@@ -27375,7 +27516,7 @@ function buildFilterTable(cfg){
      
     const unit = p => { const base=num(p[L.campo]);
       if(L.lpTablero && window.__precioDeLista) return Math.round(window.__precioDeLista(p, L.lpTablero));
-      return Math.round(L.flete100 ? base + flete100/num(p.udPorPallet) : base); };
+      return Math.round((L.flete100||L.fleteTra) ? base + fletePal/num(p.udPorPallet) : base); };
     const filas=prods.map(p=>{ const pu=unit(p); const uxm2=num(p.unidadesPorM2); const ud=num(p.udPorPallet);
        
        
