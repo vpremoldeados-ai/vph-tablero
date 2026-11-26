@@ -19959,6 +19959,13 @@ function buildFilterTable(cfg){
     });
     drawCorralones();
   }
+   
+   
+  function corWebUrl(v){
+    const t=String(v||'').trim();
+    if(/^https?:\/\/[^\s]+$/i.test(t)) return t;
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/[^\s]*)?$/i.test(t) ? 'https://'+t : '';
+  }
   function drawCorralones(){
     const cont=$('crm-cor-controles'), tabla=$('crm-cor-tabla'); if(!cont||!tabla) return;
     const n=k=>CORW.filter(r=>(r.estado||'pendiente')===k).length;
@@ -19996,8 +20003,11 @@ function buildFilterTable(cfg){
       else btn='<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+accion+'"'+(accion.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+etiqueta+'</button>';
       const sub=[r.ultimoMensajeFecha?('último '+fmt(r.ultimoMensajeFecha)):'', r.seguimientos?('seg. '+r.seguimientos):''].filter(Boolean).join(' · ');
       html+='<tr>'+
-        '<td class="cel-nombre"><input data-cor-nombre="'+ci+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
-          '<input data-cor-loc="'+ci+'" value="'+esc(r.localidad||'')+'" placeholder="localidad" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#64748b"></td>'+
+        '<td style="min-width:200px;max-width:260px"><input data-cor-nombre="'+ci+'" value="'+esc(r.nombre||'')+'" style="width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
+          '<input data-cor-loc="'+ci+'" value="'+esc(r.localidad||'')+'" placeholder="localidad" style="width:100%;border:0;background:transparent;font-size:10.5px;color:#64748b">'+
+          '<div style="display:flex;gap:6px;align-items:center">'+
+            (corWebUrl(r.web)?('<a href="'+esc(corWebUrl(r.web))+'" target="_blank" rel="noopener noreferrer" style="font-size:11px;font-weight:700;white-space:nowrap">🌐 Abrir</a>'):'')+
+            '<input data-cor-web="'+ci+'" value="'+esc(r.web||'')+'" placeholder="página web" style="flex:1;min-width:0;border:0;background:transparent;font-size:10.5px;color:#64748b"></div></td>'+
         '<td><input data-cor-tel="'+ci+'" value="'+esc(r.telefono||'')+'" placeholder="351..." style="width:110px"></td>'+
         '<td><input data-cor-contacto="'+ci+'" value="'+esc(r.contacto||'')+'" placeholder="nombre" style="width:120px"><br><input data-cor-telc="'+ci+'" value="'+esc(r.telefonoContacto||'')+'" placeholder="teléfono" style="width:120px"></td>'+
         '<td data-sortval="'+esc(est.l)+'"><select data-cor-estado="'+ci+'" style="color:'+est.c+';font-weight:700">'+COR_ESTADOS.map(x=>'<option value="'+x.k+'"'+(x.k===(r.estado||'pendiente')?' selected':'')+'>'+esc(x.l)+'</option>').join('')+'</select></td>'+
@@ -20018,6 +20028,7 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-cor-estado]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corEstado, r=>({...r, estado:s.value, estadoFecha:hoyISO, seguimientos:0, ultimoMensajeFecha:(s.value==='consultado'||s.value==='presentado')?(r.ultimoMensajeFecha||hoyISO):r.ultimoMensajeFecha})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nombre]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-cor-loc]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corLoc, r=>({...r, localidad:i.value.trim()})));
+    tabla.querySelectorAll('[data-cor-web]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corWeb, r=>({...r, web:i.value.trim()})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-tel]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTel, r=>({...r, telefono:i.value.trim(), estado:(r.estado==='falta-dato'&&i.value.trim()?'pendiente':r.estado)})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-contacto]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corContacto, r=>{ const n={...r, contacto:i.value.trim()};
       if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0; } return n; }); drawCorralones(); });
