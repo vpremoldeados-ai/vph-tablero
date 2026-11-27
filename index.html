@@ -14787,7 +14787,6 @@ function buildFilterTable(cfg){
       '<button style="'+b+'" data-l="mayFlete">Mayorista Facturado — con flete (puesto)</button>'+
       '<button style="'+b+'" data-l="maySFFlete">Mayorista Contado — con flete (puesto)</button>'+
       '<button style="'+b+'" data-l="mayBA">Mayorista Facturado — puesto en Buenos Aires</button>'+
-      '<button style="'+b+'" data-l="maySFBA">Mayorista Contado — puesto en Buenos Aires</button>'+
       '<button style="'+b+'" data-l="min">Minorista</button>'+
       '<button style="'+b+';text-align:center;background:#f1f5f9;border:0" data-l="">Cancelar</button></div>';
     document.body.appendChild(ov);
@@ -14878,7 +14877,7 @@ function buildFilterTable(cfg){
     // Lista de precios mayorista en PDF (Base de Datos → 📄). El flete de "hasta 100 km" lo cobra
     // Expreso Biletta y lo actualiza cuando quiere — por eso es un parámetro y no un número en el código.
     {g:'Lista de precios', k:'fletePallet100', l:'Flete por pallet hasta 100 km ($)', def:0, t:'num', hint:'Lo que cobra el transporte (Expreso Biletta) por pallet hasta 100 km de Córdoba Capital (ej. Santa Rosa de Calamuchita). La lista "Mayorista hasta 100 km" suma este flete dividido las unidades del pallet al precio de cada producto. En 0 esa lista NO se genera.'},
-    {g:'Lista de precios', k:'fletePalletBA', l:'Flete por pallet puesto en Buenos Aires ($, con IVA)', def:120000, t:'num', hint:'Va dentro del precio de las listas "puesto en Buenos Aires" (se reparte por las unidades de cada pallet). 120.000 cubre un camión de 18 pallets a $1.500.000 + IVA desde los 16 pallets. En 0 esas listas NO se generan.'},
+    {g:'Lista de precios', k:'fletePalletBA', l:'Flete por pallet puesto en Buenos Aires ($, con IVA)', def:120000, t:'num', hint:'Va dentro del precio de la lista "puesto en Buenos Aires" (se reparte por las unidades de cada pallet). 120.000 cubre un camión de 18 pallets a $1.500.000 + IVA desde los 16 pallets. En 0 esa lista NO se genera.'},
     {g:'Lista de precios', k:'margenSugerido', l:'Margen sugerido de reventa (%)', def:75, t:'num', hint:'La columna "Sugerido reventa" de las listas mayoristas en PDF: el precio de la lista más este porcentaje.'},
     {g:'Logística', k:'capSanchez', l:'Capacidad camión Sánchez (pallets)',              def:8,  t:'num', hint:'Cuántos pallets entran por viaje. Se usa en Producción y Logística → Coordinar entregas para saber cuánto lugar queda en cada camión.'},
     {g:'Logística', k:'capBrio',    l:'Capacidad camión Brío (pallets)',                 def:0,  t:'num', hint:'En 0 no se controla la capacidad de ese transporte (no muestra cuánto falta para llenarlo).'},
@@ -19488,8 +19487,9 @@ function buildFilterTable(cfg){
   const COR_COL='vph_config', COR_DOC='crm_corralones', COR_KEY='vph_crm_corralones_v1';
   const COR_SEGUI_CONSULTA=3, COR_SEGUI_PRESENTADO=4, COR_MAX_SEGUI=3;
   const COR_CATALOGO='VPH_Catalogo_Mayorista_2026.pdf (Drive › 01 VENTAS › MAYORISTAS › CORDOBA)';
-  // Qué lista de precios recibe cada corralón: las dos de fábrica (Córdoba) o las puestas en Buenos Aires (26/11).
-  const COR_LISTAS=[['may','Facturado'],['maySF','Contado'],['mayBA','Bs. As. · Facturado'],['maySFBA','Bs. As. · Contado']];
+  // Qué lista de precios recibe cada corralón: las dos de fábrica (Córdoba) o la puesta en Buenos Aires (26/11;
+  // desde el 27/11 solo facturada).
+  const COR_LISTAS=[['may','Facturado'],['maySF','Contado'],['mayBA','Bs. As. · Facturado']];
   const corPuestoBA=r=>/BA$/.test(String((r&&r.lista)||''));
   const COR_ESTADOS=[
     {k:'pendiente',    l:'Pendiente',     c:'#64748b'},
@@ -27313,10 +27313,9 @@ function buildFilterTable(cfg){
     // (param fletePalletBA: $120.000, pensado para camión de 18 pallets compartido entre pedidos), repartido en las
     // unidades del pallet. Sin reventa sugerida: el +75% quedaba muy arriba de lo que se publica allá.
     // Sin compra mínima ni plazo de entrega: todavía no están definidos y la lista no puede prometerlos.
+    // A Buenos Aires se vende SIEMPRE facturado (27/11, Marcelo): no hay versión contado sin factura.
     mayBA:     { campo:'precioMayorista',   nombre:'Mayorista puesto en Buenos Aires', may:1, fleteBA:1, sinSugerido:1,
-               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_FACT+' '+LP_CAMION },
-    maySFBA:   { campo:'precioMayoristaSF', nombre:'Mayorista Contado puesto en Buenos Aires', may:1, fleteBA:1, sinSugerido:1,
-               cond:'Precios por unidad, PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_CONT+' '+LP_CAMION }
+               cond:'Precios finales por unidad, IVA incluido (Factura A o B), PUESTOS en tu corralón: el flete ya está incluido. '+LP_PAGO_FACT+' '+LP_CAMION }
   };
   // Los DATOS de una lista (qué productos entran y a qué precio), separados del papel. Los consumen
   // el PDF (listaPrecios) y la IMAGEN para WhatsApp (listaPreciosImagen, 02/10): es UNA sola cuenta,
