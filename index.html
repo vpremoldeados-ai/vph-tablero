@@ -19539,9 +19539,9 @@ function buildFilterTable(cfg){
   }
   function corTexto(r, accion){
     const f=corFirma(), emp=corNombreSaludo(r&&r.nombre), pila=corPila(r);
-    // El primer mensaje es el texto que dictó Marcelo (26/11), tal cual: firma él, sin importar «Firmo como».
+    // El primer mensaje es el texto que dictó Marcelo (27/11), con la puntuación acomodada: firma él, sin importar «Firmo como».
     if(accion==='primero')
-      return 'Hola soy Marcelo de VPH Premoldeados (Ciudad de Córdoba), fabricamos losetas cribadas, green blocks y topes de hormigón.\n\n'+
+      return 'Hola, soy Marcelo de VASSALLO, Fábrica de Premoldeados de Hormigón (Ciudad de Córdoba). Fabricamos Pisos Drenantes con Diseño (losetas cribadas y green blocks) y, para playas de estacionamiento, topes de hormigón.\n\n'+
         '¿Con quién puedo hablar para presentarles nuestros productos? Busco a la persona que define los nuevos proveedores del corralón. ¡Gracias!';
     if(accion==='seg-consulta')
       return 'Hola, ¿cómo va? Les escribí hace unos días: soy '+f+' de VPH Premoldeados. ¿Me pasan el contacto de quien se encarga de los proveedores del corralón? Quiero presentarles nuestros productos 🙏';
@@ -19580,10 +19580,25 @@ function buildFilterTable(cfg){
       navigator.clipboard.write([new ClipboardItem({'image/png':x.png})]).then(()=>{ corImg='ok'; drawCorralones(); }).catch(()=>{ corImg='error'; drawCorralones(); });
     }catch(e){ corImg='error'; }
   }
+  // La imagen del primer mensaje (27/11, pedido de Marcelo) también va COPIADA: el link de WhatsApp no adjunta nada.
+  // Es la pieza para corralones «envíos a todo el país». Se pide al servidor cada vez por si se rehace con el mismo nombre.
+  const COR_IMG_PRIMERO='Corralones/presentacion.jpg';
+  function corCopiarImagen(src){
+    corImg='';
+    try{
+      if(typeof navigator==='undefined' || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem==='undefined'){ corImg='error'; return; }
+      const png=fetch(src,{cache:'no-cache'}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); })
+        .then(b=>createImageBitmap(b))
+        .then(bmp=>new Promise((ok,ko)=>{ const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height;
+          c.getContext('2d').drawImage(bmp,0,0); c.toBlob(x=> x?ok(x):ko(new Error('toBlob')), 'image/png'); }));
+      corImg='copiando';
+      navigator.clipboard.write([new ClipboardItem({'image/png':png})]).then(()=>{ corImg='ok'; drawCorralones(); }).catch(()=>{ corImg='error'; drawCorralones(); });
+    }catch(e){ corImg='error'; }
+  }
   function corAbrirChat(ci, accion){
     const r=CORW[ci]; if(!r) return false;
     const lk=topesWaLink(corTelDe(r, accion)); if(!lk) return false;
-    if(accion==='presentacion') corCopiarLista(r); else corImg='';
+    if(accion==='presentacion') corCopiarLista(r); else if(accion==='primero') corCopiarImagen(COR_IMG_PRIMERO); else corImg='';
     // Corralones abre SIEMPRE la app de WhatsApp de Windows (26/11): no sigue la casilla 🌐 del panel Mayoristas.
     const ch=mayChatUrl(lk, corTexto(r, accion), false);
     window.open(ch.url, '_blank');
@@ -19620,7 +19635,7 @@ function buildFilterTable(cfg){
     const seg=CORW.filter(corTocaSeguimiento).length;
     cont.innerHTML=
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
-        '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> abre la <b>app de WhatsApp de Windows</b> con el mensaje que pide hablar con quien define los proveedores. '+
+        '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> abre la <b>app de WhatsApp de Windows</b> con el mensaje que pide hablar con quien define los proveedores y deja <b>copiada la imagen</b> (<a href="'+COR_IMG_PRIMERO+'" target="_blank" rel="noopener">verla</a>): mandá el texto con Enter y después pegala con Ctrl+V. '+
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
         '3) <b>📲 Presentación + lista</b> abre el chat con ese contacto y deja <b>copiada la lista de la columna «Lista»</b> (Ctrl+V y Enviar); el <b>catálogo</b> se adjunta a mano con el clip: <i>'+esc(COR_CATALOGO)+'</i>. Para Buenos Aires va la lista «Bs. As.», con el flete incluido, y su propio catálogo: <i>'+esc(COR_CATALOGO_BA)+'</i>. '+
         '4) Después aparece <b>🔁 Seguimiento</b> a los '+COR_SEGUI_PRESENTADO+' días hasta que acepte. En cada paso confirmá si el mensaje salió.</div>'+
@@ -19633,7 +19648,8 @@ function buildFilterTable(cfg){
       '</div>'+
       (corConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
         (corConfirm.accion==='presentacion' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">📋 Lista '+(corPuestoBA(CORW[corConfirm.ci])?'puesta en Buenos Aires ':'')+'copiada: pegala en el chat con Ctrl+V y adjuntá el catálogo'+(corPuestoBA(CORW[corConfirm.ci])?' de Buenos Aires':'')+' (clip). </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la lista: sacala con el 📄 de Base de Datos. Adjuntá también el catálogo. </span>' : '<span style="color:#64748b">Copiando la lista… </span>') : '')+
-        '¿Salió el mensaje a <b>'+esc((CORW[corConfirm.ci]||{}).nombre||'')+'</b>? '+
+        (corConfirm.accion==='primero' ? (corImg==='ok' ? '<span style="color:#157a1d;font-weight:600">🖼️ Imagen copiada: mandá primero el texto (Enter) y después pegala con Ctrl+V y Enviar. </span>' : corImg==='error' ? '<span style="color:#b45309;font-weight:600">⚠️ No se pudo copiar la imagen: <a href="'+COR_IMG_PRIMERO+'" target="_blank" rel="noopener">abrila</a> y adjuntala a mano. </span>' : '<span style="color:#64748b">Copiando la imagen… </span>') : '')+
+        '¿Salió el mensaje a<b>'+esc((CORW[corConfirm.ci]||{}).nombre||'')+'</b>? '+
         '<button class="cmp-btn" data-cor-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
         '<button class="cmp-btn" data-cor-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> '+
         '<button class="cmp-btn" data-cor-no>✗ No salió</button></div>') : '');
