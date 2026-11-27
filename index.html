@@ -20755,13 +20755,19 @@ function buildFilterTable(cfg){
   }
 
   // 09/11: WATCHER AUTOMÁTICO del inbox de WhatsApp Web.
-  // Cada INBOX_MS (15 s) le pide a la extensión el listado de chats con mensajes no leídos en el aside de
-  // WhatsApp Web (sin abrir nada: la extensión solo mira el DOM de la lista, no marca como leído). Para
-  // cada nuevo, si trae teléfono (jid con @c.us o número en el nombre del contacto) o si el nombre matchea
-  // un cliente/lead del Tablero, llama al Worker a /wa-leer para que el agente genere la sugerencia.
+  // Cada INBOX_MS (15 s) le pide a la extensión el listado de chats ENTRANTES del aside de WhatsApp Web
+  // (sin abrir nada: la extensión solo mira el DOM de la lista, no marca como leído). Para cada nuevo, si
+  // trae teléfono (jid con @c.us o número en el nombre del contacto) o si el nombre matchea un
+  // cliente/lead del Tablero, llama al Worker a /wa-leer para que el agente genere la sugerencia.
   // Guarda en localStorage los (nombre+preview) ya procesados para no repetir.
   // 11/11: bajado de 30 a 15 s (Marcelo: "tarda mucho en aparecer el mensaje" — veía ~1 minuto). El Worker
   // tarda ~6-8 s en generar la sugerencia; la demora grande era la ESPERA del próximo ciclo.
+  // 27/11 (Marcelo: "que el Worker observe y registre todos los mensajes que ingresan"): hasta acá solo
+  // traía los chats con el GLOBITO de no leído — si Sofía abría el chat y lo leía sin contestar todavía,
+  // ese mensaje nunca se registraba. Ahora la extensión trae CUALQUIER chat cuyo último mensaje sea del
+  // cliente (leído o no); `unread` sigue viajando para que `resolverLeidosInbox` no confunda "ya lo vi"
+  // con "está sin leer". La primera corrida en cada PC se toma como línea de base (ver más abajo) para no
+  // disparar de una una sugerencia por cada chat viejo ya resuelto.
   const INBOX_MS=15000;
   const procesadosInbox=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_inbox_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
   // Se recuerda solo el ÚLTIMO mensaje visto de cada chat: si el cliente repite un texto más tarde ("Para autos"),
@@ -20812,6 +20818,9 @@ function buildFilterTable(cfg){
     const c=fb(); if(!c||!c.db) return;
     const noLeidos=new Set();
     chats.forEach(ch=>{
+      // 27/11: `chats` ahora trae TODOS los entrantes (leídos y no leídos, ver escanearInbox en la
+      // extensión) — para esta cuenta solo cuentan los que SIGUEN con el globito puesto.
+      if(!ch.unread) return;
       let tel=String(ch.tel||'').replace(/\D/g,'');
       if(!tel) tel=buscarTelPorNombre(ch.nombre||'');
       if(tel) noLeidos.add(tel);
@@ -20830,6 +20839,16 @@ function buildFilterTable(cfg){
     if(!r.ok||!Array.isArray(r.chats)) return;
     resolverLeidosInbox(r.chats);   // corre siempre, incluso con 0 no-leídos (ahí resuelve todo lo demás)
     if(!r.chats.length) return;
+    // 27/11: desde hoy `escanear-inbox` trae TODOS los entrantes, no solo los no leídos (así un mensaje
+    // que Sofía lee sin contestar todavía no se pierde). LA PRIMERA VEZ que esto corre en esta PC hay que
+    // tomarlo como LÍNEA DE BASE: marcar todo lo que YA está ahí como "conocido" sin avisarle al Worker,
+    // para no disparar de golpe una sugerencia por cada uno de los chats viejos ya resueltos. De ahí en
+    // más, cualquier mensaje realmente nuevo (texto distinto al último visto de ese contacto) sí dispara.
+    if(!localStorage.getItem('vph_wa_inbox_baseline_v1')){
+      r.chats.forEach(c=>{ const texto=String(c.preview||'').trim(); if(texto) recordarInbox((c.nombre||'')+'|'+texto); });
+      try{ localStorage.setItem('vph_wa_inbox_baseline_v1','1'); }catch(e){}
+      return;
+    }
     const url=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,'');
     const tk=String(window.__param?window.__param('waLenovoToken',''):'');
     if(!url||!tk) return;   // configuración incompleta: el watcher queda en silencio hasta que se cargue
