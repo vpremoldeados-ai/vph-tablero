@@ -19983,7 +19983,7 @@ function buildFilterTable(cfg){
       return hola+' ¿Cómo va? ¿Pudiste definir algo sobre el pedido? Cuando quieras te armo el primer envío 👌';
     return '';
   }
-  let CORW=[], corUnsub=null, corConfirm=null, corImg='', corFiltro='', corCargado=false;
+  let CORW=[], corUnsub=null, corUltimo=0, corImg='', corFiltro='', corCargado=false;
   function corLoadLocal(){ try{ const d=JSON.parse(localStorage.getItem(COR_KEY)); if(Array.isArray(d)) return d; }catch(e){} return []; }
   function corSave(list){ CORW=list.slice();
     if(window.__usaNube){ const c=fb(); if(c&&c.db) c.FS.setDoc(c.FS.doc(c.db,COR_COL,COR_DOC),{filas:CORW},{merge:true}).catch(e=>alert('Error al guardar: '+e.message)); else alert('Iniciá sesión.'); }
@@ -20035,22 +20035,29 @@ function buildFilterTable(cfg){
      
     const ch=mayChatUrl(lk, corTexto(r, accion), false);
     window.open(ch.url, '_blank');
-    corConfirm={ci, accion}; drawCorralones();
+     
+     
+    corUltimo=Date.now();
+    corUpd(ci, x=>({...x, sinConfirmar:{accion, fecha:hoyISO, ts:corUltimo}}));
+    drawCorralones();
     return true;
   }
    
    
-  function corConfirmar(salio, sinWa){
-    const cf=corConfirm; corConfirm=null; if(!cf){ drawCorralones(); return; }
-    if(!salio){
-      if(sinWa) corUpd(cf.ci, r=>({...r, estado:'falta-dato', notas:((r.notas?r.notas+' · ':'')+'sin WhatsApp '+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7))}));
-      drawCorralones(); return;
-    }
-    corUpd(cf.ci, r=>{
-      const n={...r, ultimoMensajeFecha:hoyISO, ultimoMensajePor:corFirma()};
-      if(cf.accion==='primero'){ n.estado='consultado'; n.primerContactoFecha=hoyISO; n.seguimientos=0; }
-      else if(cf.accion==='presentacion'){ n.estado='presentado'; n.presentadoFecha=hoyISO; n.catalogoFecha=''; n.seguimientos=0; }
-      else if(cf.accion==='catalogo'){ n.catalogoFecha=hoyISO; n.seguimientos=0; }
+   
+  function corConfirmar(ci, salio, sinWa){
+    const sc=(CORW[ci]||{}).sinConfirmar; if(!sc){ drawCorralones(); return; }
+    corUpd(ci, r=>{
+      const n={...r}; delete n.sinConfirmar;
+      if(!salio){
+        if(sinWa){ n.estado='falta-dato'; n.notas=(r.notas?r.notas+' · ':'')+'sin WhatsApp '+hoyISO.slice(8,10)+'/'+hoyISO.slice(5,7); }
+        return n;
+      }
+      const cuando=sc.fecha||hoyISO;
+      n.ultimoMensajeFecha=cuando; n.ultimoMensajePor=corFirma();
+      if(sc.accion==='primero'){ n.estado='consultado'; n.primerContactoFecha=cuando; n.seguimientos=0; }
+      else if(sc.accion==='presentacion'){ n.estado='presentado'; n.presentadoFecha=cuando; n.catalogoFecha=''; n.seguimientos=0; }
+      else if(sc.accion==='catalogo'){ n.catalogoFecha=cuando; n.seguimientos=0; }
       else n.seguimientos=(r.seguimientos||0)+1;
       return n;
     });
@@ -20087,27 +20094,24 @@ function buildFilterTable(cfg){
     const cont=$('crm-cor-controles'), tabla=$('crm-cor-tabla'); if(!cont||!tabla) return;
     const n=k=>CORW.filter(r=>(r.estado||'pendiente')===k).length;
     const seg=CORW.filter(corTocaSeguimiento).length;
+    const sinConf=CORW.filter(r=>r.sinConfirmar).length;
+    if(corFiltro==='sinconf' && !sinConf) corFiltro='';
     cont.innerHTML=
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
         '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> abre la <b>app de WhatsApp de Windows</b> con el mensaje que pide hablar con quien define los proveedores y deja <b>copiada la imagen</b> (<a href="'+COR_IMG_PRIMERO+'" target="_blank" rel="noopener">verla</a>): mandá el texto con Enter y después pegala con Ctrl+V. '+
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
         '3) <b>📲 Presentar al contacto</b> le escribe a esa persona y deja copiada la segunda imagen (<a href="'+COR_IMG_PROVEEDORES+'" target="_blank" rel="noopener">verla</a>). '+
         '4) <b>📎 Mandar catálogo</b>: se adjunta a mano con el clip. Córdoba: <i>'+esc(COR_CATALOGO)+'</i> (queda copiada además la lista de precios, que ese PDF no trae). Para Buenos Aires va su propio catálogo: <i>'+esc(COR_CATALOGO_BA)+'</i>. '+
-        '5) <b>🔁 Seguimiento</b>: si no contesta, a los '+COR_SEGUI_PRESENTADO+' días aparece solo (antes y después del catálogo) y sigue hasta que marques «Aceptó» o «Sin interés». La fila dice desde qué día. En cada paso confirmá si el mensaje salió.</div>'+
+        '5) <b>🔁 Seguimiento</b>: si no contesta, a los '+COR_SEGUI_PRESENTADO+' días aparece solo (antes y después del catálogo) y sigue hasta que marques «Aceptó» o «Sin interés». La fila dice desde qué día. En cada paso confirmá <b>en la misma fila</b> si el mensaje salió: mientras no lo hagas queda en amarillo.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
         COR_ESTADOS.map(e=>'<button class="filter-btn'+(corFiltro===e.k?' active':'')+'" data-cor-filtro="'+e.k+'">'+esc(e.l)+' ('+n(e.k)+')</button>').join('')+
         (seg?('<button class="filter-btn'+(corFiltro==='seguir'?' active':'')+'" data-cor-filtro="seguir" style="border-color:#d98324;color:#b45309;font-weight:700">🔁 Toca seguimiento ('+seg+')</button>'):'')+
+        (sinConf?('<button class="filter-btn'+(corFiltro==='sinconf'?' active':'')+'" data-cor-filtro="sinconf" style="border-color:#d97706;color:#92400e;font-weight:700">❓ Sin confirmar ('+sinConf+')</button>'):'')+
         (corFiltro?'<button class="filter-btn" data-cor-filtro="">✕ Todos</button>':'')+
         '<span style="margin-left:auto;display:flex;gap:8px"><button class="cmp-btn" data-cor-agregar>+ Agregar</button></span>'+
-      '</div>'+
-      (corConfirm ? ('<div style="margin-bottom:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;font-size:12.5px">'+
-        corAviso(CORW[corConfirm.ci], corConfirm.accion)+
-        '¿Salió el mensaje a <b>'+esc((CORW[corConfirm.ci]||{}).nombre||'')+'</b>? '+
-        '<button class="cmp-btn" data-cor-si style="background:#1e9e5a;color:#fff">✓ Lo mandé</button> '+
-        '<button class="cmp-btn" data-cor-sinwa title="El número no tiene WhatsApp: queda en Falta dato">📵 No tiene WhatsApp</button> '+
-        '<button class="cmp-btn" data-cor-no>✗ No salió</button></div>') : '');
-    const vista=CORW.map((r,ci)=>({r,ci})).filter(({r})=> !corFiltro || (corFiltro==='seguir' ? corTocaSeguimiento(r) : (r.estado||'pendiente')===corFiltro));
+      '</div>';
+    const vista=CORW.map((r,ci)=>({r,ci})).filter(({r})=> !corFiltro || (corFiltro==='seguir' ? corTocaSeguimiento(r) : corFiltro==='sinconf' ? !!r.sinConfirmar : (r.estado||'pendiente')===corFiltro));
     const ord=k=>({pendiente:1,consultado:2,'con-contacto':0,presentado:3,negociando:4,'falta-dato':5,acepto:6,'sin-interes':7})[k||'pendiente'];
     vista.sort((a,b)=>((corTocaSeguimiento(b.r)?1:0)-(corTocaSeguimiento(a.r)?1:0)) || (ord(a.r.estado)-ord(b.r.estado)) || String(a.r.nombre||'').localeCompare(String(b.r.nombre||''),'es'));
     const fmt=f=>f?(String(f).slice(8,10)+'/'+String(f).slice(5,7)):'';
@@ -20116,15 +20120,25 @@ function buildFilterTable(cfg){
       const est=corEstado(r.estado), accion=corAccionDe(r), tel=corTelDe(r, accion||'primero');
       const boton=a=>'<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+a+'"'+(a.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+
         ({primero:'📲 Presentarme',presentacion:'📲 Presentar al contacto',catalogo:'📎 Mandar catálogo'}[a]||'🔁 Seguimiento')+'</button>';
+      const sc=r.sinConfirmar;
       let btn;
-      if(!accion) btn='<span style="color:#94a3b8;font-size:11px">'+(est.k==='presentado'||est.k==='consultado'||est.k==='negociando'?'esperando respuesta':'—')+'</span>';
+      if(sc){
+        const que={primero:'el primer mensaje', presentacion:'el mensaje al contacto', catalogo:'el catálogo'}[sc.accion]||'el seguimiento';
+        const resp=(attr,texto,extra)=>'<button class="cmp-btn" '+attr+'="'+ci+'" style="padding:3px 7px;font-size:11px;'+(extra||'')+'">'+texto+'</button>';
+        btn='<div style="font-size:11.5px;font-weight:700;color:#92400e">¿Salió '+que+'?</div>'+
+          '<div style="display:flex;gap:4px;margin-top:3px">'+resp('data-cor-si','✓ Lo mandé','background:#1e9e5a;color:#fff')+resp('data-cor-no','✗ No salió')+'</div>'+
+          '<div style="margin-top:3px">'+resp('data-cor-sinwa','📵 No tiene WhatsApp')+'</div>'+
+          '<div style="font-size:10.5px;white-space:normal;max-width:190px;margin-top:3px;color:#64748b">'+
+            (sc.ts===corUltimo ? corAviso(r, sc.accion) : 'abierto el '+fmt(sc.fecha))+'</div>';
+      }
+      else if(!accion) btn='<span style="color:#94a3b8;font-size:11px">'+(est.k==='presentado'||est.k==='consultado'||est.k==='negociando'?'esperando respuesta':'—')+'</span>';
       else if(!topesWaLink(tel)) btn='<span style="color:#94a3b8;font-size:11px">'+(COR_AL_CONTACTO.indexOf(accion)>=0?'cargá el teléfono del contacto':'sin tel.')+'</span>';
        
       else btn=boton(accion)+(accion==='seg-contacto' ? '<div style="margin-top:4px">'+boton('catalogo')+'</div>' : '');
-      const prox=corProximoSeguimiento(r);
+      const prox=sc?'':corProximoSeguimiento(r);
       if(prox) btn+='<div style="font-size:10.5px;color:#b45309">🔁 reconsultar el '+fmt(prox)+'</div>';
       const sub=[r.catalogoFecha?('catálogo '+fmt(r.catalogoFecha)):'', r.ultimoMensajeFecha?('último '+fmt(r.ultimoMensajeFecha)):'', r.seguimientos?('seg. '+r.seguimientos):''].filter(Boolean).join(' · ');
-      html+='<tr>'+
+      html+='<tr'+(sc?' style="background:#fff4d6"':'')+'>'+
         '<td style="min-width:200px;max-width:260px"><input data-cor-nombre="'+ci+'" value="'+esc(r.nombre||'')+'" style="display:block;width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
           '<input data-cor-loc="'+ci+'" value="'+esc(r.localidad||'')+'" placeholder="localidad" style="display:block;width:100%;border:0;background:transparent;font-size:10.5px;color:#64748b">'+
           '<div style="display:flex;gap:6px;align-items:center">'+
@@ -20143,17 +20157,20 @@ function buildFilterTable(cfg){
     tabla.innerHTML=html+'</tbody>';
     cont.querySelectorAll('[data-cor-filtro]').forEach(b=>b.onclick=()=>{ corFiltro=b.dataset.corFiltro; drawCorralones(); });
     cont.querySelectorAll('[data-cor-agregar]').forEach(b=>b.onclick=()=>{ corSave([{nombre:'', localidad:'', telefono:'', contacto:'', telefonoContacto:'', lista:'may', estado:'pendiente', notas:''}].concat(CORW)); corFiltro=''; drawCorralones(); });
-    cont.querySelectorAll('[data-cor-si]').forEach(b=>b.onclick=()=>corConfirmar(true));
-    cont.querySelectorAll('[data-cor-no]').forEach(b=>b.onclick=()=>corConfirmar(false));
-    cont.querySelectorAll('[data-cor-sinwa]').forEach(b=>b.onclick=()=>corConfirmar(false,true));
+    tabla.querySelectorAll('[data-cor-si]').forEach(b=>b.onclick=()=>corConfirmar(+b.dataset.corSi, true));
+    tabla.querySelectorAll('[data-cor-no]').forEach(b=>b.onclick=()=>corConfirmar(+b.dataset.corNo, false));
+    tabla.querySelectorAll('[data-cor-sinwa]').forEach(b=>b.onclick=()=>corConfirmar(+b.dataset.corSinwa, false, true));
     tabla.querySelectorAll('[data-cor-chat]').forEach(b=>b.onclick=()=>corAbrirChat(+b.dataset.corChat, b.dataset.corAccion));
-    tabla.querySelectorAll('[data-cor-estado]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corEstado, r=>({...r, estado:s.value, estadoFecha:hoyISO, seguimientos:0, ultimoMensajeFecha:(s.value==='consultado'||s.value==='presentado'||s.value==='negociando')?(r.ultimoMensajeFecha||hoyISO):r.ultimoMensajeFecha})); drawCorralones(); });
+     
+    tabla.querySelectorAll('[data-cor-estado]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corEstado, r=>{ const n={...r, estado:s.value, estadoFecha:hoyISO, seguimientos:0, ultimoMensajeFecha:(s.value==='consultado'||s.value==='presentado'||s.value==='negociando')?(r.ultimoMensajeFecha||hoyISO):r.ultimoMensajeFecha}; delete n.sinConfirmar; return n; }); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nombre]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-cor-loc]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corLoc, r=>({...r, localidad:i.value.trim()})));
     tabla.querySelectorAll('[data-cor-web]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corWeb, r=>({...r, web:i.value.trim()})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-tel]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTel, r=>({...r, telefono:i.value.trim(), estado:(r.estado==='falta-dato'&&i.value.trim()?'pendiente':r.estado)})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-contacto]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corContacto, r=>{ const n={...r, contacto:i.value.trim()};
-      if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0; } return n; }); drawCorralones(); });
+      if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0;
+         
+        if(n.sinConfirmar){ n.ultimoMensajeFecha=n.sinConfirmar.fecha; delete n.sinConfirmar; } } return n; }); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-telc]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTelc, r=>({...r, telefonoContacto:i.value.trim()})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nota]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNota, r=>({...r, notas:i.value})));
