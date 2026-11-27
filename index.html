@@ -20832,9 +20832,65 @@ function buildFilterTable(cfg){
     }
     if(tareas.length) await Promise.all(tareas);
   }
-  let inboxReloj=null;
-  function arrancarWatcherInbox(){ if(inboxReloj) return; inboxReloj=setInterval(procesarInboxTick, INBOX_MS); procesarInboxTick(); }
-  function pararWatcherInbox(){ if(inboxReloj){ clearInterval(inboxReloj); inboxReloj=null; } }
+  // 27/11: WATCHER de lo que Sofía contesta A MANO desde WhatsApp Web, sin pasar por el Tablero. Hasta ahora
+  // esas respuestas quedaban invisibles del lado de web-lenovo: ni la memoria de la charla se enteraba (el
+  // agente volvía a sugerir como si ella no hubiera contestado) ni quedaban en la Bandeja — solo el canal
+  // 'cloud' (bot en servidor, con el eco oficial de /wa-manual) tenía esto. Mismo ciclo que el inbox (cada
+  // INBOX_MS): le pide a la extensión los chats cuyo ÚLTIMO mensaje salió de ESTE WhatsApp Web
+  // (escanear-propios, detectado por el ícono de estado ✓/✓✓/reloj que solo WhatsApp dibuja junto a un
+  // saliente) y los manda a /wa-manual, el MISMO endpoint que ya usa el canal 'cloud' para esto — no hizo
+  // falta tocar el Worker. Un eco de lo que el propio Worker mandó por /wa-enviado lo filtra /wa-manual del
+  // lado del servidor (claveEnviadoLen): acá no hace falta distinguirlo.
+  const procesadosPropios=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_propios_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
+  function recordarPropio(k){ const pre=k.slice(0,k.indexOf('|')+1); for(const x of Array.from(procesadosPropios)) if(x.startsWith(pre)) procesadosPropios.delete(x); procesadosPropios.add(k); try{ const arr=Array.from(procesadosPropios); localStorage.setItem('vph_wa_propios_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
+  const propiosPend=new Map();
+  window.addEventListener('message', ev=>{
+    const d=ev.data;
+    if(ev.source!==window||!d||d.vphWa!==1) return;
+    if(d.tipo==='resultado-propios'){ const p=propiosPend.get(d.id); if(!p) return; propiosPend.delete(d.id); clearTimeout(p.to); p.ok({ok:!!d.ok, chats:d.chats||[], error:d.error||''}); }
+  });
+  function pedirPropios(){
+    return new Promise((ok,err)=>{
+      const id='pr_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+      const to=setTimeout(()=>{ propiosPend.delete(id); err(new Error('timeout')); },10000);
+      propiosPend.set(id,{ok,err,to});
+      window.postMessage({vphWa:1, tipo:'escanear-propios', id},'*');
+    });
+  }
+  async function procesarPropiosTick(){
+    if(waCanalEnvio()!=='web-lenovo'||window.__waExtListo!==true) return;
+    let r; try{ r=await pedirPropios(); }catch(e){ return; }   // sin ruido si la extensión o WA Web no están
+    if(!r.ok||!Array.isArray(r.chats)||!r.chats.length) return;
+    const url=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,'');
+    const tk=String(window.__param?window.__param('waLenovoToken',''):'');
+    if(!url||!tk) return;   // configuración incompleta: el watcher queda en silencio hasta que se cargue
+    const tareas=[];
+    for(const c of r.chats){
+      const texto=String(c.preview||'').trim();
+      if(!texto) continue;
+      const clave=(c.nombre||'')+'|'+texto;
+      if(procesadosPropios.has(clave)) continue;
+      let tel=String(c.tel||'').replace(/\D/g,'');
+      if(!tel) tel=buscarTelPorNombre(c.nombre||'');
+      if(!tel) continue;   // sin teléfono no hay a quién anotarle el turno — no se inventa un número
+      recordarPropio(clave);
+      tareas.push(
+        fetch(url+'/wa-manual', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk}, body:JSON.stringify({to:tel, nombre:c.nombre||'', texto}) })
+          .then(res=>{ if(!res.ok) console.warn('[propios] /wa-manual respondió', res.status, 'para', c.nombre); })
+          .catch(e=>console.warn('[propios] no se pudo hablar con el Worker:', e&&e.message||e))
+      );
+    }
+    if(tareas.length) await Promise.all(tareas);
+  }
+  let inboxReloj=null, propiosReloj=null;
+  function arrancarWatcherInbox(){
+    if(!inboxReloj){ inboxReloj=setInterval(procesarInboxTick, INBOX_MS); procesarInboxTick(); }
+    if(!propiosReloj){ propiosReloj=setInterval(procesarPropiosTick, INBOX_MS); procesarPropiosTick(); }
+  }
+  function pararWatcherInbox(){
+    if(inboxReloj){ clearInterval(inboxReloj); inboxReloj=null; }
+    if(propiosReloj){ clearInterval(propiosReloj); propiosReloj=null; }
+  }
   window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>{ if(window.__waExtListo===true && waCanalEnvio()==='web-lenovo') arrancarWatcherInbox(); });
   window.__afterLogout=window.__afterLogout||[]; window.__afterLogout.push(pararWatcherInbox);
   window.addEventListener('vph-params', ()=>{ if(waCanalEnvio()==='web-lenovo' && window.__waExtListo===true) arrancarWatcherInbox(); else pararWatcherInbox(); });
