@@ -3302,7 +3302,10 @@ function _volHabil(d){
   const wd=d.getDay(); if(wd<1||wd>5) return false;
   try{ return !(window.__esFeriado && window.__esFeriado(_volIso(d))); }catch(e){ return true; }
 }
-// Pura: arma la semana de "hoy" y las 4 anteriores. Una semana con feriado tiene el objetivo proporcional.
+// Pura: arma la semana de "hoy" y las 4 anteriores. El objetivo es SIEMPRE el fijo de Parámetros
+// (27/11, pedido de Marcelo: independiente de los días hábiles) — un feriado no lo achica, exige
+// vender más en los días que quedan. `habiles`/`transcurridos` solo sirven para el RITMO ("a esta
+// altura"), nunca para el tamaño del objetivo.
 function volSemanaDatos(hoy, objMin, objMay, vol){
   const lunes=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()-((hoy.getDay()+6)%7));
   const hoyIso=_volIso(hoy);
@@ -3315,7 +3318,7 @@ function volSemanaDatos(hoy, objMin, objMay, vol){
       if(habil){ s.habiles++; if(iso<=hoyIso) s.transcurridos++; }
     }
     s.hasta=s.dias[6].fecha; s.total=s.min+s.may+s.sin;
-    s.objMin=objMin*s.habiles/5; s.objMay=objMay*s.habiles/5; s.obj=s.objMin+s.objMay;
+    s.objMin=objMin; s.objMay=objMay; s.obj=objMin+objMay;
     return s;
   };
   const actual=semana(lunes);
@@ -3362,13 +3365,16 @@ window.__pintarVolSemana = function(){
     const pct=p.obj>0?p.total/p.obj*100:0, col=pct>=100?'var(--green)':(pct>=70?'var(--amber)':'var(--red)');
     return '<tr><td>'+fc(p.desde)+' al '+fc(p.hasta)+'</td><td class="num">'+kg(p.min)+'</td><td class="num">'+kg(p.may)+'</td><td class="num">'+kg(p.total)+'</td><td class="num">'+pesos(p.neto)+'</td><td class="num" style="color:'+col+';font-weight:700">'+pct.toFixed(0)+'%</td></tr>';
   }).join('');
-  // Lo que va del mes, contra el objetivo semanal llevado a los días hábiles del mes.
+  // Lo que va del mes: objetivo FIJO = 4 semanas (27/11, pedido de Marcelo: independiente de los días
+  // hábiles del mes — nunca `diasHabilesMes`, que varía con feriados y con la cantidad de semanas del
+  // mes). `dh` se usa SOLO para el ritmo ("a esta altura"), no para el tamaño del objetivo.
   const per=_volIso(hoy).slice(0,7); let mMin=0,mMay=0,mNeto=0;
   Object.keys(vol).forEach(f=>{ if(f.slice(0,7)!==per) return; const v=vol[f]; mMin+=v.min||0; mMay+=v.may||0; mNeto+=(v.netoMin||0)+(v.netoMay||0)+(v.netoSin||0); });
-  const dh=diasHabilesMes(hoy), objMesMin=objMin*dh.tot/5, objMesMay=objMay*dh.tot/5, objMes=objMesMin+objMesMay;
+  const objMesMin=objMin*4, objMesMay=objMay*4, objMes=objMesMin+objMesMay;
+  const dh=diasHabilesMes(hoy);
   const fracMes = dh.tot>0 ? dh.tra/dh.tot : 0, restantesMes=Math.max(dh.tot-dh.tra,0);
   const esperadoMesMin=objMesMin*fracMes, esperadoMesMay=objMesMay*fracMes, esperadoMes=objMes*fracMes;
-  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+(s.habiles<5?' (semana con '+s.habiles+' días hábiles)':'')+' · objetivo del mes '+kg(objMes)+' ('+dh.tot+' días hábiles; se recalcula solo con los feriados cargados) · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
+  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+' · objetivo del mes '+kg(objMes)+' (4 semanas, fijo — no se achica con los feriados) · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
   const sinCanal=s.sin>0?'<div class="note" style="margin-top:0">'+kg(s.sin)+' de esta semana no son ni minoristas ni mayoristas (lista promedio o sin lista): suman solo en el total.</div>':'';
   cont.innerHTML=
     barra('Minorista',s.min,s.objMin,s.esperadoMin,s.restantes)+
