@@ -2192,6 +2192,14 @@ window.__demoSeed = function () {
     </div>
   </div>
 
+  
+  <div class="cmp-overlay" id="ddj-modal">
+    <div class="cmp-dialog" style="max-width:640px">
+      <div class="cmp-dialog-head"><h3 id="ddj-titulo">DDJJ de IVA</h3><button class="cmp-x" id="ddj-x">✕</button></div>
+      <div class="cmp-dialog-body" id="ddj-body"></div>
+    </div>
+  </div>
+
   <div class="page" id="page-igrevision">
     <div class="kpis" id="igr-kpis"></div>
     <section>
@@ -2942,6 +2950,16 @@ window.__demoSeed = function () {
       </div>
 
       <div class="kpis" id="liv-kpis-saldo" style="margin-bottom:14px"></div>
+      <div id="liv-ddjj-cotejo" style="font-size:13px;margin:-4px 0 14px;display:none"></div>
+
+      <h2 style="margin-top:8px"><span class="dot" style="background:var(--blue)"></span>DDJJ de IVA presentadas (F.2051)</h2>
+      <div class="asof">Subí la <b>DDJJ</b> y el <b>acuse de ARCA</b> (los dos PDF juntos, o también el VEP). Queda el registro, el saldo a favor pasa al mes siguiente y, si hay saldo a pagar, se agenda en Compras.</div>
+      <div style="display:flex;gap:12px;margin:10px 0;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary" id="liv-ddjj-btn" style="background:var(--blue)">📎 Cargar DDJJ y acuse</button>
+        <input type="file" id="liv-ddjj-file" accept="application/pdf,.pdf" multiple style="display:none">
+        <span id="liv-ddjj-estado" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <div class="tbl-wrap" style="margin-bottom:18px"><table id="liv-ddjj-tabla"></table></div>
 
       <div class="filter-bar" id="liv-tabs" style="margin-bottom:10px"></div>
       <div class="kpis" id="liv-kpis-tab" style="margin-bottom:12px"></div>
@@ -5301,6 +5319,35 @@ function buildFilterTable(cfg){
     c.sueEmpUid=o.empUid||'';
     persistCompra(c);
     return uid;
+  };
+
+   
+   
+   
+   
+   
+  const uidIvaDDJJ = periodo => 'ddjjiva_'+String(periodo||'').slice(0,7);
+  const catNoOper = ()=>{ const c=CATS.find(x=>!x.fijo&&!x.varb); return c?c.n:'NO OPERATIVAS'; };
+  window.__upsertCompraDDJJ = o=>{
+    o=o||{}; const uid=uidIvaDDJJ(o.periodo);
+    const prev=DB.compras.find(x=>x._uid===uid);
+    const c = prev ? {...prev} : blankCompra();
+    c._uid=uid; if(!prev) c.categoria=catNoOper();
+    c.tipoComprobante='Compra'; c.condIva='X'; c.proveedor='ARCA — IVA'; c.cuit=''; c.puntoVenta=''; c.nroFactura='';
+    c.fecha=o.fecha||hoyISO; c.periodo=String(c.fecha).slice(0,7); c.vencimiento=o.vencimiento||c.fecha;
+    c.items=[{ desc:o.detalle||'Saldo de IVA según DDJJ', codigo:'', cant:1, precioUnit:round2(num(o.monto)), descPct:0, iva:'nogravado' }];
+    c.descGeneral=0; c.percepIva=0; c.percepIibb=0; c.impInternos=0; c.intereses=0;
+    c.nota=o.nota||''; c.pagos=(prev&&prev.pagos)?prev.pagos.slice():[];
+    c.ddjjPeriodo=String(o.periodo||'').slice(0,7);
+    persistCompra(c);
+    return uid;
+  };
+   
+  window.__borrarCompraDDJJ = periodo=>{
+    const c=DB.compras.find(x=>x._uid===uidIvaDDJJ(periodo));
+    if(!c) return true;
+    if((c.pagos||[]).length) return false;
+    deleteCompra(c._uid); return true;
   };
 
    
@@ -8498,9 +8545,12 @@ function buildFilterTable(cfg){
     const ivaDeb = delMes.reduce((a,x)=>a+x.k.ivaDebito,0);
     const hayCred = typeof window.__ivaCreditoMes === 'function';
     const ivaCred = hayCred ? num(window.__ivaCreditoMes(mesAct)) : 0;
-    const saldoIva = round2(ivaDeb - ivaCred);
+     
+    const ddjjAnt = window.__ddjjSaldoAnterior ? window.__ddjjSaldoAnterior(mesAct) : null;
+    const favorAnt = ddjjAnt ? ddjjAnt.tecFavor : 0;
+    const saldoIva = round2(ivaDeb - ivaCred - favorAnt);
     const ivaSub = hayCred
-      ? ('Déb. '+money(ivaDeb)+' − Créd. '+money(ivaCred)+' · '+labelPeriodo(mesAct))
+      ? ('Déb. '+money(ivaDeb)+' − Créd. '+money(ivaCred)+(favorAnt?' − a favor ant. '+money(favorAnt):'')+' · '+labelPeriodo(mesAct))
       : ('IVA facturado a clientes · '+labelPeriodo(mesAct));
      
      
@@ -30556,6 +30606,341 @@ function buildFilterTable(cfg){
   const td=v=>'<td style="text-align:right">'+money(v)+'</td>';
   const tdB=v=>'<td style="text-align:right"><b>'+money(v)+'</b></td>';
 
+   
+   
+   
+  const CUIT_VPH_DDJJ='30000000000';
+  let DDJJ={};    
+  const DDJJ_KEY='vph_ddjj_iva_v1';
+  function periodoAnterior(p){ const a=+String(p).slice(0,4), m=+String(p).slice(5,7); return m===1 ? (a-1)+'-12' : a+'-'+String(m-1).padStart(2,'0'); }
+  function mesDDJJ(p){ return (MESES[+String(p).slice(5,7)-1]||'')+' '+String(p).slice(0,4); }
+
+   
+  function parseDDJJIVA(texto){
+    const T=String(texto||'').replace(/\s+/g,' ');
+    const monto=re=>{ const m=T.match(new RegExp(re+'\\s*\\$\\s*(-?[\\d.]+,\\d{2})','i')); return m?num(m[1]):null; };
+    const r={
+      periodo:'', secuencia:'', fechaPresentacion:'', nroTransaccion:'', md5:'',
+      debito:monto('Total del d[eé]bito fiscal del per[ií]odo'),
+      credito:monto('Total del cr[eé]dito fiscal del per[ií]odo'),
+      tecAnterior:monto('Saldo t[eé]cnico a favor del contribuyente del per[ií]odo anterior'),
+      tecFavor:monto('Saldo t[eé]cnico a favor del contribuyente(?! del)'),
+      tecARCA:monto('Saldo t[eé]cnico a favor de ARCA'),
+      ldAnterior:monto('libre disponibilidad del per[ií]odo anterior neto de usos'),
+      retPerc:monto('Total de retenciones, percepciones y pagos a cuenta neto de restituciones'),
+      ldPeriodo:monto('Saldo de libre disponibilidad a favor del contribuyente del per[ií]odo'),
+      aPagar:monto('Saldo del? impuesto a favor de ARCA'),
+      cuitOk:T.replace(/-/g,'').indexOf(CUIT_VPH_DDJJ)>=0
+    };
+    const mp=T.match(/Per[ií]odo\s+Secuencia\s+(20\d{2})(0[1-9]|1[0-2])\s+(Original|Rectificativa(?:\s*\d+)?)/i) ||
+             T.match(/Per[ií]odo\D{0,30}?(20\d{2})(0[1-9]|1[0-2])\b/i);
+    if(mp){ r.periodo=mp[1]+'-'+mp[2]; r.secuencia=mp[3]||''; }
+    const mf=T.match(/Fecha de Presentaci[oó]n.{0,60}?(\d{2})\/(\d{2})\/(\d{4})\s+(\d{6,})/i);
+    if(mf){ r.fechaPresentacion=mf[3]+'-'+mf[2]+'-'+mf[1]; r.nroTransaccion=mf[4]; }
+    const md=T.match(/\b([0-9a-f]{32})\b/i); if(md) r.md5=md[1].toLowerCase();
+    return r;
+  }
+  function parseAcuseIVA(texto){
+    const T=String(texto||'').replace(/\s+/g,' ');
+    const g=re=>{ const m=T.match(re); return m?m[1]:''; };
+    const mp=T.match(/Per[ií]odo:\s*(20\d{2})-?(0[1-9]|1[0-2])/i);
+    return { periodo:mp?mp[1]+'-'+mp[2]:'',
+      fechaPresentacion:g(/Fecha de Presentaci[oó]n:\s*(\d{4}-\d{2}-\d{2})/i),
+      hora:g(/Hora:\s*(\d{2}:\d{2}(?::\d{2})?)/i),
+      nroTransaccion:g(/Nro\.?\s*de\s*Transacci[oó]n:\s*(\d{6,})/i),
+      md5:g(/\[([0-9a-f]{32})\]/i).toLowerCase(),
+      cuitOk:T.replace(/-/g,'').indexOf(CUIT_VPH_DDJJ)>=0 };
+  }
+  function parseVEPIVA(texto){
+    const T=String(texto||'').replace(/\s+/g,' ');
+    const g=re=>{ const m=T.match(re); return m?m[1]:''; };
+    const mp=T.match(/Per[ií]odo:\s*(20\d{2})-?(0[1-9]|1[0-2])/i);
+    return { periodo:mp?mp[1]+'-'+mp[2]:'', nro:g(/Nro\.?\s*VEP:\s*(\d+)/i),
+      expira:g(/D[ií]a de Expiraci[oó]n:\s*(\d{4}-\d{2}-\d{2})/i),
+      importe:num(g(/Importe total a pagar\s*\$\s*([\d.]+,\d{2})/i)) };
+  }
+  function tipoPdfIVA(texto){
+    const T=String(texto||'');
+    if(/Volante\s+Electr[oó]nico\s+de\s+Pago/i.test(T)) return 'vep';
+    if(/Acuse\s+de\s+recibo/i.test(T)) return 'acuse';
+    if(/Determinaci[oó]n\s+del\s+impuesto|Total del d[eé]bito fiscal/i.test(T)) return 'ddjj';
+    return '';
+  }
+
+   
+   
+   
+  function posicionIVA(debito, credito, retPerc, prev){
+    const tecAnt=prev?num(prev.tecFavor):0, ldAnt=prev?num(prev.ldPeriodo):0;
+    const neto=round2(num(debito)-num(credito)-tecAnt);
+    const disp=round2(ldAnt+num(retPerc));
+    if(neto<=0) return { tecAnt, ldAnt, favorTec:round2(-neto), tecARCA:0, aPagar:0, ld:disp };
+    return { tecAnt, ldAnt, favorTec:0, tecARCA:neto, aPagar:round2(Math.max(0,neto-disp)), ld:round2(Math.max(0,disp-neto)) };
+  }
+
+   
+  function controlesDDJJ(r, prev, acuse, vep){
+    const A=[], dif=(a,b)=>Math.abs(num(a)-num(b))>=1;
+    if(!r.cuitOk) A.push('El PDF no menciona el CUIT de VPH. Revisá que sea el correcto.');
+    if(r.debito==null||r.credito==null) A.push('No pude leer el débito o el crédito fiscal: completalos mirando el PDF.');
+    else {
+      const neto=round2(num(r.debito)-num(r.credito)-num(r.tecAnterior));
+      if(dif(r.tecFavor, Math.max(0,-neto)) || dif(r.tecARCA, Math.max(0,neto)))
+        A.push('El saldo técnico no coincide con débito − crédito − saldo anterior. Compará con el PDF.');
+      if(num(r.tecARCA)>0){
+        const exp=round2(Math.max(0, num(r.tecARCA)-num(r.ldAnterior)-num(r.retPerc)));
+        if(dif(r.aPagar, exp)) A.push('El saldo a pagar leído no coincide con la cuenta del formulario (daría '+money(exp)+').');
+      }
+    }
+    if(prev){
+      if(dif(prev.tecFavor, r.tecAnterior)) A.push('El saldo técnico anterior ('+money(r.tecAnterior)+') no es el que quedó en la DDJJ de '+mesDDJJ(prev.periodo)+' ('+money(prev.tecFavor)+').');
+      if(num(r.ldAnterior)-num(prev.ldPeriodo)>=1) A.push('El saldo de libre disponibilidad anterior es mayor al que dejó '+mesDDJJ(prev.periodo)+' ('+money(prev.ldPeriodo)+').');
+    }
+    if(acuse){
+      if(!acuse.cuitOk) A.push('El acuse no menciona el CUIT de VPH.');
+      if(acuse.periodo && r.periodo && acuse.periodo!==r.periodo) A.push('El acuse es de '+mesDDJJ(acuse.periodo)+' y la DDJJ de '+mesDDJJ(r.periodo)+'.');
+      if(acuse.nroTransaccion && r.nroTransaccion && acuse.nroTransaccion!==r.nroTransaccion) A.push('El N° de transacción del acuse no es el de la DDJJ.');
+      if(acuse.md5 && r.md5 && acuse.md5!==r.md5) A.push('El código MD5 del acuse no es el de la DDJJ.');
+    }
+    if(vep){
+      if(vep.periodo && r.periodo && vep.periodo!==r.periodo) A.push('El VEP es de otro período ('+mesDDJJ(vep.periodo)+').');
+      if(vep.importe && dif(vep.importe, r.aPagar)) A.push('El VEP es por '+money(vep.importe)+' y la DDJJ dice '+money(r.aPagar)+' a pagar.');
+    }
+    return A;
+  }
+
+   
+  function retIvaDelMes(pref){
+    if(!window.__ventasTodas||!window.__esRetencion) return 0;
+    let t=0;
+    window.__ventasTodas().forEach(v=>(v.cobros||[]).forEach(c=>{
+      if(String(c.fecha||'').slice(0,7)===pref && c.retImpuesto==='IVA' && window.__esRetencion(c.medio)) t+=num(c.monto); }));
+    return round2(t);
+  }
+
+   
+  window.__ddjjSaldoAnterior = periodo => { const d=DDJJ[periodoAnterior(periodo)];
+    return d ? { periodo:d.periodo, tecFavor:num(d.tecFavor), ldPeriodo:num(d.ldPeriodo) } : null; };
+
+  function refrescarDDJJ(){
+    if(window.__pintarLibroIVA){ try{ window.__pintarLibroIVA(); }catch(e){} }
+    if(window.__ventasRefrescar){ try{ window.__ventasRefrescar(); }catch(e){} }
+  }
+  let ddjjUnsub=null;
+  function ddjjSuscribir(){
+    if(window.__rol!=='admin') return;
+    const c=window.__fbctx; if(!c||!c.db) return;
+    if(ddjjUnsub) ddjjUnsub();
+    ddjjUnsub=c.FS.onSnapshot(c.FS.doc(c.db,'vph_config','ddjj_iva'), s=>{
+      const d=s.exists()?s.data():null; DDJJ=(d&&d.periodos)||{}; refrescarDDJJ();
+    }, err=>console.error('ddjj_iva:',err));
+  }
+  function ddjjCortar(){ if(ddjjUnsub){ ddjjUnsub(); ddjjUnsub=null; } DDJJ={}; }
+
+  async function guardarRegistroDDJJ(per, reg){
+    DDJJ={...DDJJ, [per]:reg};    
+    const c=window.__fbctx;
+    if(window.__usaNube && c&&c.db) await c.FS.setDoc(c.FS.doc(c.db,'vph_config','ddjj_iva'), {periodos:{[per]:reg}}, {merge:true});
+    else { try{ localStorage.setItem(DDJJ_KEY, JSON.stringify(DDJJ)); }catch(e){} }
+    refrescarDDJJ();
+  }
+  const MAX_PDF_DDJJ=600*1024;
+  async function archivarPdfDDJJ(file, tipo, periodo){
+    const c=window.__fbctx;
+    if(!window.__usaNube || !c || !c.db) return '';
+    if(file.size>MAX_PDF_DDJJ) throw new Error(file.name+' pesa '+Math.round(file.size/1024)+' KB y el máximo es 600 KB');
+    const b64=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result||'').split(',')[1]||'');
+      fr.onerror=()=>rej(new Error('no se pudo leer '+file.name)); fr.readAsDataURL(file); });
+    const uid='adj_'+tipo+'_'+periodo+'_'+Date.now();
+    await c.FS.setDoc(c.FS.doc(c.db,'vph_adjuntos',uid), { _uid:uid, tipo, periodo, nombre:String(file.name).slice(0,120),
+      contentType:file.type||'application/pdf', bytes:file.size, fecha:new Date().toISOString().slice(0,10), datos:b64 });
+    return uid;
+  }
+
+  const hoyLocal=()=>{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+  const cerrarDDJJ=()=>{ const m=$('ddj-modal'); if(m) m.classList.remove('open'); };
+
+  async function leerArchivosDDJJ(files){
+    const est=$('liv-ddjj-estado'), pdfs={};
+    try{
+      if(!window.__leerPdfTexto) throw new Error('el lector de PDF no está disponible');
+      for(const f of files){
+        if(est) est.textContent='Leyendo '+f.name+'…';
+        const texto=await window.__leerPdfTexto(f,3);
+        const t=tipoPdfIVA(texto);
+        if(!t){ alert(f.name+': no parece una DDJJ de IVA, un acuse ni un VEP. No lo tomé.'); continue; }
+        pdfs[t]={file:f, texto};
+      }
+      if(est) est.textContent='';
+      if(!pdfs.ddjj){
+         
+        const sueltos=['acuse','vep'].filter(k=>pdfs[k]);
+        if(!sueltos.length) return;
+        for(const k of sueltos){
+          const d=k==='acuse'?parseAcuseIVA(pdfs[k].texto):parseVEPIVA(pdfs[k].texto);
+          const reg=DDJJ[d.periodo];
+          if(!reg){ alert('Primero cargá la DDJJ de '+(d.periodo?mesDDJJ(d.periodo):'ese período')+' (podés subir los dos PDF juntos).'); continue; }
+          const adj=await archivarPdfDDJJ(pdfs[k].file, k+'-iva', d.periodo);
+          await guardarRegistroDDJJ(d.periodo, {...reg, [k==='acuse'?'adjAcuse':'adjVep']:adj});
+          if(est) est.textContent=(k==='acuse'?'Acuse':'VEP')+' agregado a '+mesDDJJ(d.periodo)+'.';
+        }
+        return;
+      }
+      abrirModalDDJJ(pdfs);
+    }catch(e){ if(est) est.textContent=''; alert('No pude leer el PDF: '+e.message); console.error('[ddjj]',e); }
+  }
+
+  const CAMPOS_DDJJ=[['debito','Débito fiscal del período'],['credito','Crédito fiscal del período'],
+    ['tecAnterior','Saldo técnico a favor del período anterior'],['tecFavor','Saldo técnico a tu favor'],
+    ['tecARCA','Saldo técnico a favor de ARCA'],['ldAnterior','Libre disponibilidad anterior'],
+    ['retPerc','Retenciones, percepciones y pagos a cuenta'],['ldPeriodo','Libre disponibilidad a tu favor'],
+    ['aPagar','Saldo de impuesto A PAGAR']];
+  const aTexto=n=>num(n).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  function abrirModalDDJJ(pdfs){
+    const r=parseDDJJIVA(pdfs.ddjj.texto);
+    const acuse=pdfs.acuse?parseAcuseIVA(pdfs.acuse.texto):null;
+    const vep=pdfs.vep?parseVEPIVA(pdfs.vep.texto):null;
+    if(!r.periodo && acuse) r.periodo=acuse.periodo;
+    const prev=r.periodo?DDJJ[periodoAnterior(r.periodo)]:null;
+    const ya=r.periodo?DDJJ[r.periodo]:null;
+    const avisos=controlesDDJJ(r, prev, acuse, vep);
+    if(!pdfs.acuse && !(ya&&ya.adjAcuse)) avisos.push('Falta el acuse de ARCA: es el comprobante de que se presentó. Lo podés subir después.');
+    if(ya) avisos.unshift('Ya hay una DDJJ cargada de '+mesDDJJ(r.periodo)+' ('+(ya.secuencia||'Original')+'). Al guardar la reemplazás.');
+    const inp=(id,val,extra)=>'<input id="'+id+'" value="'+esc(val)+'" '+(extra||'')+' style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;width:100%">';
+    let h='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">'+
+      '<div class="cmp-field"><label>Período (AAAA-MM)</label>'+inp('ddj-periodo', r.periodo)+'</div>'+
+      '<div class="cmp-field"><label>Fecha de presentación</label>'+inp('ddj-fecha', r.fechaPresentacion||(acuse&&acuse.fechaPresentacion)||'', 'type="date"')+'</div></div>'+
+      '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">'+esc(r.secuencia||'')+(r.nroTransaccion?' · Transacción '+esc(r.nroTransaccion):'')+
+        ' · Archivos: '+['ddjj','acuse','vep'].filter(k=>pdfs[k]).map(k=>({ddjj:'DDJJ',acuse:'Acuse',vep:'VEP'}[k])).join(' + ')+'</div>';
+    h+=CAMPOS_DDJJ.map(([k,l])=>'<div style="display:grid;grid-template-columns:1fr 170px;gap:8px;align-items:center;margin-bottom:5px">'+
+        '<span style="font-size:13px'+(k==='aPagar'?';font-weight:700':'')+'">'+l+'</span>'+
+        inp('ddj-'+k, r[k]==null?(k==='debito'||k==='credito'?'':'0,00'):aTexto(r[k]), 'inputmode="decimal" style="text-align:right"')+'</div>').join('');
+    if(avisos.length) h+='<div style="margin:10px 0;padding:10px 12px;border-left:3px solid var(--orange);background:var(--bg,#f8fafc);font-size:13px">'+
+      avisos.map(a=>'<div>⚠️ '+esc(a)+'</div>').join('')+'</div>';
+    h+='<div id="ddj-pago" style="margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>'+
+      '<div id="ddj-err" style="color:var(--red);min-height:18px"></div>'+
+      '<div class="cmp-form-foot"><button class="cmp-btn" id="ddj-cancel">Cancelar</button><button class="cmp-btn cmp-btn-primary" id="ddj-save">Guardar</button></div>';
+    $('ddj-titulo').textContent='DDJJ de IVA'+(r.periodo?' — '+mesDDJJ(r.periodo):'');
+    $('ddj-body').innerHTML=h;
+     
+    const venc=(ya&&ya.vencimientoPago)||r.fechaPresentacion||(vep&&vep.expira)||hoyLocal();
+     
+    const vieja=!ya && venc<new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+    const marcar=ya ? !!ya.compraUid : !vieja;
+    const pintarPago=()=>{
+      const m=num($('ddj-aPagar').value), box=$('ddj-pago');
+      if(!(m>0)){ box.innerHTML='✅ <b>No hay saldo a pagar.</b> Lo que quedó a favor se descuenta solo en el mes siguiente.'; return; }
+      box.innerHTML=(vieja?'<div style="color:var(--orange);margin-bottom:8px">Es una presentación de hace más de un mes: tildá solo si todavía NO se pagó.</div>':'')+
+        '<label style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" id="ddj-agendar"'+(marcar?' checked':'')+'> <b>Agendar '+money(m)+' como pago a ARCA</b></label>'+
+        '<div class="cmp-field" style="max-width:220px"><label>Vence el</label>'+inp('ddj-venc', venc, 'type="date"')+'</div>'+
+        '<div style="color:var(--muted);margin-top:6px">Queda en Compras (NO OPERATIVAS): aparece en «A pagar» y en la proyección de Caja. Cuando lo pagues, cargá el pago ahí.</div>';
+    };
+    $('ddj-aPagar').addEventListener('input', pintarPago);
+    pintarPago();
+    $('ddj-cancel').onclick=cerrarDDJJ;
+    $('ddj-save').onclick=()=>guardarDDJJ(pdfs, r, acuse, vep);
+    $('ddj-modal').classList.add('open');
+  }
+
+  async function guardarDDJJ(pdfs, r, acuse, vep){
+    const err=$('ddj-err'), btn=$('ddj-save'); err.textContent='';
+    const per=String($('ddj-periodo').value||'').trim(), fecha=$('ddj-fecha').value;
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(per)){ err.textContent='El período tiene que ser AAAA-MM, por ejemplo 2026-10.'; return; }
+    if(!fecha){ err.textContent='Falta la fecha de presentación.'; return; }
+    if(!String($('ddj-debito').value).trim() || !String($('ddj-credito').value).trim()){ err.textContent='Faltan el débito o el crédito fiscal.'; return; }
+    const ya=DDJJ[per]||null;
+    const reg={ periodo:per, fechaPresentacion:fecha, hora:(acuse&&acuse.hora)||'', secuencia:r.secuencia||'Original',
+      nroTransaccion:r.nroTransaccion||(acuse&&acuse.nroTransaccion)||'', md5:r.md5||'' };
+    CAMPOS_DDJJ.forEach(([k])=>{ reg[k]=round2(num($('ddj-'+k).value)); });
+    const agendar=reg.aPagar>0 && $('ddj-agendar') && $('ddj-agendar').checked;
+    const venc=agendar?$('ddj-venc').value:'';
+    if(agendar && !venc){ err.textContent='Falta la fecha de vencimiento del pago.'; return; }
+     
+    let yaCargada=false;
+    if(agendar && window.__comprasTodas){
+      const dup=window.__comprasTodas().find(c=>c._uid!=='ddjjiva_'+per && /\b(ARCA|AFIP)\b/i.test(c.proveedor||'') && window.__compraResumen && Math.abs(num((window.__compraResumen(c._uid)||{}).total)-reg.aPagar)<1);
+      if(dup) yaCargada=!confirm('En Compras ya hay "'+dup.proveedor+'" por '+money(reg.aPagar)+' ('+fmtFechaAR(dup.fecha)+').\n\nAceptar = agendarlo IGUAL (quedaría dos veces).\nCancelar = guardar la DDJJ sin agendar.');
+    }
+    btn.disabled=true; btn.textContent='Guardando…';
+    try{
+      reg.adjDDJJ=await archivarPdfDDJJ(pdfs.ddjj.file,'ddjj-iva',per);
+      reg.adjAcuse=pdfs.acuse?await archivarPdfDDJJ(pdfs.acuse.file,'acuse-iva',per):((ya&&ya.adjAcuse)||'');
+      reg.adjVep=pdfs.vep?await archivarPdfDDJJ(pdfs.vep.file,'vep-iva',per):((ya&&ya.adjVep)||'');
+      reg.compraUid=''; reg.vencimientoPago='';
+      if(agendar && !yaCargada){
+        if(!window.__upsertCompraDDJJ) throw new Error('el módulo Compras no está disponible');
+        reg.vencimientoPago=venc;
+        reg.compraUid=window.__upsertCompraDDJJ({ periodo:per, monto:reg.aPagar, fecha, vencimiento:venc,
+          detalle:'Saldo de IVA '+mesDDJJ(per)+' (F.2051)', nota:'DDJJ '+per+(reg.nroTransaccion?' · transacción '+reg.nroTransaccion:'')+(vep&&vep.nro?' · VEP '+vep.nro:'') });
+      } else if(ya && ya.compraUid){
+         
+        if(reg.aPagar>0 && yaCargada===false && !agendar){ reg.compraUid=ya.compraUid; reg.vencimientoPago=ya.vencimientoPago||'';
+          if(Math.abs(num(ya.aPagar)-reg.aPagar)>=1) alert('El pago agendado en Compras quedó con el importe anterior ('+money(ya.aPagar)+'). Corregilo ahí si corresponde.'); }
+        else if(window.__borrarCompraDDJJ && !window.__borrarCompraDDJJ(per)){
+          reg.compraUid=ya.compraUid;
+          alert('Ojo: la compra del IVA de '+mesDDJJ(per)+' ya tiene un pago cargado y no la toqué. Revisala en Compras.');
+        }
+      }
+      await guardarRegistroDDJJ(per, reg);
+      cerrarDDJJ();
+      const est=$('liv-ddjj-estado');
+      if(est) est.textContent='✅ DDJJ de '+mesDDJJ(per)+' guardada'+(reg.compraUid&&reg.aPagar>0?' y pago agendado para el '+fmtFechaAR(reg.vencimientoPago):'')+'.';
+    }catch(e){ err.textContent='No se pudo guardar: '+e.message; console.error('[ddjj]',e); }
+    finally{ btn.disabled=false; btn.textContent='Guardar'; }
+  }
+
+  async function eliminarDDJJ(per){
+    const reg=DDJJ[per]; if(!reg) return;
+    if(!confirm('¿Eliminar la DDJJ cargada de '+mesDDJJ(per)+'?\nSe borran el registro y sus PDF. Si tenía un pago agendado sin pagar, también se saca de Compras.')) return;
+    if(reg.compraUid && window.__borrarCompraDDJJ && !window.__borrarCompraDDJJ(per))
+      alert('La compra del IVA ya tiene un pago cargado: queda en Compras.');
+    const n={...DDJJ}; delete n[per]; DDJJ=n;
+    const c=window.__fbctx;
+    try{
+      if(window.__usaNube && c&&c.db){
+        await c.FS.updateDoc(c.FS.doc(c.db,'vph_config','ddjj_iva'), {['periodos.'+per]:c.FS.deleteField()});
+        for(const a of [reg.adjDDJJ,reg.adjAcuse,reg.adjVep].filter(Boolean)) await c.FS.deleteDoc(c.FS.doc(c.db,'vph_adjuntos',a));
+      } else localStorage.setItem(DDJJ_KEY, JSON.stringify(DDJJ));
+    }catch(e){ alert('No se pudo eliminar: '+e.message); }
+    refrescarDDJJ();
+  }
+
+  function renderDDJJTabla(){
+    const t=$('liv-ddjj-tabla'); if(!t) return;
+    const pers=Object.keys(DDJJ).sort().reverse();
+    if(!pers.length){ t.innerHTML='<tbody><tr><td style="color:var(--muted)">Todavía no hay ninguna DDJJ cargada.</td></tr></tbody>'; return; }
+    const ver=(uid,l)=>uid?'<button class="cmp-btn" data-ddj-ver="'+esc(uid)+'" style="padding:4px 8px;font-size:11.5px">📄 '+l+'</button> ':'';
+    let h='<thead><tr><th>Período</th><th>Presentada</th><th style="text-align:right">Débito</th><th style="text-align:right">Crédito</th><th style="text-align:right">Saldo técnico a favor</th><th style="text-align:right">Libre disp.</th><th>A pagar</th><th>Archivos</th><th></th></tr></thead><tbody>';
+    pers.forEach(p=>{
+      const d=DDJJ[p];
+      let pago='—';
+      if(num(d.aPagar)>0){
+        const k=d.compraUid&&window.__compraResumen?window.__compraResumen(d.compraUid):null;
+        pago='<b>'+money(d.aPagar)+'</b><div style="font-size:11.5px">'+(k ? (k.saldo<=0.5?'<span class="badge green">pagado</span>':'<button class="cmp-btn" data-ddj-compra="'+esc(d.compraUid)+'" style="padding:3px 8px;font-size:11.5px">vence '+fmtFechaAR(d.vencimientoPago)+'</button>') : '<span style="color:var(--muted)">sin agendar</span>')+'</div>';
+      }
+      h+='<tr><td data-sortval="'+p.replace('-','')+'"><b>'+esc(mesDDJJ(p))+'</b></td><td>'+esc(fmtFechaAR(d.fechaPresentacion))+(d.secuencia&&d.secuencia!=='Original'?'<div style="font-size:11px">'+esc(d.secuencia)+'</div>':'')+'</td>'+
+        td(d.debito)+td(d.credito)+tdB(d.tecFavor)+td(d.ldPeriodo)+'<td>'+pago+'</td>'+
+        '<td>'+ver(d.adjDDJJ,'DDJJ')+ver(d.adjAcuse,'Acuse')+ver(d.adjVep,'VEP')+(d.adjAcuse?'':'<span style="font-size:11.5px;color:var(--orange)">falta acuse</span>')+'</td>'+
+        '<td><button class="cmp-x" data-ddj-del="'+esc(p)+'" title="Eliminar">✕</button></td></tr>';
+    });
+    t.innerHTML=h+'</tbody>';
+    t.querySelectorAll('[data-ddj-ver]').forEach(b=> b.onclick=()=>{ if(window.__abrirAdjunto) window.__abrirAdjunto(b.dataset.ddjVer,'ddjj-iva.pdf'); });
+    t.querySelectorAll('[data-ddj-compra]').forEach(b=> b.onclick=()=>{ if(window.__abrirCompra) window.__abrirCompra(b.dataset.ddjCompra); });
+    t.querySelectorAll('[data-ddj-del]').forEach(b=> b.onclick=()=>eliminarDDJJ(b.dataset.ddjDel));
+    if(window.__ordenable) window.__ordenable(t);
+  }
+
+   
+  function cotejoDDJJ(pref, debito, credito){
+    const d=DDJJ[pref]; if(!d) return '';
+    const linea=(l,dj,tab)=>{ const dif=round2(num(tab)-num(dj));
+      return l+' declarado <b>'+money(dj)+'</b>, en el Tablero <b>'+money(tab)+'</b>'+(Math.abs(dif)>=1?' <span style="color:var(--orange)">(el Tablero tiene '+money(Math.abs(dif))+' '+(dif>0?'de más':'de menos')+')</span>':' ✓'); };
+    return '🧾 <b>'+esc(mesDDJJ(pref))+' ya se presentó</b> el '+esc(fmtFechaAR(d.fechaPresentacion))+': '+
+      (num(d.aPagar)>0?'a pagar '+money(d.aPagar):'saldo técnico a favor '+money(d.tecFavor)+' y libre disponibilidad '+money(d.ldPeriodo))+'.<br>'+
+      linea('Débito',d.debito,debito)+'<br>'+linea('Crédito',d.credito,credito);
+  }
+
   let tab='ventas';
   let ultimoArca=null;     
   let ultimoArcaV=null;    
@@ -30584,15 +30969,24 @@ function buildFilterTable(cfg){
     const filasV=filasDe(window.__ventasTodas?ventasDe(pref):[], true);
     const filasC=filasDe(window.__comprasTodas?comprasDe(pref):[], false);
     const aV=agregar(filasV), aC=agregar(filasC);
-    const saldo=round2(aV.iva-aC.iva);
+     
+    const perAnt=periodoAnterior(pref), ant=DDJJ[perAnt]||null;
+    const retIva=retIvaDelMes(pref);
+    const pos=posicionIVA(aV.iva, aC.iva, round2(aC.percIva+retIva), ant);
+    const antLbl=mesDDJJ(perAnt);
 
     cont.innerHTML =
       kpiHtml('IVA Débito — Ventas', money(aV.iva), aV.n+' comprobante'+(aV.n===1?'':'s')+' de '+mesLbl) +
       kpiHtml('IVA Crédito — Compras', money(aC.iva), aC.n+' comprobante'+(aC.n===1?'':'s')+' de '+mesLbl) +
-      kpiHtml('Saldo de IVA estimado', money(Math.abs(saldo)),
-        saldo>=0?'a pagar — débito mayor que crédito':'a favor — crédito mayor que débito',
-        saldo>=0?'warn':'good') +
-      (aC.percIva ? kpiHtml('Percepciones de IVA (compras)', money(aC.percIva), 'crédito adicional — lo computa el contador aparte') : '');
+      (ant ? kpiHtml('A favor que viene de '+antLbl, money(pos.tecAnt), 'saldo técnico · libre disponibilidad '+money(pos.ldAnt), 'info') : '') +
+      (pos.aPagar>0
+        ? kpiHtml('Posición estimada', money(pos.aPagar), 'A PAGAR'+(ant?' · ya descontado lo que venía a favor':' · falta cargar la DDJJ de '+antLbl), 'warn')
+        : kpiHtml('Posición estimada', money(pos.favorTec), 'a favor, no hay que pagar'+(pos.ld?' · libre disponibilidad '+money(pos.ld):'')+(ant?'':' · falta cargar la DDJJ de '+antLbl), 'good')) +
+      ((aC.percIva||retIva) ? kpiHtml('Percepciones y retenciones de IVA', money(round2(aC.percIva+retIva)), 'bajan lo que haya que pagar') : '');
+
+    const cot=$('liv-ddjj-cotejo');
+    if(cot){ const txt=cotejoDDJJ(pref, aV.iva, aC.iva); cot.innerHTML=txt; cot.style.display=txt?'block':'none'; }
+    renderDDJJTabla();
 
      
      
@@ -31344,6 +31738,18 @@ function buildFilterTable(cfg){
       btnArcaV.onclick=()=>fileArcaV.click();
       fileArcaV.onchange=()=>{ const f=fileArcaV.files && fileArcaV.files[0]; if(f) procesarArca(f,'emitidos'); fileArcaV.value=''; };
     }
+    const btnDj=$('liv-ddjj-btn'), fileDj=$('liv-ddjj-file');
+    if(btnDj && fileDj){
+      btnDj.onclick=()=>fileDj.click();
+      fileDj.onchange=()=>{ const fs=Array.from(fileDj.files||[]); fileDj.value=''; if(fs.length) leerArchivosDDJJ(fs); };
+    }
+    const x=$('ddj-x'); if(x) x.onclick=cerrarDDJJ;
+    if(window.__usaNube){
+      window.__afterLogin=window.__afterLogin||[]; window.__afterLogout=window.__afterLogout||[];
+      window.__afterLogin.push(ddjjSuscribir); window.__afterLogout.push(ddjjCortar);
+      if(window.__fbctx && window.__fbctx.auth && window.__fbctx.auth.currentUser) ddjjSuscribir();
+    } else { try{ DDJJ=JSON.parse(localStorage.getItem(DDJJ_KEY)||'{}')||{}; }catch(e){ DDJJ={}; } }
+
      
     document.addEventListener('click', e=>{
       if(e.target && e.target.closest && e.target.closest('.nav-item')){
