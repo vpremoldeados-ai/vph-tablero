@@ -3730,6 +3730,9 @@ function _volHabil(d){
   try{ return !(window.__esFeriado && window.__esFeriado(_volIso(d))); }catch(e){ return true; }
 }
  
+ 
+ 
+ 
 function volSemanaDatos(hoy, objMin, objMay, vol){
   const lunes=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()-((hoy.getDay()+6)%7));
   const hoyIso=_volIso(hoy);
@@ -3742,7 +3745,7 @@ function volSemanaDatos(hoy, objMin, objMay, vol){
       if(habil){ s.habiles++; if(iso<=hoyIso) s.transcurridos++; }
     }
     s.hasta=s.dias[6].fecha; s.total=s.min+s.may+s.sin;
-    s.objMin=objMin*s.habiles/5; s.objMay=objMay*s.habiles/5; s.obj=s.objMin+s.objMay;
+    s.objMin=objMin; s.objMay=objMay; s.obj=objMin+objMay;
     return s;
   };
   const actual=semana(lunes);
@@ -3768,11 +3771,11 @@ window.__pintarVolSemana = function(){
   const fc=iso=>iso.slice(8,10)+'/'+iso.slice(5,7);
   document.getElementById('volsem-rango').textContent='— '+fc(s.desde)+' al '+fc(s.hasta);
   const color=(real,esperado,obj)=> real>=obj&&obj>0 ? 'var(--green)' : (real>=esperado ? 'var(--accent)' : (real>=esperado*0.7 ? 'var(--amber)' : 'var(--red)'));
-  const barra=(nombre,real,obj,esperado)=>{
+  const barra=(nombre,real,obj,esperado,restantes)=>{
     const pct=obj>0?real/obj*100:0, col=color(real,esperado,obj), marca=obj>0?Math.min(esperado/obj*100,100):0;
     const falta=Math.max(obj-real,0);
     const pie= obj>0&&real>=obj ? '<span style="color:var(--green);font-weight:700">OBJETIVO CUMPLIDO</span>'
-      : (s.restantes>0 ? '<span>Faltan '+kg(falta)+' · '+kg(falta/s.restantes)+' por día en '+s.restantes+(s.restantes===1?' día hábil':' días hábiles')+'</span>' : '<span>Faltaron '+kg(falta)+'</span>');
+      : (restantes>0 ? '<span>Faltan '+kg(falta)+' · '+kg(falta/restantes)+' por día en '+restantes+(restantes===1?' día hábil':' días hábiles')+'</span>' : '<span>Faltaron '+kg(falta)+'</span>');
     return '<div class="progress-wrap" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-bottom:6px;gap:10px;flex-wrap:wrap">'+
       '<span>'+nombre+': '+kg(real)+' — <span style="color:'+col+'">'+pct.toFixed(0)+'% del objetivo</span></span><span style="color:var(--muted)">Objetivo: '+kg(obj)+'</span></div>'+
       '<div class="progress" style="position:relative"><i style="width:'+Math.min(pct,100)+'%;background:'+col+'"></i><b style="position:absolute;top:0;bottom:0;left:'+marca+'%;width:2px;background:#333"></b></div>'+
@@ -3790,16 +3793,25 @@ window.__pintarVolSemana = function(){
     return '<tr><td>'+fc(p.desde)+' al '+fc(p.hasta)+'</td><td class="num">'+kg(p.min)+'</td><td class="num">'+kg(p.may)+'</td><td class="num">'+kg(p.total)+'</td><td class="num">'+pesos(p.neto)+'</td><td class="num" style="color:'+col+';font-weight:700">'+pct.toFixed(0)+'%</td></tr>';
   }).join('');
    
+   
+   
   const per=_volIso(hoy).slice(0,7); let mMin=0,mMay=0,mNeto=0;
   Object.keys(vol).forEach(f=>{ if(f.slice(0,7)!==per) return; const v=vol[f]; mMin+=v.min||0; mMay+=v.may||0; mNeto+=(v.netoMin||0)+(v.netoMay||0)+(v.netoSin||0); });
-  const dh=diasHabilesMes(hoy), objMes=(objMin+objMay)*dh.tot/5;
-  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+(s.habiles<5?' (semana con '+s.habiles+' días hábiles)':'')+' · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
+  const objMesMin=objMin*4, objMesMay=objMay*4, objMes=objMesMin+objMesMay;
+  const dh=diasHabilesMes(hoy);
+  const fracMes = dh.tot>0 ? dh.tra/dh.tot : 0, restantesMes=Math.max(dh.tot-dh.tra,0);
+  const esperadoMesMin=objMesMin*fracMes, esperadoMesMay=objMesMay*fracMes, esperadoMes=objMes*fracMes;
+  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+' · objetivo del mes '+kg(objMes)+' (4 semanas, fijo — no se achica con los feriados) · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
   const sinCanal=s.sin>0?'<div class="note" style="margin-top:0">'+kg(s.sin)+' de esta semana no son ni minoristas ni mayoristas (lista promedio o sin lista): suman solo en el total.</div>':'';
   cont.innerHTML=
-    barra('Minorista',s.min,s.objMin,s.esperadoMin)+
-    barra('Mayorista',s.may,s.objMay,s.esperadoMay)+
-    barra('Total',s.total,s.obj,s.esperado)+sinCanal+
-    '<div style="font-size:13px;margin:4px 0 10px"><b>En lo que va del mes:</b> '+kg(mMin)+' minoristas + '+kg(mMay)+' mayoristas = <b>'+kg(mMin+mMay)+'</b> de '+kg(objMes)+' · '+pesos(mNeto)+'</div>'+
+    barra('Minorista',s.min,s.objMin,s.esperadoMin,s.restantes)+
+    barra('Mayorista',s.may,s.objMay,s.esperadoMay,s.restantes)+
+    barra('Total',s.total,s.obj,s.esperado,s.restantes)+sinCanal+
+    '<div style="font-weight:800;font-size:13px;margin:16px 0 10px;border-top:1px solid var(--border);padding-top:14px">📅 Mes en curso</div>'+
+    barra('Minorista (mes)',mMin,objMesMin,esperadoMesMin,restantesMes)+
+    barra('Mayorista (mes)',mMay,objMesMay,esperadoMesMay,restantesMes)+
+    barra('Total (mes)',mMin+mMay,objMes,esperadoMes,restantesMes)+
+    '<div style="font-size:12px;color:var(--muted);margin:-8px 0 10px">'+pesos(mNeto)+' facturados en el mes (sin IVA y sin flete)</div>'+
     '<div class="tbl-wrap"><table><tr><th>Esta semana</th><th class="num">Minorista</th><th class="num">Mayorista</th><th class="num">Total</th><th class="num">Pesos</th></tr>'+filas+'</table></div>'+
     '<div class="tbl-wrap" style="margin-top:10px"><table><tr><th>Semanas anteriores</th><th class="num">Minorista</th><th class="num">Mayorista</th><th class="num">Total</th><th class="num">Pesos</th><th class="num">Objetivo</th></tr>'+filasPrev+'</table></div>';
 };
@@ -19897,6 +19909,9 @@ function buildFilterTable(cfg){
    
   const COR_CATALOGO_BA='VPH_Catalogo_Mayorista_BuenosAires_2026_v2.pdf (Drive › 01 VENTAS › MAYORISTAS › BUENOS AIRES)';
    
+  const COR_CATALOGO_ROS='VPH_Catalogo_Mayorista_Rosario_2026.pdf (Drive › 01 VENTAS › MAYORISTAS › ROSARIO)';
+  const corEsRosario=r=>/\brosario\b|santa fe\s*$/i.test(String((r&&r.localidad)||''));
+   
    
   const COR_LISTAS=[['may','Facturado'],['maySF','Contado'],['mayBA','Bs. As. · Facturado']];
   const corPuestoBA=r=>/BA$/.test(String((r&&r.lista)||''));
@@ -20082,7 +20097,7 @@ function buildFilterTable(cfg){
       return gris('Copiando la imagen…');
     }
     if(accion==='catalogo'){
-      if(corPuestoBA(r)) return verde('📎 Mandá el texto (Enter) y adjuntá con el clip el catálogo de Buenos Aires: <i>'+esc(COR_CATALOGO_BA)+'</i>.');
+      if(corPuestoBA(r)) return verde('📎 Mandá el texto (Enter) y adjuntá con el clip el catálogo de '+(corEsRosario(r)?'Rosario: <i>'+esc(COR_CATALOGO_ROS):'Buenos Aires: <i>'+esc(COR_CATALOGO_BA))+'</i>.');
       const pdf='Adjuntá con el clip el catálogo: <i>'+esc(COR_CATALOGO)+'</i>.';
       if(corImg==='ok') return verde('📎 Mandá el texto (Enter), pegá la lista de precios con Ctrl+V. '+pdf);
       if(corImg==='error') return ambar('⚠️ No se pudo copiar la lista de precios: sacala con el 📄 de Base de Datos. '+pdf);
@@ -20101,7 +20116,7 @@ function buildFilterTable(cfg){
         '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> abre la <b>app de WhatsApp de Windows</b> con el mensaje que pide hablar con quien define los proveedores y deja <b>copiada la imagen</b> (<a href="'+COR_IMG_PRIMERO+'" target="_blank" rel="noopener">verla</a>): mandá el texto con Enter y después pegala con Ctrl+V. '+
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
         '3) <b>📲 Presentar al contacto</b> le escribe a esa persona y deja copiada la segunda imagen (<a href="'+COR_IMG_PROVEEDORES+'" target="_blank" rel="noopener">verla</a>). '+
-        '4) <b>📎 Mandar catálogo</b>: se adjunta a mano con el clip. Córdoba: <i>'+esc(COR_CATALOGO)+'</i> (queda copiada además la lista de precios, que ese PDF no trae). Para Buenos Aires va su propio catálogo: <i>'+esc(COR_CATALOGO_BA)+'</i>. '+
+        '4) <b>📎 Mandar catálogo</b>: se adjunta a mano con el clip. Córdoba: <i>'+esc(COR_CATALOGO)+'</i> (queda copiada además la lista de precios, que ese PDF no trae). Para Buenos Aires va su propio catálogo: <i>'+esc(COR_CATALOGO_BA)+'</i>. Para Rosario: <i>'+esc(COR_CATALOGO_ROS)+'</i>. '+
         '5) <b>🔁 Seguimiento</b>: si no contesta, a los '+COR_SEGUI_PRESENTADO+' días aparece solo (antes y después del catálogo) y sigue hasta que marques «Aceptó» o «Sin interés». La fila dice desde qué día. En cada paso confirmá <b>en la misma fila</b> si el mensaje salió: mientras no lo hagas queda en amarillo.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
@@ -21180,9 +21195,65 @@ function buildFilterTable(cfg){
     }
     if(tareas.length) await Promise.all(tareas);
   }
-  let inboxReloj=null;
-  function arrancarWatcherInbox(){ if(inboxReloj) return; inboxReloj=setInterval(procesarInboxTick, INBOX_MS); procesarInboxTick(); }
-  function pararWatcherInbox(){ if(inboxReloj){ clearInterval(inboxReloj); inboxReloj=null; } }
+   
+   
+   
+   
+   
+   
+   
+   
+   
+  const procesadosPropios=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem('vph_wa_propios_procesados_v1'))||[]); }catch(e){ return new Set(); } })();
+  function recordarPropio(k){ const pre=k.slice(0,k.indexOf('|')+1); for(const x of Array.from(procesadosPropios)) if(x.startsWith(pre)) procesadosPropios.delete(x); procesadosPropios.add(k); try{ const arr=Array.from(procesadosPropios); localStorage.setItem('vph_wa_propios_procesados_v1', JSON.stringify(arr.slice(-500))); }catch(e){} }
+  const propiosPend=new Map();
+  window.addEventListener('message', ev=>{
+    const d=ev.data;
+    if(ev.source!==window||!d||d.vphWa!==1) return;
+    if(d.tipo==='resultado-propios'){ const p=propiosPend.get(d.id); if(!p) return; propiosPend.delete(d.id); clearTimeout(p.to); p.ok({ok:!!d.ok, chats:d.chats||[], error:d.error||''}); }
+  });
+  function pedirPropios(){
+    return new Promise((ok,err)=>{
+      const id='pr_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+      const to=setTimeout(()=>{ propiosPend.delete(id); err(new Error('timeout')); },10000);
+      propiosPend.set(id,{ok,err,to});
+      window.postMessage({vphWa:1, tipo:'escanear-propios', id},'*');
+    });
+  }
+  async function procesarPropiosTick(){
+    if(waCanalEnvio()!=='web-lenovo'||window.__waExtListo!==true) return;
+    let r; try{ r=await pedirPropios(); }catch(e){ return; }    
+    if(!r.ok||!Array.isArray(r.chats)||!r.chats.length) return;
+    const url=String(window.__param?window.__param('waWorkerUrl',''):'').replace(/\/+$/,'');
+    const tk=String(window.__param?window.__param('waLenovoToken',''):'');
+    if(!url||!tk) return;    
+    const tareas=[];
+    for(const c of r.chats){
+      const texto=String(c.preview||'').trim();
+      if(!texto) continue;
+      const clave=(c.nombre||'')+'|'+texto;
+      if(procesadosPropios.has(clave)) continue;
+      let tel=String(c.tel||'').replace(/\D/g,'');
+      if(!tel) tel=buscarTelPorNombre(c.nombre||'');
+      if(!tel) continue;    
+      recordarPropio(clave);
+      tareas.push(
+        fetch(url+'/wa-manual', { method:'POST', headers:{'Content-Type':'application/json','X-VPH-Lenovo-Token':tk}, body:JSON.stringify({to:tel, nombre:c.nombre||'', texto}) })
+          .then(res=>{ if(!res.ok) console.warn('[propios] /wa-manual respondió', res.status, 'para', c.nombre); })
+          .catch(e=>console.warn('[propios] no se pudo hablar con el Worker:', e&&e.message||e))
+      );
+    }
+    if(tareas.length) await Promise.all(tareas);
+  }
+  let inboxReloj=null, propiosReloj=null;
+  function arrancarWatcherInbox(){
+    if(!inboxReloj){ inboxReloj=setInterval(procesarInboxTick, INBOX_MS); procesarInboxTick(); }
+    if(!propiosReloj){ propiosReloj=setInterval(procesarPropiosTick, INBOX_MS); procesarPropiosTick(); }
+  }
+  function pararWatcherInbox(){
+    if(inboxReloj){ clearInterval(inboxReloj); inboxReloj=null; }
+    if(propiosReloj){ clearInterval(propiosReloj); propiosReloj=null; }
+  }
   window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>{ if(window.__waExtListo===true && waCanalEnvio()==='web-lenovo') arrancarWatcherInbox(); });
   window.__afterLogout=window.__afterLogout||[]; window.__afterLogout.push(pararWatcherInbox);
   window.addEventListener('vph-params', ()=>{ if(waCanalEnvio()==='web-lenovo' && window.__waExtListo===true) arrancarWatcherInbox(); else pararWatcherInbox(); });
