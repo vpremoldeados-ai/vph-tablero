@@ -3341,11 +3341,11 @@ window.__pintarVolSemana = function(){
   const fc=iso=>iso.slice(8,10)+'/'+iso.slice(5,7);
   document.getElementById('volsem-rango').textContent='— '+fc(s.desde)+' al '+fc(s.hasta);
   const color=(real,esperado,obj)=> real>=obj&&obj>0 ? 'var(--green)' : (real>=esperado ? 'var(--accent)' : (real>=esperado*0.7 ? 'var(--amber)' : 'var(--red)'));
-  const barra=(nombre,real,obj,esperado)=>{
+  const barra=(nombre,real,obj,esperado,restantes)=>{
     const pct=obj>0?real/obj*100:0, col=color(real,esperado,obj), marca=obj>0?Math.min(esperado/obj*100,100):0;
     const falta=Math.max(obj-real,0);
     const pie= obj>0&&real>=obj ? '<span style="color:var(--green);font-weight:700">OBJETIVO CUMPLIDO</span>'
-      : (s.restantes>0 ? '<span>Faltan '+kg(falta)+' · '+kg(falta/s.restantes)+' por día en '+s.restantes+(s.restantes===1?' día hábil':' días hábiles')+'</span>' : '<span>Faltaron '+kg(falta)+'</span>');
+      : (restantes>0 ? '<span>Faltan '+kg(falta)+' · '+kg(falta/restantes)+' por día en '+restantes+(restantes===1?' día hábil':' días hábiles')+'</span>' : '<span>Faltaron '+kg(falta)+'</span>');
     return '<div class="progress-wrap" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-bottom:6px;gap:10px;flex-wrap:wrap">'+
       '<span>'+nombre+': '+kg(real)+' — <span style="color:'+col+'">'+pct.toFixed(0)+'% del objetivo</span></span><span style="color:var(--muted)">Objetivo: '+kg(obj)+'</span></div>'+
       '<div class="progress" style="position:relative"><i style="width:'+Math.min(pct,100)+'%;background:'+col+'"></i><b style="position:absolute;top:0;bottom:0;left:'+marca+'%;width:2px;background:#333"></b></div>'+
@@ -3365,14 +3365,20 @@ window.__pintarVolSemana = function(){
   // Lo que va del mes, contra el objetivo semanal llevado a los días hábiles del mes.
   const per=_volIso(hoy).slice(0,7); let mMin=0,mMay=0,mNeto=0;
   Object.keys(vol).forEach(f=>{ if(f.slice(0,7)!==per) return; const v=vol[f]; mMin+=v.min||0; mMay+=v.may||0; mNeto+=(v.netoMin||0)+(v.netoMay||0)+(v.netoSin||0); });
-  const dh=diasHabilesMes(hoy), objMes=(objMin+objMay)*dh.tot/5;
-  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+(s.habiles<5?' (semana con '+s.habiles+' días hábiles)':'')+' · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
+  const dh=diasHabilesMes(hoy), objMesMin=objMin*dh.tot/5, objMesMay=objMay*dh.tot/5, objMes=objMesMin+objMesMay;
+  const fracMes = dh.tot>0 ? dh.tra/dh.tot : 0, restantesMes=Math.max(dh.tot-dh.tra,0);
+  const esperadoMesMin=objMesMin*fracMes, esperadoMesMay=objMesMay*fracMes, esperadoMes=objMes*fracMes;
+  document.getElementById('asof-volsem').textContent='Kilos vendidos según la fecha de la venta, EN VIVO · objetivo de la semana '+kg(s.obj)+(s.habiles<5?' (semana con '+s.habiles+' días hábiles)':'')+' · objetivo del mes '+kg(objMes)+' ('+dh.tot+' días hábiles; se recalcula solo con los feriados cargados) · pesos sin IVA y sin flete · los objetivos se editan en Base de Datos → ⚙️ Parámetros';
   const sinCanal=s.sin>0?'<div class="note" style="margin-top:0">'+kg(s.sin)+' de esta semana no son ni minoristas ni mayoristas (lista promedio o sin lista): suman solo en el total.</div>':'';
   cont.innerHTML=
-    barra('Minorista',s.min,s.objMin,s.esperadoMin)+
-    barra('Mayorista',s.may,s.objMay,s.esperadoMay)+
-    barra('Total',s.total,s.obj,s.esperado)+sinCanal+
-    '<div style="font-size:13px;margin:4px 0 10px"><b>En lo que va del mes:</b> '+kg(mMin)+' minoristas + '+kg(mMay)+' mayoristas = <b>'+kg(mMin+mMay)+'</b> de '+kg(objMes)+' · '+pesos(mNeto)+'</div>'+
+    barra('Minorista',s.min,s.objMin,s.esperadoMin,s.restantes)+
+    barra('Mayorista',s.may,s.objMay,s.esperadoMay,s.restantes)+
+    barra('Total',s.total,s.obj,s.esperado,s.restantes)+sinCanal+
+    '<div style="font-weight:800;font-size:13px;margin:16px 0 10px;border-top:1px solid var(--border);padding-top:14px">📅 Mes en curso</div>'+
+    barra('Minorista (mes)',mMin,objMesMin,esperadoMesMin,restantesMes)+
+    barra('Mayorista (mes)',mMay,objMesMay,esperadoMesMay,restantesMes)+
+    barra('Total (mes)',mMin+mMay,objMes,esperadoMes,restantesMes)+
+    '<div style="font-size:12px;color:var(--muted);margin:-8px 0 10px">'+pesos(mNeto)+' facturados en el mes (sin IVA y sin flete)</div>'+
     '<div class="tbl-wrap"><table><tr><th>Esta semana</th><th class="num">Minorista</th><th class="num">Mayorista</th><th class="num">Total</th><th class="num">Pesos</th></tr>'+filas+'</table></div>'+
     '<div class="tbl-wrap" style="margin-top:10px"><table><tr><th>Semanas anteriores</th><th class="num">Minorista</th><th class="num">Mayorista</th><th class="num">Total</th><th class="num">Pesos</th><th class="num">Objetivo</th></tr>'+filasPrev+'</table></div>';
 };
