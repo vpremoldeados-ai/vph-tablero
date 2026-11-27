@@ -15299,6 +15299,8 @@ function buildFilterTable(cfg){
     {g:'Comercial', k:'igTopeDiario', l:'Instagram: máximo de mensajes directos automáticos por día (por PC)', def:10, t:'num', hint:'Al llegar, 📸 Instagram automático espera al día siguiente. Instagram bloquea las cuentas que mandan muchos mensajes a desconocidos: subirlo de a poco. En 0 no hay tope.'},
     {g:'Comercial', k:'igMinutosEntre', l:'Instagram: minutos entre mensajes directos automáticos', def:20, t:'num', hint:'Espera mínima entre dos mensajes de Instagram de la misma PC. Usa el mismo horario que Topes.'},
     {g:'Comercial', k:'topesHoraHasta', l:'Topes: hora de fin de los WhatsApp en frío', def:19, t:'num', hint:'Desde esta hora ▶ Siguiente no abre más chats hasta mañana.'},
+     
+    {g:'Comercial', k:'corTopeDiario', l:'Corralones: máximo de WhatsApp por día', def:15, t:'num', hint:'Cuenta los mensajes de CRM → 🏪 Corralones de HOY (confirmados y sin confirmar, desde cualquier PC). Al llegar, los botones de mandar se frenan hasta mañana. En 0 no hay tope.'},
     {g:'Flete', k:'fleteCapital',   l:'2 Córdoba Capital ($ por pallet)',               def:35000, t:'num', hint:'Precio final (con IVA), igual que el cotizador web. En el presupuesto se carga como renglón "Flete".'},
     {g:'Flete', k:'fleteCercanas',  l:'3 Hasta 30km de Av. de Circunvalación ($/pallet)', def:48750, t:'num', hint:'Precio final (con IVA).'},
     {g:'Flete', k:'fleteMati',      l:'4 Interior con Mati ($ por pallet)',             def:140000, t:'num', hint:'Precio final (con IVA). El interior puede variar según la distancia: revisalo antes de enviar.'},
@@ -19927,6 +19929,15 @@ function buildFilterTable(cfg){
   ];
   function corEstado(k){ return COR_ESTADOS.find(e=>e.k===k)||COR_ESTADOS[0]; }
   function corFirma(){ return (((typeof topesFirma==='function') && topesFirma()) || 'Sofía').trim() || 'Sofía'; }
+   
+   
+   
+  function corTope(){ const n=Math.round(Number(window.__param ? window.__param('corTopeDiario',15) : 15)); return n>0 ? n : 0; }
+  function corEnviosDe(r, fecha){ const d=r.enviosDia; return d && d.fecha===fecha ? d.n : (r.ultimoMensajeFecha===fecha ? 1 : 0); }
+   
+  function corSumarEnvio(r, fecha){ const d=r.enviosDia; return d && d.fecha>fecha ? d : {fecha, n:corEnviosDe(r, fecha)+1}; }
+  function corEnviadosHoy(){ return CORW.reduce((s,r)=>s + corEnviosDe(r, hoyISO) + (r.sinConfirmar && r.sinConfirmar.fecha===hoyISO ? 1 : 0), 0); }
+  function corTopeLleno(){ const t=corTope(); return !!t && corEnviadosHoy()>=t; }
   function corNombreSaludo(nombre){
     let n=String(nombre||'').replace(/\([^)]*\)/g,' ').split(/\s[-–—|]\s/)[0];
     n=n.replace(/[\s,]+(S\.?\s?A\.?\s?S\.?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?|Ltda\.?)\s*$/i,'').replace(/\s+/g,' ').trim();
@@ -20042,6 +20053,10 @@ function buildFilterTable(cfg){
   function corAbrirChat(ci, accion){
     const r=CORW[ci]; if(!r) return false;
     const lk=topesWaLink(corTelDe(r, accion)); if(!lk) return false;
+    if(corTopeLleno()){
+      alert('Hoy ya van '+corEnviadosHoy()+' mensajes de Corralones y el tope es '+corTope()+'. Seguí mañana: mandar muchos en un día es lo que hace que WhatsApp restrinja el número.\n\n(El tope se cambia en Base de Datos → ⚙️ Parámetros.)');
+      return false;
+    }
      
     if(accion==='primero') corCopiarImagen(COR_IMG_PRIMERO);
     else if(accion==='presentacion') corCopiarImagen(COR_IMG_PROVEEDORES);
@@ -20069,6 +20084,7 @@ function buildFilterTable(cfg){
         return n;
       }
       const cuando=sc.fecha||hoyISO;
+      n.enviosDia=corSumarEnvio(r, cuando);
       n.ultimoMensajeFecha=cuando; n.ultimoMensajePor=corFirma();
       if(sc.accion==='primero'){ n.estado='consultado'; n.primerContactoFecha=cuando; n.seguimientos=0; }
       else if(sc.accion==='presentacion'){ n.estado='presentado'; n.presentadoFecha=cuando; n.catalogoFecha=''; n.seguimientos=0; }
@@ -20111,15 +20127,18 @@ function buildFilterTable(cfg){
     const seg=CORW.filter(corTocaSeguimiento).length;
     const sinConf=CORW.filter(r=>r.sinConfirmar).length;
     if(corFiltro==='sinconf' && !sinConf) corFiltro='';
+    const tope=corTope(), hoyN=corEnviadosHoy(), lleno=corTopeLleno();
     cont.innerHTML=
       '<div style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:8px">'+
         '<b>Cómo se usa:</b> 1) <b>📲 Presentarme</b> abre la <b>app de WhatsApp de Windows</b> con el mensaje que pide hablar con quien define los proveedores y deja <b>copiada la imagen</b> (<a href="'+COR_IMG_PRIMERO+'" target="_blank" rel="noopener">verla</a>): mandá el texto con Enter y después pegala con Ctrl+V. '+
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
         '3) <b>📲 Presentar al contacto</b> le escribe a esa persona y deja copiada la segunda imagen (<a href="'+COR_IMG_PROVEEDORES+'" target="_blank" rel="noopener">verla</a>). '+
         '4) <b>📎 Mandar catálogo</b>: se adjunta a mano con el clip. Córdoba: <i>'+esc(COR_CATALOGO)+'</i> (queda copiada además la lista de precios, que ese PDF no trae). Para Buenos Aires va su propio catálogo: <i>'+esc(COR_CATALOGO_BA)+'</i>. Para Rosario: <i>'+esc(COR_CATALOGO_ROS)+'</i>. '+
-        '5) <b>🔁 Seguimiento</b>: si no contesta, a los '+COR_SEGUI_PRESENTADO+' días aparece solo (antes y después del catálogo) y sigue hasta que marques «Aceptó» o «Sin interés». La fila dice desde qué día. En cada paso confirmá <b>en la misma fila</b> si el mensaje salió: mientras no lo hagas queda en amarillo.</div>'+
+        '5) <b>🔁 Seguimiento</b>: si no contesta, a los '+COR_SEGUI_PRESENTADO+' días aparece solo (antes y después del catálogo) y sigue hasta que marques «Aceptó» o «Sin interés». La fila dice desde qué día. En cada paso confirmá <b>en la misma fila</b> si el mensaje salió: mientras no lo hagas queda en amarillo. '+
+        (tope?'<b>Tope:</b> '+tope+' mensajes por día, para que WhatsApp no restrinja el número; al llegar, los botones se frenan hasta mañana.':'')+'</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
+        '<span style="font-weight:700;font-size:12.5px;color:'+(!tope?'#475569':lleno?'#b91c1c':hoyN>=tope-3?'#b45309':'#157a1d')+'">Hoy: '+hoyN+(tope?' de '+tope:'')+(lleno?' · seguí mañana':'')+'</span>'+
         COR_ESTADOS.map(e=>'<button class="filter-btn'+(corFiltro===e.k?' active':'')+'" data-cor-filtro="'+e.k+'">'+esc(e.l)+' ('+n(e.k)+')</button>').join('')+
         (seg?('<button class="filter-btn'+(corFiltro==='seguir'?' active':'')+'" data-cor-filtro="seguir" style="border-color:#d98324;color:#b45309;font-weight:700">🔁 Toca seguimiento ('+seg+')</button>'):'')+
         (sinConf?('<button class="filter-btn'+(corFiltro==='sinconf'?' active':'')+'" data-cor-filtro="sinconf" style="border-color:#d97706;color:#92400e;font-weight:700">❓ Sin confirmar ('+sinConf+')</button>'):'')+
@@ -20133,7 +20152,7 @@ function buildFilterTable(cfg){
     let html='<thead><tr><th>Corralón</th><th>Teléfono</th><th>Contacto (decide proveedores)</th><th>Estado</th><th>📲 Mensaje</th><th>Lista</th><th>Notas</th><th></th></tr></thead><tbody>';
     vista.forEach(({r,ci})=>{
       const est=corEstado(r.estado), accion=corAccionDe(r), tel=corTelDe(r, accion||'primero');
-      const boton=a=>'<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+a+'"'+(a.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+
+      const boton=a=>'<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+a+'"'+(lleno?' title="Tope de hoy alcanzado: seguí mañana" style="opacity:.45"':a.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+
         ({primero:'📲 Presentarme',presentacion:'📲 Presentar al contacto',catalogo:'📎 Mandar catálogo'}[a]||'🔁 Seguimiento')+'</button>';
       const sc=r.sinConfirmar;
       let btn;
@@ -20177,7 +20196,9 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-cor-sinwa]').forEach(b=>b.onclick=()=>corConfirmar(+b.dataset.corSinwa, false, true));
     tabla.querySelectorAll('[data-cor-chat]').forEach(b=>b.onclick=()=>corAbrirChat(+b.dataset.corChat, b.dataset.corAccion));
      
-    tabla.querySelectorAll('[data-cor-estado]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corEstado, r=>{ const n={...r, estado:s.value, estadoFecha:hoyISO, seguimientos:0, ultimoMensajeFecha:(s.value==='consultado'||s.value==='presentado'||s.value==='negociando')?(r.ultimoMensajeFecha||hoyISO):r.ultimoMensajeFecha}; delete n.sinConfirmar; return n; }); drawCorralones(); });
+    tabla.querySelectorAll('[data-cor-estado]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corEstado, r=>{ const n={...r, estado:s.value, estadoFecha:hoyISO, seguimientos:0, ultimoMensajeFecha:(s.value==='consultado'||s.value==='presentado'||s.value==='negociando')?(r.ultimoMensajeFecha||hoyISO):r.ultimoMensajeFecha};
+      if(r.sinConfirmar) n.enviosDia=corSumarEnvio(r, r.sinConfirmar.fecha);    
+      delete n.sinConfirmar; return n; }); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nombre]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNombre, r=>({...r, nombre:i.value.trim()})));
     tabla.querySelectorAll('[data-cor-loc]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corLoc, r=>({...r, localidad:i.value.trim()})));
     tabla.querySelectorAll('[data-cor-web]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corWeb, r=>({...r, web:i.value.trim()})); drawCorralones(); });
@@ -20185,7 +20206,7 @@ function buildFilterTable(cfg){
     tabla.querySelectorAll('[data-cor-contacto]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corContacto, r=>{ const n={...r, contacto:i.value.trim()};
       if(n.contacto && (r.estado==='consultado'||r.estado==='pendiente'||!r.estado)){ n.estado='con-contacto'; n.estadoFecha=hoyISO; n.seguimientos=0;
          
-        if(n.sinConfirmar){ n.ultimoMensajeFecha=n.sinConfirmar.fecha; delete n.sinConfirmar; } } return n; }); drawCorralones(); });
+        if(n.sinConfirmar){ n.enviosDia=corSumarEnvio(r, n.sinConfirmar.fecha); n.ultimoMensajeFecha=n.sinConfirmar.fecha; delete n.sinConfirmar; } } return n; }); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-telc]').forEach(i=>i.onchange=()=>{ corUpd(+i.dataset.corTelc, r=>({...r, telefonoContacto:i.value.trim()})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-lista]').forEach(s=>s.onchange=()=>{ corUpd(+s.dataset.corLista, r=>({...r, lista:s.value})); drawCorralones(); });
     tabla.querySelectorAll('[data-cor-nota]').forEach(i=>i.onchange=()=>corUpd(+i.dataset.corNota, r=>({...r, notas:i.value})));
@@ -20239,6 +20260,7 @@ function buildFilterTable(cfg){
   $('crm-tab-corralones').onclick=()=>setCrmTab('corralones');
   if(window.__usaNube){ window.__afterLogin=window.__afterLogin||[]; window.__afterLogin.push(()=>corSubscribe()); }
   else corSubscribe();
+  window.addEventListener('vph-params', ()=>{ const p=$('crm-cor-panel'); if(p && p.style.display!=='none') drawCorralones(); });
 
   boot();
 })();
