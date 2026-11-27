@@ -19517,14 +19517,22 @@ function buildFilterTable(cfg){
     return Math.round((new Date(HOY.getFullYear(),HOY.getMonth(),HOY.getDate()) - new Date(p[0],p[1]-1,p[2]))/86400000);
   }
   // ¿Toca el seguimiento? Contando desde el último mensaje. «Consultado» (sin respuesta) tiene tope; una vez que hay
-  // contacto se sigue hasta el acuerdo (27/11). En «Presentado» primero va el catálogo: sin catálogo no hay seguimiento.
+  // contacto se sigue hasta el acuerdo (27/11), también si al contacto todavía no se le mandó el catálogo.
   function corTocaSeguimiento(r){
     if(!r) return false;
     const est=r.estado||'pendiente'; if(est!=='consultado' && est!=='presentado' && est!=='negociando') return false;
-    if(est==='presentado' && !r.catalogoFecha) return false;
     if(est==='consultado' && (r.seguimientos||0)>=COR_MAX_SEGUI) return false;
     const d=corDias(r.ultimoMensajeFecha); if(d==null) return false;
     return d >= (est==='consultado' ? COR_SEGUI_CONSULTA : COR_SEGUI_PRESENTADO);
+  }
+  // Desde qué día aparece el 🔁, para mostrarlo en la fila. '' si no corresponde o ya toca.
+  function corProximoSeguimiento(r){
+    const est=(r&&r.estado)||'pendiente'; if(est!=='consultado' && est!=='presentado' && est!=='negociando') return '';
+    if(est==='consultado' && (r.seguimientos||0)>=COR_MAX_SEGUI) return '';
+    if(corDias(r.ultimoMensajeFecha)==null || corTocaSeguimiento(r)) return '';
+    const p=String(r.ultimoMensajeFecha).slice(0,10).split('-').map(Number);
+    const d=new Date(p[0], p[1]-1, p[2]+(est==='consultado' ? COR_SEGUI_CONSULTA : COR_SEGUI_PRESENTADO));
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   }
   // Qué mensaje corresponde ahora a esta fila (el botón de la fila lo usa).
   function corAccionDe(r){
@@ -19532,12 +19540,13 @@ function buildFilterTable(cfg){
     if(est==='pendiente' || est==='falta-dato') return 'primero';
     if(est==='consultado') return corTocaSeguimiento(r) ? 'seg-consulta' : null;
     if(est==='con-contacto') return 'presentacion';
-    if(est==='presentado') return !r.catalogoFecha ? 'catalogo' : (corTocaSeguimiento(r) ? 'seg-presentado' : null);
+    // Sin catálogo: se ofrece mandarlo; si pasan los días sin respuesta, toca reconsultar (la fila muestra las dos cosas).
+    if(est==='presentado') return !r.catalogoFecha ? (corTocaSeguimiento(r) ? 'seg-contacto' : 'catalogo') : (corTocaSeguimiento(r) ? 'seg-presentado' : null);
     if(est==='negociando') return corTocaSeguimiento(r) ? 'seg-negociando' : null;
     return null;
   }
   // Desde que hay contacto, los mensajes van a ESA persona (si no hay teléfono propio, al del corralón).
-  const COR_AL_CONTACTO=['presentacion','catalogo','seg-presentado','seg-negociando'];
+  const COR_AL_CONTACTO=['presentacion','catalogo','seg-contacto','seg-presentado','seg-negociando'];
   function corTelDe(r, accion){
     return COR_AL_CONTACTO.indexOf(accion)>=0 ? (String(r.telefonoContacto||'').trim() || String(r.telefono||'').trim()) : String(r.telefono||'').trim();
   }
@@ -19557,6 +19566,9 @@ function buildFilterTable(cfg){
         '¿Te paso el catálogo con la propuesta y los precios?';
     if(accion==='catalogo')
       return 'Te paso el catálogo con la propuesta '+(ba ? 'y los precios puestos en tu corralón, con el flete incluido' : 'y la lista de precios mayorista')+'. Cualquier duda me avisás 👌';
+    if(accion==='seg-contacto')
+      return hola+' ¿Cómo va? Soy Marcelo de VASSALLO, te escribí hace unos días por nuestros pisos drenantes y topes de hormigón. '+
+        (ba ? 'Los precios son puestos en tu corralón, con el flete incluido.' : 'Entregamos en 7 días hábiles.')+' ¿Te paso el catálogo con la propuesta y los precios? 👌';
     if(accion==='seg-presentado')
       return hola+' ¿Pudiste ver el catálogo y los precios que te pasé? Si querés te armo una cotización por pallets para una primera prueba. '+
         (ba ? 'Va con el flete incluido, puesta en tu corralón 👌' : 'Entregamos en 7 días hábiles 👌');
@@ -19674,7 +19686,7 @@ function buildFilterTable(cfg){
         '2) Cuando conseguís ese contacto, cargá su <b>nombre y teléfono</b> en la fila y queda «Con contacto». '+
         '3) <b>📲 Presentar al contacto</b> le escribe a esa persona y deja copiada la segunda imagen (<a href="'+COR_IMG_PROVEEDORES+'" target="_blank" rel="noopener">verla</a>). '+
         '4) <b>📎 Mandar catálogo</b>: se adjunta a mano con el clip. Córdoba: <i>'+esc(COR_CATALOGO)+'</i> (queda copiada además la lista de precios, que ese PDF no trae). Para Buenos Aires va su propio catálogo: <i>'+esc(COR_CATALOGO_BA)+'</i>. '+
-        '5) Después aparece <b>🔁 Seguimiento</b> cada '+COR_SEGUI_PRESENTADO+' días hasta que marques «Aceptó» o «Sin interés». En cada paso confirmá si el mensaje salió.</div>'+
+        '5) <b>🔁 Seguimiento</b>: si no contesta, a los '+COR_SEGUI_PRESENTADO+' días aparece solo (antes y después del catálogo) y sigue hasta que marques «Aceptó» o «Sin interés». La fila dice desde qué día. En cada paso confirmá si el mensaje salió.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
         '<span style="font-weight:800;font-size:13px">'+CORW.length+' corralones</span>'+
         COR_ESTADOS.map(e=>'<button class="filter-btn'+(corFiltro===e.k?' active':'')+'" data-cor-filtro="'+e.k+'">'+esc(e.l)+' ('+n(e.k)+')</button>').join('')+
@@ -19695,11 +19707,15 @@ function buildFilterTable(cfg){
     let html='<thead><tr><th>Corralón</th><th>Teléfono</th><th>Contacto (decide proveedores)</th><th>Estado</th><th>📲 Mensaje</th><th>Lista</th><th>Notas</th><th></th></tr></thead><tbody>';
     vista.forEach(({r,ci})=>{
       const est=corEstado(r.estado), accion=corAccionDe(r), tel=corTelDe(r, accion||'primero');
-      const etiqueta={primero:'📲 Presentarme',presentacion:'📲 Presentar al contacto',catalogo:'📎 Mandar catálogo'}[accion]||'🔁 Seguimiento';
+      const boton=a=>'<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+a+'"'+(a.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+
+        ({primero:'📲 Presentarme',presentacion:'📲 Presentar al contacto',catalogo:'📎 Mandar catálogo'}[a]||'🔁 Seguimiento')+'</button>';
       let btn;
       if(!accion) btn='<span style="color:#94a3b8;font-size:11px">'+(est.k==='presentado'||est.k==='consultado'||est.k==='negociando'?'esperando respuesta':'—')+'</span>';
       else if(!topesWaLink(tel)) btn='<span style="color:#94a3b8;font-size:11px">'+(COR_AL_CONTACTO.indexOf(accion)>=0?'cargá el teléfono del contacto':'sin tel.')+'</span>';
-      else btn='<button class="cmp-btn" data-cor-chat="'+ci+'" data-cor-accion="'+accion+'"'+(accion.indexOf('seg')===0?' style="border-color:#d98324;color:#b45309"':'')+'>'+etiqueta+'</button>';
+      // Al reconsultar antes del catálogo queda también el botón para mandarlo, por si contesta.
+      else btn=boton(accion)+(accion==='seg-contacto' ? '<div style="margin-top:4px">'+boton('catalogo')+'</div>' : '');
+      const prox=corProximoSeguimiento(r);
+      if(prox) btn+='<div style="font-size:10.5px;color:#b45309">🔁 reconsultar el '+fmt(prox)+'</div>';
       const sub=[r.catalogoFecha?('catálogo '+fmt(r.catalogoFecha)):'', r.ultimoMensajeFecha?('último '+fmt(r.ultimoMensajeFecha)):'', r.seguimientos?('seg. '+r.seguimientos):''].filter(Boolean).join(' · ');
       html+='<tr>'+
         '<td style="min-width:200px;max-width:260px"><input data-cor-nombre="'+ci+'" value="'+esc(r.nombre||'')+'" style="display:block;width:100%;min-width:150px;border:0;background:transparent;font-weight:700">'+
